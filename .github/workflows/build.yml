@@ -47,7 +47,7 @@ jobs:
         shell: bash
         run: bash scripts/build-shell-frontend.sh
       - name: Install Linux system deps (Tauri v2)
-        if: runner.os ==  + Linux + 
+        if: runner.os == 'Linux'
         shell: bash
         run: |
           sudo apt-get update -y
