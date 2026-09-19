@@ -174,7 +174,11 @@ check("C-e 非 Windows 返回 'npx'", npxBin({ platform: 'linux' }) === 'npx', n
       && gate('D:\\a\\dsh\\test\\fake-npm.js') === false, '已豁免');
   check('C-f 反向：盘符路径夹带元字符/空白/相对形态仍拒（豁免面不扩大）',
     gate('D:\\a\\x;y') && gate('D:\\a\\x y') && gate('D:\\a\\x$(pwn)') && gate('D:\\a\\x`id`')
-      && gate('D:/a/x/y') === false && gate('C:rel\\path') === false && gate('D:\\') === true, '已收紧');
+      && gate('D:/a/x/y') === false && gate('C:rel\\path') === false && gate('D:\\') === true
+      // 已知豁免边界：`\\` 不在豁免字符类禁用集内（`D:\a\x\y` 仍按盘符路径放行）。
+      // 判据语义=「是否为 win32 盘符绝对路径」，非路径规范化；argv 不经 shell，
+      // 重复分隔符无注入面。故此项为**预期放行**而非缺陷。
+      && gate('D:\\a\\x\\y') === false, '已收紧');
   check('C-f 反向：linux/mac 路径不受影响（不含 `\\` 本就不触发禁用字符集）',
     gate('/tmp/fake.js') === false && gate('/tmp/a b') === true, 'ok');
 }
