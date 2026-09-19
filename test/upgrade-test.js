@@ -201,6 +201,8 @@ async function main() {
   const before = await api(3940, 'GET', '/status');
   await api(3940, 'POST', '/native/upgrade');
   const st = await waitUpgrade(3940, (x) => x.state === 'done' || x.state === 'failed');
+  // 失败时把 lastError + 升级日志尾部带进输出（跨平台失败（如 windows-only）否则无从取证，禁本机复跑）
+  if (st && st.state !== 'done') console.log('  [U2-diag] lastError=' + st.lastError + ' rolledBack=' + st.rolledBack + ' logTail=' + JSON.stringify((st.logTail || []).slice(-12)));
   check('升级终态=done', st && st.state === 'done', JSON.stringify(st && st.state));
   const pkgAfter = JSON.parse(fs.readFileSync(pkgA, 'utf8'));
   check('package.json 版本已切换到 2.0.0', pkgAfter.version === '2.0.0', pkgAfter.version);
@@ -216,6 +218,7 @@ async function main() {
   console.log('== U3: 已是最新时跳过 ==');
   await api(3940, 'POST', '/native/upgrade');
   const st3 = await waitUpgrade(3940, (x) => x.state === 'done' || x.state === 'failed', 15000);
+  if (st3 && st3.state !== 'done') console.log('  [U3-diag] lastError=' + st3.lastError + ' logTail=' + JSON.stringify((st3.logTail || []).slice(-12)));
   check('重复升级被安全处理', !!st3);
   const pkg3 = JSON.parse(fs.readFileSync(pkgA, 'utf8'));
   check('版本保持 2.0.0', pkg3.version === '2.0.0', pkg3.version);
