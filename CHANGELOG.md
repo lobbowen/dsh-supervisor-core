@@ -6,7 +6,110 @@
 
 ## [未发布]
 
-（下一版本待记）
+### 安全（AUDIT-2026-09-19 第 1 批：P0 A1/A2/A4）
+
+- **A1 持久化「读失败→默认值覆盖」三处收口（fail-closed）**：
+  `config.json` 读/解析失败拒绝写回并保全原字节（`desired.js`，事件 `config_persist_aborted`）；
+  `dsh-main.json` 损坏态拒绝以默认值覆盖写，仅显式重设 `remoteToken` 解锁（`main-store.js`）——
+  消除 9-13 凭据覆盖事故的运行时同型根因；受管目录 `managed-objects.json` 损坏时
+  改名 `.bad-<ts>` 保全 + 以未加载态启动（`registry.js`，事件 `managed_registry_corrupt`）。
+- **A2 frpc 安装 fail-closed**：取不到官方 sha256（GitHub 直连不可达/校验表缺项）即**拒绝安装**，
+  不再降级放行未校验二进制（`frp-install.js`）；离线一次不污染缓存，可重试。
+- **A4 win32 浏览器打开去 cmd 注入面**：`open`/`launchIsolated` 不再借道 `cmd /c start`
+  （URL 中 `& ^ " ( )` 会被 cmd.exe 二次解析执行），改直启 `chrome.exe`（探测标准安装路径）
+  或 `explorer.exe`；入口统一 `isSafeHttpUrl` 仅放行 http(s) 绝对 URL（`platform/os/browser.js`）。
+- 测试并入既有文件（不破 N-e 链长约束）：`round13-frpc-integrity-test.js`（C 案例反转为拒绝+缺项+重试）、
+  `platform-layer-portability-test.js`（X-8 win32 新形态+A4 判据）、
+  `app-ctor-injection-test.js`（A1-a/A1-b 损坏保全断言）、`managed-registry-test.js`（A1-c 损坏目录断言）。
+
+## [0.1.5-BETA.9]（2026-09-18）
+
+### 修复
+
+- **退出管家后桌面壳被自动重新拉起（严重）**：会话退出意图持久化（新增 `status.shellHalted`，
+  跨守卫重启经 `loadState` 继承，看护观测到壳在线且非退出中时清除）；看护「退出中不自愈」门
+  从 bootstrap 定时器闭包**下沉到看护域**（`tick` 依赖 `halted/onShellAlive`）；`POST /shell/restart`
+  退出中/已退出返回 409；`restartShell` 在杀旧壳与 spawn 之间增加 `shouldAbort` 复判；
+  `shutdownAll` 与完整 `shutdown()` 对齐，清全部周期定时器。详见
+  `INCIDENT-2026-09-18-exit-manager-relaunch.md`。
+
+## [0.1.5-BETA.8]（2026-09-18）
+
+本版为**结构收口 + 积压清零**预发布：无用户可见 API/事件契约变更，内核运行时依赖仍为 0。
+
+### 安全
+
+- `/dist/registry/probe` 盲 SSRF **双层闭环**：API 层公网 host 策略 + `platform/distribution/registry.js`
+  的 `redirect:'manual'`（禁止 302 绕回内网）；
+- 局域网无访问密钥时鉴权 **fail-closed**（401），并修正 frp expose 状态码、清密钥时回关 LAN；
+- frp 下载重定向协议校验：非 `http(s)` 跳转不再让守卫同步抛错崩溃；
+- 密钥/关闭行为持久化失败**如实上报**（200 → 500），不再「假成功」。
+
+### 修复
+
+- **AUDIT 积压收口**：instance/relay/router 侧（#2/#4/#5/#10/#11/#15-#20/#29/#30）与
+  platform/plugin/shell/app 侧（#3/#13/#14/#21-#28）逐项修复；门禁/制度债 #31-#36 收口
+  （EX 工具系统性假阴性修正、A-5 扩面到 `release/**`+`.github/**`、等）；
+- **存疑项确证为真缺陷后收口**：D9 try/finally、D10 停止路径改用 `DaemonLifecycle.classify()`
+  动态归属（防误杀异主 daemon）、D11 假死自愈声明化、D12 kill 失败不再只发成功事件
+  （新增 `stop_failed` + 2s 复核窗口 + timer 代际）；
+- FIX 同型未覆盖调用点收口（含 FIX-5 根因）；lan-daemon 实例快照补契约 `all()`（DG-11 回归）。
+
+### 结构（app 层「去 this」收口）
+
+- `src/app` 全部**宿主绑定切面**移除隐式 `this`：facade（router/lan/ports/main/status）、
+  daemons 切面（identity/runtime/probe/supervise）、main 全部 7 文件、control/scheduler、
+  control/instance-adapter、settings/versions、settings/lan-panel，以及 `domain-actions` 三个写动作。
+  实现体改经按 host 缓存的 **WeakMap 惰性 deps**，**方法名 / `{methods}` 外壳 / 逐字体一律保留**，
+  装配路径与对外面不变；类自身实例（`ManagedLifecycle`/`ManagedRegistry`/`DaemonLifecycle` 等）
+ 保持 OOP 语义不动；
+- ctl/audit 切面工厂化；删除 proxy-instance 过渡 shim 与 `releaseProviderPorts` 导出；
+- 门禁棘轮 AT 的 `this.X(` 由 267 降至 84（剩余全部为类自身方法与注释，非宿主债）。
+
+### 契约
+
+- instance `command` **运行时执行边界复校**（`EXECUTION-CONTRACT.md` §8.6 由「待决」改「定案」）：
+  api 写时闸与启动期 realpath 复校共用单一纯函数，ENOENT fail-closed，**适用范围仅 sandbox**；
+- `command` 契约成文为 SSOT（`EXECUTION-CONTRACT.md` §8）；N11 加码（node 族必须给 DSH 入口且绝对路径）；
+- 历史 `inst.state.version` 键在加载期做内存幂等清理。
+
+### 门禁（无用户可见影响）
+
+- test/ 下自带「注释剥离」统一到字符级单一实现 `test/_strip.js`（17/18；新增多语言安全的
+  `stripLineAndBlocks`）；
+- 修复多起门禁**假阴性**：剥离顺序错误（先块后行）致 4 道门禁对部分区间失明、U-1b 误报、
+  DG-14 抽取器依赖缩进形态；新增 docs-reference 门禁与四道结构性门禁；
+- 多处源码形态钉子改为**按符号名**（不再依赖 `this.` 前缀），判据本意不变。
+
+### 文档
+
+- 阶段二~六作业单与逐阶段报告（30+ 份）；`_p3-e-audit-backlog.md` 逐行回写现状（阶段四/五已全部处置）；
+- 验收口径收敛为「**只由 CI 裁决**，本机禁止运行任何测试」（`ACCEPTANCE-STANDARD.md`）；
+- 撤销过期 `TODO(P2)`、作废过期作业单、更正 release 文档漂移。
+
+## [0.1.5-BETA.7]（2026-09-16）
+
+### 修复：原生 DSH「检测 → 绑定 → 接管」——消除两套对立逻辑
+
+真机：系统已原生安装 DSH，守卫却判「未安装」，面板据此去装**第二个** DSH 顶替原生的那个。
+
+根因：原生 DSH 的存在/位置**只来自静态 `config.command[1]`**（出厂默认裸逻辑名 `'dsh'`）——
+`fs.existsSync('dsh')` 恒 false → `NativeManager.status().installed` 恒 false；全仓（含壳）
+**没有任何一处**把 `dsh` 解析为真实入口（`node dsh` 不做 PATH 解析、Windows 裸名无扩展名）。
+同一事实得到两个相反结论 —— 这才是「两套对立的逻辑」。
+
+修法（契约见 `NATIVE-DSH-TAKEOVER-CONTRACT.md` N1–N5）：
+
+- `platform/os/exec-path.js::resolveDsh()`：跨平台解析原生 DSH（`DSH_BIN` → PATH/PATHEXT →
+  标准落点 → 包内 `node_modules/@deepseek-ai/dsh/lib/bin.js`），优先包内 JS（用 node 承载，
+  规避 shebang / `.cmd` 垫片）；
+- `supervisor._bindNativeDshCommand()`：启动时**在任何消费者之前**把出厂默认/裸名绑定为绝对入口；
+  用户显式给出的路径**原样尊重**（即使当前不存在也不覆盖）；
+- `NativeManager.detected()/binPath()`：以检测结果为准，未装**如实 false**，绝不伪造路径；
+- 插件 CLI 经 `target.runtime` 承载（原生绑定后与沙箱的 `lib/bin.js` 都可跑，Windows 亦成立）；
+- 壳体感契约同步：`runtime.json` 增 `npmArgs`（npm 仅包内 JS 时 program=node、args=[npm-cli.js]）；
+  内核 `env-catalog` 的 npm 探测改为**契约优先**（Windows 裸 `npm` 是 ENOENT）。
+- 门禁：`test/native-dsh-binding-test.js`（检测 / 绑定 / 版本 / 如实未装 / 结构不变量）。
 
 ## [0.1.5-BETA.6]（2026-09-15）
 

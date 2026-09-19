@@ -9,7 +9,7 @@ const os = require('node:os');
 const fs2 = require('node:fs');
 const ROOT = path.join(__dirname, '..');
 const TMP = fs2.mkdtempSync(path.join(os.tmpdir(), 'mreg-'));
-const { ManagedRegistry, PHASES, DESIRED, MANAGED_KINDS } = require(path.join(ROOT, 'src', 'guard', 'lifecycle', 'objects'));
+const { ManagedRegistry, PHASES, DESIRED, MANAGED_KINDS } = require(path.join(ROOT, 'src', 'app', 'control', 'registry'));
 
 let failures = 0;
 // ⚠ 2026-09-13（P3 测试基建缺陷）：本文件原以**硬编码常量**报告总数 ——
@@ -163,6 +163,34 @@ const fakePorts = {
     check('heartbeat 后续健康对象**仍被观测**（不因前一个卡死而跳过）',
       r.observed.indexOf('healthy') >= 0 && to.get('healthy').lastObserved.ok === true,
       JSON.stringify(r.observed));
+  }
+
+  // 11. A1-c（2026-09-19 审计修复）：既有目录文件损坏 ≠ 首启空目录 ——
+  //     改名 .bad-<ts> 保全原始字节 + 以「未加载」态启动（允许 state.json 种子回灌）+ 事件不静默。
+  {
+    const cf = path.join(TMP, 'corrupt-objects.json');
+    fs2.writeFileSync(cf, '{"objects":[{"kind":"dsh"'); // 半截 JSON
+    const cEvts = [];
+    const regC = new ManagedRegistry({ file: cf, logger: null, events: { append: (t) => cEvts.push(t) } });
+    check('A1c 损坏目录降级为空目录（不崩）', regC.count() === 0, String(regC.count()));
+    check('A1c _loadedFromDisk 置 false（state.json desired 可一次性回灌）', regC._loadedFromDisk === false, String(regC._loadedFromDisk));
+    const bads = fs2.readdirSync(TMP).filter((f) => f.indexOf('corrupt-objects.json.bad-') === 0);
+    check('A1c 原始字节被改名保全到 .bad-<ts>',
+      bads.length === 1 && fs2.readFileSync(path.join(TMP, bads[0]), 'utf8') === '{"objects":[{"kind":"dsh"',
+      JSON.stringify(bads));
+    check('A1c managed_registry_corrupt 事件（不静默）', cEvts.indexOf('managed_registry_corrupt') >= 0, JSON.stringify(cEvts));
+    regC.register({ kind: 'dsh', id: 'fresh', desired: 'running' });
+    check('A1c 保全后新目录可正常落盘（原路径已是新内容）',
+      JSON.parse(fs2.readFileSync(cf, 'utf8')).objects.some((o) => o.id === 'fresh'), 'ok');
+    // 单条坏 entry 不得中断整份加载（其后合法条目不丢）
+    const pf = path.join(TMP, 'partial-objects.json');
+    fs2.writeFileSync(pf, JSON.stringify({ schema: 'managed-objects@1', objects: [
+      { kind: 'bogus-kind', id: 'b' },
+      { kind: 'dsh', id: 'ok-1', desired: 'running' },
+    ] }));
+    const regP = new ManagedRegistry({ file: pf, logger: null });
+    check('A1c 未知 kind 单条跳过，其后合法条目仍恢复',
+      regP.count() === 1 && !!regP.get('ok-1'), String(regP.count()));
   }
 
   console.log('');
