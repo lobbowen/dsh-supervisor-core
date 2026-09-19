@@ -51,6 +51,7 @@ class ManagedRegistry {
     //   false = 目录文件原不存在（首启/老库迁移）-> 允许 state.json 的 desired 作一次性种子。
     // 注意：必须记录「构造前是否存在」，而非 _save 之后——构造函数随后会创建文件（否则判定失真）。
     this._loadedFromDisk = false;
+    this._saveBlocked = false; // A1-c：损坏且连改名保全都失败时置真，本进程禁绝对目录文件的覆盖写
     if (this.file) {
       try { this._loadedFromDisk = fs.existsSync(this.file); } catch { this._loadedFromDisk = false; }
       this._load();
@@ -59,36 +60,57 @@ class ManagedRegistry {
 
   /*  持久化（应然+所有权；实然与适配器不入册）  */
   _load() {
+    let raw;
     try {
-      const raw = JSON.parse(fs.readFileSync(this.file, 'utf8'));
-      const arr = (raw && Array.isArray(raw.objects)) ? raw.objects : [];
-      for (const o of arr) {
-        // 逐条容错：单条坏 entry（缺 id/字段异常）不得中断整份加载，否则其后合法条目全部静默丢失。
+      raw = JSON.parse(fs.readFileSync(this.file, 'utf8'));
+    } catch (e) {
+      // A1-c（2026-09-19 审计修复）：既有目录文件不可读/损坏 ≠ 首启空目录。
+      //   旧行为静默当空目录继续 → 任一 upsert 触发 _save 用派生内容覆盖原文件，
+      //   desired/guardian/崩溃计数永久丢失（且 _loadedFromDisk=true 使 state.json 不回灌种子）。
+      //   现在：改名 .bad-<ts> 保全原始字节，以「未加载」态启动（回灌 state.json 种子）。
+      if (this._loadedFromDisk) {
+        this._log('warn', 'managed-objects 读/解析失败，按损坏保全处理: ' + ((e && e.message) || e));
+        this._loadedFromDisk = false; // 允许 state.json desired 一次性种子回灌
+        let bak = null;
         try {
-          if (!o || !kindMeta(o.kind)) continue; // 未知类型/损坏条目：跳过（不阻断启动）
-          // guardian 只在域 A 传：域 B 的**旧残留**（早期版本曾写 true）由此被自然丢弃——
-          //   配合 _save 不写该字段，升级后首次落盘即完成归一（无需一次性迁移脚本）。
-          const e = createEntry({ kind: o.kind, id: o.id, name: o.name, desired: o.desired, guardian: isDomainA(o.kind) ? o.guardian : undefined, ownership: o.ownership });
-          // 恢复持久化的受管阶段(仅合法值;观测不恢复)
-          if (PHASES.includes(o.phase)) e.phase = o.phase;
-          if (Number.isInteger(o.backoffLevel)) e.backoffLevel = o.backoffLevel;
-          if (typeof o.backoffUntil === 'number' && o.backoffUntil > Date.now()) e.backoffUntil = o.backoffUntil;
-          // 崩溃窗/重启计数随目录持久化（B2 归一：与 state.json 不再双副本——main 崩溃保护跨重启保持）。
-          if (Number.isInteger(o.restartCount) && o.restartCount >= 0) e.restartCount = o.restartCount;
-          if (o.crashWindowStart === null || typeof o.crashWindowStart === 'number') e.crashWindowStart = o.crashWindowStart;
-          if (Number.isInteger(o.crashWindowRestarts) && o.crashWindowRestarts >= 0) e.crashWindowRestarts = o.crashWindowRestarts;
-          if (typeof o.startedAt === 'string') e.startedAt = o.startedAt;
-          e.lastTransitionAt = null;
-          this._index(e);
-        } catch (err) {
-          this._log('warn', 'managed-objects 条目损坏已跳过(' + ((o && o.kind) || '?') + ':' + ((o && o.id) || '?') + '): ' + ((err && err.message) || err));
+          bak = this.file + '.bad-' + Date.now();
+          fs.renameSync(this.file, bak);
+        } catch (e2) {
+          this._saveBlocked = true; // 连保全改名都失败 → 本进程禁绝对该路径的覆盖写
+          this._log('warn', 'managed-objects 损坏备份失败，持久化已禁用: ' + ((e2 && e2.message) || e2));
         }
+        this._event('managed_registry_corrupt', { backup: bak, error: (e && e.message) || String(e) });
       }
-    } catch { /* 首次启动/文件缺失：空目录 */ }
+      return; // 首启/文件缺失或损坏降级：空目录
+    }
+    const arr = (raw && Array.isArray(raw.objects)) ? raw.objects : [];
+    for (const o of arr) {
+      // 逐条容错：单条坏 entry（缺 id/字段异常）不得中断整份加载，否则其后合法条目全部静默丢失。
+      try {
+        if (!o || !kindMeta(o.kind)) continue; // 未知类型/损坏条目：跳过（不阻断启动）
+        // guardian 只在域 A 传：域 B 的**旧残留**（早期版本曾写 true）由此被自然丢弃——
+        //   配合 _save 不写该字段，升级后首次落盘即完成归一（无需一次性迁移脚本）。
+        const e = createEntry({ kind: o.kind, id: o.id, name: o.name, desired: o.desired, guardian: isDomainA(o.kind) ? o.guardian : undefined, ownership: o.ownership });
+        // 恢复持久化的受管阶段(仅合法值;观测不恢复)
+        if (PHASES.includes(o.phase)) e.phase = o.phase;
+        if (Number.isInteger(o.backoffLevel)) e.backoffLevel = o.backoffLevel;
+        if (typeof o.backoffUntil === 'number' && o.backoffUntil > Date.now()) e.backoffUntil = o.backoffUntil;
+        // 崩溃窗/重启计数随目录持久化（B2 归一：与 state.json 不再双副本——main 崩溃保护跨重启保持）。
+        if (Number.isInteger(o.restartCount) && o.restartCount >= 0) e.restartCount = o.restartCount;
+        if (o.crashWindowStart === null || typeof o.crashWindowStart === 'number') e.crashWindowStart = o.crashWindowStart;
+        if (Number.isInteger(o.crashWindowRestarts) && o.crashWindowRestarts >= 0) e.crashWindowRestarts = o.crashWindowRestarts;
+        if (typeof o.startedAt === 'string') e.startedAt = o.startedAt;
+        e.lastTransitionAt = null;
+        this._index(e);
+      } catch (err) {
+        this._log('warn', 'managed-objects 条目损坏已跳过(' + ((o && o.kind) || '?') + ':' + ((o && o.id) || '?') + '): ' + ((err && err.message) || err));
+      }
+    }
   }
 
   _save() {
     if (!this.file) return;
+    if (this._saveBlocked) return; // A1-c：原字节未被保全前绝不覆盖（fail-closed）
     try {
       const dir = path.dirname(this.file);
       fs.mkdirSync(dir, { recursive: true });

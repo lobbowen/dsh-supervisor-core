@@ -91,6 +91,70 @@ function fakeRegistry() {
 }
 
 // ───────────────────────────────────────────────────────────────────────────
+// A1-a（2026-09-19 审计修复）：config.json 读/解析失败 → **拒绝写回**（fail-closed），
+//   原字节保留；仅 ENOENT（首启）照常写入。旧行为 catch{} 后以 cur={} 覆盖 → 全键静默蒸发。
+// ───────────────────────────────────────────────────────────────────────────
+{
+  const { createDesired } = require(path.join(ROOT, 'src', 'app', 'state', 'desired.js'));
+  const t = fs.mkdtempSync(path.join(os.tmpdir(), 'a1-config-'));
+  const cf = path.join(t, 'config.json');
+  const warns = []; const evs = [];
+  const d = createDesired({
+    getConfigPath: () => cf,
+    getLogger: () => ({ warn: (m) => warns.push(String(m)) }),
+    getEvents: () => ({ append: (e) => evs.push(e) }),
+    fields: {}, store: {},
+  });
+  check('A1a 首启（文件缺失）仍照常写入 —— 不伤可用性',
+    d.persistConfigPatch({ apiPort: 8080 }) === true
+    && JSON.parse(fs.readFileSync(cf, 'utf8')).apiPort === 8080, 'ok');
+  fs.writeFileSync(cf, '{"apiAccessKey":"SECRET","swit');
+  check('A1a 半截 JSON → 返回 false', d.persistConfigPatch({ apiPort: 9 }) === false, 'false');
+  check('A1a **原字节保留**（未被派生内容覆盖）',
+    fs.readFileSync(cf, 'utf8') === '{"apiAccessKey":"SECRET","swit', fs.readFileSync(cf, 'utf8').slice(0, 24));
+  check('A1a 根为数组同样拒绝', (() => { fs.writeFileSync(cf, '[1,2]'); return d.persistConfigPatch({ apiPort: 9 }) === false && fs.readFileSync(cf, 'utf8') === '[1,2]'; })(), 'ok');
+  fs.rmSync(cf); fs.mkdirSync(cf); // EISDIR：非 ENOENT 读失败
+  check('A1a 读失败（EISDIR，非 ENOENT）拒绝', d.persistConfigPatch({ apiPort: 9 }) === false, 'false');
+  fs.rmSync(cf, { recursive: true });
+  check('A1a 故障解除后可正常再写',
+    d.persistConfigPatch({ apiPort: 7 }) === true && JSON.parse(fs.readFileSync(cf, 'utf8')).apiPort === 7, 'ok');
+  check('A1a 不静默：warn 日志 + config_persist_aborted 事件都在',
+    warns.some((w) => /fail-closed/.test(w)) && evs.filter((e) => e === 'config_persist_aborted').length >= 3,
+    JSON.stringify(evs));
+}
+
+// ───────────────────────────────────────────────────────────────────────────
+// A1-b（2026-09-19 审计修复）：dsh-main.json 损坏 → 读回默认值但标记 corrupt，
+//   后续**不带显式 remoteToken 的写回一律拒绝**（默认值覆盖 = 令牌静默清零 → 零认证降级，
+//   9-13 事故运行时同型）；显式重设令牌是唯一解锁路径。
+// ───────────────────────────────────────────────────────────────────────────
+{
+  const { createMainStore } = require(path.join(ROOT, 'src', 'app', 'state', 'main-store.js'));
+  const t = fs.mkdtempSync(path.join(os.tmpdir(), 'a1-main-'));
+  const sf = path.join(t, 'state.json');
+  const mf = path.join(t, 'dsh-main.json');
+  const warns = [];
+  const mkStore = () => createMainStore({ getConfig: () => ({ stateFile: sf }), getLogger: () => ({ warn: (m) => warns.push(String(m)) }) });
+  // 首启：无文件照常写
+  mkStore().writeDshMain({ guardian: true, remoteToken: 'TK-1' });
+  check('A1b 首启写入正常', JSON.parse(fs.readFileSync(mf, 'utf8')).remoteToken === 'TK-1', 'ok');
+  // 损坏态
+  fs.writeFileSync(mf, '{"guardian":true,"remoteToken":"TK-SECRET"');
+  const ms = mkStore();
+  ms.writeDshMain({ guardian: true }); // 先写后读：内部首次读即判 corrupt
+  check('A1b corrupt 态**拒绝默认值覆盖写**（原字节保留）',
+    fs.readFileSync(mf, 'utf8') === '{"guardian":true,"remoteToken":"TK-SECRET"', fs.readFileSync(mf, 'utf8').slice(0, 24));
+  const meta = ms.readDshMain();
+  check('A1b 读回降级为默认值但**留 warn**（不静默）',
+    meta.remoteToken === '' && warns.some((w) => /dsh-main\.json 读\/解析失败/.test(w)), JSON.stringify(warns).slice(0, 120));
+  ms.writeDshMain({ remoteToken: 'TK-RESET' });
+  check('A1b 唯一解锁：显式重设 remoteToken 可写回',
+    JSON.parse(fs.readFileSync(mf, 'utf8')).remoteToken === 'TK-RESET', fs.readFileSync(mf, 'utf8').slice(0, 60));
+  ms.writeDshMain({ guardian: true });
+  check('A1b 解锁后普通写恢复', JSON.parse(fs.readFileSync(mf, 'utf8')).guardian === true, 'ok');
+}
+
+// ───────────────────────────────────────────────────────────────────────────
 // F2 session：createSession(deps) —— 自己持有会话态
 // ───────────────────────────────────────────────────────────────────────────
 {

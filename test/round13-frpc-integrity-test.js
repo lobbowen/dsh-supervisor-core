@@ -16,13 +16,13 @@
 //
 // 校验和从**官方 GitHub 主机直连**取得（frp_<ver>_checksums.txt），**不经镜像前缀** ——
 // 于是「只控制镜像的攻击者」无法同时伪造校验和。
-// 取不到校验和时降级放行但记 warn（本仓可用性原则：有界失败即放行）；
-// 一旦取得校验和，**不匹配即拒绝该镜像**并尝试下一个。
+// A2（2026-09-19 审计修复）：语义由「取不到降级放行」翻转为 **fail-closed** ——
+// 取不到期望校验和即拒绝安装（可重试）；一旦取得校验和，不匹配同样拒绝该镜像。
 //
 // ## 门禁（行为级：桩掉网络层，断言拒绝/放行语义）
 //   A 校验和不匹配 → install 必须失败且**不落盘** frpc
 //   B 校验和匹配 → install 成功
-//   C 取不到校验和 → 降级放行但**记 warn**（不静默）
+//   C 取不到校验和（官方不可达 / 校验表缺项）→ **拒绝安装**且**不落盘**（A2 fail-closed），不静默
 //   D 校验和取自官方主机（不经镜像前缀）——结构断言，防信任根被换回镜像
 // ═══════════════════════════════════════════════════════════════════════════
 
@@ -122,13 +122,36 @@ function makeTarGz(frpcBody) {
     check('B frpc 已落盘', fs.existsSync(mgr.binPath), '存在');
   }
 
-  console.log('== C 取不到校验和 → 降级放行但记 warn ==');
+  console.log('== C 取不到校验和 → 拒绝安装（A2 fail-closed）==');
   {
+    // C1 官方主机不可达（_download 抛错）
     const { mgr, warns } = mk(null, goodTgz);
     const r = await mgr.install(() => {});
-    check('C 降级放行（可用优先，不阻断安装）', r.ok === true, JSON.stringify(r).slice(0, 120));
-    check('C 但**记了 warn**（不静默）',
-      warns.some((w) => /校验和失败|sha256 校验/.test(w)), JSON.stringify(warns).slice(0, 120));
+    check('C1 拒绝安装（不再降级放行）', r.ok === false, JSON.stringify(r).slice(0, 120));
+    check('C1 错误信息说明无完整性校验被拒', /sha256|完整性校验/.test(r.error || ''), (r.error || '').slice(0, 80));
+    check('C1 **未落盘** frpc', !fs.existsSync(mgr.binPath), String(fs.existsSync(mgr.binPath)));
+    check('C1 仍**记了 warn**（不静默）',
+      warns.some((w) => /校验和失败|sha256/.test(w)), JSON.stringify(warns).slice(0, 120));
+  }
+  {
+    // C2 官方校验表可达但缺该 asset 行 → expectedSha256 返回 null，同样必须拒绝
+    const other = 'a'.repeat(64) + '  frp_0.61.1_windows_arm64.tar.gz\n';
+    const { mgr } = mk(other, goodTgz);
+    const r = await mgr.install(() => {});
+    check('C2 校验表缺项同样拒绝安装', r.ok === false, JSON.stringify(r).slice(0, 120));
+    check('C2 **未落盘** frpc', !fs.existsSync(mgr.binPath), String(fs.existsSync(mgr.binPath)));
+  }
+  {
+    // C3 离线一次不得永久化：先失败（不可达），再恢复可得校验和 → 必须能装成功
+    const { mgr } = mk(null, goodTgz);
+    const r1 = await mgr.install(() => {});
+    check('C3 首次（不可达）失败', r1.ok === false, JSON.stringify(r1).slice(0, 80));
+    mgr._download = async (url) => {
+      if (url.indexOf('_checksums.txt') >= 0) return Buffer.from(goodSum + '  ' + asset + '\n', 'utf8');
+      return goodTgz;
+    };
+    const r2 = await mgr.install(() => {});
+    check('C3 恢复后重试成功（失败未污染缓存）', r2.ok === true, JSON.stringify(r2).slice(0, 120));
   }
 
   console.log('== D 信任根：校验和必须直连官方、不经镜像 ==');

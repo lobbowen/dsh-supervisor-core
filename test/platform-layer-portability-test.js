@@ -285,29 +285,48 @@ const TMP = fs.mkdtempSync(path.join(os.tmpdir(), 'platport-'));
   }
 }
 
-// ── X-8：browser —— 平台命令规划（含 Windows start 空标题陷阱）──
+// ── X-8：browser —— 平台命令规划（A4 2026-09-19：win32 去 cmd /c start，杜绝二次解析注入）──
 {
   const br = require(path.join(ROOT, 'src', 'platform', 'os', 'browser.js'));
   const u = 'http://127.0.0.1:28111/x';
   const w = br.openCommand('win32', u);
-  check('X-8 win32 openCommand = cmd /c start "" <url>（**空标题位必须存在**）',
-    w.cmd === 'cmd' && JSON.stringify(w.args) === JSON.stringify(['/c', 'start', '', u]), JSON.stringify(w));
+  check('X-8 win32 openCommand = explorer.exe <url>（**不得再出现 cmd**）',
+    w.cmd === 'explorer.exe' && JSON.stringify(w.args) === JSON.stringify([u]), JSON.stringify(w));
   check('X-8 darwin openCommand = open <url>',
     JSON.stringify(br.openCommand('darwin', u)) === JSON.stringify({ cmd: 'open', args: [u] }), 'ok');
   check('X-8 linux openCommand = xdg-open <url>',
     JSON.stringify(br.openCommand('linux', u)) === JSON.stringify({ cmd: 'xdg-open', args: [u] }), 'ok');
   check('X-8 未知平台**有意**退化 xdg-open（best-effort，不宣称能力）',
     br.openCommand('freebsd', u).cmd === 'xdg-open', br.openCommand('freebsd', u).cmd);
+  // A4 入口闸门：仅 http(s) 绝对 URL 可进 argv
+  check('A4 isSafeHttpUrl 接受 http/https',
+    br.isSafeHttpUrl(u) === true && br.isSafeHttpUrl('https://a.b/c') === true, 'ok');
+  check('A4 isSafeHttpUrl 拒绝 file/ javascript:/ 相对串/空',
+    br.isSafeHttpUrl('file:///c:/windows/system32/calc.exe') === false
+    && br.isSafeHttpUrl('javascript:alert(1)') === false
+    && br.isSafeHttpUrl('not a url & calc.exe') === false
+    && br.isSafeHttpUrl('') === false, 'ok');
+  check('A4 反向：cmd 形态会被判据识别（旧计划含 /c start 即违规）',
+    JSON.stringify({ cmd: 'cmd', args: ['/c', 'start', '', u] }).indexOf('start') >= 0, 'hit');
+  check('A4 findChromeWin：三根目录都不存在 → null（不抛）',
+    br.findChromeWin({ 'ProgramFiles': '/nonexistent-a', 'ProgramFiles(x86)': '/nonexistent-b', LOCALAPPDATA: '/nonexistent-c' }, () => false) === null, 'null');
+  check('A4 findChromeWin：命中 LOCALAPPDATA 且路径拼接正确',
+    br.findChromeWin({ LOCALAPPDATA: 'C:\\Users\\x\\AppData\\Local' }, (p) => p.indexOf('Google') >= 0 && p.endsWith('chrome.exe')) !== null, 'hit');
 
   const dp = br.isolatedPlan('darwin', u, { antiArgs: ['--a', '--b'] });
   check('X-8 darwin 隔离计划 = open -na "Google Chrome" --args <antiArgs>',
     dp.kind === 'single' && dp.bin === 'open'
     && JSON.stringify(dp.args) === JSON.stringify(['-na', 'Google Chrome', '--args', '--a', '--b']), JSON.stringify(dp.args));
-  const wp = br.isolatedPlan('win32', u, { profileDir: '/P', antiArgs: ['--a'] });
-  check('X-8 win32 隔离计划只传 incognito + user-data-dir（**刻意不传 antiArgs**）',
-    wp.bin === 'cmd'
-    && JSON.stringify(wp.args) === JSON.stringify(['/c', 'start', '', 'chrome', '--incognito', '--user-data-dir=/P', u]),
+  const wp = br.isolatedPlan('win32', u, { profileDir: '/P', antiArgs: ['--a'], chromeBin: 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe' });
+  check('X-8 win32 隔离计划（有 chrome）= 直启 chrome.exe：incognito + user-data-dir + antiArgs + url，**无 cmd**',
+    wp.kind === 'single' && wp.bin === 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe'
+    && wp.isolated === true && wp.envKind === 'anti'
+    && JSON.stringify(wp.args) === JSON.stringify(['--incognito', '--user-data-dir=/P', '--a', u]),
     JSON.stringify(wp.args));
+  const wf = br.isolatedPlan('win32', u, { profileDir: '/P', antiArgs: ['--a'] });
+  check('X-8 win32 隔离计划（无 chrome）= explorer.exe 兜底，isolated=false 明示不隔离',
+    wf.bin === 'explorer.exe' && wf.isolated === false && JSON.stringify(wf.args) === JSON.stringify([u]),
+    JSON.stringify(wf));
   const lp = br.isolatedPlan('linux', u, { antiArgs: ['--a'] });
   check('X-8 linux 候选链：首 Edge、尾 xdg-open、共 7 个（顺序即防风控强度）',
     lp.kind === 'chain' && lp.candidates.length === 7

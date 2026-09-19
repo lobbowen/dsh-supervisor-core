@@ -6,7 +6,21 @@
 
 ## [未发布]
 
-（下一版本待记）
+### 安全（AUDIT-2026-09-19 第 1 批：P0 A1/A2/A4）
+
+- **A1 持久化「读失败→默认值覆盖」三处收口（fail-closed）**：
+  `config.json` 读/解析失败拒绝写回并保全原字节（`desired.js`，事件 `config_persist_aborted`）；
+  `dsh-main.json` 损坏态拒绝以默认值覆盖写，仅显式重设 `remoteToken` 解锁（`main-store.js`）——
+  消除 9-13 凭据覆盖事故的运行时同型根因；受管目录 `managed-objects.json` 损坏时
+  改名 `.bad-<ts>` 保全 + 以未加载态启动（`registry.js`，事件 `managed_registry_corrupt`）。
+- **A2 frpc 安装 fail-closed**：取不到官方 sha256（GitHub 直连不可达/校验表缺项）即**拒绝安装**，
+  不再降级放行未校验二进制（`frp-install.js`）；离线一次不污染缓存，可重试。
+- **A4 win32 浏览器打开去 cmd 注入面**：`open`/`launchIsolated` 不再借道 `cmd /c start`
+  （URL 中 `& ^ " ( )` 会被 cmd.exe 二次解析执行），改直启 `chrome.exe`（探测标准安装路径）
+  或 `explorer.exe`；入口统一 `isSafeHttpUrl` 仅放行 http(s) 绝对 URL（`platform/os/browser.js`）。
+- 测试并入既有文件（不破 N-e 链长约束）：`round13-frpc-integrity-test.js`（C 案例反转为拒绝+缺项+重试）、
+  `platform-layer-portability-test.js`（X-8 win32 新形态+A4 判据）、
+  `app-ctor-injection-test.js`（A1-a/A1-b 损坏保全断言）、`managed-registry-test.js`（A1-c 损坏目录断言）。
 
 ## [0.1.5-BETA.9]（2026-09-18）
 
