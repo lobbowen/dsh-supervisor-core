@@ -4,6 +4,10 @@
   "private": true,
   "description": "DSH 生命周期监管工具：独立于 Harness 的守卫进程，自动重启 dsh web",
   "license": "UNLICENSED",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/lobbowen/dsh-supervisor-core.git"
+  },
   "bin": {
     "dsh-supervisor": "bin/dsh-supervisor"
   },
