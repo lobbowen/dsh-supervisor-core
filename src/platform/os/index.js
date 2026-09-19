@@ -14,6 +14,8 @@ const stateRoot = require('../service/state-root');
 const os = require('node:os');
 const path = require('node:path');
 const ex = require('../util/exec');
+// B10：hasTool 的存在性判定复用跨平台可执行解析（PATH/PATHEXT/标准目录），不 spawn。
+const execPath = require('./exec-path');
 // 平台静态能力档位（纯数据；本门面只做分派。CP-3 要求门面显式列出三平台分支）。
 const CAPABILITY_PROFILES = require('./capability-profile');
 
@@ -35,6 +37,13 @@ function hasTool(name, args) {
     if (hit === true) return true;
     if (Date.now() - (hit.at || 0) < _NEG_TTL_MS) return false;
   }
+  // B10（AUDIT-2026-09-19）：**存在性优先按解析判定，不执行**。旧实现统一 `--version` 探测，
+  // 而 taskkill/schtasks/osascript/powershell 均无 `--version` 约定（Windows 内建直接报错退出非零）
+  // → /env/status 谎报能力缺失、面板禁用整树终止与自启。exec-path 解析（PATH+PATHEXT+标准落点）
+  // 即「可被 spawn」的准确语义，且不在轮询路径上 spawn 第三方工具。
+  if (execPath.resolveExecutable(name)) { _toolCache[name] = true; return true; }
+  // 兜底实测（门禁 A3′ 亦要求保留 runOut 形态）：解析器覆盖不到的落点（如仅 shell 感知的 PATH
+  // 变体）仍可用显式 args 实测；失败按可执行缺失记负。
   // 必须用 runOut：execFileSync 在 stdio ignore 下成功也返回 null，用 !== null 判存在会恒 false，
   // 导致 capabilities() 把 multiInstance/desktopNotify/autostart 全部误降为 false。
   const ok = ex.runOut(name, args || ['--version'], { timeoutMs: 3000 }) !== null;
@@ -89,7 +98,7 @@ module.exports = {
   dataDir, supervisorDir, capabilities, capabilityProfile, hasTool,
   processControl: require('./process'),
   pidlookup: require('./pidlookup'),
-  execPath: require('./exec-path'),      // 跨平台可执行解析（扩展名/PATHEXT/标准目录）
+  execPath,                         // 跨平台可执行解析（扩展名/PATHEXT/标准目录；hasTool 亦复用）
   fileProtect: require('./file-protect'), // 跨平台文件保护（Unix chmod / Windows icacls）
   service: require('./service'),          // 服务管理器抽象（Provider 分派）
   // notify 必须是直接可调函数：supervisor 按 platform.notify(title, body, onError) 调用，

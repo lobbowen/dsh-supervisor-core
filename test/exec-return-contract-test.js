@@ -115,6 +115,41 @@ const check = (n, c, x) => {
     /exec\.run\(cmd, args, opts \|\| \{\}\)/.test(code), '有');
 }
 
+// ── A4b：B12 单元名白名单（AUDIT §B-12，裁决=合法：id 经 instances.json 原样载回，属信任边界外）──
+{
+  const svcMod = require(path.join(ROOT, 'src', 'platform', 'os', 'service.js'));
+  const raw = fs.readFileSync(path.join(ROOT, 'src', 'platform', 'os', 'service.js'), 'utf8');
+  check('A4b 存在导出的 UNIT_NAME_RE/unitNameViolation（判定单一实现）',
+    svcMod.UNIT_NAME_RE instanceof RegExp && typeof svcMod.unitNameViolation === 'function', 'ok');
+  for (const m of ['stopUnit', 'resetFailed', 'isUnitActive', 'transientUnitFile', 'cleanTransient', 'startTransient']) {
+    const body = raw.match(new RegExp('\\n  ' + m + '\\([^)]*\\) \\{[\\s\\S]*?\\n  \\},'));
+    check('A4b systemd.' + m + ' 体内先过 unitNameViolation 闸', !!body && /unitNameViolation/.test(body[0]), body ? '有' : '未定位');
+  }
+  const v = svcMod.unitNameViolation;
+  check('A4b 行为：合法名放行（裸名/.service/模板实例）',
+    v('dsh-web@inst-1725-3') === null && v('dsh-no-such-unit-xyz.service') === null && v('main') === null, 'ok');
+  check('A4b 行为：路径穿越/参数夹带/控制符/后缀伪装全部拒绝',
+    v('../../evil') !== null && v('a --user stop b') !== null && v('x\n.service') !== null
+      && v('foo.timer') !== null && v('foo.service\x00.txt') !== null && v('') !== null, 'ok');
+  {
+    // Linux 行为闸：非法名不得触达 systemctl（stopUnit=false、startTransient 抛、文件路径=null）
+    if (process.platform === 'linux') {
+      const svc = svcMod.current();
+      check('A4b 行为：stopUnit(非法名)=false 且未执行命令', svc.stopUnit('../../evil') === false, 'false');
+      check('A4b 行为：isUnitActive(非法名)=false（恒判不活跃，绝不删除路径放行）',
+        svc.isUnitActive('../../evil') === false, 'false');
+      check('A4b 行为：transientUnitFile(非法名)=null（不拼出可删除的任意路径）',
+        svc.transientUnitFile('../x') === null, 'null');
+      check('A4b 行为：startTransient(非法名) 抛错（不进 systemd-run argv）',
+        (() => { try { svc.startTransient({ unit: 'a b', cmd: ['node'] }); return false; } catch (e) { return /systemd-run 拒绝/.test(e.message); } })(), '已抛');
+      check('A4b 行为：cleanTransient(非法名)={ok:false}（全链路拒）',
+        svc.cleanTransient('a/b').ok === false, 'ok:false');
+    }
+  }
+  check('A4b 反向：字符集若漏掉合法字符会误杀既有单元名',
+    svcMod.UNIT_NAME_RE.test('dsh-web@inst-1757-842') && /^dsh-web@/.test('dsh-web@main'), 'ok');
+}
+
 // ── A5/A6：Linux 行为（systemd 真实存在时）──
 if (process.platform === 'linux') {
   const svc = require(path.join(ROOT, 'src', 'platform', 'os', 'service.js')).current();
@@ -130,16 +165,19 @@ if (process.platform === 'linux') {
   }
 
   // A6：找一个确实 active 的 --user 单元，isUnitActive 必须为 true
+  // ⚠ B12 后单元名只接受 *.service / 裸名（AUDIT §B-12 白名单）——枚举必须限定 --type=service，
+  //   否则宿主上恰好 active 的 .device/.mount 单元会被正确拒判为 false，误报本用例失败。
   let activeUnit = null;
   try {
-    const out = ex.runOut('systemctl', ['--user', 'list-units', '--state=active', '--no-legend', '--plain'], { timeoutMs: 5000 });
+    const out = ex.runOut('systemctl', ['--user', 'list-units', '--state=active', '--type=service', '--no-legend', '--plain'], { timeoutMs: 5000 });
     if (out) activeUnit = ((out.trim().split('\n')[0] || '').trim().split(/\s+/)[0]) || null;
+    if (activeUnit && !/\.service$/.test(activeUnit)) activeUnit = null; // 与 A4b 白名单同判据，防非 service 混入
   } catch { /* 无 user session */ }
   if (activeUnit) {
     check('A6 isUnitActive(确实 active 的单元) === true（旧实现恒 false）',
       svc.isUnitActive(activeUnit) === true, activeUnit.slice(0, 50));
   } else {
-    console.log('SKIP A6 本机无 active 的 --user 单元（非 Linux user session）—— 非通过，仅跳过');
+    console.log('SKIP A6 本机无 active 的 --user service 单元（非 Linux user session）—— 非通过，仅跳过');
   }
   check('A6 反向：不存在的单元 isUnitActive === false',
     svc.isUnitActive('dsh-no-such-unit-xyz.service') === false, 'false');

@@ -146,20 +146,35 @@ const CRLF = String.fromCharCode(13) + String.fromCharCode(10);
     notify.notifyCommand('freebsd', 'T', 'B') === null, 'null');
 
   // ⚠ 转义：两平台规则**不同**，必须分开实现（本次修复的正是"套用 JSON 规则"）
+  // B9（AUDIT-2026-09-19）：PowerShell 侧改**单引号字面量**——旧双引号串漏 $，
+  //   body（含 err.message 通路）里的 $(...) 会被子表达式插值执行 = 注入面。
   const Q = String.fromCharCode(34);
+  const SQ = String.fromCharCode(39);
   const raw = 'a' + Q + 'b';
   check('Y-3 AppleScript 转义用反斜杠（JSON 规则恰好等价）',
     notify.appleScriptString(raw) === Q + 'a' + String.fromCharCode(92) + Q + 'b' + Q,
     notify.appleScriptString(raw));
-  check('Y-3 **PowerShell 转义用双写**（不是反斜杠）',
-    notify.powerShellString(raw) === Q + 'a' + Q + Q + 'b' + Q,
+  check('Y-3 **PowerShell 用单引号字面量**（" 为字面字符，$ 不再插值）',
+    notify.powerShellString(raw) === SQ + 'a' + Q + 'b' + SQ,
     notify.powerShellString(raw));
+  check('Y-3 PowerShell 单引号转义 = ' + "'" + ' 双写',
+    notify.powerShellString("it's") === SQ + 'it' + SQ + SQ + 's' + SQ,
+    notify.powerShellString("it's"));
   check('Y-3 两者产出**不同**（证明不可复用同一 helper）',
     notify.appleScriptString(raw) !== notify.powerShellString(raw), '已区分');
-  // 端到端：win32 命令里不得出现反斜杠转义形态
+  // 端到端：win32 命令里标题为单引号字面量形态
   const wQ = notify.notifyCommand('win32', raw, raw);
-  check('Y-3 win32 命令里标题用双写而**不含** \\" 形态',
-    wQ.args[3].indexOf('ShowBalloonTip(4000, ' + Q + 'a' + Q + Q + 'b' + Q) >= 0, 'ok');
+  check('Y-3 win32 命令里标题走单引号字面量（不含双引号串包裹）',
+    wQ.args[3].indexOf('ShowBalloonTip(4000, ' + SQ + 'a' + Q + 'b' + SQ + ', ' + SQ) >= 0, 'ok');
+  // B9 注入行为：$(...) 与反引号必须原样处于单引号内（不成为插值点）
+  const inj = 'x$(calc.exe)y`z';
+  const wrapped = notify.powerShellString(inj);
+  check('B9 $()/反引号 原样留在单引号串内（PowerShell 单引号语义=字面量）',
+    wrapped === SQ + inj + SQ, wrapped);
+  // 反向（门禁非空转）：旧双引号+只转义"的形态会泄漏 $( 插值
+  const legacy = '"' + inj.replace(/"/g, '""') + '"';
+  check('B9 反向：旧双引号形态被「$ 处于双引号串」判据命中',
+    /^".*\$\(/.test(legacy) && !/^".*\$\(/.test(wrapped), 'hit+safe');
 }
 
 /** 子进程伪造 platform + env 后执行（模块级：Y-4 与 Y-5 都要用）。 */

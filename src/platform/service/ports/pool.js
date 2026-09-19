@@ -133,11 +133,12 @@ class PortRegistry {
     return null;
   }
 
-  /** 端口是否被占用：已登记 ∩ 本机实际监听；excludeOwner 仅豁免 registry 登记。 */
+  /** 端口是否被占用：已登记 ∩ 本机实际监听；excludeOwner 仅豁免 registry 登记。
+   *  B14：监听探测为**双栈回环**（127.0.0.1 ∪ ::1），不再漏 IPv6-only 监听者。 */
   async isTaken(port, excludeOwner) {
     const rec = this._records.get(Number(port));
     if (rec && (!excludeOwner || rec.owner !== excludeOwner)) return true;
-    return probe.portListening(port);
+    return probe.loopbackListening(port);
   }
 
   /** 全部端口清单（按端口升序）。 */

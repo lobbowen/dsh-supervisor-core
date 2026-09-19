@@ -68,6 +68,8 @@ function makePM(opts = {}) {
     dshPort: 3080, instances: null, tasks: null, logger: { info() {}, warn() {}, error() {} },
     events: { append: (t, d) => events.push({ t, d }) },
     onNativeRestart: opts.nativeRestart || (() => { instances.calls.push('native-restart'); return { ok: true }; }),
+    // B16（AUDIT-2026-09-19）：默认未退出；O 组用例注入 () => true 验证退出门。
+    exitIntended: opts.exitIntended || (() => false),
     dist: { fetchNpmLatest: async (n) => (opts.distLatest !== undefined ? opts.distLatest[n] : '2.0.0') },
   });
   pm.instances = instances;
@@ -281,6 +283,19 @@ const eventsOf = (arr, type) => (arr || []).some((e) => e.t === type);
     const job = await waitJob(pm, r.jobId, 3000);
     check('N1 本地型更新 job failed', job.state === 'failed', job.state + ' / ' + (job.error || ''));
     check('N2 本地型不执行 CLI', !instances.calls.some((c) => c.startsWith('cli:inst-a:update')), instances.calls.join(','));
+  }
+  // ── O. B16（AUDIT-2026-09-19 §B-16）：INV-S1 退出门约束插件变更生效重启 ──
+  //   本测试注入的是裸 instances（无外层适配器门）——域侧必须自查 ctx.exitIntended。
+  {
+    const A_TGT = { id: 'inst-a', name: '沙箱甲', kind: 'sandbox', profileDir: 'p', profileName: 'web' };
+    const NAT_TGT = { id: 'native', name: '原生实例', kind: 'native', profileDir: 'p', profileName: 'web' };
+    const { pm, instances, events } = makePM({ running: true, exitIntended: () => true });
+    check('O1 沙箱目标：退出中 → 不生效(false)', await pm._applyPluginChange(A_TGT, 'uninstall', () => {}) === false, '');
+    check('O2 沙箱目标：零停起调用', !instances.calls.some((c) => c.startsWith('stop:') || c.startsWith('start:')), instances.calls.join(','));
+    check('O3 原生目标：退出中 → 不触发 onNativeRestart', await pm._applyPluginChange(NAT_TGT, 'update', () => {}) === false, '');
+    check('O4 退出中不发 plugin_restart_* 事件', !eventsOf(events, 'plugin_restart_started') && !eventsOf(events, 'plugin_restart_done'), events.map((e) => e.t).join(','));
+    const { pm: pm2, instances: inst2 } = makePM({ running: true });
+    check('O5 反向（门有牙）：未退出 → 正常重启生效', await pm2._applyPluginChange(A_TGT, 'uninstall', () => {}) === true && inst2.calls.includes('start:inst-a'), inst2.calls.join(','));
   }
 
   const failed = results.filter((r) => !r);

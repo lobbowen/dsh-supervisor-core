@@ -129,8 +129,11 @@ if [ -d "$SRC_DIR/ui-react" ]; then
 else
   echo "警告：launcher 产物缺 ui-react"
 fi
-NODE_GEN="const fs=require('fs');const o={name:'$PKG_NAME',version:'$VER',description:'DSH lifecycle guard core (Node launcher) for $OS_TAG-$ARCH — requires Node >=18.',license:'$MAIN_LICENSE',repository:{type:'git',url:'$MAIN_REPO'},os:['$PLAT'],cpu:['$ARCH'],bin:{'dsh-supervisor':'bin/dsh-supervisor'},files:['bin','core.cjs','ui-react','README.md'],keywords:['dsh','guard','launcher','core']};fs.writeFileSync('$STAGE/package.json',JSON.stringify(o,null,2)+'\n')"
-node -e "$NODE_GEN"
+# B23（AUDIT-2026-09-19）：包元数据生成**不得**把 shell 变量拼进 JS 源码 ——
+#   MAIN_REPO/MAIN_LICENSE 等来自 package.json 字段，含 ' 即可越出字符串字面量改写整段
+#   node -e 脚本（CI 内执行 = 供应链注入面）。统一经 env 导出、JS 只读 process.env。
+export GEN_PKG_NAME="$PKG_NAME" GEN_VER="$VER" GEN_LICENSE="$MAIN_LICENSE" GEN_REPO="$MAIN_REPO" GEN_STAGE="$STAGE" GEN_PLAT="$PLAT" GEN_ARCH="$ARCH" GEN_OSTAG="$OS_TAG"
+node -e 'const fs=require("fs"),e=process.env;const o={name:e.GEN_PKG_NAME,version:e.GEN_VER,description:"DSH lifecycle guard core (Node launcher) for "+e.GEN_OSTAG+"-"+e.GEN_ARCH+" — requires Node >=18.",license:e.GEN_LICENSE,repository:{type:"git",url:e.GEN_REPO},os:[e.GEN_PLAT],cpu:[e.GEN_ARCH],bin:{"dsh-supervisor":"bin/dsh-supervisor"},files:["bin","core.cjs","ui-react","README.md"],keywords:["dsh","guard","launcher","core"]};fs.writeFileSync(e.GEN_STAGE+"/package.json",JSON.stringify(o,null,2)+String.fromCharCode(10))'
 cat > "$STAGE/README.md" <<EOF
 # $PKG_NAME
 
@@ -212,18 +215,29 @@ if [ "$PUBLISH" = 1 ]; then
   # ⚠ 必须 `|| true`：版本不存在时 `npm view` 返回非零，而本脚本是 `set -euo pipefail`，
   #   管道失败会让**赋值语句本身**失败并中止脚本 —— 即「首次发布必然失败」。
   #   （实测：v0.1.3-BETA.2 发布时脚本在认证后静默终止，正是此处。）
-  EXISTING_SIZE="$(npm view "$PKG_NAME@$VER" dist.unpackedSize --registry="$REGISTRY" 2>/dev/null | tr -d '"' | tr -d "\r" || true)"
-  EXISTING_SIZE="$(printf '%s' "$EXISTING_SIZE" | tr -d '[:space:]')"
-  if [ -n "$EXISTING_SIZE" ]; then
+  # B24（AUDIT-2026-09-19）：幂等判定不得「只看体积、不一致只警告」。改为：
+  #   ① 存在性：远端 JSON 非空（npm view 对不存在版本返回非零 + 空输出）；
+  #   ② 体积：与远端 dist.unpackedSize 同口径的本地 dry-run unpackedSize；
+  #   ③ 内容：本地真 pack 的 tarball sha1 对远端 dist.shasum（同体积异内容是真实碰撞面）。
+  #   任一要素缺失或不一致 → 拒绝幂等跳过、非零退出（「核对不了」不得换「视为成功」的假安心）。
+  REMOTE_SPEC="$(npm view "$PKG_NAME@$VER" --json --registry="$REGISTRY" 2>/dev/null | tr -d '\r' || true)"
+  if printf '%s' "$REMOTE_SPEC" | grep -q .; then
     LOCAL_SIZE="$(npm pack --dry-run --json --registry="$REGISTRY" 2>/dev/null | node -e 'let b="";process.stdin.on("data",d=>b+=d);process.stdin.on("end",()=>{try{const j=JSON.parse(b);console.log((j[0]&&j[0].unpackedSize)||"")}catch(e){console.log("")}})' || true)"
-    echo "== $PKG_NAME@$VER 已存在于 $REGISTRY → 跳过发布（幂等：视为成功）=="
-    echo "   远端 unpackedSize=$EXISTING_SIZE  本地 unpackedSize=${LOCAL_SIZE:-未知}"
-    if [ -n "$LOCAL_SIZE" ] && [ "$EXISTING_SIZE" != "$LOCAL_SIZE" ]; then
-      echo "   ⚠ 体积不一致：远端与本地产物可能不同源。请人工确认后再决定是否升版本重发。"
-      echo "     （不自动失败：体积差异也可能来自 npm 打包细节，误判会阻断正常补发）"
-    else
-      echo "   ✅ 体积一致，内容可信"
+    LOCAL_TGZ="$(npm pack --json --registry="$REGISTRY" 2>/dev/null | node -e 'let b="";process.stdin.on("data",d=>b+=d);process.stdin.on("end",()=>{try{const j=JSON.parse(b);process.stdout.write((Array.isArray(j)?j[0]:j).filename||"")}catch(e){}})' || true)"
+    LOCAL_SHA1=''
+    [ -n "$LOCAL_TGZ" ] && [ -f "$LOCAL_TGZ" ] && LOCAL_SHA1="$(sha1sum "$LOCAL_TGZ" | awk '{print $1}')"
+    REMOTE_SIZE="$(RG="$REMOTE_SPEC" node -e 'try{const j=JSON.parse(process.env.RG);const s=j&&j.dist&&j.dist.unpackedSize;process.stdout.write(s==null?"":String(s))}catch(e){}')"
+    REMOTE_SHA="$(RG="$REMOTE_SPEC" node -e 'try{const j=JSON.parse(process.env.RG);process.stdout.write((j&&j.dist&&j.dist.shasum)||"")}catch(e){}')"
+    echo "== $PKG_NAME@$VER 已存在于 $REGISTRY → 内容强核对（未通过前绝不按成功跳过）=="
+    if [ -z "$REMOTE_SHA" ] || [ -z "$REMOTE_SIZE" ] || [ -z "$LOCAL_SHA1" ] || [ -z "$LOCAL_SIZE" ]; then
+      echo "   ❌ 核对要素缺失（远端 size=$REMOTE_SIZE sha=$REMOTE_SHA 本地 size=$LOCAL_SIZE sha=${LOCAL_SHA1}）：无法证明同源，禁止幂等跳过。"; exit 1
     fi
+    if [ "$REMOTE_SIZE" != "$LOCAL_SIZE" ] || [ "$REMOTE_SHA" != "$LOCAL_SHA1" ]; then
+      echo "   ❌ 内容不一致：unpackedSize 远端=${REMOTE_SIZE} 本地=${LOCAL_SIZE}；shasum 远端=$REMOTE_SHA 本地=$LOCAL_SHA1"
+      echo "      同版本远端产物与本地产物不同源 —— 拒绝幂等跳过，请人工裁决（升版本重发或排查构建漂移）。"; exit 1
+    fi
+    rm -f "$LOCAL_TGZ" 2>/dev/null || true
+    echo "   ✅ 体积与 sha1 双项一致，内容可信 → 跳过发布（幂等：视为成功）"
     exit 0
   fi
   echo "== 发布 $PKG_NAME@$VER ${DIST_TAG:-（tag=latest）} → $REGISTRY =="

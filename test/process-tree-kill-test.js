@@ -53,8 +53,18 @@ const pc = require(path.join(ROOT, 'src', 'platform', 'os', 'process.js'));
 
 // ── G-a：平台层实现 ──
 check('G-a 平台层导出 killTree', typeof pc.killTree === 'function', typeof pc.killTree);
-check('G-a killTree 的 Windows 分支用 taskkill /T（整树）',
-  /execFile\('taskkill', \['\/PID', String\(pid\), '\/T'\]/.test(processSrc), '有');
+check('G-a killTree 的 Windows 分支用 taskkill /T /F（整树+强制，B13）',
+  /execFile\('taskkill', \['\/PID', String\(pid\), '\/T', '\/F'\]/.test(processSrc), '有');
+// B13（AUDIT-2026-09-19）：POSIX 组信号必须显式声明 ownGroup——接管（外来）pid 不得 kill(-pid)
+check('B13 POSIX 组信号仅限 ownGroup（外来 pid 退化单进程）',
+  /opts && opts\.ownGroup === true/.test(processSrc), '有');
+check('B13 自有子进程升级路径显式 ownGroup:true',
+  /killTree\(child\.pid, sig \|\| 'SIGKILL', \(\) => \{\}, \{ ownGroup: true \}\)/.test(mainProc), '有');
+{
+  const m = mainProc.match(/\n  _killAdopted\(pid\) \{[\s\S]*?\n  \}/);
+  check('B13 反向：接管路径不传 ownGroup（外来 pid 绝不组信号）',
+    !!m && /killTree\(pid, 'SIGKILL', \(\) => \{\}\)/.test(m[0]) && !/ownGroup:/.test(m[0]), 'ok');
+}
 
 // ── G-b：supervisor 实际调用（这是缺陷的核心）──
 check('G-b main-process 定义 _killTree 并调用 platform killTree',

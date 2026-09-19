@@ -120,6 +120,33 @@ async function main() {
   });
   check('非法 JSON → 400', bad.code === 400, bad);
 
+  // 7b. ★ 来源闸（AUDIT B-2）：application/json 必需 + Origin 若携带必须回环
+  const { ctlSourceProblem } = require(path.join(__dirname, '..', 'src', 'platform', 'ctl', 'server'));
+  check('B-2 纯判据：text/plain 盲打被拒（不触发预检的 CSRF 形态）',
+    !!ctlSourceProblem({ headers: { 'content-type': 'text/plain' } }), 'hit');
+  check('B-2 纯判据：无 Content-Type 被拒（form 提交/裸 fetch）',
+    !!ctlSourceProblem({ headers: {} }), 'hit');
+  check('B-2 纯判据：跨站 Origin 被拒',
+    !!ctlSourceProblem({ headers: { 'content-type': 'application/json', origin: 'https://evil.example' } }), 'hit');
+  check('B-2 纯判据：合法客户端（json、无 Origin）通过',
+    ctlSourceProblem({ headers: { 'content-type': 'application/json; charset=utf-8' } }) === null, 'ok');
+  check('B-2 纯判据：回环 Origin（面板同源直调）通过',
+    // 端口取本会话实际监听值——测试禁硬编码端口字面量（test-port-discipline T1/T2）
+    ctlSourceProblem({ headers: { 'content-type': 'application/json', origin: 'http://127.0.0.1:' + port } }) === null, 'ok');
+  const rawPost = (headers, body) => new Promise((resolve, reject) => {
+    const req = http.request({ host: '127.0.0.1', port, path: '/ctl', method: 'POST', headers }, (res) => {
+      let b = ''; res.on('data', (c) => { b += c; }); res.on('end', () => { try { resolve({ code: res.statusCode, json: JSON.parse(b) }); } catch { resolve({ code: res.statusCode, json: null }); } });
+    });
+    req.on('error', reject);
+    req.end(body);
+  });
+  const csrf = await rawPost({ 'Content-Type': 'text/plain;charset=UTF-8' }, '{"method":"status","args":[]}');
+  check('B-2 行为：text/plain JSON 盲打 → 403 且方法未执行', csrf.code === 403 && csrf.json && csrf.json.ok === false, csrf);
+  const evilOrigin = await rawPost({ 'Content-Type': 'application/json', Origin: 'https://evil.example' }, '{"method":"status","args":[]}');
+  check('B-2 行为：跨站 Origin 的 application/json → 403', evilOrigin.code === 403 && evilOrigin.json && evilOrigin.json.ok === false, evilOrigin);
+  const okPost = await rawPost({ 'Content-Type': 'application/json' }, '{"method":"status","args":[]}');
+  check('B-2 反向防空转：合法 JSON 无 Origin 仍 200（客户端链路未破坏）', okPost.code === 200 && okPost.json.ok === true, okPost);
+
   // 8. 守卫侧语义：value 必须是可 JSON 序列化结果（router.status 原样透传）
   check('value 透传 status', r1.json.ok === true); // 已覆盖
 

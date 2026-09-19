@@ -192,7 +192,9 @@ export interface LanItem {
   } | null;
 }
 export interface LanAccessResponse { items: LanItem[]; addresses: string[]; }
-export interface FrpSettings { enabled?: boolean; serverAddr: string; serverPort: number; authToken: string; user?: string; }
+// B7（AUDIT-2026-09-19）：/lan/frp 状态面不再回显 authToken 明文，只下发 authTokenSet 布尔；
+// UI 提交走 patch 语义——字段缺省=服务端保留现值，故此处 authToken 为可选（仅提交新值时带）。
+export interface FrpSettings { enabled?: boolean; serverAddr: string; serverPort: number; authToken?: string; authTokenSet?: boolean; user?: string; }
 export interface FrpStatus {
   installed: boolean;
   running: boolean;

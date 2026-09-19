@@ -164,7 +164,10 @@ function _startShellWatchdog(host) {
         events: host.events,
         config: host.config,
         // 门**下沉到看护域**（2026-09-18 修，K3）：tick() 的一切调用者都受同一门约束。
-        halted: () => !!(host._stopping || host._shellHalted || (host._sessionHalting && host._sessionHalting())),
+        //   E-3（AUDIT-2026-09-19）：合取式收敛为单源谓词 host._shellExitIntended()
+        //   （通用退出 ∨ 持久 _shellHalted）。壳看护是**桌面壳域**自愈，须含 shellHalted
+        //   （9-18：退出管家后守卫重启不得把壳拉回）；主 DSH 收敛用不含 shellHalted 的 _exitIntended。
+        halted: () => host._shellExitIntended(),
         // 壳已在线 = 用户重新打开了壳 -> 清除持久退出标记（否则自愈被永久抑制）。
         //   ⚠ 只在**非退出中**才清：退出握手期间壳还会存活数百 ms，若此时误清，
         //   持久标记被写成 false，守卫重启后看护又把壳拉回（本修的核心场景）。

@@ -142,10 +142,14 @@ class TokenPool {
   }
 
   /* 生命周期 */
-  /** 清空某目标的令牌与调度；TK-8：必须广播 null（消费方据此立刻丢弃旧代令牌）。 */
+  /** 清空某目标的令牌与调度；TK-8：必须广播 null（消费方据此立刻丢弃旧代令牌）。
+   *  TK-1：stdout 行缓冲同属旧代状态——不清则 ensureCaptured 下一拍从残留行再“捕获”已死令牌，
+   *  以新 gen 追加进恢复文件（回灌死令牌，relay 恒 401）。 */
   clear(id) {
     this._cancelSchedule(id);
     this._backfillAt.delete(id);
+    const src = this._sources.get(id);
+    if (src && src.lines && src.lines.length) src.lines.length = 0;
     this._records.delete(id);
     this._persistPool();       // 池快照同步移除该 id（原子替换，不整文件删除）
     this._bus.emit(id, null, null);

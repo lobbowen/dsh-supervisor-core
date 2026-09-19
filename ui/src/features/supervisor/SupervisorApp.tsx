@@ -47,6 +47,7 @@ export function SupervisorApp() {
   const [routerActions, setRouterActions] = useState<{ onAdd: () => void; onDelete: () => void } | null>(null);
   const { snap } = useSupervisorData();
   const online = snap.online;
+  const authFailed = snap.authFailed; // B8：401 鉴权被拒 ≠ 离线，呈现可操作错误
   const status = snap.status;
 
   // 轮询生命周期与宿主绑定（R3 修复）：start 只在装配层调用一次，卸载即 stop；
@@ -205,6 +206,11 @@ export function SupervisorApp() {
                 <span className="inline-flex items-center gap-1.5 text-xs leading-tight text-muted-foreground">
                   <span className="size-1.5 rounded-full bg-muted-foreground/50" />
                   DSH 管家已停止{phase ? " · " + phase : ""}
+                </span>
+              ) : authFailed ? (
+                <span className="inline-flex items-center gap-1.5 text-xs leading-tight text-destructive" title="管家在运行，但本机未缓存有效访问密钥。请用带 ?access_key= 的链接重新进入，或在本机 127.0.0.1 面板更新密钥。">
+                  <span className="size-1.5 rounded-full bg-destructive" />
+                  访问密钥缺失或错误
                 </span>
               ) : (
                 <span className="inline-flex items-center gap-1.5 text-xs leading-tight text-muted-foreground">

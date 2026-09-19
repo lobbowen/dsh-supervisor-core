@@ -335,7 +335,14 @@ git add -A && git commit && git tag v<ver> && git push origin main && git push o
 
 ## 凭据与令牌（**认证单源**，2026-09-10 标准化）
 
-发布链路需要的令牌**值不存仓库目录**，按根目录 **`CREDENTIALS-STANDARD.md`** 管理（工具 `release/scripts/cred.sh`，规范库为真实用户 home 下的 `.dsh/credentials/`，0700/0600）。
+发布链路需要的令牌**值不存仓库目录**，按根目录 **`CREDENTIALS-STANDARD.md`** 管理（工具 `release/scripts/cred.sh`，规范库为真实用户 home 下的 `develop/.credentials/`，0700/0600）。
+
+> ⚠ **2026-09-19 凭据事故后的通道定稿（以下 SSH 部署密钥段落已废弃，仅存史）**：
+> SSH 部署密钥随旧机器环境全部丢失，未重建。现行通道：
+> · **git push = HTTPS + credential store**（`credential.helper store --file <规范库>/git-credentials`，令牌值不内嵌 remote URL —— 铁律 2）；
+> · **REST API（查 CI / 设 secret / 分支保护）= 同一枚 GitHub 细粒度 PAT**（规范库 `github-pat`，两公开仓共用）；
+> · **npm 发布 = Granular Access Token**（`@dsh-sup`，须勾选 bypass 2FA；Classic Automation 已被 npm 新政拒发），
+>   CI 侧经仓库 secret `NPM_TOKEN` 注入，不依赖本机库。
 
 | 令牌 | 消费方 | 最小权限 |
 |---|---|---|

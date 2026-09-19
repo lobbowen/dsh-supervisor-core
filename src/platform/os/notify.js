@@ -13,10 +13,12 @@ function appleScriptString(s) {
   return JSON.stringify(String(s));
 }
 
-/** PowerShell 双引号字符串字面量转义：双引号要双写（" 变 ""），反斜杠是字面字符。
- *  与 JSON/AppleScript 规则不同，故必须分开实现；否则 notify 会因语法错误静默失败。 */
+/** PowerShell **单引号**字符串字面量：' 双写即唯一转义规则；$ 与反引号在单引号串内是字面字符。
+ *  B9（AUDIT-2026-09-19）：旧实现用双引号串且只双写 "，漏 $ —— body 有 err.message 通路，
+ *  `$(...)` 会被 PowerShell 子表达式插值**执行**，是命令注入面。双引号串同时转义 ` 与 $ 太易漏，
+ *  故整体改单引号语义（与 AppleScript/JSON 的反斜杠规则不同，必须分开实现）。 */
 function powerShellString(s) {
-  return '"' + String(s).replace(/"/g, '""') + '"';
+  return "'" + String(s).replace(/'/g, "''") + "'";
 }
 
 /** 平台到通知命令（纯函数，可穷举；不 spawn）。命令构造/转义是跨平台 bug 的藏身处，

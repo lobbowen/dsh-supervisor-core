@@ -245,6 +245,25 @@ async function main() {
     execSync("pkill -9 -f 'mock-target.js'", { stdio: 'ignore' });
   } catch {}
 
+  // B22（AUDIT-2026-09-19）：升级 hold 释放单点化 + 失败尾部清理（源码形态门禁，不依赖 spawn）。
+  {
+    const upg = fs.readFileSync(path.join(ROOT, 'src', 'app', 'native', 'upgrade.js'), 'utf8');
+    const between = (a, b) => { const i = upg.indexOf(a); const j = upg.indexOf(b, i + a.length); return i < 0 || j < 0 ? '' : upg.slice(i, j); };
+    const hUF = between('async function handleUpgradeFailure', '/** 一键升级');
+    const rbAF = between('async function rollbackAfterFailure', 'async function handleUpgradeFailure');
+    const resumeCount = (s) => (s.match(/resumeAfterUpgrade\(\)/g) || []).length;
+    check('B22 handleUpgradeFailure 调回滚后不再 early-return（保留尾部统一释放）',
+      /await rollbackAfterFailure\(host\);/.test(hUF) && !/if \(!rb\.ok\) return/.test(hUF), 'ok');
+    check('B22 handleUpgradeFailure 尾部单一 resume 点 + 清 _activeTaskId',
+      resumeCount(hUF) === 1 && /host\._activeTaskId = null;/.test(hUF), 'count=' + resumeCount(hUF));
+    check('B22 rollbackAfterFailure 内不再各自 resume（释放收敛到调用方）',
+      resumeCount(rbAF) === 0, 'count=' + resumeCount(rbAF));
+    // 反向（防空转）：旧形态「回滚失败即 return + 内部自行 resume」必须被识别（证明判据确有牙）
+    const OLD = 'async function handleUpgradeFailure(host){ const rb = await rollbackAfterFailure(host); if (!rb.ok) return; if (host.hooks.resumeAfterUpgrade) host.hooks.resumeAfterUpgrade(); }';
+    check('B22 反向：判据能识别「if (!rb.ok) return」早退 + 内联 resume 旧形态',
+      /if \(!rb\.ok\) return/.test(OLD) && resumeCount(OLD) === 1, 'ok');
+  }
+
   console.log('\n==============================');
   console.log(`结果: ${passed} passed, ${failed} failed`);
   process.exit(failed > 0 ? 1 : 0);

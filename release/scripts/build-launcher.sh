@@ -67,7 +67,22 @@ bash "$ROOT/release/scripts/build-ui.sh"
 [ -f "$ROOT/ui-react/supervisor.html" ] || { echo "错误：UI 镜像缺失"; exit 1; }
 
 echo "[2/6] esbuild 打包 bin → core.cjs…（平台无关：仅 --platform=node + 版本注入）"
-npx --yes esbuild bin/dsh-supervisor --bundle --platform=node --format=cjs --outfile="$OUT/core.cjs" --define:__DSH_VERSION__="\"$VER\"" >/dev/null
+# B23/B26（AUDIT-2026-09-19）：
+#  ① 版本形态硬校验后才进 --define 插值 —— 防含引号/空格/$ 的 version 破坏参数或注入 shell。
+#  ② npx 浮动拉包 = 同 commit 不同天构建结果可能不同（esbuild 新 release 悄悄换默认行为）。
+#     固版：默认锁一个已验证版本，DSH_ESBUILD_VERSION 显式覆盖；构建后复跑 --version 对账，
+#     不一致即失败（npx 拉不到固版会自行报错，不会静默回退别的版本）。
+case "$VER" in
+  [0-9]*.[0-9]*.[0-9]*) ;;
+  *) echo "非法 version（只允许点分数字/x-prerelease）：$VER"; exit 1 ;;
+esac
+ESBUILD_VER="${DSH_ESBUILD_VERSION:-0.25.9}"
+npx --yes "esbuild@$ESBUILD_VER" bin/dsh-supervisor --bundle --platform=node --format=cjs --outfile="$OUT/core.cjs" --define:__DSH_VERSION__="\"$VER\"" >/dev/null
+ACTUAL_ESBUILD="$(npx --yes "esbuild@$ESBUILD_VER" --version 2>/dev/null | tr -d '\r' | tail -n1)"
+if [ "$ACTUAL_ESBUILD" != "$ESBUILD_VER" ]; then
+  echo "esbuild 版本对账失败：期望 ${ESBUILD_VER}，实际 ${ACTUAL_ESBUILD}（固版未生效？）"; exit 1
+fi
+echo "  esbuild=${ACTUAL_ESBUILD}（固版）；__DSH_VERSION__=${VER}（单源注入）"
 
 echo "[3/6] 派生平台目录…"
 DIRS=()

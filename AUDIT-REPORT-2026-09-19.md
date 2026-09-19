@@ -122,6 +122,76 @@
 
 > 说明：按 ACCEPTANCE-STANDARD，以上修复的验证一律走 CI 四平台矩阵；每条 P0/P1 建议补对应可执行断言（本仓「文档可信度不变量」）。
 
+## G. 第 3 批裁决与修复登记（B-1…B-28 + N2/B-21 + E-3）
+
+- **分支**：`fix/audit-batch3-b-e3`（81 文件，+1670/−206，PR #5 走 CI 四平台矩阵裁决后合入）。
+- **验证口径**：本机只做 `node --check` / `bash -n` + 纯静态形态门禁 + 纯 node 探针（全部测试本地绿灯）；任何运行时行为以 CI 矩阵为唯一裁判。
+- **登记纪律**：每条给出「裁决」（确认缺陷 / 疑似成立 / 契约改判 / 部分过时）、「修复锚点」（实现所在文件+符号）、「测试与门禁」（并入既有测试文件，零新增测试文件）。
+
+### G-1 令牌/面板域（B-1…B-8）
+
+| # | 裁决 | 修复锚点 | 测试/门禁 |
+|---|---|---|---|
+| B-1 | 确认缺陷 | `domains/instance/ops.js` `updateInstance`：remoteEnabled/remoteToken 任一变化置 `remoteChanged` → `onRemoteChange`（变更事件只记 `tokenSet` 布尔，不落值）；`relay/ops/reconcile.js` 兜底：token/frpEnabled/frpRemotePort 漂移即重走 `syncProxyQueued` | `round13-router-relay-gaps-test`（B-1 正反） |
+| B-2 | 确认缺陷（浏览器可代表用户盲打回环） | `platform/ctl/server.js` 不变量 4 `ctlSourceProblem`：POST /ctl 必须 `application/json` + 携带 Origin 必须回环（`LOOPBACK_ORIGIN_RE`）；先闸后读体，403 拒绝 | `router-ctl-test`（B-2 含反向：合法 tail.js 形态放行） |
+| B-3 | 确认缺陷（违 TK-1） | `platform/service/token/pool.js` `clear()`：截断 `_sources.get(id).lines`，旧代 stdout 缓冲不再回灌新 gen | `token-boundary-test` |
+| B-4 | 确认缺陷（TK-8 断链） | `app/daemons/runtime.js`：`tokens[i.id] = String(t || '')` —— 空值显式写入为失效信号，daemon 侧对已清空的 id 应用 null 并收敛 `cookieReady` | `token-contract-gate-test`（B-4/TK-8） |
+| B-5 | 契约改判（非违规回退） | 裁决：lan-state.json 中 remoteToken 是 **instances[] 配置行的字段投影**（与 command/healthUrl 同列），非令牌域第二落盘副本。`DSH-TOKEN-CONTRACT.md` TK-7 相应改述 + 白名单化；旧门禁「反向把违规定为合法」同步改为校验新措辞 | `token-contract-gate-test`（TK-7 新措辞 + 行白名单） |
+| B-6 | 确认缺陷 | `domains/relay/frp.js`：frp.json tmp 名带 pid + `mode 0600` 建立 + chmod 兜底（与 frpc.toml 同规） | `frp-resilience-test` |
+| B-7 | 确认缺陷 | `domains/relay/frp.js` `status()`：只回 `authTokenSet` 布尔；UI 侧省略字段=保留现值、显式 `''`=清除（`LanPage` frpPayload） | `frp-resilience-test` + `round13-csp-probe-test`（B7） |
+| B-8 | 确认缺陷 | `ui/services/supervisor/client.ts`：访问密钥本机缓存（`dsh.apiAccessKey`）+ URL `?access_key` 一次性迁移后即 `replaceState` 抹除 + 请求携带 `Authorization`；401 由轮询层显式呈现「离线原因」 | `client.test.ts` + `round13-csp-probe-test`（B8） |
+
+### G-2 平台层（B-9…B-14）
+
+| # | 裁决 | 修复锚点 | 测试/门禁 |
+|---|---|---|---|
+| B-9 | 确认缺陷（`$(...)` 可被执行） | `os/notify.js`：PowerShell 字面量整体改**单引号串**语义（`'`→`''`），`$`/反引号变字面字符 | `platform-parsers-and-commands-test` |
+| B-10 | 确认缺陷 | `os/index.js` `hasTool`：存在性优先 `execPath.resolveExecutable`（PATH/PATHEXT/标准目录，不 spawn），保留显式 args 实测兜底 | `platform-audit-fixes-test` |
+| B-11 | 确认缺陷 | `distribution/install.js`：`PKG_NAME_RE`/`BAD_ARGV_CHAR_RE`（空白+shell 元字符）fail-closed、version 严格 semver、registry 收纯 http(s) origin、追加 `--ignore-scripts`、argv[0] 非 `npm` 不再原样进 spawn（逻辑名走 `npmBin()`） | `npm-resolution-test` |
+| B-12 | 疑似成立→确认修复（inst.id 自 instances.json 原样载回，属信任边界外） | `os/service.js`：`UNIT_NAME_RE`（1–128 字符集白名单 + 仅 `.service`/无后缀）+ `unitNameViolation`；stop/resetFailed/is-active/transient 路径/systemd-run 全部 fail-closed 拒绝 | `exec-return-contract-test` + 平台域测试 |
+| B-13 | 确认缺陷 | `os/process.js` `killTree`：Windows `taskkill /T` 补 `/F`；POSIX 外来 pid 不发组信号（无 `ownGroup` 退化单进程），仅本守卫 detached 拉起者显式 `ownGroup:true`（`daemons/process.js`）；接管路径不传 ownGroup（`main/signals.js` 注释语义） | `process-tree-kill-test` |
+| B-14 | 确认缺陷 | `ports/alloc.js`：跨进程 `wx` 自旋锁 `.alloc.lock`（3s 超时/15s 老化接管；超时**有界 fail-open** 退到「登记后被抢即撤销」复检）+ 复检撤销；`probe.js` 补 IPv6-only；`migrate.js`：源/目标任一损坏返回 0 且不碰文件、先原子清源再写目标、目标失败回写源并上抛 | `ports-claim-test` + `ports-migrate-test` |
+
+### G-3 生命周期/域（B-15…B-22）+ E-3
+
+| # | 裁决 | 修复锚点 | 测试/门禁 |
+|---|---|---|---|
+| B-15 | 确认缺陷（破「停就停」红线） | `domains/instance/lifecycle.js` `supervise`：`guardian.shouldGuard(inst)`（纯判 `inst.guardian===true`）下沉 gate —— BACKOFF→`setStopped`、FAILED→no-op，关守护不再被拉起 | `instance-state-test` 6a–6d（含反向：guarded 仍 startTransient→STARTING；需真实 bin.js 种子过执行边界闸） |
+| B-16 | 确认缺陷（INV-S1 被绕过） | `domains/plugin/restart.js` `applyPluginChange` 自检 `ctx.exitIntended`（收到的是裸 InstanceManager，外层 instance-adapter 门不可依赖）；`compose/domains.js` 注入 `exitIntended: () => host._exitIntended()`（E-3 单源） | `plugin-change-restart-test` O1–O5 + `session-lifecycle-test` B16 接线门禁（含反向） |
+| B-17 | 裁决=确认缺陷，语义定为「外部关停即退出意图」→补持久化 | `app/session/shutdown.js`：SIGTERM 时若无在途会话退出（`!_shellHalted && !_sessionHalting()`）置 `_shellHalted` 并落盘 + 事件 `shell_halt_on_external_stop`（9-18 K1–K5 同谱系，看护门已下沉） | `session-lifecycle-test` item 6 + `graceful-shutdown-test`（B17 行为+反向，fake host 注 `_sessionHalting`） + `shell-watchdog-test` W4-i 不回退（38/38） |
+| B-18 | 确认缺陷（`Number(null)===0` 假基线） | `providers/policies/quota.js`：基线显式判空（null/undefined/非 number/非 finite → false），无基线只认证据 a) | `monthly-credits-freeze-test` |
+| B-19 | 确认缺陷 | `router/store/usage.js`：`_modelKey` 截断 128 + byModel 64 键上限（超限并 `(other)`）+ 脏标记 + 尾部定时器 `writeDelayMs`（默认 1000，测试注 0） | `router-test` |
+| B-20 | 确认缺陷（反代多活无界） | `providers/instance-lifecycle.js`：`STOP_PENDING_MAX_MS = 5min` 有界期限，`_stopPendingSince` 到期不再延后→强制 kill；归零/恢复时清零 | `router-test`（B20） |
+| B-21（N2） | 确认缺陷（直指本分支主题） | `app/assembly/bootstrap.js` `install()` 成功路径：`_recordManifest(target` 之后立即 `_bindNativeDshCommand`（try/catch 包裹）——首装后免重启守卫即绑定真实入口，破 60s 冷静期死循环 | `native-dsh-binding-test` §8（install 切片形态 + OLD8 反向） |
+| B-22 | 三分：(a)(b) 确认缺陷已修；(c) **部分过时** | (a) `app/native/upgrade.js` 三条早退路径统一 `resumeAfterUpgrade`（单次 resume，DSH 停摆不再 ≈12min）；(b) `app/daemons/runtime.js` lan 停止分支补 `classify()` 同闸：`mode==='external'` → 拒绝停用（`{refused:'external'}`，不碰进程/锁）；(c) `api-rebind.js`：git blame 证实 `portsShared.register('supervisor-api')` 早于本分支已存在（b2f3d3d/3edd267），审计该行失实；本分支实落 = 慢重试期退出意图 abort（`bind._slowRetry`）。「非 EADDRINUSE 永久下线」剩余面按 C 类「API 重绑无回退」排期 | `upgrade-test` 18/18 + `session-lifecycle-test`；(c) 失实结论已此登记 |
+| E-3 | 报告建议**部分采纳**（单谓词被实验否决） | 落点：两级谓词而非单一——`_exitIntended()` = `_stopping || session.halting()`（通用自愈/收敛权威=desired）；`_shellExitIntended()` = `_exitIntended() || _shellHalted`（仅桌面壳看护，9-18 语义）。P2-A/P2-D 实验证明把 `_shellHalted` 并入通用谓词会破坏主 DSH 恢复。注入点：`bootstrap.js` 看护 halted、`compose/domains.js` B16 接线、`daemons/runtime.js` `_spawn` 闸、`app/native/upgrade.js` | `session-lifecycle-test`（含 `stopping` 如实返回不混 error 语义）+ 各域反向 fixture |
+
+### G-4 发布链（B-23…B-26）
+
+| # | 裁决 | 修复锚点 | 测试/门禁 |
+|---|---|---|---|
+| B-23 | 确认缺陷（version 可进 `--define`/字符串拼接） | `build-launcher.sh`：`case "$VER"` 点分数字/x-prerelease 硬闸（非法 exit 1）；`publish-core.sh`：删 NODE_GEN heredoc 拼接 → `node -e` 全部经 `GEN_*` 环境变量读取（os/cpu 字段保留） | `release-spec-consistency-test` P-9（含反向插值 fixture、`!includes('npx --yes esbuild bin/')`） |
+| B-24 | 确认缺陷（体积代内容） | `publish-core.sh` 幂等发布：远端存在时**双项核对**——`unpackedSize`（dry-run 同口径）+ 本地 tarball sha1 vs 远端 `dist.shasum`；任一要素缺失或不一致 → exit 1 禁跳过；一致才 rm tgz + exit 0 | P-9（旧「不等只告警」文本判缺） |
+| B-25 | 确认缺陷（备份非硬闸） | `cred.sh` 写入前：`( cp -p "$f" "$BK" && chmod 600 "$BK" ) \|\| echo 警告…` 显式判定备份结果（`W-6` 门禁 `\.bak-\$\(date` 仍命中） | P-9 正则（cp&&chmod 先于 \|\|）+ 反向 |
+| B-26 | 确认缺陷（孤儿锁 + 浮动取包） | 根 `package-lock.json` 重建：lockfileVersion 3、零 dependencies、version 同步 0.1.5-BETA.10（清 acorn/npmmirror 漂移）；esbuild 固版 `esbuild@$DSH_ESBUILD_VERSION`（默认 0.25.9）+ 装后 `--version` 对账不符 exit 1 | P-9（零依赖 + 锁同步 + driftLock 反向）；`all-platforms-test` T4-c 判据同步固版字面量并补反向坏样本（旧正则在新形态下恒 0 命中会静默失覆盖） |
+
+### G-5 UI（B-27…B-28）
+
+| # | 裁决 | 修复锚点 | 测试/门禁 |
+|---|---|---|---|
+| B-27 | 确认缺陷（同源 iframe 过 Origin 闸） | `src/api/static.js` CSP 追加 `frame-ancestors 'none'` | `core-test`（B-27）+ `round13-csp-probe-test` |
+| B-28 | 确认缺陷 | `LanPage.tsx` 等：公网暴露 Switch 等高危操作加二次确认（confirm 掩码链路 11 处）；远程令牌采集弃 `window.prompt` 改掩码输入 | `round13-csp-probe-test`（B28 形态门禁） |
+
+### G-6 残留与诚实声明
+
+1. **B-25 未收口项**：备份已成硬闸告警，但「空 stdin 写入仍落 0 字节并置 `status=active`」的落盘语义**未改**（可从 `.bak-<ts>` 手工恢复）——彻底 fail-closed 排入第 4 批。
+2. **B-22(c)**：审计原文「不登记 supervisor-api 端口」经 blame 证伪（登记行早已存在）；「非 EADDRINUSE 永久下线/无回退」仍在 C 类排期，本批未修。
+3. **B-14**：跨进程锁为 best-effort——超时/IO 故障时**有界 fail-open**，依赖复检层，不承诺 TOCTOU 100% 消除。
+4. **B-8**：UI 首次引入 `localStorage`（密钥本机缓存），与审计「UI 无 localStorage」的现状描述有意背离，安全权衡=401 静默不可自助恢复。
+5. **本机不可达 npm registry**：esbuild `0.25.9` 固版存在性与对账逻辑由 CI build job 首跑复核。
+6. **E-3**：与原建议的偏离（两级谓词）以 P2-A/P2-D 实验为据，如 reviewer 不认可，裁决点在 G-3 表 E-3 行。
+7. **全量链复跑抓出的三处（两处既有缺陷 + 一处测试毛边，均非本批逻辑回归，随批修复登记）**：① `domain-structure-gate-test` DG-14 的 `UNSUPPORTED_METHOD_FORM` 正则因 `\s*(?!\{)` 回溯把块体箭头 `setX: () => { }` **误报**为未支持形态（HEAD 既有，反向自检判 FAIL）→ 收紧为 `\s*[^{\s]`；② `app-this-ratchet-gate-test` AT-1：E-3 在 `daemons/process.js` 有意新增 1 处 `this._exitIntended()` → 按棘轮纪律**上调** daemons 29→30（注明归属，提交信息同步）。另 `report-only` 软项 `app/control/registry.js` 307 行 >300 为第 1 批 A1-c 落点既有事实，非本分支引入。③ 全量链抓到 `p2p-router-test` B3/B5、`p2p-api-test` P9 的**负载敏感假失败**（固定 8s sleep 骑在 `waitHealthy` 6×1.5s 上界）→ 改为 20s deadline 轮询（§D「冒烟假失败」同族）。
+
 ## 附录：分域审计明细索引
 
 | 域 | 范围 | 规模 | 主要文件锚点 |

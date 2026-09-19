@@ -10,7 +10,7 @@ function depsOf(host) {
   if (!d) {
     d = {
       stopping: () => host._stopping,
-      session: () => host.session,
+      exitIntended: () => host._exitIntended(),
       instances: () => host.instances,
       logger: () => host.logger,
       control: () => host.control,
@@ -33,8 +33,8 @@ module.exports = {
     async _sandboxSuperviseOnce(entry) {
       const d = depsOf(this);
       if (d.stopping()) return { ok: false, error: 'guard stopping' };
-      // INV-S1 全域（契约 §3.3）：会话退出中/已退出 -> 沙箱不再监督收敛（防 shutdownAll 停掉后又被拉起）。
-      if (d.session().halting()) return { ok: false, error: 'session halting' };
+      // INV-S1 全域（契约 §3.3）/E-3：退出意图（单源谓词 _exitIntended = stopping ∨ session halting）-> 沙箱不再监督收敛。
+      if (d.exitIntended()) return { ok: false, error: 'exit intended' };
       if (entry && d.instances() && typeof d.instances().supervise === 'function') {
         try {
           await d.instances().supervise(entry.id);

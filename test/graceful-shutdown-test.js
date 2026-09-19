@@ -100,27 +100,42 @@ check('G-e SIGTERM/SIGINT 均走 gracefulExit',
   // AP1（批 8/10）：shutdown 不再挂 Supervisor.prototype（原型挂载已消除）——
   //   直接 require 其家园模块，以 host 首参形态调用（新装配下的真实调用形态）。
   const { shutdown } = require(path.join(ROOT, 'src', 'app', 'session', 'shutdown.js'));
-  const fake = {};
-  fake._stopping = false;
-  fake._shutdownPromise = null;
-  fake.lifecycle = { beginShutdown() {} };
-  fake.events = { append() {} };
-  fake.logger = { info() {}, warn() {} };
-  fake.writeState = () => {};
-  let stopCalls = 0;
-  fake.lifecycleManager = {
-    get: () => null,
-    stopAll: async () => { stopCalls++; await new Promise((r) => setTimeout(r, 5)); },
+  const mkFake = (halting) => {
+    const f = {};
+    f.evts = [];
+    f._stopping = false;
+    f._shutdownPromise = null;
+    f.lifecycle = { beginShutdown() {} };
+    f.events = { append(n, p) { f.evts.push(n); } };
+    f.logger = { info() {}, warn() {} };
+    f.writeState = () => {};
+    f._sessionHalting = () => !!halting;
+    let stops = 0;
+    f.lifecycleManager = {
+      get: () => null,
+      stopAll: async () => { stops++; await new Promise((r) => setTimeout(r, 5)); },
+      get stopCalls() { return stops; },
+    };
+    f._routerDaemonActive = () => false;
+    return f;
   };
-  fake._routerDaemonActive = () => false;
+  const fake = mkFake(false);
   const p1 = shutdown(fake);
   const p2 = shutdown(fake);
   check('G-a 行为：shutdown 返回 thenable', p1 && typeof p1.then === 'function', typeof p1);
   check('G-c 行为：重复调用返回同一 Promise', p1 === p2, p1 === p2 ? '同一实例' : '不同');
   p1.then(() => {
-    check('G-b 行为：await 后 stopAll 已执行完', stopCalls === 1, stopCalls + ' 次');
+    check('G-b 行为：await 后 stopAll 已执行完', fake.lifecycleManager.stopCalls === 1, fake.lifecycleManager.stopCalls + ' 次');
+    // B17（AUDIT-2026-09-19）：外部关停且无在途会话退出 → 落盘壳退出意图（9-18 谱系收口）
+    check('B17 行为：会话未 halting 时置 _shellHalted + 事件',
+      fake._shellHalted === true && fake.evts.includes('shell_halt_on_external_stop'), fake._shellHalted);
+    // 反向：会话正在 halting（壳侧 shutdownAll 在位）→ 不重复置壳退出意图
+    const f2 = mkFake(true);
+    return shutdown(f2).then(() => {
+      check('B17 反向：会话 halting 中不落 _shellHalted', !f2._shellHalted && !f2.evts.includes('shell_halt_on_external_stop'), f2._shellHalted);
     const failed = results.filter((r) => !r);
     console.log(String.fromCharCode(10) + '结果: ' + (results.length - failed.length) + ' passed, ' + failed.length + ' failed');
     process.exit(failed.length ? 1 : 0);
+    });
   });
 }

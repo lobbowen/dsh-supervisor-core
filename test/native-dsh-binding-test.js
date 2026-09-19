@@ -129,6 +129,22 @@ check('runtime-contract 透出 npmArgs（包内 JS 场景）',
   JSON.stringify(rcGot && rcGot.npmArgs));
 try { fs.rmSync(path.dirname(rcFile), { recursive: true, force: true }); } catch {}
 
+// 8) N2/B21（AUDIT-2026-09-19）：安装成功路径必须当场复跑「检测 → 绑定」。
+//    裸 config.command 首装后若不绑定，DSH 永不起、60s 冷静期无限循环（boot 期是唯一旧调用点）。
+const natOps = fs.readFileSync(path.join(ROOT, 'src', 'app', 'native', 'ops.js'), 'utf8');
+const iStart = natOps.indexOf('async function install(host, version)');
+const iEnd = natOps.indexOf('function startInstall', iStart);
+const installSlice = iStart >= 0 && iEnd > iStart ? natOps.slice(iStart, iEnd) : '';
+check('B21 install() 切片可定位', installSlice.length > 200, String(iStart) + '..' + String(iEnd));
+const bindIdx8 = installSlice.indexOf('host._bindNativeDshCommand');
+const recIdx8 = installSlice.indexOf('_recordManifest(target');
+check('B21 安装成功后复跑绑定（且在记录 manifest 之后）', bindIdx8 > recIdx8 && recIdx8 > 0, recIdx8 + ' < ' + bindIdx8);
+check('B21 绑定异常不阻断安装终态（try/catch + warn 降级）', /try \{ if \(typeof host\._bindNativeDshCommand/.test(installSlice) && /安装后原生绑定失败/.test(installSlice), 'ok');
+// 反向（判据有牙）：无绑定的旧安装路径切片必被识破
+const OLD8 = "async function install(host, version) { host._recordManifest(target, []); const ver = host.installedVersion(); } function startInstall";
+const oldS = OLD8.slice(0, OLD8.indexOf('function startInstall'));
+check('B21 反向：旧无绑定形态被判失败', oldS.indexOf('host._bindNativeDshCommand') === -1, 'ok');
+
 restore();
 try { fs.rmSync(TMP, { recursive: true, force: true }); } catch {}
 

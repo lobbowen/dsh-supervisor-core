@@ -74,6 +74,37 @@ async function main() {
   p.applyDetection(normal, { ok: true, quota: JSON.parse(JSON.stringify(normal.quota)) });
   check('60% 正常账号不受影响', normal.status === 'ready', normal.status);
 
+  // ── 场景 G（B18 / AUDIT-2026-09-19）：creditsRefilled 对 null 基线必须 fail-closed ──
+  //   冻结时无余额证据 → freeze.js 记 lim.creditsAt = null。旧实现 Number(null)===0 是有限值，
+  //   任意正余额都满足 now>0 → 误判「已充值」解冻，耗尽账号被重新选路。
+  const quota = require('../src/domains/router/providers/policies/quota');
+  const mkFrozen = (creditsAt, remaining) => ({
+    status: 'frozen', nextResetAt: Date.now() + 3600e3, // 未到期：证据 a) 不成立
+    limit: { kind: 'credits', creditsAt },
+    quota: { monthlyRemaining: remaining, credits: { monthlyCredits: remaining } },
+  });
+  check('G-B18 null 基线 + 任意正余额 → 不判「已充值」（fail-closed）',
+    quota.creditsRefilled(mkFrozen(null, 9.99)) === false, String(quota.creditsRefilled(mkFrozen(null, 9.99))));
+  check('G-B18 undefined 基线同样不判「已充值」',
+    quota.creditsRefilled(mkFrozen(undefined, 9.99)) === false, 'ok');
+  // 反向（防空转）：数值基线且余额确实回升 → 必须判 true（证明未写死 false）
+  check('G-B18 反向：数值基线 5→10 回升 → 判「已充值」true',
+    quota.creditsRefilled(mkFrozen(5, 10)) === true, 'ok');
+  check('G-B18 反向：数值基线 5→3 未回升 → 判 false',
+    quota.creditsRefilled(mkFrozen(5, 3)) === false, 'ok');
+
+  // ── 场景 H：null 基线冻结账号收到正余额快照（无到期）→ applyDetection 维持冻结 ──
+  const noEv = { key: 'k4', keyId: 'no-ev', maskedKey: '...no-ev', status: 'ready',
+    quota: { rolling: { status: 'ok', percent: 0 }, weekly: { status: 'ok', percent: 0 }, monthly: { status: 'ok', percent: 0 } } }; // 无 monthlyRemaining/credits → 冻结基线为 null
+  p.accounts.push(noEv);
+  p.markCreditsExhausted(noEv); // 触发 credits 冻结（此时无余额证据 → creditsAt=null）
+  check('H-B18 冻结基线为 null（无余额证据）', noEv.status === 'frozen' && noEv.limit.creditsAt === null, JSON.stringify(noEv.limit && noEv.limit.creditsAt));
+  // 后续补探测带回正余额（percent 已回落不再 creditsLow），且无 periodEnd 到期 → 不得解冻
+  noEv.nextResetAt = Date.now() + 3600e3;
+  if (noEv.limit.recovery) noEv.limit.recovery.at = noEv.nextResetAt;
+  p.applyDetection(noEv, { ok: true, quota: { rolling: { status: 'ok', percent: 0 }, weekly: { status: 'ok', percent: 0 }, monthly: { status: 'ok', percent: 0 }, monthlyRemaining: 8.0, credits: { monthlyCredits: 8.0 } } });
+  check('H-B18 null 基线 + 正余额快照 + 未到期 → 维持冻结（旧实现此处误解冻）', noEv.status === 'frozen', noEv.status);
+
   console.log('\n==============================');
   console.log('结果: ' + passed_str(pass, fail));
   process.exit(fail > 0 ? 1 : 0);

@@ -22,6 +22,8 @@
 //   2. 内部方法（`_` 前缀）永不可达：唯一入口是 `isMethodAllowed` 的
 //      `includes` 闸，而各域白名单按约定只收录公开方法。
 //   3. 仅绑定 127.0.0.1（由调用方 listen 决定），与守卫 API 同级信任。
+//   4. POST /ctl 来源闸（AUDIT B-2）：application/json 必需 + Origin 若携带必须回环
+//      （见 ctlSourceProblem）；防任意网页对回环 ctlPort 的盲 CSRF 驱动白名单写方法。
 //
 // 调用方摘要（一句话即可用）：
 //   const { createCtlServer } = require('../../platform/ctl/server');
@@ -35,6 +37,24 @@ const http = require('node:http');
  *  无需起真实 HTTP server 也能锁住 PG-5）。 */
 const isMethodAllowed = (allowMethods, method) =>
   Array.isArray(allowMethods) && typeof method === 'string' && allowMethods.includes(method);
+
+// 回环 Origin 形态（IPv4/IPv6/localhost，可带任意端口）。
+const LOOPBACK_ORIGIN_RE = /^https?:\/\/(?:127\.0\.0\.1|\[::1\]|localhost)(?::\d{1,5})?$/i;
+
+/** 来源闸（AUDIT B-2）：ctl 是仅回环的进程外带通道，但浏览器可代表用户盲打回环端口，
+ *  白名单方法里含写操作 → 任意网页 CSRF 即可停实例/改配置。两道纯请求判据：
+ *  ① POST /ctl 必须携带 application/json——合法客户端（platform/service/log/tail.js#ctlCall）
+ *    固定发送；form-urlencoded / text/plain / multipart 这些**不触发 CORS 预检**的盲打形态被切断。
+ *  ② 携带 Origin 的请求必须指向回环自身——浏览器发起的任何跨站请求都带受害者站点 Origin；
+ *    非浏览器客户端不发 Origin，不受影响。
+ *  @returns {string|null} 拒绝原因；null 表示通过。 */
+function ctlSourceProblem(req) {
+  const ct = String(req.headers['content-type'] || '');
+  if (!/^application\/json\b/i.test(ct)) return 'content-type 必须为 application/json';
+  const origin = req.headers.origin;
+  if (origin !== undefined && !LOOPBACK_ORIGIN_RE.test(String(origin))) return 'Origin 非回环: ' + String(origin).slice(0, 80);
+  return null;
+}
 
 /**
  * 创建 ctl HTTP server。
@@ -64,6 +84,13 @@ function createCtlServer({ target, allowMethods, logger, events } = {}) {
     }
     if (req.method !== 'POST' || req.url !== '/ctl') {
       return send(404, { ok: false, error: 'not found' });
+    }
+    // 来源闸（不变量 4，AUDIT B-2）：先闸后读体，非法形态不消耗 body。
+    const srcBad = ctlSourceProblem(req);
+    if (srcBad) {
+      if (logger && logger.warn) logger.warn('[ctl] 来源闸拒绝: ' + srcBad);
+      try { req.resume(); } catch {}
+      return send(403, { ok: false, error: 'ctl source gate: ' + srcBad });
     }
 
     let body = '';
@@ -124,4 +151,4 @@ function createCtlServer({ target, allowMethods, logger, events } = {}) {
   return server;
 }
 
-module.exports = { createCtlServer, isMethodAllowed };
+module.exports = { createCtlServer, isMethodAllowed, ctlSourceProblem };

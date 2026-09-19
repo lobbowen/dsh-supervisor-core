@@ -112,6 +112,22 @@ async function main() {
     check('取消订阅生效（后续广播不再回调）', pushed === null, '未回调');
   }
 
+  console.log('== 令牌边界：clear() 必须同步清空 stdout 残留行（TK-1 死令牌回灌，AUDIT B-3）==');
+  {
+    const sup = buildSupervisor();
+    sup.tokenService.attach('inst-w', { unit: null });
+    sup.tokenService.feedLine('inst-w', 'dsh web: http://127.0.0.1:3081/?token=OLD999');
+    check('清除前 capture 正常（前置状态）', sup.tokenService.get('inst-w') === 'OLD999');
+    sup.tokenService.clear('inst-w');
+    check('clear 后 get 为空串（TK-8 失效已广播）', sup.tokenService.get('inst-w') === '');
+    const revived = sup.tokenService.capture('inst-w');
+    check('capture() 不得从残留行复活旧令牌（旧实现第 0 拍即命中 OLD999 记为新 gen）',
+      !revived, String(revived));
+    check('复活判定防空转：池清空后仍是空', sup.tokenService.get('inst-w') === '');
+    sup.tokenService.feedLine('inst-w', 'dsh web: http://127.0.0.1:3081/?token=NEW111');
+    check('clear 后重喂新行仍可捕获（链路未被清死，TK-1 恒通）', sup.tokenService.get('inst-w') === 'NEW111');
+  }
+
   console.log('\n==============================');
   console.log('结果: ' + passed + ' passed, ' + failed + ' failed');
   try { fs.rmSync(TMP, { recursive: true, force: true }); } catch {}

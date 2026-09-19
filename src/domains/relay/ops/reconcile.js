@@ -29,8 +29,20 @@ function removeOne(host, proxy, inst) {
   if (host.events) host.events.append('lan_instance_removed', { id: proxy.id, reason: !inst ? 'stale' : 'disabled' });
 }
 
-/** relay 运行 = 目标存活：up 则确保在监听，down 则暂停（保留注册）。 */
+/** relay 运行 = 目标存活：up 则确保在监听，down 则暂停（保留注册）。
+ *  令牌/frp 意图漂移复判（AUDIT B-1）：main 无 onRemoteChange 钩子、daemon 侧仅靠状态文件，
+ *  热换钩子可能丢失变更 —— reconcile 是唯一兜底收敛点，比对代理缓存与实例现值，漂移即重走
+ *  syncProxy（其快路径负责 setToken 热换 + syncFrpc 收敛）。 */
 async function ensureProxyRunning(host, proxy, inst) {
+  const wantToken = String(inst.remoteToken || '');
+  const wantFrp = !!inst.frpEnabled;
+  const drifted = proxy.token !== wantToken
+    || proxy.frpEnabled !== wantFrp
+    || (proxy.frpRemotePort || null) !== (inst.frpRemotePort || null);
+  if (drifted && proxy.wanPort) {
+    syncProxyQueued(host, inst).catch((e) => host.logger.warn && host.logger.warn('reconcile resync ' + inst.id + ': ' + e.message));
+    return;
+  }
   const targetAlive = await targetReachable(inst);
   const running = !!(host._lanServers && host._lanServers[proxy.id]);
   if (targetAlive && !running) {

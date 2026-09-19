@@ -41,6 +41,10 @@ class DaemonLifecycle {
     this.stopGraceMs = o.stopGraceMs || 4000;
     this.portReleaseTimeoutMs = o.portReleaseTimeoutMs || 5000;
     this.spawnWindowMs = o.spawnWindowMs || 25000;
+    // E-3（AUDIT-2026-09-19）：退出意图谓词钩子（守卫注入 host._exitIntended，单源）。
+    //   ensureRunning 是全部 daemon spawn 的必经入口；仅有内存 _stopping 不够——
+    //   「退出管家」后守卫被外部拉起的那拍，会话/持久标记同样必须否决 spawn。
+    this._exitIntended = typeof o.exitIntended === 'function' ? o.exitIntended : () => false;
     this._spawnWindowUntil = 0; // spawn latch
     this._stopping = false;
   }
@@ -151,6 +155,8 @@ class DaemonLifecycle {
   }
 
   _spawn() {
+    // E-3 门禁：spawn 是唯一的「复活」动作，任何入口（ensure/换代/监督）都必须过退出意图闸。
+    if (this._stopping || this._exitIntended()) return { mode: 'stopping' };
     // 经统一封装：daemon 用 detached:true + stdio 'ignore'，走 detached()
     // （固定 detached+windowsHide；不加 windowsHide 时 detached 会在 Windows 上新建控制台窗口）。
     const child = spawnOS.detached(process.execPath, [this.script, ...this.args], {

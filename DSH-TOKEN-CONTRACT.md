@@ -25,7 +25,7 @@ KINDS = {
 | 1 | `dsh-main` | 原生 main 会话令牌 | **DSH 进程** | **捕捉 + 持久化 + 跟随** | DSH 每次重启 | 令牌池 + 池文件 |
 | 2 | `dsh-instance` | 沙箱实例会话令牌 | **DSH 进程** | 同上（源不同） | 同上 | 令牌池 + 池文件 |
 | 3 | `dsh-auth` | 浏览器会话 cookie（`dsh-auth-*`） | DSH 派生（303 换取） | 换取 + 缓存 + 轮换重换 | 跟随 dshToken | relay 内存（不落盘） |
-| 4 | `remote-token` | 远程/局域网门卫令牌 | **用户**（UI） | 存储 + 下发 | 用户改动 | **配置存储**（唯一） |
+| 4 | `remote-token` | 远程/局域网门卫令牌 | **用户**（UI） | 存储 + 下发 | 用户改动 | **配置存储**（唯一权威）；经 `lan-state.json` instances[] 行投影下发 daemon（见 TK-7 裁决） |
 | 5 | `api-access-key` | 出回环访问密钥 | **用户**（config） | 存储 + 校验 | 用户改动 | **配置存储** |
 | 6 | `frp-auth` | FRP 认证令牌 | **用户**（UI） | 存储 + 透传 | 用户改动 | **配置存储** |
 | 7 | `lan-gate` | `dsh_lan_token` cookie | **我方签发** | 签发 + 校验 | 门卫会话 | 浏览器 |
@@ -37,7 +37,7 @@ KINDS = {
 |---|---|---|
 | **DSH 侧生成** | 1, 2 | 我方**只能捕捉**；链路必须**恒通**；需持久化接管 |
 | **派生** | 3 | 由 #1/#2 换得，随其轮换 |
-| **用户配置** | 4, 5, 6 | **不是 DSH 令牌**：不捕捉、不进令牌池、不随 DSH 轮换、**不得走 `lan-state.json`** |
+| **用户配置** | 4, 5, 6 | **不是 DSH 令牌**：不捕捉、不进令牌池、不随 DSH 轮换、**不进 `lan-state.json` 的 `tokens` 段**；仅 #4 可以配置字段身份走 instances[] 行投影（TK-7 裁决） |
 | **我方签发** | 7 | 门卫会话 |
 
 ---
@@ -52,7 +52,7 @@ KINDS = {
 | **TK-4** | **单一存储**。令牌池是唯一事实源；消费方**按需读取**，**不得自行缓存**令牌。 |
 | **TK-5** | **单一落盘点**。持久化只经 `persist.js`；统一权限（0600）+ 统一脱敏。 |
 | **TK-6** | **绝不静默销毁**。持久化超限必须**轮转**，不得 `rmSync` 清空（那是唯一持久链路）。 |
-| **TK-7** | **用户配置 ≠ DSH 令牌**。两条通道，互不污染，不共用 `lan-state.json`。 |
+| **TK-7** | **用户配置 ≠ DSH 令牌**。两条通道，互不污染：用户配置不进令牌池/池文件/`tokens` 段，DSH 令牌不写配置存储。 |
 | **TK-8** | **变动必须广播**。令牌变更**与失效/清空**都要广播（含 `value=null`）。 |
 
 ---
@@ -119,8 +119,14 @@ pool.onChange(fn)                        // fn(id, value|null, record) —— va
 | TK-4 | 除 `src/platform/service/token/**` 外，无模块持有令牌成员字段（`dshToken` 等） |
 | TK-5 | 令牌持久化仅经 `persist.js`；落盘权限一律 0600 |
 | TK-6 | 持久化无 `rmSync` 清空语义（必须轮转） |
-| TK-7 | 用户配置类（remote-token/api-access-key/frp-auth）**不出现**在 `lan-state.json` 中 |
+| TK-7 | `lan-state.json`：`tokens` 段只含 DSH 侧令牌；instances[] 行字段 ⊆ 注册白名单，唯一可携带的用户配置凭证字段为 `remoteToken`；`api-access-key`/`frp-auth` 全文件零出现 |
 | TK-8 | `clear/detach` 均触发 `onChange(id, null)` |
+
+> **TK-7 裁决（2026-09-19，AUDIT B-5）**：旧措辞「用户配置不得走 `lan-state.json`」与 daemon 进程解耦
+> 的必需分发通道冲突（lan-daemon 无 `remoteToken` 值即无法执行门卫校验与 frp 暴露闸）。裁决为：
+> 权威只在配置存储（`instances.json` / `dsh-main.json`），`lan-state.json` 是其 **0600、原子、只读**
+> 的派生投影（daemon 绝不回写），不构成第二权威；`tokens` 段仍严格只承载 DSH 侧令牌。门禁 TK-G4
+> 据此对 instances[] 行做**字段白名单**判定——新增凭证字段想混进此文件必须先过门禁改约。
 
 ---
 
@@ -131,7 +137,7 @@ pool.onChange(fn)                        // fn(id, value|null, record) —— va
 | TK-G1 | `kinds.js` 存在且登记 §1 全部 kind |
 | TK-G2 | **令牌不得驱动生命周期**：`src/app/daemons/probe.js`/`src/app/main/controller.js` 中无 `_maybeReclaimAdoptToken`，且 phase switch 内不读令牌池 |
 | TK-G3 | **无静默销毁**：`persist.js` 不含清空式 `rmSync` |
-| TK-G4 | **用户配置类不进 `lan-state.json`**：`src/app/daemons/runtime.js#_syncLanState` 写出的 `tokens` 段只含 `dsh-*` |
+| TK-G4 | **用户配置与 DSH 令牌通道不混**：`src/app/daemons/runtime.js#_syncLanState` 写出的 `tokens` 段只含 `dsh-*`；instances[] 行字段 ⊆ 白名单且仅 `remoteToken` 携带凭证（TK-7 裁决） |
 | TK-G5 | **单实例令牌获取**：除 token 组件外无 `this.dshToken` 式缓存（relay 改为按需读） |
 | TK-G6 | **令牌不进 argv/URL**：`browser.js` 调用点不得拼 `?token=` |
 | TK-G7 | 幽灵键 `lanToken` 在 `src/` 中零引用 |

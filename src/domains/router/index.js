@@ -71,7 +71,7 @@ class RouterService {
     });
     this._ops = ops.createOps({
       state, store: this.store, logger: this.logger, events: this.events, dist: this.dist, ports,
-      endpoint: this._endpoint, scheduler: this._scheduler,
+      endpoint: this._endpoint, scheduler: this._scheduler, usage: this._forward.usage,
       createDirect: (o) => new DirectProvider(o), createProxy: (o) => new ProxyProvider(o),
       apps: PROXY_APPS, presets: PROVIDER_PRESETS, save: () => this._save(),
     });

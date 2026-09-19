@@ -107,6 +107,10 @@ async function install(host, version) {
     // 数据认领：仅首装（manifest 尚不存在）尝试；~/.dsh 已有用户数据时不认领（防误删）。
     const isFirstInstall = !host._manifest();
     host._recordManifest(target, isFirstInstall ? host._claimDataPaths() : []);
+    // N2/B21（AUDIT-2026-09-19）：安装成功后立即复跑「检测 -> 绑定」——裸 config.command
+    //   首装后若不绑定，DSH 永不起、60s 冷静期无限循环，直到守卫重启（boot 期唯一旧调用点）。
+    try { if (typeof host._bindNativeDshCommand === 'function') host._bindNativeDshCommand(); }
+    catch (e) { host.logger.warn && host.logger.warn('安装后原生绑定失败: ' + (e && e.message)); }
     const ver = host.installedVersion();
     host.installing = null;
     host.lastInstall = { ok: true, version: ver || target, error: null, at: new Date().toISOString(), log: host.installLog.slice(-8) };

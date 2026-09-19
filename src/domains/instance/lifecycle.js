@@ -208,6 +208,9 @@ function createLifecycle(deps) {
           break;
         }
         case 'BACKOFF': { // 到期则重试启动；失败继续退避（自愈）
+          // B15（AUDIT-2026-09-19 §B-15）：退避/失败同样是「自动拉起」——守护开关关掉后
+          // 仍按 BACKOFF 无限重试，破「停就停」红线。未守护：落 STOPPED，等用户显式 start。
+          if (!guarded) { stateMachine.setStopped(stateDeps(), inst); break; }
           if (state.backoffUntil && now >= state.backoffUntil) {
             start(inst.id).then((r) => {
               if (!r || (!r.ok && !r.installing)) stateMachine.restart(stateDeps(), inst, '重试失败:' + ((r && r.error) || ''));
@@ -218,6 +221,8 @@ function createLifecycle(deps) {
         case 'FAILED': {
           // 安装任务登记失败等会把进行中的安装误判 FAILED；若 npm 实际已成功（installOk===true），
           // 必须自愈拉起，否则永久卡死。重试超限后不再自动拉起，交用户处理。
+          // B15：同上，未守护实例不做任何自愈拉起（installOk 兜底也归守护语义）。
+          if (!guarded) break;
           if (state.installOk === true && !st.running && !/重试超限/.test(state.lastError || '')) {
             const r = _systemdStart(inst);
             if (!r.ok) stateMachine.restart(stateDeps(), inst, '启动失败:' + r.error);

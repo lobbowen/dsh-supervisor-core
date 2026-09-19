@@ -50,7 +50,10 @@ const MIME = {
   '.png': 'image/png',
   '.ico': 'image/x-icon',
 };
-const CSP = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'";
+// frame-ancestors 'none'（AUDIT B-27）：面板写操作是同源 fetch，而 originAllowed 对**同源 iframe**
+// 同样放行——第三方页嵌入面板后诱导一次单击即可开公网暴露/停实例。禁止任何页面 framing 是唯一
+// 在 Origin 闸之外仍然成立的防线（点击劫持与框选拖拽都发生在框架内）。
+const CSP = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'";
 
 function serveStatic(res, file, corsOrigin) {
   if (!UI_DIR) {

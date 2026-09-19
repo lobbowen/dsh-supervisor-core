@@ -179,6 +179,52 @@ if (spec) {
     jobSection(crlf, "build").includes("needs: precheck"), "hit");
 }
 
+// ── P-9：AUDIT-2026-09-19 第 3 批发布链门禁（B23/B24/B25/B26，纯静态源码形态）──
+//   全部判据自带反向夹具（防空转）；运行时行为由 CI 四平台矩阵裁决。
+{
+  const bl = fs.readFileSync(path.join(ROOT, 'release', 'scripts', 'build-launcher.sh'), 'utf8').replace(/\r\n/g, '\n');
+  const pc = fs.readFileSync(path.join(ROOT, 'release', 'scripts', 'publish-core.sh'), 'utf8').replace(/\r\n/g, '\n');
+  const cr = fs.readFileSync(path.join(ROOT, 'release', 'scripts', 'cred.sh'), 'utf8').replace(/\r\n/g, '\n');
+  const pkgLock = fs.readFileSync(path.join(ROOT, 'package-lock.json'), 'utf8');
+  const pkgJson = require(path.join(ROOT, 'package.json'));
+
+  // B23-a：esbuild 固版 + 构建后对账（npx 浮动拉包 = 同 commit 不同日不同产物）
+  check('P-9 B23 build-launcher esbuild 固版（esbuild@$ESBUILD_VER）', bl.includes('"esbuild@$ESBUILD_VER" bin/dsh-supervisor'), 'ok');
+  check('P-9 B23 构建后版本对账（不一致即失败）', /ACTUAL_ESBUILD.*!=.*ESBUILD_VER/.test(bl), 'ok');
+  check('P-9 B23 反向：无版本 npx esbuild 浮动形态判缺', !bl.includes('npx --yes esbuild bin/'), 'ok');
+  // B23-b：--define 插值前 version 形态硬校验
+  const caseIdx = bl.indexOf('case "$VER" in');
+  const defIdx = bl.indexOf('--define:__DSH_VERSION__');
+  check('P-9 B23 version 形态闸先于 --define 插值', caseIdx >= 0 && defIdx > caseIdx, caseIdx + ' < ' + defIdx);
+  // B23-c：子包元数据生成不得拼 JS 源码（供应链注入面）
+  check('P-9 B23 NODE_GEN 拼接已移除', !pc.includes('NODE_GEN='), 'ok');
+  check('P-9 B23 包元数据经 env 生成（GEN_REPO/GEN_PKG_NAME）', pc.includes('GEN_PKG_NAME="$PKG_NAME"') && /node -e '[^']*process\.env/.test(pc), 'ok');
+  check('P-9 B23 os/cpu 平台过滤字段仍在生成器中', /os:\[e\.GEN_PLAT\],cpu:\[e\.GEN_ARCH\]/.test(pc), 'ok');
+  check('P-9 B23 反向：旧插值形态（repository:{type:\'git\',url:\'$MAIN_REPO\'}）可被识别', /repository:\{type:'git',url:'\$MAIN_REPO'\}/.test("const o={repository:{type:'git',url:'$MAIN_REPO'},bin:{'dsh-supervisor':'x'}}"), 'ok');
+  // B24：幂等发布 = 体积 + sha1 双项强核对，缺要素/不一致即拒（不得只警告）
+  check('P-9 B24 幂等核对取远端 shasum', pc.includes('j.dist.shasum'), 'ok');
+  check('P-9 B24 本地真 pack 计 sha1 对账', pc.includes('sha1sum "$LOCAL_TGZ"'), 'ok');
+  check('P-9 B24 缺要素/不一致均 fail-closed', /-z "\$REMOTE_SHA"[\s\S]{0,200}exit 1/.test(pc) && /\$REMOTE_SHA" != "\$LOCAL_SHA1"[\s\S]{0,300}exit 1/.test(pc), 'ok');
+  check('P-9 B24 反向：旧「体积不一致仅警告」形态判缺', !pc.includes('请人工确认后再决定是否升版本重发'), 'ok');
+  // B25：备份降级为尽力安全网（warn 继续），确认项仍硬闸
+  const putSeg = cr.slice(cr.indexOf('B25（AUDIT'), cr.indexOf('umask 077'));
+  check('P-9 B25 备份失败不阻断 put（|| 警告分支）', /\( cp -p "\$f" "\$BK" && chmod 600 "\$BK" \)[\s\S]{0,40}\|\| echo/.test(putSeg), 'ok');
+  check('P-9 B25 反向：旧硬闸形态（cp&&chmod 独立成句）可识别', /^\s*cp -p "\$f" .* && chmod .* "\$f"\.bak/m.test('  cp -p "$f" "$f.bak-x" && chmod 600 "$f".bak-* 2>/dev/null'), 'ok');
+  // 尾账：CANON_STORE 规范库根 = develop/.credentials（2026-09-19 用户定稿；禁机器绝对路径）
+  check('P-9 CANON_STORE 指向 REAL_HOME/develop/.credentials',
+    cr.includes('CANON_STORE=') && cr.includes('"$REAL_HOME/develop/.credentials"') && !cr.includes('"$REAL_HOME/.dsh/credentials"'), 'ok');
+  // （X-1 门禁禁操作者用户名字面量 —— 用通用 /home/<user> 形态判，不写死是谁）
+  check('P-9 CANON_STORE 不含操作者绝对路径（X-2）', !/\/home\/[a-z0-9._-]+\//.test(cr), 'ok');
+  // B26：内核零依赖不变量 + lockfile 版本同步 + 无第三方 registry 残留
+  check('P-9 B26 package.json 无 dependencies（内核零依赖）', !pkgJson.dependencies, JSON.stringify(Object.keys(pkgJson.dependencies || {})));
+  check('P-9 B26 lock 版本与 package.json 同步', pkgLock.includes('"version": "' + pkgJson.version + '"'), pkgJson.version);
+  check('P-9 B26 lock 无 npmmirror/acorn 残留', !/npmmirror/.test(pkgLock) && !/acorn/.test(pkgLock), 'ok');
+  // 反向：把真实 lock 的版本换成旧值，同步判据必须识破（防空转）
+  const driftLock = pkgLock.split(pkgJson.version).join('0.1.5-BETA.7');
+  check('P-9 B26 反向：漂移夹具（版本回退 BETA.7）被同步判据识破',
+    !driftLock.includes('"version": "' + pkgJson.version + '"') && /npmmirror/.test('https://registry.npmmirror.com/acorn/-/acorn-8.18.0.tgz'), 'ok');
+}
+
 const failed = results.filter((r) => !r);
 console.log(String.fromCharCode(10) + '结果: ' + (results.length - failed.length) + ' passed, ' + failed.length + ' failed');
 process.exit(failed.length ? 1 : 0);

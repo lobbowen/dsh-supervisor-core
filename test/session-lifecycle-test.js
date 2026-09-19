@@ -241,6 +241,43 @@ const check = (n, c, x) => { results.push(!!c); console.log((c ? 'PASS' : 'FAIL'
     check('A5-b 自更新不可用时回退而非直接报错', aboutTsx.includes('upstream === "git-repo"'), 'ok');
   }
 
+  // ── E-3（AUDIT-2026-09-19）：意图轴单源谓词拆分 + B17 外部关停持久化（源码形态门禁）──
+  console.log('== E-3 谓词单源 + B17 ==');
+  {
+    const collab = fs.readFileSync(path.join(ROOT, 'src', 'app', 'assembly', 'collaborators.js'), 'utf8');
+    const boot = fs.readFileSync(path.join(ROOT, 'src', 'app', 'assembly', 'bootstrap.js'), 'utf8');
+    const shut = fs.readFileSync(path.join(ROOT, 'src', 'app', 'session', 'shutdown.js'), 'utf8');
+    const lineOf = (src, re) => (src.match(re) || [''])[0];
+    // 1) _exitIntended = 通用退出（stopping ∨ session halting），且【不含】_shellHalted。
+    const exitDef = lineOf(collab, /host\._exitIntended = [^\n]*\n/);
+    check('E-3 _exitIntended 定义含 stopping 与 halting', /_stopping/.test(exitDef) && /halting\(\)/.test(exitDef), exitDef.trim());
+    check('E-3 _exitIntended 不含 _shellHalted（主 DSH 恢复权威是 desired，非壳退出）', !/_shellHalted/.test(exitDef), exitDef.trim());
+    // 2) _shellExitIntended 额外含 _shellHalted，仅供壳看护。
+    const shellDef = lineOf(collab, /host\._shellExitIntended = [^\n]*\n/);
+    check('E-3 _shellExitIntended 含 _shellHalted（桌面壳域退出判据）', /_shellHalted/.test(shellDef) && /_exitIntended\(\)/.test(shellDef), shellDef.trim());
+    // 3) 壳看护 halted 门切到 _shellExitIntended（不再是裸 _exitIntended）。
+    check('E-3 壳看护 halted 用 _shellExitIntended（9-18 壳侧 shellHalted 生效）', /halted:\s*\(\)\s*=>\s*host\._shellExitIntended\(\)/.test(boot), 'ok');
+    check('E-3 壳看护 halted 不再直接绑裸 _exitIntended（会丢 shellHalted 原子）', !/halted:\s*\(\)\s*=>\s*host\._exitIntended\(\)/.test(boot), 'ok');
+    // 4) 反向（防空转）：旧「三原子合一」形态（_exitIntended 内含 _shellHalted）必须被判 FAIL。
+    const OLD_PRED = 'host._exitIntended = () => !!(host._stopping || host._shellHalted || session.halting());\n';
+    const oldLine = lineOf(OLD_PRED, /host\._exitIntended = [^\n]*\n/);
+    check('E-3 反向：判据能识别「_exitIntended 混入 _shellHalted」的旧形态',
+      /_stopping/.test(oldLine) && /halting\(\)/.test(oldLine) && /_shellHalted/.test(oldLine), oldLine.trim());
+    // 5) B17：外部 SIGTERM 关停（无在途会话退出）持久化 shellHalted + 事件；会话 halting 时不重复置位。
+    check('B17 shutdown() 外部停落在 _shellHalted=false 且非会话 halting 时持久化退出意图',
+      /if \(!host\._shellHalted && !host\._sessionHalting\(\)\) \{/.test(shut) && /host\._shellHalted = true;/.test(shut) && /shell_halt_on_external_stop/.test(shut), 'ok');
+    // 反向：无守卫的旧 shutdown（无 !host._sessionHalting() 前置即盲写）应能被判缺——用去守卫样本验证正则确有牙。
+    const OLD_SHUT = 'function shutdown(host){ host._stopping = true; host.lifecycle.beginShutdown(); }';
+    check('B17 反向：判据要求 !host._shellHalted && !host._sessionHalting() 守卫存在',
+      !/if \(!host\._shellHalted && !host\._sessionHalting\(\)\) \{/.test(OLD_SHUT), 'ok');
+    // 6) B16 接线：组合根必须把单源谓词注入 PluginManager（行为级 O 组锁域内逻辑，此处锁接线）。
+    const dom = fs.readFileSync(path.join(ROOT, 'src', 'app', 'assembly', 'compose', 'domains.js'), 'utf8');
+    check('B16 组合根向 PluginManager 注入 exitIntended（E-3 单源）',
+      /exitIntended:\s*\(\)\s*=>\s*host\._exitIntended\(\)/.test(dom), 'ok');
+    check('B16 反向：旧「不注入」形态（无 exitIntended 行）可被判缺',
+      !/exitIntended:\s*\(\)\s*=>\s*host\._exitIntended\(\)/.test("new PluginManager({ dshBin, instances: host.instances, tasks: host.tasks })"), 'ok');
+  }
+
   const failed = results.filter((r) => !r);
   console.log('\n结果: ' + (results.length - failed.length) + ' passed, ' + failed.length + ' failed');
   process.exit(failed.length ? 1 : 0);

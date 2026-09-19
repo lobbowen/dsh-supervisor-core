@@ -35,6 +35,33 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
       m.buildConfig(settings, [{ id: 'x', frpEnabled: true, frpRemotePort: 7001, wanPort: null }]).count === 0, 'ok');
   }
 
+  // ── R5：凭据落盘卫生 + API 回显掩码（AUDIT B-6/B-7）──
+  console.log('== R5 frp.json 写入卫生 + status() 掩码 ==');
+  {
+    const D5 = fs.mkdtempSync(path.join(TMP, 'hyg-'));
+    const m5 = new FrpManager({ dir: D5, logger, events: null });
+    m5.saveSettings({ enabled: true, serverAddr: '1.2.3.4', serverPort: 7000, authToken: 'S3CR3T-frp', user: 'dsh' });
+    const raw5 = fs.readFileSync(m5.settingsFile, 'utf8');
+    check('R5-a settings 落盘可读（写链路未被掩码改动破坏）', /S3CR3T-frp/.test(raw5), 'ok');
+    if (process.platform !== 'win32') {
+      const mode5 = fs.statSync(m5.settingsFile).mode & 0o777;
+      check('R5-b frp.json 权限 0600（authToken 明文不出属主；旧实现默认 umask 落盘）',
+        mode5 === 0o600, 'mode=' + (mode5).toString(8));
+    } else console.log('SKIP R5-b（Windows 无 POSIX 权限位）');
+    const strays5 = fs.readdirSync(D5).filter((f) => /\.tmp/.test(f));
+    check('R5-c 写完成无 .tmp 残留（rename 原子替换）', strays5.length === 0, strays5.join(','));
+    const frpSrc = fs.readFileSync(path.join(ROOT, 'src', 'domains', 'relay', 'frp.js'), 'utf8');
+    check('R5-d saveSettings tmp 名含 pid（防预测名劫持/并发互踩；旧形态固定 .tmp）',
+      /settingsFile\s*\+\s*'\.'\s*\+\s*process\.pid/.test(frpSrc) && /writeFileSync\(tmp,[\s\S]{0,80}mode:\s*0o600/.test(frpSrc), 'ok');
+    const st5 = m5.status();
+    check('R5-e status().settings 不回显 authToken 明文，只报 authTokenSet（AUDIT B-7，与 access.js 同规）',
+      !('authToken' in st5.settings) && st5.settings.authTokenSet === true && !JSON.stringify(st5).includes('S3CR3T-frp'),
+      JSON.stringify(st5.settings));
+    check('R5-f 非机密配置字段照常回显（UI 回填面不丢）',
+      st5.settings.serverAddr === '1.2.3.4' && st5.settings.enabled === true && st5.settings.serverPort === 7000,
+      JSON.stringify(st5.settings));
+  }
+
   // ── R2/R3：真实子进程 crash → 自动重拉 ──
   // ⚠ 仅 POSIX：本组用「POSIX shell 脚本」（#!/bin/sh + sleep）冒充 frpc 可执行文件；
   //   Windows 无法执行该格式（spawn 同步抛 errno -4094 / code UNKNOWN）——

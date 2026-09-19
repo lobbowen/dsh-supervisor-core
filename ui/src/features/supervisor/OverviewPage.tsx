@@ -25,6 +25,9 @@ export function OverviewPage() {
   const { snap } = useSupervisorData();
   const { busy, run } = useSupervisorAction();
   const [upgradeOpen, setUpgradeOpen] = useState(false);
+  // B28（AUDIT-2026-09-19）：停止运行中的主干 DSH 是高危动作（在飞请求中断）——需二次确认，
+  // 与其他无确认开关同批收敛（LanPage 三开关 / window.prompt 令牌录入）。
+  const [confirmStopDsh, setConfirmStopDsh] = useState(false);
   // main(原生 DSH) 守护开关（2026-09 收敛：守护=跟开关走，与沙箱同语义，默认关持久化 dsh-main.json）
   const [mainGuardian, setMainGuardian] = useState<boolean | null>(null);
   const s = snap.status;
@@ -192,7 +195,7 @@ export function OverviewPage() {
                 </Button>
                 {/* D3-A 定案：主 DSH 由守卫统一自 spawn（始终守护拉起），无「进程守护」开关；
                     运行操作统一白底 outline（卸载 DSH 为唯一高危实色按钮） */}
-                <Button disabled={busy === "dsh"} onClick={() => void toggleDsh()} size="sm" variant="outline">
+                <Button disabled={busy === "dsh"} onClick={() => { if (running) setConfirmStopDsh(true); else void toggleDsh(); }} size="sm" variant="outline">
                   {running ? <><Power className="size-4 text-status-error" />停止 DSH</> : <><Rocket className="size-4 text-primary" />启动 DSH</>}
                 </Button>
                 {/* 分割线（自停止/启动 DSH 后开始分割）→ 进程守护按钮（实例页同款按钮式，非 Switch） */}
@@ -246,6 +249,18 @@ export function OverviewPage() {
             <Button disabled={busy === "upg" || upgradeRunning} onClick={() => void upgradeDsh()}>
               {busy === "upg" || upgradeRunning ? "升级中…" : "开始升级"}
             </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* B28：停止主干 DSH 二次确认 */}
+      <Dialog open={confirmStopDsh} onOpenChange={setConfirmStopDsh}>
+        <DialogContent className="max-w-[400px]">
+          <DialogHeader><DialogTitle>停止 DSH？</DialogTitle></DialogHeader>
+          <p className="text-sm text-muted-foreground">主干 DeepSeek Harness 正在运行；停止会中断进行中的请求，远程访问同时不可用。确认停止？</p>
+          <DialogFooter>
+            <Button onClick={() => setConfirmStopDsh(false)} variant="outline">取消</Button>
+            <Button disabled={busy === "dsh"} onClick={() => { setConfirmStopDsh(false); void toggleDsh(); }}>停止 DSH</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

@@ -45,7 +45,8 @@ function realHome() {
   return os.homedir();
 }
 const REAL_HOME = realHome();
-const REAL_STORE = process.env.DSH_CRED_DIR || path.join(REAL_HOME, '.dsh', 'credentials');
+// 规范库根（2026-09-19 定稿）：真实 home 下 develop/.credentials（与 cred.sh CANON_STORE 同口径）。
+const REAL_STORE = process.env.DSH_CRED_DIR || path.join(REAL_HOME, 'develop', '.credentials');
 const LEGACY_ALIAS = path.join(REAL_HOME, '.dsh', 'github-pat-advgyxqamf');
 const HOME_ROOT_STRAYS = ['gh_token.txt', 'gh_token', '.gh_token'].map((n) => path.join(REAL_HOME, n));
 
@@ -255,12 +256,16 @@ const TMP = fs.mkdtempSync(path.join(os.tmpdir(), 'credgate-'));
   check('持久化-3 凭据库是绝对路径（禁止 ~ 依赖）',
     /^([A-Za-z]:[\\/]|\/)/.test(REAL_STORE) && REAL_STORE.indexOf('~') < 0, REAL_STORE);
   if (fs.existsSync(REAL_STORE)) {
-    const pats = fs.readdirSync(REAL_STORE).filter((x) => x.endsWith('.pat'));
+    // 判据以 index.json 的引用集合为准（真机库文件名不保证 .pat 后缀，如 github-pat/npm-token）。
+    const idxP = path.join(REAL_STORE, 'index.json');
+    const refs = fs.existsSync(idxP)
+      ? (JSON.parse(fs.readFileSync(idxP, 'utf8')).entries || []).map((e) => e.file).filter(Boolean)
+      : [];
     check('持久化-4 真机令牌文件非空且长度合理（未被清空/占位）',
-      pats.length > 0 && pats.every((x) => {
-        const sz = fs.statSync(path.join(REAL_STORE, x)).size;
-        return sz >= 40;
-      }), pats.map((x) => x + '=' + fs.statSync(path.join(REAL_STORE, x)).size + 'B').join(', '));
+      refs.length > 0 && refs.every((f) => {
+        const fp = path.join(REAL_STORE, f);
+        try { return fs.statSync(fp).size >= 40; } catch { return false; }
+      }), refs.map((f) => { try { return f + '=' + fs.statSync(path.join(REAL_STORE, f)).size + 'B'; } catch { return f + '=缺失'; } }).join(', '));
   } else {
     console.log('SKIP 持久化-4：本机无规范凭据库（CI/新机属正常）');
   }

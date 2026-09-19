@@ -18,17 +18,29 @@ function signalProcess(pid, sig) {
   try { process.kill(-pid, sig); } catch { try { process.kill(pid, sig); } catch {} }
 }
 
-/** 整树终止（尽力而为，回调式）：POSIX 用进程组信号；
- *  Windows 用 taskkill /PID <pid> /T（含子进程）。 */
-function killTree(pid, sig, cb) {
+/** 整树终止（尽力而为，回调式）。
+ *
+ *  B13（AUDIT-2026-09-19）两处语义修正：
+ *   - Windows：`taskkill /T` 补 `/F` —— 无 /F 只投递 WM_CLOSE，无窗口/不处理该消息的
+ *     子进程杀不掉（孤儿照旧占端口）；并加 10s execFile 超时防 taskkill 挂起。
+ *     树语义按父子关系枚举，对外来 pid 同样安全。
+ *   - POSIX：负 pid 组信号**仅限本方创建的进程组**（opts.ownGroup=true，detached 子进程
+ *     必为组长）。接管实例的 pid 可能恰为无关进程组组长（如用户 shell 会话），
+ *     `kill(-pid)` 会误杀整组——外来路径只发单进程信号。
+ */
+function killTree(pid, sig, cb, opts) {
   if (!Number.isInteger(pid) || pid <= 0) { if (cb) cb(new Error('invalid pid')); return; }
   if (isWindows) {
-    execFile('taskkill', ['/PID', String(pid), '/T'], (err, stdout, stderr) => {
+    execFile('taskkill', ['/PID', String(pid), '/T', '/F'], { timeout: 10000, windowsHide: true }, (err) => {
       if (cb) cb(err || null);
     });
     return;
   }
-  signalProcess(pid, sig || 'SIGTERM');
+  if (opts && opts.ownGroup === true) {
+    signalProcess(pid, sig || 'SIGTERM');
+  } else {
+    try { process.kill(pid, sig || 'SIGTERM'); } catch {}
+  }
   if (cb) process.nextTick(cb, null);
 }
 

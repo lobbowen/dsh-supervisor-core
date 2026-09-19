@@ -58,18 +58,19 @@ module.exports = {
   /** 整树终止。
    *
    *  为什么必须单独有这个方法：
-   *   平台层提供 `killTree`（Windows = `taskkill /PID <pid> /T`，POSIX = 进程组信号），
+   *   平台层提供 `killTree`（Windows = `taskkill /PID <pid> /T /F`，POSIX = 进程组信号），
    *   实际停止路径若只用 `signalProcess`，它在 Windows 上只 `process.kill(pid, sig)`（单进程语义由平台层注释自己写明）。
    *   于是 Windows 上停止 DSH 只杀父进程：其派生的子进程（node / 浏览器 / 子命令）成为**孤儿**，
    *   继续占端口、持文件锁；守卫重启后 adopt 复用即被楔死。
    *
    *   POSIX 上 `killTree` 退化为组信号，与 `_signalChild` 等价（幂等，无害）。
+   *   B13：child 一律是本守卫 detached 拉起（组长），显式 ownGroup:true 保留组信号。
    */
   _killTree(child, sig) {
     const d = depsOf(this);
     const pc = platform.processControl;
     if (pc && typeof pc.killTree === 'function') {
-      pc.killTree(child.pid, sig || 'SIGKILL', () => {});
+      pc.killTree(child.pid, sig || 'SIGKILL', () => {}, { ownGroup: true });
       return;
     }
     // 兜底：平台层未提供时退回单进程信号（不因能力缺失而完全不杀）
@@ -113,8 +114,9 @@ module.exports = {
     d.writeAdoptKillTimer(setTimeout(() => {
       releaseSlot();
       if (pidlook.isAlive(pid)) {
-        // 接管实例同样可能有子进程：Windows 上升级为整树（taskkill /T），
-        // 否则会留下孤儿子进程占端口。
+        // 接管实例同样可能有子进程：Windows 上升级为整树（taskkill /T /F），否则会留下孤儿子进程占端口。
+        // B13：POSIX 外来 pid **不发组信号**（可能恰为无关进程组组长，kill(-pid) 误杀整组）——
+        // 不传 ownGroup，平台层退化为单进程 SIGKILL（树枚举仅 Windows 有安全实现）。
         const pc = platform.processControl;
         if (pc && typeof pc.killTree === 'function') {
           pc.killTree(pid, 'SIGKILL', () => {});

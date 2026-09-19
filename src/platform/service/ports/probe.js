@@ -6,18 +6,43 @@ const net = require('node:net');
 const probe = require('../../util/probe');
 const pidlookup = require('../../os/pidlookup');
 
-/** TCP connect 探测：能连接即视为有进程在监听。 */
-function portListening(port) { return probe.portListening('127.0.0.1', Number(port), 300); }
+/** TCP connect 探测：双栈回环任一能连接即视为有进程在监听（见 loopbackListening）。 */
+function portListening(port) { return loopbackListening(port); }
 
-/** bind 探测：能在 127.0.0.1 绑定即可分配；任何 bind 错误（EADDRINUSE 等）即不可分配。 */
+/** B14：双栈回环都探 —— 只连 127.0.0.1 会漏掉 **IPv6-only** 监听者（`net.ipv6.bindv6only=1`
+ *  或明确 bind '::1' 的进程），alloc/reclaim 路径曾长期把它们当空闲。 */
+function loopbackListening(port) {
+  const p = Number(port);
+  return Promise.all([
+    probe.portListening('127.0.0.1', p, 300),
+    probe.portListening('::1', p, 300).catch(() => false), // 无 IPv6 栈的主机：连接错误一律视为不可连
+  ]).then(([v4, v6]) => v4 || v6);
+}
+
+/** bind 探测：回环双栈 + IPv6 any 都可绑定才判「可分配」；任何 bind 错误（EADDRINUSE 等）即不可分配。
+ *  B14：分别试 127.0.0.1 与 ::1（漏 IPv6 侧会把 IPv6-only 监听者的端口分出去）；再试 `::`
+ *  （Linux 非 V6ONLY 的 any 绑定同时占住 v4 端口，只试 specifics 会误判空闲）。
+ *  剩余 TOCTOU（bind 成功后、消费方真正 listen 前被抢）无法在探测层根除：分配登记处已做
+ *  「登记后二次确认、被抢即撤销」的有界复检（alloc.js）；消费方启动仍须按 bind 失败如实报错。 */
 function bindable(port) {
-  return new Promise((resolve) => {
+  const p = Number(port);
+  const bindProbe = (host) => new Promise((resolve) => {
     let done = false;
     const srv = net.createServer();
     const finish = (ok) => { if (done) return; done = true; try { srv.close(); } catch {} resolve(ok); };
-    srv.once('error', () => finish(false));
-    srv.listen(port, '127.0.0.1', () => finish(true));
+    // 环境级失败（无 IPv6 栈：EADDRNOTAVAIL/EAFNOSUPPORT/EINVAL）= 该侧不存在占用者，放行；
+    // 端口级失败（EADDRINUSE/EACCES）= 不可分配。缺了这层区分，纯 IPv4 主机会把所有端口判成不可用。
+    srv.once('error', (e) => finish(e && (e.code === 'EADDRNOTAVAIL' || e.code === 'EAFNOSUPPORT' || e.code === 'EINVAL')));
+    srv.listen(p, host, () => finish(true));
   });
+  return (async () => {
+    // 必须**串行**：并发起三个同端口 listen 时，非 V6ONLY 的 `::` 绑定会占住地址通配位，
+    // 使 127.0.0.1/::1 探测收到 EADDRINUSE —— 空闲端口被误判不可分配（本机实测踩中）。
+    for (const host of ['127.0.0.1', '::1', '::']) {
+      if (!(await bindProbe(host))) return false;
+    }
+    return true;
+  })();
 }
 
 /** 按端口反查监听进程 pid；不可得返回 null。 */
@@ -42,4 +67,4 @@ function reclaimByCmdMark(cmdMark, cfgStr) {
   return killed;
 }
 
-module.exports = { portListening, bindable, listeningPid, reclaimByCmdMark };
+module.exports = { portListening, loopbackListening, bindable, listeningPid, reclaimByCmdMark };

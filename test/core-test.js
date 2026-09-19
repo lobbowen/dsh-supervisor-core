@@ -163,6 +163,10 @@ async function testApiSecurity() {
     uiMissing
       ? 'UI 未构建（HTTP 503）—— 请先执行 bash release/scripts/build-ui.sh（或设 DSH_UI_DIR）'
       : String(r.headers['content-security-policy']));
+  // AUDIT B-27：断言到**指令级**（旧断言长度>10 对任何字符串都绿，是「文档化门禁≠实际执行」同型）
+  check("CSP 含 frame-ancestors 'none'（面板点击劫持闸）",
+    /frame-ancestors\s+'none'/.test(String(r.headers['content-security-policy'] || '')),
+    String(r.headers['content-security-policy'] || '(缺失)'));
   check('nosniff 头存在', r.headers['x-content-type-options'] === 'nosniff',
     uiMissing ? '同上：UI 未构建，安全头未走到静态分支' : undefined);
 

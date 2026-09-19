@@ -25,13 +25,16 @@ export interface SupervisorSnapshot {
   events: EventsPage["events"];
   eventsSeq: number;
   online: boolean;
+  /** B8：全部读取都因 401（访问密钥缺失/过期）失败——「鉴权被拒」而非「管家离线」，
+   *  必须呈现为可操作错误，否则用户对着假离线指示无从下手。 */
+  authFailed: boolean;
 }
 
 function empty(): SupervisorSnapshot {
   return {
     status: null, instances: null, lan: null, frp: null,
     router: null, providers: null, ports: null,
-    events: [], eventsSeq: 0, online: false,
+    events: [], eventsSeq: 0, online: false, authFailed: false,
   };
 }
 
@@ -52,19 +55,25 @@ async function syncAll() {
   if (busy) return;
   busy = true;
   try {
+    // B8：401 单独记账——真离线（连接失败/超时）与鉴权被拒是两种病，不能都渲染成「离线」。
+    let authHit = false;
+    const onReadError = (e: unknown) => {
+      if ((e as { status?: number } | null)?.status === 401) authHit = true;
+      return null;
+    };
     const [status, instances, lan, frp, router, providers, ports] = await Promise.all([
-      supervisorApi.status().catch(() => null),
-      supervisorApi.instances().catch(() => null),
-      supervisorApi.lanAccess().catch(() => null),
-      supervisorApi.frp().catch(() => null),
-      supervisorApi.routerStatus().catch(() => null),
-      supervisorApi.providers().catch(() => null),
-      supervisorApi.ports().catch(() => null),
+      supervisorApi.status().catch(onReadError),
+      supervisorApi.instances().catch(onReadError),
+      supervisorApi.lanAccess().catch(onReadError),
+      supervisorApi.frp().catch(onReadError),
+      supervisorApi.routerStatus().catch(onReadError),
+      supervisorApi.providers().catch(onReadError),
+      supervisorApi.ports().catch(onReadError),
     ]);
     const online = !!status;
     // R4 修复：心跳不再附带 /tasks —— snap.tasks 无消费者（TasksPage 自管本地 state + 手动刷新），
     // 每 2s 白拉一次低频任务列表属于无效网络开销。
-    setPartial({ status, instances, lan, frp, router, providers, ports, online });
+    setPartial({ status, instances, lan, frp, router, providers, ports, online, authFailed: !online && authHit });
   } catch {
     setPartial({ online: false });
   } finally {

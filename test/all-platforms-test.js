@@ -105,9 +105,14 @@ console.log('== T4 四平台同源保证 ==');
   const build = read('release/scripts/build-launcher.sh');
   check('T4-a 全平台模式断言 core.cjs 逐字节一致', /一致性断言/.test(build) && /BASE_HASH/.test(build), 'ok');
   check('T4-b 不一致即失败（exit 1）', /core\.cjs 与基准不一致/.test(build) && /exit 1/.test(build), 'ok');
-  check('T4-c 构建只做一次（esbuild 不在平台循环内）',
-    (build.match(/esbuild bin\/dsh-supervisor/g) || []).length === 1,
-    'esbuild 出现 ' + (build.match(/esbuild bin\/dsh-supervisor/g) || []).length + ' 次');
+  // B26 固版后 bundling 调用字面量为 `"esbuild@$ESBUILD_VER" bin/dsh-supervisor`（--version 对账
+  // 调用不带 bin 路径，不计数）。旧正则 `esbuild bin/...` 在固版形态下恒 0 命中→门禁静默失去覆盖面。
+  const esbuildBundles = (s) => (s.match(/"esbuild@\$ESBUILD_VER" bin\/dsh-supervisor/g) || []).length;
+  check('T4-c 构建只做一次（esbuild 不在平台循环内；B26 固版形态）',
+    esbuildBundles(build) === 1, 'esbuild 打包调用出现 ' + esbuildBundles(build) + ' 次');
+  // 反向：循环内复制两份 bundling 调用的已知坏样本必须判 2（证明计数判据有牙，非恒 0 假绿）。
+  check('T4-c 反向：识别「循环内重复构建」坏样本',
+    esbuildBundles('a=npx --yes "esbuild@$ESBUILD_VER" bin/dsh-supervisor --bundle\nb=npx --yes "esbuild@$ESBUILD_VER" bin/dsh-supervisor --bundle') === 2, 'hit=2');
 }
 
 // ── T5 workflow precheck（tag 触发时的省额度闸）──

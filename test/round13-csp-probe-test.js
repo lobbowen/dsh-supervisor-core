@@ -103,6 +103,68 @@ const check = (n, c, x) => {
   check('E 判据对 await x.y(...) 形态不误报',
     !/\bfetch\(/.test('const r = await supervisorApi.registryProbe(url);'), 'no-false-positive');
 
+  // ══ F B8 面板访问密钥闭环（AUDIT-2026-09-19）══
+  // 后端对非回环请求 fail-closed（401），UI 必须：本机存 key（保存成功时落 localStorage、
+  // URL ?access_key= bootstrap）、每个请求（http + getText）带 Bearer、401 呈现为
+  // 「访问密钥缺失或错误」而非假「离线」。行为细节在 vitest（client.test.ts）；
+  // 这里锁**结构闭环**四端齐备，防单端回退。
+  console.log('== F B8 访问密钥闭环（client/polling/设置/状态条四端）==');
+  {
+    const rd = (rel) => fs.readFileSync(path.join(ROOT, ...rel.split('/')), 'utf8');
+    const client = rd('ui/src/services/supervisor/client.ts');
+    const polling = rd('ui/src/services/supervisor/polling.ts');
+    const card = rd('ui/src/features/supervisor/settings/StartupCard.tsx');
+    const app = rd('ui/src/features/supervisor/SupervisorApp.tsx');
+    check('F client 导出 setStoredAccessKey 且读头两处齐备（http+getText）',
+      /export function setStoredAccessKey/.test(client)
+      && (client.match(/readStoredAccessKey\(\)/g) || []).length >= 2, 'ok');
+    check('F client 注入 Authorization: Bearer 且 401 错误带 status',
+      /["']Authorization["']\]?\s*[:=]\s*["']Bearer ["']\s*\+/.test(client)
+      && /err\.status\s*=\s*res\.status/.test(client), 'ok');
+    check('F polling 以 status===401 置 authFailed（不再把鉴权失败吞成离线）',
+      /=== 401/.test(polling) && /authFailed:/.test(polling), 'ok');
+    check('F 保存密钥成功后落本机缓存（StartupCard 按 run 返回值 setStoredAccessKey）',
+      /if \(ok\) setStoredAccessKey\(key\)/.test(card), 'ok');
+    check('F 状态条呈现 authFailed 专属文案（可操作而非假离线）',
+      /authFailed/.test(app) && /访问密钥缺失或错误/.test(app), 'ok');
+    // 反向：判据对「不带 key 的旧形态」不误判为已修复（门禁非空转）
+    const legacy = 'const init = { method, headers: {}, signal }; throw new Error(msg);';
+    check('F 反向：旧无鉴权形态不满足 Bearer 判据',
+      !/["']Authorization["']\]?\s*[:=]\s*["']Bearer ["']\s*\+/.test(legacy), 'no-hit');
+  }
+
+  // ══ G B28/B7-UI 高危动作确认与令牌脱敏（AUDIT-2026-09-19）══
+  // LanPage：window.prompt 令牌录入 → 脱敏 Dialog；远程控制/公网暴露/FRP 总闸三个
+  // 无确认 Switch → 二次确认；frps authToken 服务端已脱敏（仅 authTokenSet），
+  // UI 不得再回填、留空提交必须省略字段（提交 '' 会被后端清除现值）。
+  // OverviewPage：停止主干 DSH 需确认。无组件测试设施 → 锁源码形态。
+  console.log('== G B28/B7-UI 确认对话框与 authToken 脱敏 ==');
+  {
+    const rd = (rel) => fs.readFileSync(path.join(ROOT, ...rel.split('/')), 'utf8');
+    const lan = rd('ui/src/features/supervisor/LanPage.tsx');
+    const overview = rd('ui/src/features/supervisor/OverviewPage.tsx');
+    const client = rd('ui/src/services/supervisor/client.ts');
+    check('G LanPage 不再调用 window.prompt（真实调用形态；注释提及不算）',
+      !/window\.prompt\(\s*['"`]/.test(lan), 'ok');
+    check('G LanPage 高危开启三处确认（setPendingOn 装载 >=3）+ Dialog 渲染',
+      (lan.match(/setPendingOn\(\{/g) || []).length >= 3 && /Dialog open=\{!!pendingOn\}/.test(lan), 'ok');
+    check('G LanPage 令牌录入走 password Dialog',
+      /Dialog open=\{!!tokenFor\}/.test(lan) && /type="password" autoComplete="new-password" placeholder="输入访问令牌"/.test(lan), 'ok');
+    check('G B7-UI 不回填 authToken 且留空省略字段（patch 语义）',
+      !/setFrpToken\(frp\.settings\.authToken/.test(lan) && /if \(t\) p\.authToken = t/.test(lan), 'ok');
+    check('G B7-UI authToken 占位提示按 authTokenSet 切换',
+      /authTokenSet \? "已设置 · 留空不修改，输入即轮换"/.test(lan), 'ok');
+    check('G client frpSettings 的 authToken 为可选字段',
+      /authToken\?: string/.test(client), 'ok');
+    check('G OverviewPage 停止主干 DSH 走确认对话框',
+      /setConfirmStopDsh\(true\)/.test(overview) && /Dialog open=\{confirmStopDsh\}/.test(overview), 'ok');
+    // 反向：判据对旧形态敏感（门禁非空转）
+    check('G 反向：旧 prompt 录入形态会被判据命中',
+      /window\.prompt\(\s*['"`]/.test("const t = window.prompt('为该实例设置远程访问令牌：');"), 'hit');
+    check('G 反向：旧回填形态会被判据命中',
+      /setFrpToken\(frp\.settings\.authToken/.test('setFrpToken(frp.settings.authToken || "");'), 'hit');
+  }
+
   const failed = results.filter((r) => !r);
   console.log('\n结果: ' + (results.length - failed.length) + ' passed, ' + failed.length + ' failed');
   process.exit(failed.length ? 1 : 0);

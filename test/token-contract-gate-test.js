@@ -472,9 +472,12 @@ function ghostKeyHitsIn(rel, code, keys) {
   return hits;
 }
 
-// ── TK-G4：lan-state.json 的 tokens 段只含 DSH 侧令牌（TK-7）──
-// tokens 段是 daemon 用来换 dsh-auth cookie 的 DSH 会话令牌通道；
-// 用户配置类（remoteToken/frpAuth/apiAccessKey）走 instances[] 配置通道，绝不能混入此段。
+// ── TK-G4：lan-state.json 双段判定（TK-7，2026-09-19 裁决后形态）──
+// tokens 段是 daemon 用来换 dsh-auth cookie 的 DSH 会话令牌通道，只含 DSH 侧令牌；
+// instances[] 行是配置存储的只读派生投影（0600，daemon 不回写），字段走**白名单**：
+// 唯一允许携带的用户配置凭证字段是 remoteToken（lan-daemon 门卫校验与 frp 暴露闸必需值）。
+// 新增任何凭证字段想进此文件，必须先改契约（DSH-TOKEN-CONTRACT TK-7 裁决）再过本门禁。
+var LAN_STATE_ROW_KEYS = ['id', 'name', 'port', 'remoteEnabled', 'remoteToken', 'frpEnabled', 'frpRemotePort'];
 function lanTokensProblems(tokens, managedIds, userConfigValues) {
   var problems = [];
   var keys = Object.keys(tokens || {});
@@ -483,6 +486,15 @@ function lanTokensProblems(tokens, managedIds, userConfigValues) {
     if (managedIds.indexOf(k) < 0) problems.push('tokens 键非 DSH 侧目标: ' + k);
     if (userConfigValues.indexOf(String(tokens[k])) >= 0) problems.push('tokens 值来自用户配置: ' + k);
   }
+  return problems;
+}
+function lanInstanceRowProblems(rows) {
+  var problems = [];
+  (rows || []).forEach(function (row) {
+    Object.keys(row || {}).forEach(function (f) {
+      if (LAN_STATE_ROW_KEYS.indexOf(f) < 0) problems.push('instances 行出现白名单外字段: ' + f);
+    });
+  });
   return problems;
 }
 
@@ -604,8 +616,15 @@ console.log('== TK-G4 lan-state.json 的 tokens 段只含 DSH 侧令牌（TK-7�
   check('TK-G4c 真实构造：tokens 键仅为 DSH 侧目标、值来自令牌服务',
     probe.ok && probe.problems.length === 0,
     probe.ok ? (probe.problems.join(' | ') || 'clean') : ('构造失败: ' + probe.error));
+  check('TK-G4d 真实构造：instances[] 行字段 ⊆ 白名单（仅 remoteToken 携带凭证，TK-7 裁决）',
+    probe.ok && probe.rowProblems.length === 0,
+    probe.ok ? (probe.rowProblems.join(' | ') || 'clean') : ('构造失败: ' + probe.error));
   check('TK-G4c 行为判定确实覆盖到 DSH 令牌（防空转）',
     probe.ok && probe.tokens && probe.tokens['main'] === 'DSH_MAIN_TOK' && probe.tokens['inst-a'] === 'DSH_INST_TOK',
+    probe.ok ? JSON.stringify(probe.tokens) : ('构造失败: ' + probe.error));
+  // TK-8 传导：池内无令牌 ≠ 缺席，必须显式 ''（daemon 据此 applyToken 丢弃旧 cookie）
+  check('TK-G4e 空令牌显式写 \'\'（失效信号进 lan-state，AUDIT B-4；旧 if(t) 形态=缺席即断链）',
+    probe.ok && Object.prototype.hasOwnProperty.call(probe.tokens, 'inst-b') && probe.tokens['inst-b'] === '',
     probe.ok ? JSON.stringify(probe.tokens) : ('构造失败: ' + probe.error));
 }
 
@@ -639,6 +658,11 @@ function runLanStateProbe() {
       instances: [{
         id: 'inst-a', name: 'a', port: 28221, remoteEnabled: true,
         remoteToken: USER[1], frpEnabled: true, frpAuth: USER[2], frpRemotePort: 7000,
+      }, {
+        // TK-8 失效信号用例：池内无令牌的实例，tokens 段必须显式写出 ''（旧实现 if (t) 直接缺席，
+        // daemon 持旧 cookie 且 cookieReady 假真）。
+        id: 'inst-b', name: 'b', port: 28222, remoteEnabled: true,
+        remoteToken: '', frpEnabled: false, frpRemotePort: null,
       }],
     };
     sup.dshMainView = function () {
@@ -650,7 +674,8 @@ function runLanStateProbe() {
     sup._syncLanState();
     var doc = JSON.parse(fs.readFileSync(path.join(TMP, 'lan-state.json'), 'utf8'));
     var tokens = (doc && doc.tokens && typeof doc.tokens === 'object') ? doc.tokens : {};
-    return { ok: true, tokens: tokens, problems: lanTokensProblems(tokens, ['main', 'inst-a'], USER) };
+    return { ok: true, tokens: tokens, problems: lanTokensProblems(tokens, ['main', 'inst-a', 'inst-b'], USER),
+      rowProblems: lanInstanceRowProblems(Array.isArray(doc && doc.instances) ? doc.instances : null) };
   } catch (e) {
     return { ok: false, tokens: {}, problems: [], error: (e && e.message) || String(e) };
   } finally {
@@ -747,6 +772,10 @@ console.log('== TK-G8 反向：判据能识别旧形态 ==');
     lanTokensProblems({ 'inst-a': 'USERCFG' }, ['main'], ['USERCFG']).length > 0, 'hit');
   check('TK-G8 G4 判据不误报纯 DSH 令牌',
     lanTokensProblems({ main: 'DSH_MAIN_TOK' }, ['main'], ['USERCFG']).length === 0, 'ok');
+  check('TK-G8 G4 白名单判据识别 instances 行混入未注册凭证字段（TK-7 裁决）',
+    lanInstanceRowProblems([{ id: 'a', port: 1, apiAccessKey: 'X' }]).length > 0, 'hit');
+  check('TK-G8 G4 白名单判据不误报注册过的投影行（remoteToken 合法在场）',
+    lanInstanceRowProblems([{ id: 'a', name: 'a', port: 1, remoteEnabled: true, remoteToken: 'T', frpEnabled: false, frpRemotePort: null }]).length === 0, 'ok');
 }
 
 var failed = results.filter(function (r) { return !r; });

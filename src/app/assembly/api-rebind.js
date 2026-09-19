@@ -15,6 +15,13 @@ function _rebindApiHost(host, createServer) {
       try { if (typeof old.closeAllConnections === 'function') old.closeAllConnections(); } catch {}
     }
     const bind = () => {
+      // E-3（AUDIT-2026-09-19）：慢重试是跨 30s 的自愈链，有退出意图即就地终止
+      //   （否则守卫关停后仍会重开监听器）。首绑不经此闸（hostFirst 装配期 _exitIntended 未必就绪）。
+      if (bind._slowRetry && typeof host._exitIntended === 'function' && host._exitIntended()) {
+        bind._slowRetry = false;
+        host.logger.warn('api rebind 中止：检测到退出意图');
+        return;
+      }
       const server = createServer(host);
       server.on('error', (err) => {
         if (err.code === 'EADDRINUSE') {
@@ -25,6 +32,7 @@ function _rebindApiHost(host, createServer) {
             setTimeout(bind, 300);
           } else {
             bind._tries = 0;
+            bind._slowRetry = true; // 标记进入慢自愈环，下一拍先过退出意图闸
             setTimeout(bind, 30000);
             host.events.append('api_error', { message: 'API 重绑端口持续被占用，30s 后自动重试: ' + err.message });
             host.logger.error('api rebind degraded (30s slow retry): ' + err.message);

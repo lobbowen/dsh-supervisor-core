@@ -17,15 +17,24 @@ function canStopInstance(provider, acc) {
   return true;
 }
 
+// B20（AUDIT-2026-09-19）：延后停止的有界期限。本地反代进程持有真实上游 key，冻结/非期望
+//   实例若被悬挂在途请求无限续命，可活过冻结很久。到期后 force kill（丢在途请求是预期语义）。
+const STOP_PENDING_MAX_MS = 5 * 60 * 1000;
+
 /** 实例停止（幂等）：在途/在用 -> 标记待停（请求结束补刀/reconcile 补停）；force 跳过仲裁。 */
 function stopInstance(provider, inst, force) {
   if (!inst) return;
   const acc = provider.accounts.find((a) => a.keyId === inst.keyId) || null;
   if (acc && !force && !canStopInstance(provider, acc)) {
-    acc._stopPendingUntilIdle = true;
-    return;
+    const now = Date.now();
+    if (!acc._stopPendingSince) acc._stopPendingSince = now;
+    // 有界期限：到期不再延后，落入下方 kill 段（reconcile 每拍都会重入此函数看到期限）。
+    if (now - acc._stopPendingSince <= STOP_PENDING_MAX_MS) {
+      acc._stopPendingUntilIdle = true;
+      return;
+    }
   }
-  if (acc) acc._stopPendingUntilIdle = false;
+  if (acc) { acc._stopPendingUntilIdle = false; acc._stopPendingSince = 0; }
   if (!inst.pid) {
     inst.status = INSTANCE_STATES.COLD;
     inst.healthy = false;
@@ -59,7 +68,7 @@ function retryPendingStop(provider, acc) {
   if ((acc.inflight || 0) > 0) return;
   const inst = provider.instanceOf(acc);
   if (inst && inst.pid) { stopInstance(provider, inst); }
-  else acc._stopPendingUntilIdle = false;
+  else { acc._stopPendingUntilIdle = false; acc._stopPendingSince = 0; }
 }
 
 /** 停掉账号实例（统一经 instanceOf 按 keyId 映射）。 */
