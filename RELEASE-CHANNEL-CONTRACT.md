@@ -81,8 +81,8 @@ npm dist-tag add @dsh-sup/dsh-core-linux-x64@0.1.6-BETA.1 canary
 #   灰度名单内的机器会取它；名单外不受影响
 
 # ── 紧急回退（全员）──
-npm dist-tag add @dsh-sup/dsh-core-linux-x64@0.1.5-BETA.9 rollback
-#   → 全体用户（含灰度）回到该版本；建议同时把 latest 也指回去
+npm dist-tag add @dsh-sup/dsh-core-linux-x64@0.1.5-BETA.10 rollback
+#   → 全体用户（含灰度）回到该版本（示例为 ≥ 下限的已知良好版本）；建议同时把 latest 也指回去
 #   ⚠ RC-7：回退目标必须 ≥ 客户端下限版本且发布未超时效窗口（当前基线见
 #     src/platform/distribution/release.js::ROLLBACK_FLOOR_VERSION），否则被客户端忽略
 

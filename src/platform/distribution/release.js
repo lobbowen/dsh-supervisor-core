@@ -25,7 +25,7 @@ function isOurReleasePackage(pkg) {
  * 下限 = 本次审计时点的已发布安全基线；每次携带安全修复的发布应同步上调
  * （发布纪律，见 RELEASE-CHANNEL-CONTRACT.md RC-7）。
  */
-const ROLLBACK_FLOOR_VERSION = '0.1.5-BETA.9';
+const ROLLBACK_FLOOR_VERSION = '0.1.5-BETA.10';
 
 /** rollback 时效窗口（天）：目标版本的 npm 发布时刻距今超过该天数即忽略。
  *  依据：合法紧急回退的目标几乎总是「刚发布不久」的已知良好版本；
