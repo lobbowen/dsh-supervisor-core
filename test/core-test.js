@@ -292,10 +292,16 @@ async function testRelay() {
   check('派生 Cookie 令牌放行', withCookie.code === 200, String(withCookie.code));
   const rawAsCookie = await req(3988, 'GET', '/', { Cookie: 'dsh_lan_token=secret123' });
   check('令牌条5 门卫令牌原文冒充 cookie → 401', rawAsCookie.code === 401, String(rawAsCookie.code));
-  // C-3（批 4）：同 IP 失败退避——窗口内 ≥10 次 401 后第 11 次起 429（HTTP 与 WS 共享账本）。
-  let last429 = 0;
-  for (let i = 0; i < 10; i++) last429 = (await req(3988, 'GET', '/?token=bad' + i)).code;
-  check('C-3 连续错误令牌后返回 429', last429 === 429, String(last429));
+  // C-3（批 4）：同 IP 失败退避——60s 窗口内累计 ≥10 次失败后、下一次请求即 429（HTTP 与 WS 共享账本）。
+  // CI run 35471888496 取证：本断言旧版**夹具误设**——循环只发 10 次（第 10 次是第 10 个失败、尚未越阈，
+  //   必回 401），且起点账本被上一条 401 污染过。先做一次成功放行清零，再钉「前 10 全 401、第 11 次 429」。
+  const prePass = await req(3988, 'GET', '/', { Cookie: lanCk });
+  check('C-3 前置：成功放行清零失败账本', prePass.code === 200, String(prePass.code));
+  const codes3 = [];
+  for (let i = 0; i < 11; i++) codes3.push((await req(3988, 'GET', '/?token=bad' + i)).code);
+  check('C-3 前 10 次失败各回 401（阈值=累计 10，未越阈不放行）',
+    codes3.slice(0, 10).every((c) => c === 401), codes3.join(','));
+  check('C-3 连续第 11 次请求返回 429', codes3[10] === 429, codes3.join(','));
   const locked = await req(3988, 'GET', '/?token=secret123');
   check('C-3 锁定期即使正确令牌也 429（Retry-After 存在）',
     locked.code === 429 && !!locked.headers['retry-after'], locked.code + ' ' + JSON.stringify(locked.headers['retry-after']));
