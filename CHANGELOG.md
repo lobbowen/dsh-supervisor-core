@@ -6,6 +6,11 @@
 
 ## [未发布]
 
+## [0.1.5-BETA.10]（2026-09-19）
+
+本版为 **AUDIT-2026-09-19 P0 清零**安全发布（第 1+2 批）；无用户可见 API/事件契约变更，
+内核运行时依赖仍为 0。同时是 A3-a 落地后**首个经 CI token-scoped 发布步 + provenance 真发布**的版本。
+
 ### 安全（AUDIT-2026-09-19 第 1 批：P0 A1/A2/A4）
 
 - **A1 持久化「读失败→默认值覆盖」三处收口（fail-closed）**：
@@ -31,8 +36,8 @@
   同时 build job 授 `id-token: write`，`publish-core.sh` 真发布加 `--provenance`
   （OIDC 供应链溯源；逃生阀 `DSH_NPM_PROVENANCE=0`）。
 - **A3-b 客户端 rollback 防降级下限（契约新增 RC-7）**：`pickReleaseVersion` 不再无条件
-  服从 `rollback` tag —— 目标版本须 ≥ 内建下限 `ROLLBACK_FLOOR_VERSION`（当前
-  `0.1.5-BETA.9`），且其 npm 发布时刻距今 ≤ `ROLLBACK_MAX_AGE_DAYS`（30 天；元数据无
+  服从 `rollback` tag —— 目标版本须 ≥ 内建下限 `ROLLBACK_FLOOR_VERSION`（本版按发布纪律
+  上调至 `0.1.5-BETA.10`：BETA.9 及更早不携带本批 P0 修复，不得再作为回退目标），且其 npm 发布时刻距今 ≤ `ROLLBACK_MAX_AGE_DAYS`（30 天；元数据无
   `time` 字段时时效核验跳过、下限仍守），不满足即视同无 rollback 走正常选版链。
   封堵「令牌失窃 → 一条 `dist-tag add <pkg>@<任意旧版> rollback` 全员定向降级到漏洞版本」。
   下限随携带安全修复的发布同步上调（发布纪律，见 RELEASE-CHANNEL-CONTRACT.md RC-7）。
