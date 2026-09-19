@@ -19,8 +19,15 @@ const policies = require('./policies');
 const PKG_NAME_RE = /^(@[a-zA-Z0-9._-]+\/)?[a-zA-Z0-9._-]+$/;
 
 /** argv 项的禁用字符集（B11）：空白与全部 shell 元字符/引号/控制符。命中即拒。
- *  与 commandTemplate **替换前**的形态兼容（模板自带 {pkg}/{version}/{prefix} 花括号）。 */
+ *  与 commandTemplate **替换前**的形态兼容（模板自带 {pkg}/{version}/{prefix} 花括号）。
+ *  ⚠ 反斜杠例外见 WIN_DRIVE_ABS_RE：win32 盘符路径（D:\\a\\...\\fake-npm.js）是合法 argv，
+ *    CI 实测旧版把 `\\` 一刀切禁用 → windows 升级链确定性判红（win32-only，linux/mac 全绿）。 */
 const BAD_ARGV_CHAR_RE = /[\s;|&<>`'"$(){}\\*?~#]/;
+
+/** 盘符绝对路径整体形态（B11 windows 例外）：仅当该项**完整匹配**此形态时豁免禁用字符集——
+ *  此时 `\\` 是路径分隔符而非转义/元字符；其余禁用字符（`;`、引号、`$` 等）仍被字符类拦截，
+ *  空白也仍禁（盘符路径含空格须走 commandTemplate 拆项，不得借豁免夹带）。 */
+const WIN_DRIVE_ABS_RE = /^[A-Za-z]:\\[^;|&<>`'"$*?~#\s]*$/;
 
 /** npm registry 最新版（用选中镜像；失败回退候选；null 表示不可达）。 */
 async function fetchNpmLatest(state, pkg, opts) {
@@ -119,7 +126,8 @@ function runNpmInstall(opts) {
       return Promise.resolve({ ok: false, error: 'runNpmInstall: 未找到可执行的 npm（commandTemplate[0]="npm" 解析失败）', output: [] });
     }
     for (const a of argv) {
-      if (BAD_ARGV_CHAR_RE.test(String(a))) {
+      // WIN_DRIVE_ABS_RE：win32 盘符绝对路径整体豁免（`\\` 为路径分隔符）；其余项零豁免。
+      if (BAD_ARGV_CHAR_RE.test(String(a)) && !WIN_DRIVE_ABS_RE.test(String(a))) {
         return Promise.resolve({ ok: false, error: 'runNpmInstall: commandTemplate 替换后含禁用字符（空白/shell 元字符）: ' + String(a).slice(0, 80), output: [] });
       }
     }
@@ -224,6 +232,7 @@ async function waitPortHealthy(opts) {
 module.exports = {
   PKG_NAME_RE,
   BAD_ARGV_CHAR_RE,
+  WIN_DRIVE_ABS_RE,
   fetchNpmLatest,
   fetchGithubLatest,
   fetchLatestVersion,

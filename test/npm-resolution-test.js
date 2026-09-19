@@ -163,6 +163,20 @@ check("C-e 非 Windows 返回 'npx'", npxBin({ platform: 'linux' }) === 'npx', n
   check('C-f 反向：白名单不拦合法包名/semver（含 prerelease 与 scope）',
     inst.PKG_NAME_RE.test('@deepseek-ai/dsh') && inst.PKG_NAME_RE.test('dsh')
       && require(path.join(ROOT, 'src', 'shared', 'version.js')).VERSION_RE.test('0.1.5-BETA.10'), 'ok');
+
+  // B11 windows 例外（CI run17 实测回归）：BAD_ARGV_CHAR_RE 把 `\\` 一刀切禁用，
+  // 误杀 win32 盘符绝对路径（D:\a\...\test\fake-npm.js）→ windows 升级链确定性判红。
+  // 纯静态判据 + 组合判据仿真（不 spawn）。
+  const gate = (s) => inst.BAD_ARGV_CHAR_RE.test(String(s)) && !inst.WIN_DRIVE_ABS_RE.test(String(s));
+  check('C-f 反向：win32 盘符绝对路径不再被误杀（BAD 命中但豁免放行）',
+    inst.BAD_ARGV_CHAR_RE.test('D:\\a\\dsh\\test\\fake-npm.js') === true
+      && inst.WIN_DRIVE_ABS_RE.test('D:\\a\\dsh\\test\\fake-npm.js') === true
+      && gate('D:\\a\\dsh\\test\\fake-npm.js') === false, '已豁免');
+  check('C-f 反向：盘符路径夹带元字符/空白/相对形态仍拒（豁免面不扩大）',
+    gate('D:\\a\\x;y') && gate('D:\\a\\x y') && gate('D:\\a\\x$(pwn)') && gate('D:\\a\\x`id`')
+      && gate('D:/a/x/y') === false && gate('C:rel\\path') === false && gate('D:\\') === true, '已收紧');
+  check('C-f 反向：linux/mac 路径不受影响（不含 `\\` 本就不触发禁用字符集）',
+    gate('/tmp/fake.js') === false && gate('/tmp/a b') === true, 'ok');
 }
 
 // ── 反向：解析结果确实可执行（本机验证，非 Windows 分支）──

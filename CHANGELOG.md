@@ -14,7 +14,8 @@
   FRP `authToken` 不再明文回显（只报 `authTokenSet`）；UI 携带访问密钥并本机缓存（401 可自助恢复）；
   TK-7 契约改述（remoteToken = instances[] 行投影，门禁同步）。
 - **平台层（B-9…B-14）**：PowerShell 通知改单引号串语义（堵 `$(...)` 插值执行）；`hasTool` 改解析判存在
-  不 spawn；npm 安装入参白名单（包名/semver/argv 禁用字符）+ `--ignore-scripts` + registry 纯 http(s) origin；
+  不 spawn；npm 安装入参白名单（包名/semver/argv 禁用字符，win32 盘符绝对路径整体豁免——
+  CI run17 实测反斜杠一刀切禁用会误杀 windows 升级链）+ `--ignore-scripts` + registry 纯 http(s) origin；
   systemd 单元名 `UNIT_NAME_RE` fail-closed；`killTree` Windows 补 `/F`、POSIX 外来 pid 不发组信号；
   端口分配跨进程锁 + 被抢即撤销复检 + migrate 损坏不碰文件/先清源后写目标。
 - **生命周期（B-15…B-22 + E-3）**：guardian 开关下沉 gate 至 BACKOFF/FAILED（守「停就停」红线）；
