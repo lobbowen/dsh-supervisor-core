@@ -101,14 +101,18 @@ console.log('== ① frp 令牌闸两条路径同规 ==');
   const bad = actions.patchDshMain({ frpEnabled: true, frpRemotePort: 7001 });
   check('① 行为：无令牌开 frp → 被拒（ok:false）', bad && bad.ok === false, JSON.stringify(bad));
   check('① 行为：被拒时**未落盘**（不产生半改状态）', written.length === 0, String(written.length));
-  const badPort = actions.patchDshMain({ remoteToken: 'tok', frpEnabled: true, frpRemotePort: 99999 });
+  const badPort = actions.patchDshMain({ remoteToken: 'remote-tok-0123', frpEnabled: true, frpRemotePort: 99999 });
   check('① 行为：令牌已设但端口非法 → 被拒', badPort && badPort.ok === false, JSON.stringify(badPort));
-  const good = actions.patchDshMain({ remoteToken: 'tok', frpEnabled: true, frpRemotePort: 7001 });
+  const good = actions.patchDshMain({ remoteToken: 'remote-tok-0123', frpEnabled: true, frpRemotePort: 7001 });
   check('① 行为：令牌+合法端口 → 通过', good && good.ok === true, JSON.stringify(good));
   check('① 行为：通过时**确实落盘一次**', written.length === 1, String(written.length));
   // 关闭 frp 不应被闸拦（关是安全方向）
   const off = actions.patchDshMain({ frpEnabled: false });
   check('① 行为：关闭 frp 不被闸拦', off && off.ok === true, JSON.stringify(off));
+  // C-3（批 4）：弱令牌在**写入口**即拒（与暴露闸同规；此前仅 '非空白' 一票闸）
+  const weak = actions.patchDshMain({ remoteToken: 'tok', frpEnabled: true, frpRemotePort: 7001 });
+  check('C-3 行为：4 位令牌 patch main → 拒且未再落盘（written 仍 1）',
+    weak && weak.ok === false && written.length === 1, JSON.stringify({ weak, written: written.length }));
 }
 
 // ── ② relay 门卫令牌必须可热换 ──
@@ -140,18 +144,25 @@ console.log('== ② relay 门卫令牌热换 ==');
   // 行为：真实 createOps 断言「只改令牌」一条链走通
   const { createOps } = require(path.join(ROOT, 'src', 'domains', 'instance', 'ops.js'));
   const seen = [];
-  const it2 = { id: 'i1', name: 'n', port: 29051, guardian: true, remoteEnabled: true, remoteToken: 'A' };
+  const it2 = { id: 'i1', name: 'n', port: 29051, guardian: true, remoteEnabled: true, remoteToken: 'tok-a-01234567' };
   const ops2 = createOps({
     store: { instances: [it2], save() {} },
     logger: { warn() {} },
     events: { append(t) { seen.push(t); } },
     hooks: { onRemoteChange(i) { seen.push('sync:' + i.remoteToken); } },
   });
-  ops2.updateInstance('i1', { remoteToken: 'B' });
-  check('② 行为：只换令牌（开关不变）即触发 onRemoteChange 且钩子读得到新值', seen.includes('sync:B'), seen.join(','));
+  // C-3（批 4）：弱令牌写入口即拒，且**不改任何字段**（半改状态防线）
+  {
+    const before = it2.guardian;
+    const r = ops2.updateInstance('i1', { guardian: false, remoteToken: 'B' });
+    check('C-3 行为：updateInstance 拒 1 位令牌（ok:false）且同补丁其它字段未被改',
+      r.ok === false && it2.remoteToken === 'tok-a-01234567' && it2.guardian === before, JSON.stringify(r));
+  }
+  ops2.updateInstance('i1', { remoteToken: 'tok-b-01234567' });
+  check('② 行为：只换令牌（开关不变）即触发 onRemoteChange 且钩子读得到新值', seen.includes('sync:tok-b-01234567'), seen.join(','));
   check('② 行为：变更留痕 inst_remote_token_changed 事件', seen.includes('inst_remote_token_changed'), seen.join(','));
   seen.length = 0;
-  ops2.updateInstance('i1', { remoteToken: 'B' });
+  ops2.updateInstance('i1', { remoteToken: 'tok-b-01234567' });
   check('② 行为：同值幂等写不再触发钩子/事件（防空转刷屏）',
     !seen.some((x) => x === 'inst_remote_token_changed' || String(x).startsWith('sync:')), seen.join(','));
   ops2.updateInstance('i1', { remoteToken: '' });

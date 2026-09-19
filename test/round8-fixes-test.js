@@ -331,6 +331,39 @@ const readDomain = (dir) => fs.readdirSync(path.join(ROOT, dir)).filter((f) => f
   fs.rmSync(tmpR, { recursive: true, force: true });
 }
 
+// ── J-k（批 4 / C-8）：镜像源写入口 SSRF 闸 —— 私网/元数据字面量不得落盘 ──
+//   旧 setRegistryConfig 只过 isValidOrigin：http://127.0.0.1:4873 之类合法落盘，
+//   并反向豁免探测闸①层（已配置源按 hostname 放行）。现在写盘前过 registryOriginViolation。
+{
+  const { DistributionManager } = require(path.join(ROOT, 'src', 'platform', 'distribution', 'index.js'));
+  const tmpK = fs.mkdtempSync(path.join(os.tmpdir(), 'regk-'));
+  const mkDm = () => {
+    const dm = Object.create(DistributionManager.prototype);
+    dm.registryFile = path.join(tmpK, 'no-such', 'registry.json'); // 不存在：load/save 走无操作分支
+    dm.logger = { warn() {}, info() {}, debug() {} };
+    dm.registryConfig = { mode: 'auto', origins: ['https://registry.npmjs.org'], manualOrigin: 'https://registry.npmjs.org' };
+    return dm;
+  };
+  // manual 切换 + 私网手动源：同步段必须**不改配置**（早退分支，不触网、不落盘）
+  {
+    const dm = mkDm();
+    dm.setRegistryConfig({ mode: 'manual', manualOrigin: 'http://169.254.169.254' });
+    check('C-8 manual+元数据地址 → registryConfig.mode 未被改（同步拒）',
+      dm.registryConfig.mode === 'auto', JSON.stringify({ mode: dm.registryConfig.mode }));
+    check('C-8 manual+回环 dev 镜像 → manualOrigin 未被落盘（同步拒）',
+      dm.registryConfig.manualOrigin === 'https://registry.npmjs.org', JSON.stringify({ mo: dm.registryConfig.manualOrigin }));
+  }
+  // 候选列表：私网项被逐条剔除（同步段），公网项保留
+  {
+    const dm = mkDm();
+    dm.setRegistryConfig({ origins: ['https://pub.example', 'http://127.0.0.1:4873', 'http://10.0.0.7:4873'] });
+    check('C-8 候选中回环/私网字面量被剔除',
+      JSON.stringify(dm.registryConfig.origins) === JSON.stringify(['https://pub.example']),
+      JSON.stringify(dm.registryConfig.origins));
+  }
+  fs.rmSync(tmpK, { recursive: true, force: true });
+}
+
 const failed = results.filter((r) => !r);
 console.log(String.fromCharCode(10) + '结果: ' + (results.length - failed.length) + ' passed, ' + failed.length + ' failed');
 process.exit(failed.length ? 1 : 0);

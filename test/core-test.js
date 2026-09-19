@@ -264,18 +264,34 @@ async function testRelay() {
 
   // 令牌门卫
   const tfile = path.join(TMP, 'token-target.js');
-  const target2 = http.createServer((q, s) => { s.writeHead(200); s.end('ok-token'); });
+  let seenPath2 = '';
+  const target2 = http.createServer((q, s) => { seenPath2 = q.url; s.writeHead(200); s.end('ok-token'); });
   await new Promise((r) => target2.listen(3987, '127.0.0.1', r));
   const relay2 = createRelay('127.0.0.1', 3987, { token: 'secret123' });
   await new Promise((r) => relay2.listen(3988, '0.0.0.0', r));
   const noToken = await req(3988, 'GET', '/');
   check('未带令牌返回 401', noToken.code === 401, String(noToken.code));
+  // C-4（批 4）：401 凭证响应不得被任何缓存保存
+  check('C-4 401 响应带 Cache-Control: no-store',
+    String(noToken.headers['cache-control'] || '') === 'no-store', JSON.stringify(noToken.headers['cache-control']));
   const withToken = await req(3988, 'GET', '/?token=secret123');
   check('URL 令牌放行并种 Cookie', withToken.code === 302 && /dsh_lan_token=/.test(withToken.headers['set-cookie'] ? withToken.headers['set-cookie'].join(';') : ''), JSON.stringify(withToken.headers));
+  check('C-4 302 种 Cookie 响应带 Cache-Control: no-store',
+    String(withToken.headers['cache-control'] || '') === 'no-store', JSON.stringify(withToken.headers['cache-control']));
+  // C-4（批 4）：门卫令牌不得随 path 泄进上游（DSH 访问日志）；其余查询参数原样保留。
+  await req(3988, 'GET', '/api/x?token=secret123&keep=1', { Cookie: 'dsh_lan_token=secret123' });
+  check('C-4 上游收到的路径已剥离 token 参数', seenPath2 === '/api/x?keep=1', seenPath2);
   const badToken = await req(3988, 'GET', '/?token=wrong');
   check('错误令牌拒绝', badToken.code === 401, String(badToken.code));
   const withCookie = await req(3988, 'GET', '/', { Cookie: 'dsh_lan_token=secret123' });
   check('Cookie 令牌放行', withCookie.code === 200, String(withCookie.code));
+  // C-3（批 4）：同 IP 失败退避——窗口内 ≥10 次 401 后第 11 次起 429（HTTP 与 WS 共享账本）。
+  let last429 = 0;
+  for (let i = 0; i < 10; i++) last429 = (await req(3988, 'GET', '/?token=bad' + i)).code;
+  check('C-3 连续错误令牌后返回 429', last429 === 429, String(last429));
+  const locked = await req(3988, 'GET', '/?token=secret123');
+  check('C-3 锁定期即使正确令牌也 429（Retry-After 存在）',
+    locked.code === 429 && !!locked.headers['retry-after'], locked.code + ' ' + JSON.stringify(locked.headers['retry-after']));
   await new Promise((r) => relay2.close(r));
   await new Promise((r) => target2.close(r));
 }

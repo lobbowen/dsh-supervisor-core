@@ -6,9 +6,31 @@
 // 使 DSH 信任围栏视为本机流量，访问控制（令牌/来源闸）留在反代层；session.js 换 dsh-auth-* 注入 HTTP/WS。
 
 const http = require('node:http');
-const { isTrustedSource, tokenGateDecision, POLYFILL_SCRIPT } = require('./core');
+const { isTrustedSource, tokenGateDecision, backoffGate, upstreamPath, POLYFILL_SCRIPT } = require('./core');
 const { createSession } = require('./session');
 const { createTunnelHandler } = require('./tunnel');
+
+/** 门卫令牌失败退避账本（C-3，批 4）：按来源 IP 计失败，窗口内超阈值即拒（429）。
+ *  仅内存、进程重启即清空；判定纯函数在 core.backoffGate，本层只管计时与账本。 */
+function createGateLedger() {
+  const map = new Map();
+  return {
+    waitMsFor(ip) {
+      const e = map.get(ip);
+      if (!e) return null;
+      const w = backoffGate({ failCount: e.n, firstAt: e.first, now: Date.now() });
+      if (w.waitMs === null && Date.now() - e.first >= 60000 && e.n >= 10) map.delete(ip);
+      return w.waitMs;
+    },
+    recordFailure(ip) {
+      const now = Date.now();
+      const e = map.get(ip);
+      if (!e || now - e.first >= 60000) map.set(ip, { n: 1, first: now });
+      else e.n += 1;
+    },
+    clear(ip) { map.delete(ip); },
+  };
+}
 
 /** 流式转发 + 断线保持。
  *
@@ -115,25 +137,38 @@ function createRelay(targetHost, targetPort, opts) {
     dshToken: o.dshToken,
   });
 
+  const gateLedger = createGateLedger();
+
   const server = http.createServer((req, res) => {
     // 来源闸：公网来源一律拒绝 —— 与 config.js 声称的「RFC1918 白名单」一致。
     if (!isTrustedSource(req)) {
       res.writeHead(403, { 'Content-Type': 'text/plain; charset=utf-8' });
       return res.end('仅允许局域网（RFC1918）或本机访问');
     }
+    const peerIp = (req.socket && req.socket.remoteAddress) || '?';
     const gate = tokenGateDecision(req, token);
     if (!gate.ok) {
+      // C-3（批 4）：凭据失败退避——同 IP 60s 窗口内 ≥10 次失败即 429（Retry-After），
+      //   封堵门卫令牌的公网侧无限速爆破（frp 通道把公网访客呈现为回环/私网来源）。
+      const waitMs = gateLedger.waitMsFor(peerIp);
+      if (waitMs !== null) {
+        res.writeHead(429, { 'Content-Type': 'text/plain; charset=utf-8', 'Cache-Control': 'no-store', 'Retry-After': String(Math.max(1, Math.ceil(waitMs / 1000))) });
+        return res.end('尝试过于频繁，请稍后再试');
+      }
       if (gate.redirect !== undefined) {
-        // 首次凭 URL 令牌进入：种 HttpOnly Cookie 后跳到干净路径。
-        res.writeHead(302, { Location: gate.redirect, 'Set-Cookie': gate.cookie });
+        // 首次凭 URL 令牌进入：种 HttpOnly Cookie 后跳到干净路径（C-4：no-store 防凭证响应被缓存）。
+        res.writeHead(302, { Location: gate.redirect, 'Set-Cookie': gate.cookie, 'Cache-Control': 'no-store' });
         return res.end();
       }
-      res.writeHead(401, { 'Content-Type': 'text/plain; charset=utf-8' });
+      gateLedger.recordFailure(peerIp);
+      res.writeHead(401, { 'Content-Type': 'text/plain; charset=utf-8', 'Cache-Control': 'no-store' });
       return res.end('需要访问令牌：在 URL 后附加 ?token=<remoteToken>（只需一次，之后凭 Cookie 访问）');
     }
+    gateLedger.clear(peerIp);
+    const fwdPath = upstreamPath(req.url);
     session.mergedCookieHeaders(req.headers).then((cookie) => {
       const upstream = http.request(
-        { hostname: targetHost, port: targetPort, path: req.url, method: req.method, headers: buildForwardHeaders(req, authority, cookie) },
+        { hostname: targetHost, port: targetPort, path: fwdPath, method: req.method, headers: buildForwardHeaders(req, authority, cookie) },
         (ur) => handleUpstream(ur, res, req.url, (status) => {
           // 会话自愈：上游 401/403 时清 cookie，下次请求重换。
           if (status === 401 || status === 403) session.invalidate(status);
@@ -147,7 +182,7 @@ function createRelay(targetHost, targetPort, opts) {
     }).catch(() => {
       // 换取 cookie 意外异常：仍按客户端原 cookie 转发（旧版 DSH 可用），绝不吞请求。
       const upstream = http.request(
-        { hostname: targetHost, port: targetPort, path: req.url, method: req.method, headers: buildForwardHeaders(req, authority, req.headers.cookie) },
+        { hostname: targetHost, port: targetPort, path: fwdPath, method: req.method, headers: buildForwardHeaders(req, authority, req.headers.cookie) },
         (ur) => handleUpstream(ur, res, req.url, null, logger)
       );
       upstream.on('error', () => {
@@ -164,6 +199,8 @@ function createRelay(targetHost, targetPort, opts) {
     targetHost,
     targetPort,
     getToken: () => token,
+    gateWaitMs: (ip) => gateLedger.waitMsFor(ip),
+    onGateFailure: (ip) => gateLedger.recordFailure(ip),
   }));
 
   // 初始令牌：池中已有即换取（尽早拿到 cookie，避免首个请求等待）。

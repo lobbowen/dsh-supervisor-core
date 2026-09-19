@@ -46,6 +46,19 @@ function cookieByName(headerValue, name) {
   return null;
 }
 
+/** 转发给上游的请求路径（C-4，批 4）：门卫令牌 ?token= 只服务于 relay 自己的准入，
+ *  对 DSH 上游是纯噪声，且门卫令牌会随 path 落进 DSH 访问日志/Referer 链——转发前剥离。
+ *  （lan cookie 302 之后本已无 token；此处兜住「带 token 直达非根路径」与 WS 升级形态。
+ *   DSH 自身的启动令牌不经此路：/open bootstrap 走回环直连。HTTP 与 tunnel 共用本实现，
+ *   放纯层也避免 proxy↔tunnel 互 require 成环。） */
+function upstreamPath(rawUrl) {
+  try {
+    const u = new URL(rawUrl, 'http://127.0.0.1');
+    if (u.searchParams.has('token')) u.searchParams.delete('token');
+    return u.pathname + (u.searchParams.toString() ? '?' + u.searchParams.toString() : '');
+  } catch { return rawUrl || '/'; }
+}
+
 /** 请求是否携带有效令牌（URL ?token= 或 Cookie）。纯判定，无 IO。 */
 function hasValidToken(req, token) {
   if (!token) return true;
@@ -159,6 +172,36 @@ function validateFrpServerSettings(settings) {
   return { ok: true };
 }
 
+/** 远程访问令牌强度闸（C-3，批 4）：与 apiAccessKey 的「至少 8 位」门（app/settings/access.js）
+ *  同规。旧闸只判「非空白」——remoteToken 守护的是经 frp 暴露到公网的 DSH 特权面
+ *  （relay 空 token 恒放行 + 回环呈现），1~2 位令牌等同无令牌，可被公网暴力枚举。
+ *  纯函数：只回判定，落点（写盘前 / 暴露闸）由调用方负责。
+ *  @param {string} token  @returns {{ok:boolean, reason:string}} reason ∈ ''（合格）| 'empty' | 'short' */
+function remoteTokenStrength(token) {
+  const t = String(token == null ? '' : token).trim();
+  if (!t) return { ok: false, reason: 'empty' };
+  if (t.length < 8) return { ok: false, reason: 'short' };
+  return { ok: true, reason: '' };
+}
+
+/** 凭据失败退避判定（C-3，批 4）：纯函数，计时与账本由调用方（proxy 层内存 Map）持有。
+ *  门卫令牌校验（tokenGateDecision/hasValidToken）此前对失败完全无状态，公网侧可无限速爆破。
+ *  @param {{failCount:number, firstAt:number, now:number}} f  now=当前时刻(ms)
+ *  @param {{max:number, windowMs:number, lockMs:number}} [cfg]
+ *  @returns {{waitMs:number|null}} null=可立即尝试；否则须等待的毫秒数（可为正数=锁未到期） */
+function backoffGate(f, cfg) {
+  const c = cfg || {};
+  const max = c.max || 10;
+  const windowMs = c.windowMs || 60000;
+  const lockMs = c.lockMs || 60000;
+  const failCount = Number(f && f.failCount) || 0;
+  const firstAt = Number(f && f.firstAt) || 0;
+  const now = Number(f && f.now) || 0;
+  if (!failCount || !firstAt || now - firstAt >= windowMs) return { waitMs: null };
+  if (failCount < max) return { waitMs: null };
+  return { waitMs: Math.max(0, lockMs - (now - firstAt)) };
+}
+
 /** 公网暴露（frp）安全闸（纯）：relay 空 token 恒放行 + 回环呈现，公网可零认证触达特权 API。
  *  开启前强制要求已设访问令牌，并做端口合法性与实例间占用校验。
  *  单一事实源：app 侧 patchDshMain 与 relay 侧 setFrp 必须调用本函数，不得各写一份。
@@ -171,8 +214,12 @@ function validateFrpServerSettings(settings) {
  */
 function validateFrpExposure({ enabled, remoteToken, frpRemotePort, peers, selfId }) {
   if (!enabled) return { ok: true };
-  if (!String(remoteToken || '').trim()) {
-    return { ok: false, error: '开启公网暴露前请先为该实例设置远程访问令牌（remoteToken），否则 DSH 特权接口将对公网完全开放' };
+  const strength = remoteTokenStrength(remoteToken);
+  if (!strength.ok) {
+    const error = strength.reason === 'short'
+      ? '远程访问令牌（remoteToken）至少 8 位：公网暴露可被暴力枚举，过短令牌等同无令牌'
+      : '开启公网暴露前请先为该实例设置远程访问令牌（remoteToken），否则 DSH 特权接口将对公网完全开放';
+    return { ok: false, error };
   }
   const port = parseInt(frpRemotePort, 10);
   if (!Number.isInteger(port) || port <= 0 || port > 65535) return { ok: false, error: '无效的公网端口' };
@@ -184,8 +231,11 @@ function validateFrpExposure({ enabled, remoteToken, frpRemotePort, peers, selfI
 module.exports = {
   isTrustedSource,
   cookieByName,
+  upstreamPath,
   hasValidToken,
   tokenGateDecision,
+  remoteTokenStrength,
+  backoffGate,
   POLYFILL_SCRIPT,
   buildFrpcToml,
   normalizeFrpSettings,

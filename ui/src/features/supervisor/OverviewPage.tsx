@@ -403,7 +403,7 @@ const EVENT_TONE: Record<string, "ok" | "err" | "warn" | "boot" | "off"> = {
   frpc_installed: "ok", frpc_started: "ok", plugin_install_done: "ok",
   native_installed: "ok", inst_upgraded: "ok", plugin_update_done: "ok",
   account_frozen: "err", account_banned: "err", dsh_exited: "err", unhealthy: "err",
-  spawn_failed: "err", spawn_error: "err", upgrade_failed: "err", api_error: "err",
+  spawn_failed: "err", spawn_error: "err", upgrade_failed: "err", api_error: "err", api_offline: "err",
   proxy_instance_failed: "err", inst_failed: "err", inst_start_failed: "err",
   native_install_failed: "err", native_uninstall_failed: "err",
   plugin_install_job_failed: "err", plugin_update_job_failed: "err",

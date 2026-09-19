@@ -24,7 +24,13 @@ function _rebindApiHost(host, createServer) {
       }
       const server = createServer(host);
       server.on('error', (err) => {
-        if (err.code === 'EADDRINUSE') {
+        // C-9 / B-22c（批 4）：监听错误按「是否可由重试消解」分类，绝不停在静默分支——
+        // API 静默永久下线比端口冲突更糟（面板失联且无事件可查）。
+        //   · EADDRINUSE / EADDRNOTAVAIL：瞬时（旧连接未散 / 网卡地址未就绪）→ 同一快慢重试环；
+        //   · EACCES：绑定特权端口(<1024)等配置性错误，重试不可消解 → 一次性 api_offline 事件，
+        //     不空转重试（host.api 保持 null，/status 与事件流如实呈现下线）。
+        const transient = err && (err.code === 'EADDRINUSE' || err.code === 'EADDRNOTAVAIL');
+        if (transient) {
           // 端口仍被旧连接占用：短暂等待后重试；10 次后降级为 30s 慢重试（持续自愈，绝不永久下线）
           const tries = bind._tries || 0;
           if (tries < 10) {
@@ -34,13 +40,21 @@ function _rebindApiHost(host, createServer) {
             bind._tries = 0;
             bind._slowRetry = true; // 标记进入慢自愈环，下一拍先过退出意图闸
             setTimeout(bind, 30000);
-            host.events.append('api_error', { message: 'API 重绑端口持续被占用，30s 后自动重试: ' + err.message });
+            host.events.append('api_error', { message: 'API 重绑端口持续被占用/不可用，30s 后自动重试: ' + err.message });
             host.logger.error('api rebind degraded (30s slow retry): ' + err.message);
           }
           return;
         }
-        host.events.append('api_error', { message: err.message });
-        host.logger.error('api error: ' + err.message);
+        if (err && err.code === 'EACCES') {
+          host.events.append('api_offline', { message: 'API 绑定被拒（权限不足，不重试）: ' + err.message, code: err.code });
+          host.logger.error('api offline (EACCES, not retryable): ' + err.message);
+          return;
+        }
+        // 未知监听错误：保守按瞬时处理进入自愈环（含退出意图闸），并留 api_error 痕迹。
+        host.events.append('api_error', { message: '未知监听错误，30s 后自动重试: ' + err.message });
+        host.logger.error('api error (retry in 30s): ' + err.message);
+        bind._slowRetry = true;
+        setTimeout(bind, 30000);
       });
       server.listen(host.config.apiPort, host.config.apiHost, () => {
         bind._tries = 0;

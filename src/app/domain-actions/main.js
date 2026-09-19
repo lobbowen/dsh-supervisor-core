@@ -9,7 +9,7 @@
 // 不直读实例域的内部数组（消除跨域穿透）。
 // 无 Node 内建依赖：仅用 relay/core 的纯判定 + 注入的 deps。
 
-const { validateFrpExposure } = require('../../domains/relay/core');
+const { validateFrpExposure, remoteTokenStrength } = require('../../domains/relay/core');
 
 /** patchDshMain 工厂。
  *  @param deps { getState, getViews, getDaemons, getEvents, getLogger } 全为惰性取值。 */
@@ -24,6 +24,12 @@ function createMainActions(deps) {
       const views = g.getViews();
       const meta = state.readMainMeta();
       const prev = { ...meta };
+      // C-3（批 4）：remoteToken 写入口强度闸（与实例域 ops.updateInstance 同规）——
+      //   非空但过短的令牌拒绝落盘；空串=清除（放行，暴露闸另判）。校验前置于任何变更。
+      if (p.remoteToken !== undefined) {
+        const tk = String(p.remoteToken || '');
+        if (tk && !remoteTokenStrength(tk).ok) return { ok: false, error: '远程访问令牌（remoteToken）至少 8 位' };
+      }
       if (p.guardian !== undefined) meta.guardian = !!p.guardian;
       if (p.remoteEnabled !== undefined) meta.remoteEnabled = !!p.remoteEnabled;
       if (p.remoteToken !== undefined) meta.remoteToken = String(p.remoteToken || '');

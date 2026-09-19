@@ -88,7 +88,7 @@ export const EVENT_LABELS: Record<string, string> = {
   sigterm_sent: "SIGTERM", sigkill_sent: "SIGKILL", stop: "停止", unhealthy: "不健康",
   start_timeout: "启动超时", crash_loop_entered: "进入退避",
   manual_restart_requested: "手动重启", systemd_start_failed: "systemd 启动失败",
-  api_listening: "API 监听", api_error: "API 错误", port_occupied_unhealthy: "端口被占",
+  api_listening: "API 监听", api_error: "API 错误", api_offline: "API 下线", port_occupied_unhealthy: "端口被占",
   version_checked: "版本检查", version_check_failed: "检查失败",
   upgrade_started: "开始升级", upgrade_stopping_dsh: "停止以升级", upgrade_fresh_install: "全新安装",
   upgrade_installed: "安装完成", upgrade_skipped: "无需升级", upgrade_done: "升级完成",

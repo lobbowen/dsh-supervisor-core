@@ -114,6 +114,51 @@ const legacyWatchdog = "ex.runDetail('schtasks', ['/Create', '/TN', 'DSH-Supervi
 check('D-8 反向：旧形态被识别', kernelCreatesWatchdog(legacyWatchdog), 'ok');
 check('D-8 反向：当前实现不被误判', !kernelCreatesWatchdog(auto), 'ok');
 
+// ── D-9（批 4 / C-9=B-22c）：API 重绑的监听错误分支绝不静默下线 ──
+{
+  const { _rebindApiHost } = require(path.join(ROOT, 'src', 'app', 'assembly', 'api-rebind.js'));
+  const mkHost = (err) => {
+    const ev = [];
+    const h = {
+      api: { close() {}, closeAllConnections() {} },
+      config: { apiPort: 29990, apiHost: '127.0.0.1' }, // 假 server 从不 bind；29990 经 T1 端口纪律（非 ephemeral/生产池）
+      logger: { warn() {}, info() {}, error(m) { ev.push('log:' + m); } },
+      events: { append(n, p) { ev.push(n); } },
+      _exitIntended: () => false,
+    };
+    const bind = () => {
+      const s = { on(e, f) { if (e === 'error') s._f = f; }, listen() {} };
+      if (err) setImmediate(() => { if (!s._fired) { s._fired = true; s._f(err); } }); // 单次触发：真实 server 不会二次 emit
+      return s;
+    };
+    bind._slowRetry = false;
+    _rebindApiHost(h, bind);
+    return { h, ev };
+  };
+  const realST = global.setTimeout;
+  const scheduled = [];
+  global.setTimeout = (fn, ms) => { scheduled.push(ms); return { unref() {} }; };
+  try {
+    const a = mkHost({ code: 'EACCES', message: 'permission denied' });
+    check('C-9 EACCES → 恰好一条 api_offline 事件', a.ev.filter((e) => e === 'api_offline').length === 1, JSON.stringify(a.ev));
+    check('C-9 EACCES 不进入重试环（零 setTimeout）', scheduled.length === 0, JSON.stringify(scheduled));
+    const b = mkHost({ code: 'EADDRINUSE', message: 'in use' });
+    check('C-9 EADDRINUSE → api_error 且调度重试(300ms)',
+      b.ev.indexOf('api_error') >= 0 && scheduled.indexOf(300) >= 0, JSON.stringify({ ev: b.ev, st: scheduled }));
+    scheduled.length = 0;
+    const c = mkHost({ code: 'EHOSTUNREACH', message: 'no route' });
+    check('C-9 未知错误 → api_error 且入 30s 自愈环',
+      c.ev.indexOf('api_error') >= 0 && scheduled.indexOf(30000) >= 0, JSON.stringify({ ev: c.ev, st: scheduled }));
+    scheduled.length = 0;
+    const d = mkHost({ code: 'EADDRNOTAVAIL', message: 'addr not available' });
+    check('C-9 EADDRNOTAVAIL → 与 EADDRINUSE 同环（300ms 重试）',
+      d.ev.indexOf('api_error') >= 0 && scheduled.indexOf(300) >= 0, JSON.stringify({ ev: d.ev, st: scheduled }));
+  } finally {
+    global.setTimeout = realST;
+    scheduled.length = 0;
+  }
+}
+
 const failed = results.filter((r) => !r);
 console.log(String.fromCharCode(10) + '结果: ' + (results.length - failed.length) + ' passed, ' + failed.length + ' failed');
 process.exit(failed.length ? 1 : 0);

@@ -208,18 +208,40 @@ async function registryInfo(state) {
   };
 }
 
-/** 保存全局镜像源配置（mode/手动源/候选），并立即重测。 */
+/** 保存全局镜像源配置（mode/手动源/候选），并立即重测。
+ *  C-8（批 4）写入口闸：manualOrigin 与每条候选 origins 都要过 policies.registryOriginViolation
+ *  （与探测端点同规的 SSRF 闸）——过不了的字面量一律不落盘，逐条原因经 error/errors 字段回传
+ *  （不静默丢弃）。auto 模式下不预校验 manualOrigin（它此刻不参与选源），改为在 manual 分支闸。 */
 async function setRegistryConfig(state, cfg) {
   const rc = state.registryConfig || {};
   let rejected = [];
   if (cfg && typeof cfg === 'object') {
     if (cfg.mode === 'manual' || cfg.mode === 'auto') rc.mode = cfg.mode;
-    if (typeof cfg.manualOrigin === 'string') rc.manualOrigin = cfg.manualOrigin.trim();
+    if (typeof cfg.manualOrigin === 'string') {
+      const mo = cfg.manualOrigin.trim();
+      // 仅「切到 manual 且要落手动源」时强校验；清空（''）沿用旧语义放行（选源侧自会回退）。
+      if (mo && rc.mode === 'manual') {
+        const v = policies.registryOriginViolation(mo);
+        if (v) {
+          const info = await registryInfo(state); // 不改配置，回当前实况 + 拒因
+          info.error = v;
+          return info;
+        }
+      }
+      rc.manualOrigin = mo;
+    }
     if (Array.isArray(cfg.origins)) {
       const raw = cfg.origins.map((x) => String(x).trim());
-      const list = raw.filter((x) => policies.isValidOrigin(x));
       // 非法项不得静默丢弃：用户改了自己的镜像源却不知道哪条被丢。收集后在下方经日志与返回值暴露。
-      rejected = raw.filter((x) => x && !policies.isValidOrigin(x));
+      // C-8：拒因含两类（格式非法 / SSRF 主机字面量违规），逐条记入 reasons 统一回传。
+      const reasons = new Map();
+      const list = raw.filter((x) => {
+        if (!x) return false;
+        const v = policies.registryOriginViolation(x);
+        if (v) { reasons.set(x, v); return false; }
+        return true;
+      });
+      rejected = raw.filter((x) => x && reasons.has(x));
       if (list.length) rc.origins = list; // 全部非法时保留既有 origins（不写成空）
     }
   }
