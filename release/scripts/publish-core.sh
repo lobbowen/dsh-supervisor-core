@@ -26,6 +26,9 @@ PUBLISH=0
 ALL=0
 SCOPE="$(node -p "try{const p=require('./package.json');(p.npmPublish&&p.npmPublish.scope)||''}catch(e){''}")"
 MAIN_LICENSE="$(node -p "require('./package.json').license")"
+# 子包 repository 单源=根 package.json#repository.url。必须与 provenance 签名的
+# 仓库地址一致，否则 registry 校验 E422 拒发（BETA.10 首发实测：缺字段即被拒）。
+MAIN_REPO="$(node -p "try{const p=require('./package.json');(p.repository&&p.repository.url)||''}catch(e){''}")"
 [ -n "$SCOPE" ] || SCOPE="${DSH_CORE_SCOPE:-}"
 [ -n "$SCOPE" ] || SCOPE="@dsh-sup"   # 产品 scope（2026-09 用户定稿：@dsh-sup/dsh-core-<os>-<arch>）
 while [ $# -gt 0 ]; do case "$1" in
@@ -126,7 +129,7 @@ if [ -d "$SRC_DIR/ui-react" ]; then
 else
   echo "警告：launcher 产物缺 ui-react"
 fi
-NODE_GEN="const fs=require('fs');const o={name:'$PKG_NAME',version:'$VER',description:'DSH lifecycle guard core (Node launcher) for $OS_TAG-$ARCH — requires Node >=18.',license:'$MAIN_LICENSE',os:['$PLAT'],cpu:['$ARCH'],bin:{'dsh-supervisor':'bin/dsh-supervisor'},files:['bin','core.cjs','ui-react','README.md'],keywords:['dsh','guard','launcher','core']};fs.writeFileSync('$STAGE/package.json',JSON.stringify(o,null,2)+'\n')"
+NODE_GEN="const fs=require('fs');const o={name:'$PKG_NAME',version:'$VER',description:'DSH lifecycle guard core (Node launcher) for $OS_TAG-$ARCH — requires Node >=18.',license:'$MAIN_LICENSE',repository:{type:'git',url:'$MAIN_REPO'},os:['$PLAT'],cpu:['$ARCH'],bin:{'dsh-supervisor':'bin/dsh-supervisor'},files:['bin','core.cjs','ui-react','README.md'],keywords:['dsh','guard','launcher','core']};fs.writeFileSync('$STAGE/package.json',JSON.stringify(o,null,2)+'\n')"
 node -e "$NODE_GEN"
 cat > "$STAGE/README.md" <<EOF
 # $PKG_NAME

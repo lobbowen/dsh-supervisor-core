@@ -11,6 +11,14 @@
 本版为 **AUDIT-2026-09-19 P0 清零**安全发布（第 1+2 批）；无用户可见 API/事件契约变更，
 内核运行时依赖仍为 0。同时是 A3-a 落地后**首个经 CI token-scoped 发布步 + provenance 真发布**的版本。
 
+### 修复（发布产线，首发实测驱动）
+
+- **子包 manifest 必须携带 `repository`**：provenance 上架时 registry 校验「包元数据 repository.url
+  == 签名仓库地址」，缺失即 E422 拒发（BETA.10 首发四平台全拦下，**无任何版本泄漏**，fail-closed 符合预期）。
+  根 `package.json` 补 `repository`（单源），`publish-core.sh` 组装子包时从该单源注入。
+  同轮另证实 npm 新政：Classic Automation 令牌已被拒发发布（E403），发布令牌须为
+  **Granular Access Token 且开启 bypass-2FA**。
+
 ### 安全（AUDIT-2026-09-19 第 1 批：P0 A1/A2/A4）
 
 - **A1 持久化「读失败→默认值覆盖」三处收口（fail-closed）**：
