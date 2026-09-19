@@ -166,21 +166,28 @@ check("C-e 非 Windows 返回 'npx'", npxBin({ platform: 'linux' }) === 'npx', n
 
   // B11 windows 例外（CI run17 实测回归）：BAD_ARGV_CHAR_RE 把 `\\` 一刀切禁用，
   // 误杀 win32 盘符绝对路径（D:\a\...\test\fake-npm.js）→ windows 升级链确定性判红。
-  // 纯静态判据 + 组合判据仿真（不 spawn）。
+  // 纯静态判据 + 组合判据仿真（不 spawn）。逐例独立断言 + 判据值回显（run20 教训：
+  // 多子句 && 串一条 check，CI 只能报条名不能报子句，等于没取证）。
   const gate = (s) => inst.BAD_ARGV_CHAR_RE.test(String(s)) && !inst.WIN_DRIVE_ABS_RE.test(String(s));
-  check('C-f 反向：win32 盘符绝对路径不再被误杀（BAD 命中但豁免放行）',
-    inst.BAD_ARGV_CHAR_RE.test('D:\\a\\dsh\\test\\fake-npm.js') === true
-      && inst.WIN_DRIVE_ABS_RE.test('D:\\a\\dsh\\test\\fake-npm.js') === true
-      && gate('D:\\a\\dsh\\test\\fake-npm.js') === false, '已豁免');
-  check('C-f 反向：盘符路径夹带元字符/空白/相对形态仍拒（豁免面不扩大）',
-    gate('D:\\a\\x;y') && gate('D:\\a\\x y') && gate('D:\\a\\x$(pwn)') && gate('D:\\a\\x`id`')
-      && gate('D:/a/x/y') === false && gate('C:rel\\path') === false && gate('D:\\') === true
-      // 已知豁免边界：`\\` 不在豁免字符类禁用集内（`D:\a\x\y` 仍按盘符路径放行）。
-      // 判据语义=「是否为 win32 盘符绝对路径」，非路径规范化；argv 不经 shell，
-      // 重复分隔符无注入面。故此项为**预期放行**而非缺陷。
-      && gate('D:\\a\\x\\y') === false, '已收紧');
-  check('C-f 反向：linux/mac 路径不受影响（不含 `\\` 本就不触发禁用字符集）',
-    gate('/tmp/fake.js') === false && gate('/tmp/a b') === true, 'ok');
+  // want=true 应拒（gate 命中禁用且无豁免）；want=false 应放行。
+  const CASES = [
+    ['D:\\a\\dsh\\test\\fake-npm.js', false], // 盘符绝对路径：豁免（run14–17 误杀对象）
+    ['D:\\', false],                          // 盘符根：形态合法，豁免
+    ['D:\\a\\x\\y', false],                   // 连续分隔符：形态判据不做路径规范化，豁免
+    ['D:/a/x/y', false],                      // 正斜杠无 `\\`：根本不触发禁用集
+    ['C:rel\\path', false],                   // 盘符相对：无 shell 元字符，不触发禁用集
+    ['/tmp/fake.js', false],                  // posix 路径：不触发
+    ['D:\\a\\x;y', true],                     // 盘符 + 命令链字符：拒
+    ['D:\\a\\x y', true],                     // 盘符 + 空白：拒
+    ['D:\\a\\x$(pwn)', true],                 // 盘符 + 命令替换：拒
+    ['D:\\a\\x`id`', true],                   // 盘符 + 反引号：拒
+    ['/tmp/a b', true],                       // posix + 空白：拒
+  ];
+  for (const [s, want] of CASES) {
+    const got = gate(s);
+    check('C-f 豁免判据 ' + JSON.stringify(s) + ' 应' + (want ? '拒' : '放行'), got === want,
+      'BAD=' + inst.BAD_ARGV_CHAR_RE.test(s) + ' WIN=' + inst.WIN_DRIVE_ABS_RE.test(s) + ' gate=' + got);
+  }
 }
 
 // ── 反向：解析结果确实可执行（本机验证，非 Windows 分支）──
