@@ -175,7 +175,7 @@ check("C-e 非 Windows 返回 'npx'", npxBin({ platform: 'linux' }) === 'npx', n
     ['D:\\', false],                          // 盘符根：形态合法，豁免
     ['D:\\a\\x\\y', false],                   // 连续分隔符：形态判据不做路径规范化，豁免
     ['D:/a/x/y', false],                      // 正斜杠无 `\\`：根本不触发禁用集
-    ['C:rel\\path', false],                   // 盘符相对：无 shell 元字符，不触发禁用集
+    ['C:rel\\path', true],                    // 盘符相对（有 `\\` 非 `X:\` 绝对形态）：不豁免 → 拒（run21 实测定性：产品对、旧期望错）
     ['/tmp/fake.js', false],                  // posix 路径：不触发
     ['D:\\a\\x;y', true],                     // 盘符 + 命令链字符：拒
     ['D:\\a\\x y', true],                     // 盘符 + 空白：拒
