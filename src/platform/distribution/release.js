@@ -18,6 +18,36 @@ function isOurReleasePackage(pkg) {
   return typeof pkg === 'string' && pkg.startsWith(OUR_RELEASE_SCOPE);
 }
 
+/**
+ * A3-b（AUDIT-2026-09-19）：rollback 防降级下限。低于此版本的 rollback tag 一律忽略。
+ * 背景：持有发布令牌即可 `npm dist-tag add <pkg>@<任意旧版> rollback`，而客户端原本
+ * 无条件服从（RC-2「最高优先级」）→ 一条 tag 写入即可把全员定向降级到已知漏洞旧版。
+ * 下限 = 本次审计时点的已发布安全基线；每次携带安全修复的发布应同步上调
+ * （发布纪律，见 RELEASE-CHANNEL-CONTRACT.md RC-7）。
+ */
+const ROLLBACK_FLOOR_VERSION = '0.1.5-BETA.9';
+
+/** rollback 时效窗口（天）：目标版本的 npm 发布时刻距今超过该天数即忽略。
+ *  依据：合法紧急回退的目标几乎总是「刚发布不久」的已知良好版本；
+ *  「翻存档」的旧版本被 tag 成 rollback 本身就是异常信号。 */
+const ROLLBACK_MAX_AGE_DAYS = 30;
+
+/** rollback 防降级下限核验（RC-7）。true = 采纳该 rollback；false = 视为不存在，继续选版链。 */
+function rollbackAllowed(version, meta, o) {
+  const floor = typeof o.rollbackFloor === 'string' && o.rollbackFloor ? o.rollbackFloor : ROLLBACK_FLOOR_VERSION;
+  if (semverCompare(version, floor) < 0) return false;
+  const maxAgeDays = typeof o.rollbackMaxAgeDays === 'number' ? o.rollbackMaxAgeDays : ROLLBACK_MAX_AGE_DAYS;
+  const t = meta && meta.time && typeof meta.time === 'object' ? meta.time[version] : null;
+  const publishedAt = typeof t === 'string' ? Date.parse(t) : NaN;
+  if (Number.isFinite(publishedAt)) {
+    const now = typeof o.now === 'number' ? o.now : Date.now();
+    if (now - publishedAt > maxAgeDays * 86400000) return false;
+  }
+  // time 缺失/不可解析（部分镜像剥掉 time 字段）：时效无从核验，交由版本下限兜底 ——
+  // 此处 fail-closed 会挡住合法紧急回退；攻击面（任意旧版）已被下限封死。
+  return true;
+}
+
 /** 在候选版本集合里取最高合法版本（semverCompare 判定）；空集返回 null。 */
 function highestVersion(candidates, isValid) {
   let best = null;
@@ -31,7 +61,7 @@ function highestVersion(candidates, isValid) {
 /**
  * 选版算法（契约第3节冻结）——唯一实现。
  *
- *   1) dist-tags.rollback 合法 -> 返回它（回退，最高优先级）
+ *   1) dist-tags.rollback 合法且通过防降级下限核验（RC-7）→ 返回它（回退，最高优先级）
  *   2) 灰度名单内且 dist-tags.canary 合法 -> 返回它（灰度）
  *   3) dist-tags.latest 合法 -> 返回它（正式，跟随我们的发布）
  *   4) 否则 versions 中最高合法版本（兼容兜底）
@@ -44,6 +74,9 @@ function highestVersion(candidates, isValid) {
  *   - isOurs  {boolean} 是否我们的发布包（用 isOurReleasePackage 判定）
  *   - canary  {boolean} 本机是否在灰度名单；仅 isOurs 时生效
  *   - isValid {(v:string)=>boolean} 版本合法性判据（install.js 传 VERSION_RE.test）
+ *   - rollbackFloor {string} 覆盖 RC-7 下限版本（仅供测试注入；生产用常量）
+ *   - rollbackMaxAgeDays {number} 覆盖时效窗口（仅供测试注入）
+ *   - now {number} 当前时刻 epoch ms（仅供测试确定性注入）
  * @returns {string|null} 目标版本；无法确定时 null（明确失败）
  */
 function pickReleaseVersion(meta, opts) {
@@ -55,9 +88,10 @@ function pickReleaseVersion(meta, opts) {
   const validTag = (v) => (typeof v === 'string' && isValid(v) ? v : null);
 
   if (o.isOurs === true) {
-    // 1) 回退最高优先级（RC-2）：独立 tag 是显式信号，不靠版本比较推断
+    // 1) 回退最高优先级（RC-2）：独立 tag 是显式信号，不靠版本比较推断；
+    //    但须通过防降级下限核验（RC-7 / A3-b），否则视为无 rollback 继续走链。
     const rollback = validTag(tags.rollback);
-    if (rollback) return rollback;
+    if (rollback && rollbackAllowed(rollback, meta, o)) return rollback;
     // 2) 灰度：定向生效（RC-4），非名单机器即使 canary tag 存在也不受影响
     if (o.canary === true) {
       const canary = validTag(tags.canary);
@@ -80,6 +114,8 @@ function pickReleaseVersion(meta, opts) {
 
 module.exports = {
   OUR_RELEASE_SCOPE,
+  ROLLBACK_FLOOR_VERSION,
+  ROLLBACK_MAX_AGE_DAYS,
   isOurReleasePackage,
   highestVersion,
   pickReleaseVersion,

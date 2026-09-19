@@ -22,6 +22,23 @@
   `platform-layer-portability-test.js`（X-8 win32 新形态+A4 判据）、
   `app-ctor-injection-test.js`（A1-a/A1-b 损坏保全断言）、`managed-registry-test.js`（A1-c 损坏目录断言）。
 
+### 安全（AUDIT-2026-09-19 第 2 批：P0 A3 —— 发布令牌作用域 + rollback 通道下限）
+
+- **A3-a CI 发布令牌收敛**：`build.yml` 的 build job 不再在 job env 挂 `NPM_TOKEN`
+  （原实现让 ci-core.sh 内 ui `npm ci` postinstall 钩子与全量 `npm test` 的第三方代码
+  进程树全部可见）；产线拆两步——验证步**永不带令牌**，发布单独一步（条件等价：tag +
+  有 NPM_TOKEN + need_build）经 `ci-core.sh --publish-only` 只跑 [5/5]。
+  同时 build job 授 `id-token: write`，`publish-core.sh` 真发布加 `--provenance`
+  （OIDC 供应链溯源；逃生阀 `DSH_NPM_PROVENANCE=0`）。
+- **A3-b 客户端 rollback 防降级下限（契约新增 RC-7）**：`pickReleaseVersion` 不再无条件
+  服从 `rollback` tag —— 目标版本须 ≥ 内建下限 `ROLLBACK_FLOOR_VERSION`（当前
+  `0.1.5-BETA.9`），且其 npm 发布时刻距今 ≤ `ROLLBACK_MAX_AGE_DAYS`（30 天；元数据无
+  `time` 字段时时效核验跳过、下限仍守），不满足即视同无 rollback 走正常选版链。
+  封堵「令牌失窃 → 一条 `dist-tag add <pkg>@<任意旧版> rollback` 全员定向降级到漏洞版本」。
+  下限随携带安全修复的发布同步上调（发布纪律，见 RELEASE-CHANNEL-CONTRACT.md RC-7）。
+- 断言并入既有门禁 `release-channel-test.js`（A3b-0..11：低于下限回落链、边界、
+  时效窗口、time 缺失跳过、第三方不受影响、契约漂移、反向非空转）。
+
 ## [0.1.5-BETA.9]（2026-09-18）
 
 ### 修复

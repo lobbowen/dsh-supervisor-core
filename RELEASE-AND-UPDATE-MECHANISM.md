@@ -78,7 +78,7 @@ dsh-supervisor: /usr/bin/dsh-supervisor-gui      # 当前生产就是 deb 安装
 
 | 平台 | 生产位置 | 入口 | 命令 |
 |---|---|---|---|
-| **linux-x64 / win-x64 / darwin-arm64 / darwin-x64** | **GitHub CI**（2026-09-13 硬标准：四平台全由 CI 产出） | tag `v<ver>` 触发 `build.yml` | 四平台矩阵各自 `ci-core.sh --publish`（本地无构建/发布路径）|
+| **linux-x64 / win-x64 / darwin-arm64 / darwin-x64** | **GitHub CI**（2026-09-13 硬标准：四平台全由 CI 产出） | tag `v<ver>` 触发 `build.yml` | 四平台矩阵验证步 `ci-core.sh`（不带令牌）→ token-scoped 发布步 `ci-core.sh --publish-only`（本地无构建/发布路径）|
 
 **认证**：`NPM_TOKEN`（经临时 userconfig 注入，不落盘）或既有 `~/.npmrc` 登录态；解析单源在 `release/scripts/_npm-auth.sh`。
 
@@ -185,8 +185,8 @@ dsh-supervisor: /usr/bin/dsh-supervisor-gui      # 当前生产就是 deb 安装
 
 ```
 【内核发布】
-  CI（四平台）: git push origin HEAD --tags → 干净树+CHANGELOG 预检 → ci-core 全套门禁
-                 → build.yml 四平台矩阵各自 ci-core.sh --publish（本地不参与）
+  CI（四平台）: git push origin HEAD --tags → 干净树+CHANGELOG 预检 → ci-core 全套门禁（不带令牌）
+                 → build.yml 四平台矩阵 token-scoped 发布步 ci-core.sh --publish-only（本地不参与）
 
 【壳发布】
   壳仓:        git push origin main && git tag v<ver> && git push origin v<ver>   # 同样必须先推分支

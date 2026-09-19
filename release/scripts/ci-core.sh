@@ -1,9 +1,12 @@
 #!/usr/bin/env bash
 # 内核发布产线（CI 核心逻辑单源）—— .github/workflows/build.yml 的四平台 build 矩阵调用（test job 自跑等价步骤）。
 # 硬标准（2026-09-13）：**所有平台构建与发布必须经 GitHub CI 完成；本地不得产生发布产物。**
-# 用法: release/scripts/ci-core.sh [--publish] [--all-platforms]
+# 用法: release/scripts/ci-core.sh [--publish] [--publish-only] [--all-platforms]
 #   - 无 --publish      = 只验证（verify:versions → 前端 verify → npm test → build:launcher → 子包 dry-run）
 #   - --publish         = 验证通过后真发布**本平台**子包 → 官方 registry（**仅 CI 内**；GITHUB_ACTIONS 守卫）
+#   - --publish-only    = 只跑 [5/5] 真发布，跳过全部验证（**仅 CI 内**；A3-a：CI 拆两步后，
+#                         验证已在不带令牌的步骤跑完，本模式让 NPM_TOKEN 只存在于发布进程树；
+#                         依赖同 workspace 已产出的 dist/launcher —— 缺产物时 publish-core.sh 拒绝）
 #   - --all-platforms   = 一律拒绝（已废弃；四平台由 CI 各 runner 各自产出）
 # 版本：从仓库根 package.json 单源注入；launcher 自报版本错配即拒绝（publish-core.sh 内置强制）。
 # 形态（2026-09 定案）：全平台弃 SEA（macOS Node SEA 注入后段错误），统一 Node launcher。
@@ -18,14 +21,16 @@ ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 cd "$ROOT"
 
 PUBLISH=0
+PUBLISH_ONLY=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --publish) PUBLISH=1 ;;
+    --publish-only) PUBLISH=1; PUBLISH_ONLY=1 ;;
     --all-platforms)
       # 硬标准（2026-09-13）：本地不得有全平台构建/发布路径。
       echo '拒绝：--all-platforms 已废弃（2026-09-13 硬标准：构建与发布均经 GitHub CI）。' >&2
       exit 2 ;;
-    *) echo "未知参数: $1（支持 --publish / --all-platforms）"; exit 2 ;;
+    *) echo "未知参数: $1（支持 --publish / --publish-only / --all-platforms）"; exit 2 ;;
   esac
   shift
 done
@@ -34,6 +39,18 @@ done
 if [ "$PUBLISH" = 1 ] && [ "${GITHUB_ACTIONS:-}" != 'true' ]; then
   echo '拒绝：真发布（--publish）只允许在 GitHub CI 内运行（GITHUB_ACTIONS=true）。' >&2
   exit 2
+fi
+
+# A3-a（2026-09-19 审计）：CI 把「验证」与「发布」拆成两个步骤，NPM_TOKEN 只挂在发布步。
+# 本模式直接跳到 [5/5]：前置产物由同 workspace 的验证步产出（publish-core.sh 的产物
+# 存在性 + 版本自洽冒烟检查就是闸，缺产物/错配即拒绝，不会带病发布）。
+if [ "$PUBLISH_ONLY" = 1 ]; then
+  echo "=== [0/5..4/5] （publish-only：验证已由 CI 不带令牌的前一步完成） ==="
+  echo "=== [5/5] 真发布内核子包（官方 registry；认证由 publish-core.sh 单源处理） ==="
+  export DSH_PUBLISH_REGISTRY="${DSH_PUBLISH_REGISTRY:-https://registry.npmjs.org/}"
+  npm run publish:core -- --publish
+  echo "=== 内核发布产线完成 ==="
+  exit 0
 fi
 
 echo "=== [0/5] 版本自洽校验（内核 package.json 单源；壳版本互锁已随壳仓剥离） ==="

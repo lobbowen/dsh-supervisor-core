@@ -67,8 +67,10 @@ module.exports = {
   DistributionManager,
   semverCompare,
   VERSION_RE,
-  // 选版算法（release.js 唯一实现）+ 包归属判定
+  // 选版算法（release.js 唯一实现）+ 包归属判定 + rollback 防降级下限常量（RC-7 / A3-b）
   pickReleaseVersion: release.pickReleaseVersion,
   isOurReleasePackage: release.isOurReleasePackage,
   OUR_RELEASE_SCOPE: release.OUR_RELEASE_SCOPE,
+  ROLLBACK_FLOOR_VERSION: release.ROLLBACK_FLOOR_VERSION,
+  ROLLBACK_MAX_AGE_DAYS: release.ROLLBACK_MAX_AGE_DAYS,
 };
