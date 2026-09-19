@@ -30,6 +30,8 @@ const ROOT = path.join(__dirname, '..');
 
 const results = [];
 const check = (n, c, x) => { results.push(!!c); console.log((c ? 'PASS' : 'FAIL') + ' ' + n + (x !== undefined && x !== '' ? '  ← ' + x : '')); };
+/** B11：需要 await 的行为断言登记处，文件尾统一结算后再统计。 */
+const _asyncGates = [];
 
 const { npmBin } = require(path.join(ROOT, 'src', 'platform', 'os', 'exec-path.js'));
 
@@ -110,12 +112,93 @@ check("C-e 非 Windows 返回 'npx'", npxBin({ platform: 'linux' }) === 'npx', n
     '已接入');
 }
 
+// ── C-f：B11 —— 安装执行器入参白名单 + --ignore-scripts + 纯 origin 闸 ──
+{
+  const distDir = path.join(ROOT, 'src', 'platform', 'distribution');
+  const dist = fs.readdirSync(distDir).filter((f) => f.endsWith('.js')).sort().map((f) => fs.readFileSync(path.join(distDir, f), 'utf8')).join(String.fromCharCode(10));
+  check('C-f 默认 npm argv 带 --ignore-scripts（安装期不执行包内生命周期脚本）',
+    /'--no-fund'\];[\s\S]{0,400}?push\('--ignore-scripts'\)/.test(dist), '有');
+  check('C-f pkg 走字符集白名单 PKG_NAME_RE',
+    /const PKG_NAME_RE = \//.test(dist) && /PKG_NAME_RE\.test\(pkg\)/.test(dist), '有');
+  check('C-f version 走严格 semver（复用 VERSION_RE，不复制第二份）',
+    /VERSION_RE\.test\(String\(o\.version\)\)/.test(dist), '有');
+  check('C-f commandTemplate 替换后逐项过禁用字符集',
+    /BAD_ARGV_CHAR_RE\.test\(String\(a\)\)/.test(dist), '有');
+  check('C-f registry 写入 npm_config_registry 前过纯 origin 闸',
+    /if \(!policies\.isValidOrigin\(o\.registry\)\)/.test(dist)
+      && dist.indexOf('if (!policies.isValidOrigin(o.registry))') < dist.indexOf('envVars.npm_config_registry = o.registry'), '有');
+  check('C-f fetchNpmLatest 拼接 URL 前过 origin + pkg 双闸',
+    /if \(!policies\.isValidOrigin\(base\)\) return null;[\s\S]{0,120}PKG_NAME_RE\.test\(pkg\)/.test(dist), '有');
+  check('C-f isValidOrigin 不再是 scheme-only（URL 解析 + 凭证/路径/片段拒绝）',
+    /new URL\(s\)/.test(dist) && /u\.username \|\| u\.password/.test(dist) && /u\.hash/.test(dist), '有');
+
+  // 行为面（无副作用：非法入参必须在 spawn **之前**被拒，故不会启动任何进程）。
+  // 文件头是同步判定器 —— 异步断言收进 _asyncGates，末尾 await 后再结算。
+  const inst = require(path.join(distDir, 'install.js'));
+  _asyncGates.push(async () => {
+    const rs = await Promise.all([
+      inst.runNpmInstall({ version: '1.2.3; touch /tmp/dsh-pwn', commandTemplate: ['node', '/tmp/fake.js', '{version}'] }),
+      inst.runNpmInstall({ pkg: 'bad pkg', version: '1.2.3' }),
+      inst.runNpmInstall({ pkg: '@a/b', version: '1.2.3', registry: 'file:///tmp/evil' }),
+      inst.runNpmInstall({ pkg: '@a/b', version: '1.2.3', registry: 'https://u:pass@host' }),
+      inst.runNpmInstall({ version: '1.2.3', commandTemplate: ['node', '/tmp/fake.js', '{prefix}'], prefix: '/tmp/a b' }),
+    ]);
+    check('C-f 行为：version 夹带 shell 元字符 → 拒（不 spawn）', !rs[0].ok && /非法版本/.test(rs[0].error), rs[0].error);
+    check('C-f 行为：pkg 含空格 → 拒', !rs[1].ok && /非法包名/.test(rs[1].error), rs[1].error);
+    check('C-f 行为：registry file:// → 拒（不写 npm_config_registry）', !rs[2].ok && /registry origin/.test(rs[2].error), rs[2].error);
+    check('C-f 行为：registry 凭证夹带 → 拒', !rs[3].ok && /registry origin/.test(rs[3].error), rs[3].error);
+    check('C-f 行为：{prefix} 注入空白/元字符 → 替换后仍被拒', !rs[4].ok && /禁用字符/.test(rs[4].error), rs[4].error);
+  });
+
+  // 反向：旧判据/旧输入必须能被新闸识别
+  const pol = require(path.join(distDir, 'policies.js'));
+  check('C-f 反向：scheme-only 旧判据确实放过凭证/路径/片段夹带',
+    /^https?:\/\//.test('https://u:pass@host/x#y') === true
+      && pol.isValidOrigin('https://u:pass@host/x#y') === false
+      && pol.isValidOrigin('https://a.b/path?q=1') === false
+      && pol.isValidOrigin('https://a.b/#x') === false, '已收紧');
+  check('C-f 反向：合法纯 origin 不被误杀（官方/镜像/带端口/IPv6/尾斜杠）',
+    pol.isValidOrigin('https://registry.npmjs.org') && pol.isValidOrigin('https://registry.npmjs.org/')
+      && pol.isValidOrigin('http://127.0.0.1:4873') && pol.isValidOrigin('https://[::1]:4873'), 'ok');
+  check('C-f 反向：白名单不拦合法包名/semver（含 prerelease 与 scope）',
+    inst.PKG_NAME_RE.test('@deepseek-ai/dsh') && inst.PKG_NAME_RE.test('dsh')
+      && require(path.join(ROOT, 'src', 'shared', 'version.js')).VERSION_RE.test('0.1.5-BETA.10'), 'ok');
+
+  // B11 windows 例外（CI run17 实测回归）：BAD_ARGV_CHAR_RE 把 `\\` 一刀切禁用，
+  // 误杀 win32 盘符绝对路径（D:\a\...\test\fake-npm.js）→ windows 升级链确定性判红。
+  // 纯静态判据 + 组合判据仿真（不 spawn）。逐例独立断言 + 判据值回显（run20 教训：
+  // 多子句 && 串一条 check，CI 只能报条名不能报子句，等于没取证）。
+  const gate = (s) => inst.BAD_ARGV_CHAR_RE.test(String(s)) && !inst.WIN_DRIVE_ABS_RE.test(String(s));
+  // want=true 应拒（gate 命中禁用且无豁免）；want=false 应放行。
+  const CASES = [
+    ['D:\\a\\dsh\\test\\fake-npm.js', false], // 盘符绝对路径：豁免（run14–17 误杀对象）
+    ['D:\\', false],                          // 盘符根：形态合法，豁免
+    ['D:\\a\\x\\y', false],                   // 连续分隔符：形态判据不做路径规范化，豁免
+    ['D:/a/x/y', false],                      // 正斜杠无 `\\`：根本不触发禁用集
+    ['C:rel\\path', true],                    // 盘符相对（有 `\\` 非 `X:\` 绝对形态）：不豁免 → 拒（run21 实测定性：产品对、旧期望错）
+    ['/tmp/fake.js', false],                  // posix 路径：不触发
+    ['D:\\a\\x;y', true],                     // 盘符 + 命令链字符：拒
+    ['D:\\a\\x y', true],                     // 盘符 + 空白：拒
+    ['D:\\a\\x$(pwn)', true],                 // 盘符 + 命令替换：拒
+    ['D:\\a\\x`id`', true],                   // 盘符 + 反引号：拒
+    ['/tmp/a b', true],                       // posix + 空白：拒
+  ];
+  for (const [s, want] of CASES) {
+    const got = gate(s);
+    check('C-f 豁免判据 ' + JSON.stringify(s) + ' 应' + (want ? '拒' : '放行'), got === want,
+      'BAD=' + inst.BAD_ARGV_CHAR_RE.test(s) + ' WIN=' + inst.WIN_DRIVE_ABS_RE.test(s) + ' gate=' + got);
+  }
+}
+
 // ── 反向：解析结果确实可执行（本机验证，非 Windows 分支）──
 {
   const local = npmBin();
   check('反向：本机解析结果可用（非空字符串）', typeof local === 'string' && local.length > 0, local);
 }
 
-const failed = results.filter((r) => !r);
-console.log(String.fromCharCode(10) + '结果: ' + (results.length - failed.length) + ' passed, ' + failed.length + ' failed');
-process.exit(failed.length ? 1 : 0);
+(async () => {
+  for (const g of _asyncGates) await g();
+  const failed = results.filter((r) => !r);
+  console.log(String.fromCharCode(10) + '结果: ' + (results.length - failed.length) + ' passed, ' + failed.length + ' failed');
+  process.exit(failed.length ? 1 : 0);
+})();

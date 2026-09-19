@@ -93,6 +93,9 @@ function composeDomains(host) {
       overlayFile: path.join(path.dirname(host.config.stateFile), 'plugin-states.patch.yml'),
       dshPort: host.config.targetPort,
       instances: host.instances,
+      // B16（AUDIT-2026-09-19）：INV-S1 退出门谓词注入（E-3 单源）——插件变更生效重启路径
+      //   持有裸 InstanceManager，必须同受退出意图约束。
+      exitIntended: () => host._exitIntended(),
       tasks: host.tasks,
       logger: host.logger,
       events: host.events,

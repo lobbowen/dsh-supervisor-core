@@ -37,9 +37,12 @@ const APP = path.join(ROOT, 'src', 'app');
 
 // 基线（本轮实测，按 src/app 直接子目录；未列出的目录基线为 0）
 const BASELINE_BY_DIR = {
-  main: 0, control: 54, daemons: 29, facade: 0, settings: 8, native: 3, ctl: 0, self: 1, assembly: 1,
+  main: 0, control: 54, daemons: 30, facade: 0, settings: 8, native: 3, ctl: 0, self: 1, assembly: 1,
 };
-const BASELINE_TOTAL = 96; // = 上述各项之和（原文口径上界；剥注释实测 94，松弛量 2）
+const BASELINE_TOTAL = 97; // = 上述各项之和（原文口径上界；剥注释实测 94，松弛量 2）
+// 上调记录（2026-09-19 第 3 批 E-3/B-22a，按上方纪律①②）：daemons 29->30 —— 新增调用点唯一归属
+//   src/app/daemons/process.js:159 `if (this._stopping || this._exitIntended()) return { mode: 'stopping' }`
+//   （DaemonLifecycle 类自身实例方法，与其余 29 处同类，E-3 退出意图谓词钩子注入所需）。总量 96->97。
 // 收紧记录（棘轮**第一次真实下降**，2026-09-17）：P3-A 完成 ctl 切面工厂化后，ctl 的
 //   this.X() 由 3 降到 0 —— 故 ctl 基线 3->0、总量 267->264。记录于此以说明本门禁**可升可降**：
 //   下调永远允许（真实下降时），上调须按上方纪律注明理由与新增调用点归属。

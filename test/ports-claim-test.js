@@ -83,6 +83,63 @@ const RANGE = { base: 28130, count: 50 };
     check('R-reload-4 reload 后 owner-A 绑定保留', p2.byOwner('owner-A') === pA, String(p2.byOwner('owner-A')));
   }
 
+  // ── B14（AUDIT §B-14）：IPv6-only 监听不再漏判 + 跨进程分配锁 + 登记后复检 ──
+  {
+    const net = require('node:net');
+    const probe = require(path.join(ROOT, 'src', 'platform', 'service', 'ports', 'probe'));
+    const utilProbe = require(path.join(ROOT, 'src', 'platform', 'util', 'probe'));
+    const RANGE2 = { base: 28200, count: 20 };
+    const p6 = new PortRegistry({ file: path.join(TMP, 'ports-v6.json') });
+
+    // 占用者：只 bind '::1'（IPv6-only，bindv6only 语义下的典型形态）
+    const occ = net.createServer();
+    const v6Ok = await new Promise((res) => {
+      occ.once('error', () => res(false));
+      occ.listen(RANGE2.base + 3, '::1', () => res(true));
+    });
+    if (v6Ok) {
+      check('B14 isTaken 识出 IPv6-only 监听者（旧实现只连 127.0.0.1 → 漏判）',
+        (await p6.isTaken(RANGE2.base + 3)) === true, 'taken');
+      check('B14 反向：util 层单栈探测对同一端口确实漏判（判据非空转）',
+        (await utilProbe.portListening('127.0.0.1', RANGE2.base + 3, 300)) === false, '单栈漏判=预期');
+      check('B14 bindable 拒绝 IPv6-only 已占端口（旧实现 bind 127.0.0.1 会成功）',
+        (await probe.bindable(RANGE2.base + 3)) === false, 'false');
+      const got = await p6.claimSlot('relay', 'relay:v6owner', { range: RANGE2 });
+      check('B14 claimSlot 绕开 IPv6-only 占用端口', !!got && got.port !== RANGE2.base + 3 && !got.conflict, JSON.stringify(got));
+      occ.close();
+    } else {
+      console.log('SKIP B14 IPv6 探针：本机 ::1 不可绑定（无 IPv6 栈）');
+      try { occ.close(); } catch {}
+    }
+    // bindable：真实 IPv4 监听者仍被拒
+    const occ4 = net.createServer();
+    await new Promise((res) => { occ4.once('error', res); occ4.listen(RANGE2.base + 9, '127.0.0.1', res); });
+    check('B14 bindable 拒绝 IPv4 已占端口', (await probe.bindable(RANGE2.base + 9)) === false, 'false');
+    occ4.close();
+
+    // 跨进程锁存在性：模拟并发者持锁（fresh mtime）→ 本次分配不崩、fail-open 结果仍正确
+    const lockF = path.join(TMP, 'ports-xlock.json') + '.alloc.lock';
+    const px = new PortRegistry({ file: path.join(TMP, 'ports-xlock.json') });
+    fs.writeFileSync(lockF, String(process.pid));
+    const t0 = Date.now();
+    const slot = await px.claimSlot('relay', 'relay:xlock', { range: RANGE2 });
+    check('B14 持锁者在场：claimSlot 超时后 fail-open 仍完成分配（不冻结）',
+      !!slot && slot.port > 0 && Date.now() - t0 >= 1000, 'took ' + (Date.now() - t0) + 'ms slot=' + JSON.stringify(slot));
+    fs.unlinkSync(lockF);
+    // 老化接管：stale 锁（mtime 远超窗口）可被接管，分配照常
+    fs.writeFileSync(lockF, '999999');
+    fs.utimesSync(lockF, new Date(Date.now() - 60000), new Date(Date.now() - 60000));
+    const slot2 = await px.claimSlot('relay', 'relay:xlock2', { range: RANGE2 });
+    check('B14 stale 锁被老化接管（持有者崩溃不死锁）', !!slot2 && slot2.port > 0 && slot2.port !== slot.port, JSON.stringify(slot2));
+    // 正常路径：锁在临界区被创建、释放后不残留
+    const px2 = new PortRegistry({ file: path.join(TMP, 'ports-xlock3.json') });
+    await px2.claimSlot('relay', 'relay:clean', { range: { base: 28230, count: 10 } });
+    check('B14 正常分配后不残留 .alloc.lock', !fs.existsSync(path.join(TMP, 'ports-xlock3.json') + '.alloc.lock'), 'clean');
+    check('B14 源码：alloc.js 使用 wx 独占创建锁 + 复检撤销',
+      /'wx'/.test(fs.readFileSync(path.join(ROOT, 'src', 'platform', 'service', 'ports', 'alloc.js'), 'utf8'))
+      && /_confirmRegister/.test(fs.readFileSync(path.join(ROOT, 'src', 'platform', 'service', 'ports', 'alloc.js'), 'utf8')), '有');
+  }
+
   const failed = results.filter((r) => !r);
   console.log('\n结果: ' + (results.length - failed.length) + ' passed, ' + failed.length + ' failed');
   process.exit(failed.length ? 1 : 0);

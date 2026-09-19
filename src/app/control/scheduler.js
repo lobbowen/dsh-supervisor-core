@@ -13,6 +13,7 @@ function depsOf(host) {
       logger: () => host.logger, audit: () => host.audit, eventHub: () => host.eventHub,
       state: () => host.state,
       stopping: () => host._stopping,
+      exitIntended: () => host._exitIntended(),
       readLastOrphanAuditAt: () => host._lastOrphanAuditAt,
       writeLastOrphanAuditAt: (v) => { host._lastOrphanAuditAt = v; },
       mLastProbeOk: () => host._mLastProbeOk(),
@@ -36,7 +37,7 @@ module.exports = {
     const d = depsOf(this);
     try {
       if (d.stopping()) return { ok: false, error: 'guard stopping' };
-      if (d.session().halting()) return { ok: false, error: 'session halting' }; // INV-S1 全域
+      if (d.exitIntended()) return { ok: false, error: 'exit intended' }; // INV-S1/E-3：意图轴单源（stopping ∨ session halting；_shellHalted 属壳域不在此）
       await d.main().converge(); // 唯一心跳驱动 main 收敛
       try { d.control().syncInstancesView(); } catch (e) { d.logger() && d.logger().warn && d.logger().warn('instances view sync: ' + ((e && e.message) || e)); } // C3-5b：聚合视图随心跳刷新
     } catch (e) {

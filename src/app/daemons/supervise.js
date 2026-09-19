@@ -18,7 +18,7 @@ function depsOf(host) {
   if (!d) {
     d = {
       stopping: () => host._stopping,
-      session: () => host.session,
+      exitIntended: () => host._exitIntended(),
       lifecycleManager: () => host.lifecycleManager,
       config: () => host.config,
       daemons: () => host.daemons,
@@ -45,8 +45,8 @@ module.exports = {
     async _daemonSuperviseOnce(kind) {
       const d = depsOf(this);
       if (d.stopping()) return { ok: false };
-      // INV-S1 全域（契约 §3.3）：会话退出中/已退出则不再监督拉起 router/lan daemon。
-      if (d.session().halting()) return { ok: false, error: 'session halting' };
+      // INV-S1 全域（契约 §3.3）/E-3：有退出意图则不再监督拉起 router/lan daemon（单源谓词）。
+      if (d.exitIntended()) return { ok: false, error: 'exit intended' };
       try {
         if (kind === 'router') {
           const rlc = d.lifecycleManager() ? d.lifecycleManager().get('router') : null;

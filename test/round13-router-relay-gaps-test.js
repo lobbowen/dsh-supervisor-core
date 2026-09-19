@@ -125,6 +125,38 @@ console.log('== ② relay 门卫令牌热换 ==');
   check('② syncProxy 快路径下发令牌（旧实现直接 return）',
     /existing\.token !== want/.test(mgr) && /setToken\(want\)/.test(mgr), '有');
 
+  // ── AUDIT B-1 补链：令牌变更的「触发—复判—收敛」三段缺一不可 ──
+  const iops = strip(read('src/domains/instance/ops.js'));
+  check('② updateInstance 只改 remoteToken 也必须触发 onRemoteChange（旧仅 remoteEnabled 变化才触发）',
+    /inst\.remoteToken !== next/.test(iops) && /remoteChanged && hooks\.onRemoteChange/.test(iops), '有');
+  check('② 令牌变更事件仅记 tokenSet 布尔（事件日志零明文）',
+    /'inst_remote_token_changed'[^;]*tokenSet/.test(iops) && !/inst_remote_token_changed[^;]*remoteToken:/.test(iops), '有');
+  const recSrc = strip(read('src/domains/relay/ops/reconcile.js'));
+  check('② reconcile 复判令牌/frp 意图漂移（钩子丢失时唯一兜底收敛点）',
+    /proxy\.token !== wantToken/.test(recSrc) && /drifted && proxy\.wanPort/.test(recSrc), '有');
+  check('② applyRelayToken 下发令牌后必须 syncFrpc（公网暴露闸依赖 remoteToken，隧道随之收敛）',
+    /existing\.token = want;[\s\S]{0,260}host\.syncFrpc\(\)/.test(mgr), '有');
+
+  // 行为：真实 createOps 断言「只改令牌」一条链走通
+  const { createOps } = require(path.join(ROOT, 'src', 'domains', 'instance', 'ops.js'));
+  const seen = [];
+  const it2 = { id: 'i1', name: 'n', port: 29051, guardian: true, remoteEnabled: true, remoteToken: 'A' };
+  const ops2 = createOps({
+    store: { instances: [it2], save() {} },
+    logger: { warn() {} },
+    events: { append(t) { seen.push(t); } },
+    hooks: { onRemoteChange(i) { seen.push('sync:' + i.remoteToken); } },
+  });
+  ops2.updateInstance('i1', { remoteToken: 'B' });
+  check('② 行为：只换令牌（开关不变）即触发 onRemoteChange 且钩子读得到新值', seen.includes('sync:B'), seen.join(','));
+  check('② 行为：变更留痕 inst_remote_token_changed 事件', seen.includes('inst_remote_token_changed'), seen.join(','));
+  seen.length = 0;
+  ops2.updateInstance('i1', { remoteToken: 'B' });
+  check('② 行为：同值幂等写不再触发钩子/事件（防空转刷屏）',
+    !seen.some((x) => x === 'inst_remote_token_changed' || String(x).startsWith('sync:')), seen.join(','));
+  ops2.updateInstance('i1', { remoteToken: '' });
+  check('② 行为：清空令牌同样触发（暴露闸与隧道必须收到清空信号）', seen.includes('sync:'), seen.join(','));
+
   // 行为：真实 createRelay，断言 setToken 后门卫生效
   const { createRelay } = require(path.join(ROOT, 'src', 'domains', 'relay', 'index.js'));
   const srv = createRelay('127.0.0.1', 9, { token: '', logger: null });

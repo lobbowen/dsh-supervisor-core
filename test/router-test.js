@@ -86,6 +86,87 @@ const check = (n, c, x) => { results.push(!!c); console.log((c ? 'PASS' : 'FAIL'
   const insts = require(path.join(ROOT, 'src', 'domains', 'router', 'model'));
   check('四态常量已导出且唯一', Object.keys(insts.INSTANCE_STATES).length === 4, Object.keys(insts.INSTANCE_STATES).join(','));
 
+  // 6. B19（AUDIT-2026-09-19）：用量账本 byModel 键上限/截断 + 节流落盘 + flush。
+  {
+    const { UsageLedger } = require(path.join(ROOT, 'src', 'domains', 'router', 'store', 'usage'));
+    const mkEntry = (model) => ({ ts: '', model, key: 'sk-x', promptTokens: 1, completionTokens: 1, totalTokens: 2, status: 200 });
+    // 6a 截断：>128 字符的 model 键被截到 128。
+    const ledT = new UsageLedger({ file: path.join(TMP, 'usage-t.json'), writeDelayMs: 0 });
+    ledT.recordUsage(mkEntry('m'.repeat(200)));
+    const keysT = Object.keys(ledT.totals.byModel);
+    check('B19 超长 model 键被截断至 128', keysT.length === 1 && keysT[0].length === 128, JSON.stringify(keysT.map((k) => k.length)));
+    check('B19 空/非字符串 model 归 unknown', (() => {
+      const l = new UsageLedger({ file: path.join(TMP, 'usage-u.json'), writeDelayMs: 0 });
+      l.recordUsage(mkEntry('')); l.recordUsage(mkEntry(null));
+      const ks = Object.keys(l.totals.byModel); return ks.length === 1 && ks[0] === 'unknown';
+    })(), 'ok');
+    // 6b 上限：maxModelKeys=3 → 至多 3 个真实键 + 1 个 '(other)'，溢出并入 other。
+    const ledC = new UsageLedger({ file: path.join(TMP, 'usage-c.json'), writeDelayMs: 0, maxModelKeys: 3 });
+    for (const m of ['a', 'b', 'c', 'd', 'e', 'f']) ledC.recordUsage(mkEntry(m));
+    const byC = ledC.totals.byModel;
+    check('B19 byModel 键数受上限约束（含 other 桶）', Object.keys(byC).length <= 4 && byC['(other)'] && byC['(other)'].requests === 3, JSON.stringify({ n: Object.keys(byC).length, other: byC['(other)'] && byC['(other)'].requests }));
+    check('B19 溢出键不再单独建桶（a/b/c 保留，d/e/f 入 other）', byC.a && byC.b && byC.c && !byC.d && !byC.e && !byC.f, JSON.stringify(Object.keys(byC)));
+    // 反向（防空转）：上限足够大时，多个 model 各自建桶（证明是上限在起作用，非写死单桶）。
+    const ledR = new UsageLedger({ file: path.join(TMP, 'usage-r.json'), writeDelayMs: 0, maxModelKeys: 100 });
+    for (const m of ['a', 'b', 'c', 'd', 'e', 'f']) ledR.recordUsage(mkEntry(m));
+    check('B19 反向：宽上限下 6 个 model 各自建桶', Object.keys(ledR.totals.byModel).length === 6 && !ledR.totals.byModel['(other)'], JSON.stringify(Object.keys(ledR.totals.byModel)));
+    // 6c 节流落盘：writeDelayMs 很大 → recordUsage 不同步落盘；flush() 才落。
+    const fThrottle = path.join(TMP, 'usage-throttle.json');
+    try { fs.rmSync(fThrottle, { force: true }); } catch {}
+    const ledTh = new UsageLedger({ file: fThrottle, writeDelayMs: 600000 });
+    ledTh.recordUsage(mkEntry('z'));
+    check('B19 节流：未到点不落盘（文件尚未生成）', !fs.existsSync(fThrottle), 'exists=' + fs.existsSync(fThrottle));
+    ledTh.flush();
+    const thDoc = fs.existsSync(fThrottle) ? JSON.parse(fs.readFileSync(fThrottle, 'utf8')) : null;
+    check('B19 flush 强制落盘（未到点的账不丢）', !!thDoc && thDoc.requests === 1, JSON.stringify(thDoc && thDoc.requests));
+    ledTh._timer && clearTimeout(ledTh._timer); // 清理未触发的定时器（unref 已防阻退出）
+    // 6d canPersist 单闸仍生效（PG-7 语义保留）
+    const fGate = path.join(TMP, 'usage-gate.json');
+    try { fs.rmSync(fGate, { force: true }); } catch {}
+    const ledG = new UsageLedger({ file: fGate, writeDelayMs: 0, canPersist: () => false });
+    ledG.recordUsage(mkEntry('g')); ledG.flush();
+    check('B19 落盘仍过 canPersist 单闸（false 时不落盘）', !fs.existsSync(fGate), 'exists=' + fs.existsSync(fGate));
+  }
+
+  // 7. B20（AUDIT-2026-09-19）：延后停止的有界期限——到期 force 落 kill，不再无限续命。
+  //    纯逻辑（instance.pid=null，不触发真实 kill）。
+  {
+    const life = require(path.join(ROOT, 'src', 'domains', 'router', 'providers', 'instance-lifecycle'));
+    const mkProv = () => ({ accounts: [], _persist() {}, isAccountUsable() { return true; }, name: 'T' });
+    const mkCase = () => {
+      const p = mkProv();
+      const acc = { keyId: 'k1', key: 'sk', maskedKey: '...k1', status: 'ready', inflight: 1, _stopPendingUntilIdle: false };
+      p.accounts.push(acc);
+      const inst = { keyId: 'k1', pid: null, status: 'HOT', healthy: true };
+      return { p, acc, inst };
+    };
+    // 期限内：在途 -> 仅标记待停 + 记 _stopPendingSince。
+    const a = mkCase();
+    life.stopInstance(a.p, a.inst);
+    check('B20 期限内：在途 stop 仅延后（置 pending + 记起始时刻）',
+      a.acc._stopPendingUntilIdle === true && typeof a.acc._stopPendingSince === 'number' && a.acc._stopPendingSince > 0,
+      JSON.stringify({ pend: a.acc._stopPendingUntilIdle, since: a.acc._stopPendingSince }));
+    // 反向（防空转）：再次 stop（仍在期限内）仍延后——证明是「到期」才放行，非首拍即放行。
+    life.stopInstance(a.p, a.inst);
+    check('B20 反向：未到期重复 stop 仍延后', a.acc._stopPendingUntilIdle === true, String(a.acc._stopPendingUntilIdle));
+    // 越界：把起始时刻拨到期限之后 -> stop 不再延后，落 kill 分支（pid=null → 置 COLD）并清标记。
+    const b = mkCase();
+    life.stopInstance(b.p, b.inst); // 先置 since
+    b.acc._stopPendingSince = Date.now() - (6 * 60 * 1000); // 超过 5min 期限
+    b.acc.inflight = 1; // 仍在途（有界期限应无视在途强停）
+    life.stopInstance(b.p, b.inst);
+    check('B20 到期：即使仍在途也停止延后，清 pending/since 并置 COLD',
+      b.acc._stopPendingUntilIdle === false && b.acc._stopPendingSince === 0 && b.inst.status === 'COLD',
+      JSON.stringify({ pend: b.acc._stopPendingUntilIdle, since: b.acc._stopPendingSince, st: b.inst.status }));
+    // retryPendingStop：在途归零且无 pid 时归位清 since。
+    const c = mkCase();
+    c.acc.inflight = 0; // 请求已结束（在途归零）才会补做
+    c.acc._stopPendingUntilIdle = true; c.acc._stopPendingSince = Date.now() - 1000;
+    c.p.instanceOf = () => ({ keyId: 'k1', pid: null });
+    life.retryPendingStop(c.p, c.acc);
+    check('B20 retryPendingStop 归位清 _stopPendingSince', c.acc._stopPendingSince === 0 && c.acc._stopPendingUntilIdle === false, JSON.stringify({ s: c.acc._stopPendingSince, p: c.acc._stopPendingUntilIdle }));
+  }
+
   const failed = results.filter((r) => !r);
   console.log('\n结果: ' + (results.length - failed.length) + ' passed, ' + failed.length + ' failed');
   process.exit(failed.length ? 1 : 0);

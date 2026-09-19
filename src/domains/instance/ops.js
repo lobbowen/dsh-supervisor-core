@@ -106,13 +106,25 @@ function createOps(deps) {
       inst.guardian = !!patch.guardian;
       if (gChanged && events) events.append('inst_guardian_changed', { id: inst.id, name: inst.name, enabled: inst.guardian === true });
     }
+    // 远程暴露意图（remoteEnabled/remoteToken）任一变化都必须触发 onRemoteChange（AUDIT B-1）：
+    // 只换令牌不换开关时，旧实现不触发任何同步 → 运行中的 relay 继续放行旧令牌、frpc 不收敛。
+    let remoteChanged = false;
     if (patch.remoteEnabled !== undefined) {
       const changed = inst.remoteEnabled !== !!patch.remoteEnabled;
       inst.remoteEnabled = !!patch.remoteEnabled;
-      if (changed && hooks.onRemoteChange) hooks.onRemoteChange(inst);
       if (changed && events) events.append('inst_remote_changed', { id: inst.id, name: inst.name, enabled: inst.remoteEnabled === true });
+      if (changed) remoteChanged = true;
     }
-    if (patch.remoteToken !== undefined) inst.remoteToken = String(patch.remoteToken || '');
+    if (patch.remoteToken !== undefined) {
+      const next = String(patch.remoteToken || '');
+      if (inst.remoteToken !== next) {
+        inst.remoteToken = next;
+        remoteChanged = true;
+        // 事件只记「是否已设」，绝不带令牌值（TK-5 脱敏纪律）
+        if (events) events.append('inst_remote_token_changed', { id: inst.id, name: inst.name, tokenSet: next !== '' });
+      }
+    }
+    if (remoteChanged && hooks.onRemoteChange) hooks.onRemoteChange(inst);
     // 历史/原生记录可能没有 sandbox 对象（model.normalizeInstance 只补 guardian 与 state，不建 sandbox）：
     // 直接写 inst.sandbox.memoryMax 会抛 TypeError，而此处 guardian 与 remoteEnabled 可能已被改 → 半改状态。
     if (patch.memoryMax !== undefined || patch.cpuQuota !== undefined) inst.sandbox = inst.sandbox || {};

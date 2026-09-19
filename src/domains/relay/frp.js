@@ -63,18 +63,25 @@ class FrpManager {
 
   saveSettings(s) {
     fs.mkdirSync(this.dir, { recursive: true });
-    const tmp = this.settingsFile + '.tmp';
-    fs.writeFileSync(tmp, JSON.stringify(s, null, 2));
+    // frp.json 含 authToken 明文：tmp 必须带 pid（防并发写互踩/预测名劫持）且以 0600 建立——
+    // 与 syncFromInstances 的 frpc.toml 写法同规（旧实现默认 umask 落盘，存在明文窗口）。
+    const tmp = this.settingsFile + '.' + process.pid + '.tmp';
+    fs.writeFileSync(tmp, JSON.stringify(s, null, 2), { mode: 0o600 });
+    try { fs.chmodSync(tmp, 0o600); } catch {}
     fs.renameSync(tmp, this.settingsFile);
     try { fs.chmodSync(this.settingsFile, 0o600); } catch {}
   }
 
   status() {
+    const s = this.loadSettings();
     return {
       installed: fs.existsSync(this.binPath),
       running: !!(this.child && this.child.pid),
       pid: this.child ? this.child.pid : null,
-      settings: this.loadSettings(),
+      // B7：API 面绝不回显 authToken 明文（与 access.js「只报 configured」同规）。
+      // UI 需要改动令牌时显式提交新值；normalizeFrpSettings 是 patch 归并——
+      // **字段缺省（undefined）= 保留现值**，显式提交 '' = 清除（UI 留空时必须省略字段，见 LanPage frpPayload）。
+      settings: { enabled: !!s.enabled, serverAddr: s.serverAddr, serverPort: s.serverPort, user: s.user, authTokenSet: !!s.authToken },
       logTail: this.logTail.slice(-20),
     };
   }

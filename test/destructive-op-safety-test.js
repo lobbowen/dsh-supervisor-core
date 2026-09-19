@@ -50,7 +50,8 @@ function realHome() {
   } catch { /* 回退到 os.homedir() */ }
   return os.homedir();
 }
-const REAL_STORE = process.env.DSH_CRED_DIR || path.join(realHome(), '.dsh', 'credentials');
+// 规范库根（2026-09-19 定稿）：真实 home 下 develop/.credentials（与 cred.sh CANON_STORE 同口径）。
+const REAL_STORE = process.env.DSH_CRED_DIR || path.join(realHome(), 'develop', '.credentials');
 
 const results = [];
 const check = (n, c, x) => {
@@ -104,13 +105,14 @@ function cred(args, env) {
 
 // ── W-1/W-2/W-3：真机库保护（用 DSH_REAL_HOME 把「真机库」指向临时目录）──
 // ⚠ 关键设计：**不依赖真机库的状态，也不复制/改写脚本**。
-//   cred.sh 的「真机库」= dsh_real_home()/.dsh/credentials；_npm-auth.sh 支持 DSH_REAL_HOME 覆盖。
+//   cred.sh 的「真机库」= dsh_real_home()/develop/.credentials（2026-09-19 定稿）；
+//   _npm-auth.sh 支持 DSH_REAL_HOME 覆盖。
 //   故设 DSH_REAL_HOME=<tmp> 即可在任意宿主确定性验证真机保护，且**完全不动真实凭据**。
 {
   const T = fs.mkdtempSync(path.join(os.tmpdir(), 'realsim-'));
   fs.chmodSync(T, 0o700);
   const fakeHome = path.join(T, 'fakehome');
-  const fakeReal = path.join(fakeHome, '.dsh', 'credentials');
+  const fakeReal = path.join(fakeHome, 'develop', '.credentials');
   fs.mkdirSync(fakeReal, { recursive: true, mode: 0o700 });
   const kf = path.join(fakeReal, 'k.pat');
   fs.writeFileSync(kf, 'original-secret-value');

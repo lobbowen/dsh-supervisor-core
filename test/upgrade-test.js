@@ -201,6 +201,8 @@ async function main() {
   const before = await api(3940, 'GET', '/status');
   await api(3940, 'POST', '/native/upgrade');
   const st = await waitUpgrade(3940, (x) => x.state === 'done' || x.state === 'failed');
+  // 失败时把 lastError + 升级日志尾部带进输出（跨平台失败（如 windows-only）否则无从取证，禁本机复跑）
+  if (st && st.state !== 'done') console.log('  [U2-diag] lastError=' + st.lastError + ' rolledBack=' + st.rolledBack + ' logTail=' + JSON.stringify((st.logTail || []).slice(-12)));
   check('升级终态=done', st && st.state === 'done', JSON.stringify(st && st.state));
   const pkgAfter = JSON.parse(fs.readFileSync(pkgA, 'utf8'));
   check('package.json 版本已切换到 2.0.0', pkgAfter.version === '2.0.0', pkgAfter.version);
@@ -216,6 +218,7 @@ async function main() {
   console.log('== U3: 已是最新时跳过 ==');
   await api(3940, 'POST', '/native/upgrade');
   const st3 = await waitUpgrade(3940, (x) => x.state === 'done' || x.state === 'failed', 15000);
+  if (st3 && st3.state !== 'done') console.log('  [U3-diag] lastError=' + st3.lastError + ' logTail=' + JSON.stringify((st3.logTail || []).slice(-12)));
   check('重复升级被安全处理', !!st3);
   const pkg3 = JSON.parse(fs.readFileSync(pkgA, 'utf8'));
   check('版本保持 2.0.0', pkg3.version === '2.0.0', pkg3.version);
@@ -244,6 +247,25 @@ async function main() {
     execSync("pkill -CONT -f 'mock-target.js' || true", { stdio: 'ignore' });
     execSync("pkill -9 -f 'mock-target.js'", { stdio: 'ignore' });
   } catch {}
+
+  // B22（AUDIT-2026-09-19）：升级 hold 释放单点化 + 失败尾部清理（源码形态门禁，不依赖 spawn）。
+  {
+    const upg = fs.readFileSync(path.join(ROOT, 'src', 'app', 'native', 'upgrade.js'), 'utf8');
+    const between = (a, b) => { const i = upg.indexOf(a); const j = upg.indexOf(b, i + a.length); return i < 0 || j < 0 ? '' : upg.slice(i, j); };
+    const hUF = between('async function handleUpgradeFailure', '/** 一键升级');
+    const rbAF = between('async function rollbackAfterFailure', 'async function handleUpgradeFailure');
+    const resumeCount = (s) => (s.match(/resumeAfterUpgrade\(\)/g) || []).length;
+    check('B22 handleUpgradeFailure 调回滚后不再 early-return（保留尾部统一释放）',
+      /await rollbackAfterFailure\(host\);/.test(hUF) && !/if \(!rb\.ok\) return/.test(hUF), 'ok');
+    check('B22 handleUpgradeFailure 尾部单一 resume 点 + 清 _activeTaskId',
+      resumeCount(hUF) === 1 && /host\._activeTaskId = null;/.test(hUF), 'count=' + resumeCount(hUF));
+    check('B22 rollbackAfterFailure 内不再各自 resume（释放收敛到调用方）',
+      resumeCount(rbAF) === 0, 'count=' + resumeCount(rbAF));
+    // 反向（防空转）：旧形态「回滚失败即 return + 内部自行 resume」必须被识别（证明判据确有牙）
+    const OLD = 'async function handleUpgradeFailure(host){ const rb = await rollbackAfterFailure(host); if (!rb.ok) return; if (host.hooks.resumeAfterUpgrade) host.hooks.resumeAfterUpgrade(); }';
+    check('B22 反向：判据能识别「if (!rb.ok) return」早退 + 内联 resume 旧形态',
+      /if \(!rb\.ok\) return/.test(OLD) && resumeCount(OLD) === 1, 'ok');
+  }
 
   console.log('\n==============================');
   console.log(`结果: ${passed} passed, ${failed} failed`);

@@ -6,6 +6,35 @@
 
 ## [未发布]
 
+### 安全与生命周期（AUDIT-2026-09-19 第 3 批：B-1…B-28 + N2/B-21 + E-3，裁决登记见 AUDIT-REPORT §G）
+
+- **令牌/面板域（B-1…B-8）**：remoteToken 热换触发 `onRemoteChange` + reconcile 漂移兜底；
+  ctl 通道来源闸（application/json + 回环 Origin，403 fail-closed）；令牌池 `clear()` 截断旧代
+  stdout 行缓冲（TK-1）；lan-state 令牌空值显式写入（TK-8 失效广播闭环）；frp.json tmp 带 pid+0600；
+  FRP `authToken` 不再明文回显（只报 `authTokenSet`）；UI 携带访问密钥并本机缓存（401 可自助恢复）；
+  TK-7 契约改述（remoteToken = instances[] 行投影，门禁同步）。
+- **平台层（B-9…B-14）**：PowerShell 通知改单引号串语义（堵 `$(...)` 插值执行）；`hasTool` 改解析判存在
+  不 spawn；npm 安装入参白名单（包名/semver/argv 禁用字符，win32 盘符绝对路径整体豁免——
+  CI run17 实测反斜杠一刀切禁用会误杀 windows 升级链）+ `--ignore-scripts` + registry 纯 http(s) origin；
+  systemd 单元名 `UNIT_NAME_RE` fail-closed；`killTree` Windows 补 `/F`、POSIX 外来 pid 不发组信号；
+  端口分配跨进程锁 + 被抢即撤销复检 + migrate 损坏不碰文件/先清源后写目标。
+- **生命周期（B-15…B-22 + E-3）**：guardian 开关下沉 gate 至 BACKOFF/FAILED（守「停就停」红线）；
+  插件变更路径自检 `exitIntended`（补 INV-S1 旁路）；SIGTERM 外部关停落盘退出意图（9-18 谱系收口）；
+  credits 解冻基线显式判空；用量账本键上限+截断+脏标记异步落盘；冻结反代 5min 有界强制停；
+  升级 hold 早退路径统一 resume；lan 停止补 `classify()` 归属闸；**N2/B-21**：安装成功后立即
+  `_bindNativeDshCommand`（首装免重启守卫）；E-3 意图轴收敛为两级谓词（`_exitIntended` 通用自愈 /
+  `_shellExitIntended` 仅壳看护，P2-A/P2-D 实验裁决）。
+- **发布链（B-23…B-26）**：version 串进构建前硬闸（点分数字/x-prerelease）；NODE_GEN 改环境变量注入
+  （os/cpu 保留）；幂等发布改 unpackedSize+sha1 双项核对（缺失/不一致 exit 1，禁静默跳过）；
+  cred.sh 旧值备份判成败；根 lockfile 重建零依赖同步 BETA.10 + esbuild 固版对账（`DSH_ESBUILD_VERSION`）。
+- **UI（B-27/B-28）**：CSP 补 `frame-ancestors 'none'`（点击劫持面）；公网暴露等高危操作二次确认、
+  令牌采集弃 `window.prompt` 改掩码输入。
+- **凭据文档尾账**：规范库位置统一改 `<REAL_HOME>/develop/.credentials/`（cred.sh `CANON_STORE`、
+  CREDENTIALS-STANDARD、DEVELOPMENT-TRACK、release/README + 9-19 事故后通道定稿：push=HTTPS+凭据文件、
+  API=单一细粒度 PAT、npm=Granular bypass-2FA）。
+- 测试全部并入既有文件（零新增测试文件，`package.json#scripts.test` 链长不破 8000）；
+  新增断言均带反向防挂机 fixture；运行时裁决一律走 CI 四平台矩阵。
+
 ## [0.1.5-BETA.10]（2026-09-19）
 
 本版为 **AUDIT-2026-09-19 P0 清零**安全发布（第 1+2 批）；无用户可见 API/事件契约变更，

@@ -23,24 +23,46 @@ function run(cmd, args, opts) {
   return exec.run(cmd, args, opts || {});
 }
 
+/** systemd 单元名字符集白名单（B12，AUDIT §B-12）。
+ *
+ *  unit 名的唯一来源是 `'dsh-web@' + inst.id`，而 inst.id 会从 instances.json **原样载回**
+ *  —— 该文件沙箱侧/人工可改，属信任边界之外。历史上 stop/reset-failed/is-active 与
+ *  transient 文件路径都直接拼接 unit：名字里带 `/`、`..`、空白或控制符即可把命令指向
+ *  其它 `*.service`、把删除指向任意路径（fail-open）。
+ *  判据（fail-closed）：1..128 字符，仅允许 systemd 单元名安全集（字母数字 + `:` `-` `_` `.` `@`），
+ *  必须带 `.service` 后缀或无任何后缀（内核两种来路都覆盖：裸名与具名）。 */
+const UNIT_NAME_RE = /^[A-Za-z0-9:@._-]{1,128}$/;
+function unitNameViolation(unit) {
+  const s = String(unit == null ? '' : unit);
+  if (!UNIT_NAME_RE.test(s)) return '非法单元名（字符集/长度白名单不通过）: ' + s.slice(0, 80);
+  const dot = s.indexOf('.');
+  if (dot >= 0 && !/\.service$/.test(s)) return '单元名后缀不受支持（仅允许 .service 或无后缀）: ' + s.slice(0, 80);
+  return null;
+}
+
 const systemd = {
   kind: 'systemd',
   supportsUnits: true,
   supportsTransient: true,
   daemonReload() { try { return run('systemctl', ['--user', 'daemon-reload'], { timeoutMs: 15000 }) !== null; } catch { return false; } },
   stopUnit(unit, opts) {
+    if (unitNameViolation(unit)) return false; // B12：非法名绝不进 systemctl argv
     const o = opts || {};
     try { return run('systemctl', ['--user', 'stop', unit], { timeoutMs: o.timeoutMs || 15000 }) !== null; }
     catch { return false; } // 停止失败不抛（调用方多为 best-effort 清理）；可经 isUnitActive 复核
   },
   // run() 失败返回 null 而不抛，故原 try/catch 是死代码、恒返回 true（N5）。如实回传成败。
-  resetFailed(unit) { return run('systemctl', ['--user', 'reset-failed', unit], { timeoutMs: 10000 }) !== null; },
+  resetFailed(unit) {
+    if (unitNameViolation(unit)) return false; // B12
+    return run('systemctl', ['--user', 'reset-failed', unit], { timeoutMs: 10000 }) !== null;
+  },
   /** 单元活跃判定（三态）：确认 active -> true；确认不活跃 -> false；查询未完成 -> null（未知）。
    *  旧实现把「查询未完成」折成 false，而 run() 失败只返回 null，于是
    *  instance/ops.js 删除数据目录前的 null 保护成了不可达死分支，is-active 超时时仍会 rmSync
    *  沙箱数据（FIX-5 A 的根因）。调用方按「!== false 才放行删除」消费本函数。 */
   isUnitActive(unit) {
     if (!unit) return true; // 无单元约束 -> 视为通过（调用方语义）
+    if (unitNameViolation(unit)) return false; // B12：非法名不可能由内核启动，恒判「确认不活跃」
     try {
       const r = exec.runDetail('systemctl', ['--user', 'is-active', unit], { timeoutMs: 8000 });
       if (r.timedOut) return null; // 超时 -> 查询未完成，未知（绝不当作「不活跃」）
@@ -51,6 +73,7 @@ const systemd = {
     } catch { return null; }
   },
   transientUnitFile(unit) {
+    if (unitNameViolation(unit)) return null; // B12：非法名不再生成路径（调用方据此跳过 unlink）
     let uid = 0;
     try { uid = os.userInfo().uid; } catch { /* 受限环境：退回 /run/user/0 */ }
     const rt = process.env.XDG_RUNTIME_DIR || ('/run/user/' + uid);
@@ -63,6 +86,8 @@ const systemd = {
    *  退出属正常，不计入 ok；真正的硬失败只有删单元文件与 daemon-reload。 */
   cleanTransient(unit) {
     const errors = [];
+    const bad = unitNameViolation(unit);
+    if (bad) return { ok: false, errors: [bad] }; // B12：非法名整链路拒绝（不进 systemctl、不拼删除路径）
     exec.runDetail('systemctl', ['--user', 'stop', unit + '.service'], { timeoutMs: 10000 });
     exec.runDetail('systemctl', ['--user', 'reset-failed', unit + '.service'], { timeoutMs: 10000 });
     let unlinkOk = true;
@@ -75,6 +100,8 @@ const systemd = {
    *    props 为 systemd 属性（如 KillMode=process、MemoryMax=8G），平台层只拼装成 --property，不解释语义。 */
   startTransient(o) {
     const opts = o || {};
+    const bad = unitNameViolation(opts.unit);
+    if (bad) throw new Error('systemd-run 拒绝: ' + bad); // B12：unit 名进 --unit= 前必须过白名单
     const args = ['--user', '--unit=' + opts.unit];
     if (opts.description) args.push('--description=' + opts.description);
     for (const p of (opts.props || [])) args.push('--property=' + p);
@@ -115,4 +142,4 @@ const NONE = makeUnsupported('none', '当前平台无服务管理器');
 
 function current() { return PROVIDERS[PLATFORM] || NONE; }
 
-module.exports = { current, CapabilityError, kind: () => current().kind, PLATFORM };
+module.exports = { current, CapabilityError, kind: () => current().kind, PLATFORM, UNIT_NAME_RE, unitNameViolation };

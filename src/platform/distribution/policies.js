@@ -16,9 +16,26 @@ function normalizeOrigin(origin) {
   return String(origin || '').trim().replace(/\/+$/, '');
 }
 
-/** 是否为合法 http(s) origin（防 SSRF 到任意协议）。 */
+/** 是否为合法 http(s) **纯 origin**（防 SSRF 到任意协议；B11 收紧自「仅查 scheme」）。
+ *
+ *  旧实现 `/^https?:\/\//` 有三个漏洞面（origin 会经字符串拼接进请求 URL / 写进 npm_config_registry）：
+ *    · `http://u:pass@host` —— 凭证夹带；
+ *    · `http://host/path?q=1` 与 `http://host/#x` —— 路径/查询/片段借拼接污染真实请求路径；
+ *    · `http://host//a` —— 拼接后双斜杠改语义。
+ *  现判据：能被 WHATWG URL 解析 + 协议仅 http/https + 无用户名密码 + 主机存在，
+ *  且（normalizeOrigin 剥尾斜杠后）剩余只能是空或单个 `/`。 */
 function isValidOrigin(origin) {
-  return /^https?:\/\//.test(String(origin || ''));
+  const s = normalizeOrigin(origin); // 与拼接侧同一归一（剥尾斜杠），合法 `https://host/` 不被误拒
+  // 原文形态闸：仅 scheme://host[:port]（host 允许 IPv6 方括号），杜绝 `?`/`#`/`@`/路径等一切夹带；
+  // URL 解析闸（下方）兜住原文闸放行的畸形体。
+  if (!/^https?:\/\/(\[[0-9A-Fa-f:]+\]|[A-Za-z0-9.\-_]+)(:\d+)?$/.test(s)) return false;
+  let u;
+  try { u = new URL(s); } catch { return false; }
+  if (u.protocol !== 'http:' && u.protocol !== 'https:') return false;
+  if (u.username || u.password) return false;
+  if (u.hash) return false; // WHATWG 解析会把 `#x` 从 pathname 剥离，须单独判
+  if (!u.hostname) return false;
+  return u.pathname === '' || u.pathname === '/' || u.pathname === '//';
 }
 
 /** 生效的候选 registry 列表：配置优先，空则回退兜底。 */

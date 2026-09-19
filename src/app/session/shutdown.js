@@ -9,6 +9,15 @@ const platform = require('../../platform/os/index');
 function shutdown(host) {
     if (host._stopping) return host._shutdownPromise || Promise.resolve();
     host._stopping = true;
+    // B17（AUDIT-2026-09-19 §B-17，裁决=补持久化）：SIGTERM 到达时若**没有**进行中的会话退出
+    //   （shutdownAll 已置 _shellHalted 并落盘），说明外部所有者（systemctl stop/注销）直接
+    //   关停守卫。守卫是 Restart=always 的常驻自愈者，语义上等于「用户离开了」——不落盘
+    //   退出意图，则守卫被重新拉起后壳看护按 desired=running 又把壳拉回（9-18 同类）。
+    //   壳侧 shutdownAll 在位时本分支天然跳过（session 已 stopping/stopped）。
+    if (!host._shellHalted && !host._sessionHalting()) {
+      host._shellHalted = true;
+      try { host.events.append('shell_halt_on_external_stop', {}); } catch {}
+    }
     host.lifecycle.beginShutdown();
     host.events.append('guard_exit', {});
     host.logger.info('guard shutting down');

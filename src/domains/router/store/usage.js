@@ -32,26 +32,42 @@ class UsageLedger {
     this._canPersist = typeof o.canPersist === 'function' ? o.canPersist : (() => true);
     this.events = o.events || null;
     this.totals = null;
+    // B19（AUDIT-2026-09-19）：byModel 键来自客户端请求体，可被撑到无界 → 截断 + 限流桶；
+    //   同步全量写盘改脏标记 + 尾部定时器（测试可注入 writeDelayMs=0 保持即时落盘语义）。
+    this._writeDelayMs = typeof o.writeDelayMs === 'number' ? o.writeDelayMs : 1000;
+    this._maxModelKeys = typeof o.maxModelKeys === 'number' ? o.maxModelKeys : 64;
+    this._timer = null;
+    this._dirty = false;
   }
 
-  /** 读盘（缓存于 this.totals；兼容旧格式补默认字段，防 undefined 崩溃）。 */
-  load() {
-    if (this.totals) return this.totals;
-    let t;
-    try { t = JSON.parse(fs.readFileSync(this.file, 'utf8')); } catch {}
-    if (!t || typeof t !== 'object') t = {};
-    this.totals = defaults(t);
-    return this.totals;
+  /** 归一 model 键：字符串化 + 截断；未知/空归 'unknown'。 */
+  _modelKey(model) {
+    if (typeof model !== 'string' || !model) return 'unknown';
+    return model.length > 128 ? model.slice(0, 128) : model;
   }
 
-  /** 记账：累计总量 + byModel + byKey，按快照单价估算费用，原子落盘。 */
+  /** byModel 取桶：超上限的新键并入 '(other)'，防客户端任意 model 名撑爆账本。 */
+  _bump(t, model) {
+    const key = this._modelKey(model);
+    let bm = t.byModel[key];
+    if (!bm) {
+      if (Object.keys(t.byModel).length >= this._maxModelKeys && key !== '(other)') {
+        bm = t.byModel['(other)'] || (t.byModel['(other)'] = { requests: 0, promptTokens: 0, completionTokens: 0, totalTokens: 0, costUsd: 0 });
+      } else {
+        bm = t.byModel[key] = { requests: 0, promptTokens: 0, completionTokens: 0, totalTokens: 0, costUsd: 0 };
+      }
+    }
+    return bm;
+  }
+
+  /** 记账：累计总量 + byModel + byKey，按快照单价估算费用，节流落盘。 */
   recordUsage(entry) {
     const t = this.load();
     t.requests += 1;
     t.promptTokens += entry.promptTokens;
     t.completionTokens += entry.completionTokens;
     t.totalTokens += entry.totalTokens;
-    const bm = t.byModel[entry.model] || (t.byModel[entry.model] = { requests: 0, promptTokens: 0, completionTokens: 0, totalTokens: 0, costUsd: 0 });
+    const bm = this._bump(t, entry.model);
     bm.requests += 1; bm.promptTokens += entry.promptTokens; bm.completionTokens += entry.completionTokens; bm.totalTokens += entry.totalTokens;
     const cost = this._estimateCost(entry);
     if (cost > 0) {
@@ -64,7 +80,7 @@ class UsageLedger {
       bk.requests += 1; bk.promptTokens += entry.promptTokens; bk.completionTokens += entry.completionTokens; bk.totalTokens += entry.totalTokens;
       if (cost > 0) bk.costUsd = (bk.costUsd || 0) + cost;
     }
-    this._writeTotals();
+    this._scheduleWrite();
     if (this.events) this.events.append('router_usage', { model: entry.model, tokens: entry.totalTokens });
     return t;
   }
@@ -73,8 +89,37 @@ class UsageLedger {
   recordError() {
     const t = this.load();
     t.errors = (t.errors || 0) + 1;
-    this._writeTotals();
+    this._scheduleWrite();
     return t.errors;
+  }
+
+  /** 脏标记 + 尾部定时器合并落盘（delay=0 时保持每调用同步写，兼容既有测试语义）。 */
+  _scheduleWrite() {
+    this._dirty = true;
+    if (this._writeDelayMs <= 0) return this._writeTotals();
+    if (this._timer) return;
+    this._timer = setTimeout(() => {
+      this._timer = null;
+      this._writeTotals();
+    }, this._writeDelayMs);
+    if (this._timer && this._timer.unref) this._timer.unref();
+  }
+
+  /** 强制落盘（停机/测试钩子）：定时器未到点也不丢账；无脏数据则跳过。 */
+  flush() {
+    if (this._timer) { clearTimeout(this._timer); this._timer = null; }
+    if (!this._dirty) return;
+    this._writeTotals();
+  }
+
+  /** 读盘（缓存于 this.totals；兼容旧格式补默认字段，防 undefined 崩溃）。 */
+  load() {
+    if (this.totals) return this.totals;
+    let t;
+    try { t = JSON.parse(fs.readFileSync(this.file, 'utf8')); } catch {}
+    if (!t || typeof t !== 'object') t = {};
+    this.totals = defaults(t);
+    return this.totals;
   }
 
   /** 汇总视图（byModel 取 token 前 12）。 */
@@ -94,6 +139,7 @@ class UsageLedger {
       const tmp = this.file + '.tmp.' + process.pid + '.' + Date.now();
       fs.writeFileSync(tmp, JSON.stringify(t), { mode: 0o600 });
       fs.renameSync(tmp, this.file);
+      this._dirty = false;
     } catch {}
   }
 }

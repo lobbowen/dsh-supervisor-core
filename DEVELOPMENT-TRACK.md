@@ -160,7 +160,7 @@ if (matrix.supportsProcessGroup()) { /* POSIX 进程组 */ }
 
 改动涉及**令牌 / 密钥 / CI Secrets / 分支保护**时，**必须**先读 `CREDENTIALS-STANDARD.md`。
 
-- 凭据只允许在规范库（**真实用户 home** 下的 `.dsh/credentials/`；**禁止**实例子目录 / 附件目录 —— 那是 ephemeral 的）；
+- 凭据只允许在规范库（**真实用户 home** 下的 `develop/.credentials/`；**禁止**实例子目录 / 附件目录 —— 那是 ephemeral 的）；
 - 用 `bash release/scripts/cred.sh list|doctor|verify` 查看与管理；
 - ⚠ `$HOME` 被重定向到实例数据目录，**一律用绝对路径**，禁止 `~`；
 - 新增 / 轮换后必须经 `credential-hygiene-test`（由 CI 执行）。

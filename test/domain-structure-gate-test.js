@@ -131,7 +131,10 @@ function methodBodies(src) {
 }
 /** 抽取器**无法**取体的成员形态：属性箭头**无块体**（name: (a) => expr）—— 无花括号可 readBrace。
  *  返回这些形态的名字，由 DG-14 显式判为违规，使门禁对未知形态**失败可见**而非静默失覆盖。 */
-const UNSUPPORTED_METHOD_FORM = /^[ \t]{2,8}([A-Za-z_$][\w$]*)\s*:\s*(?:async\s+)?(?:\([^)]*\)|[A-Za-z_$][\w$]*)\s*=>\s*(?!\{)/gm;
+// 尾部用 `\s*[^{\s]`（要求 => 后第一个非空白字符存在且非 {）——旧写法 `\s*(?!\{)` 会因
+// `\s*` 回退到零宽而使 lookahead 落在空白上，把 `setX: () => { ... }`（=> 与 { 之间有空格）
+// **误报**为未支持形态（2026-09-19 第 3 批全量链复跑抓出，反向自检判 FAIL）。
+const UNSUPPORTED_METHOD_FORM = /^[ \t]{2,8}([A-Za-z_$][\w$]*)\s*:\s*(?:async\s+)?(?:\([^)]*\)|[A-Za-z_$][\w$]*)\s*=>\s*[^{\s]/gm;
 function unsupportedMethodForms(src) {
   const out = []; let m;
   while ((m = UNSUPPORTED_METHOD_FORM.exec(src))) {

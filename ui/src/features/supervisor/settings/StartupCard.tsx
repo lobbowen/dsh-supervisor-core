@@ -7,7 +7,7 @@ import { toast } from "sonner";
 import { Button, Select, SelectContent, SelectItem, SelectTrigger, SelectValue, Switch } from "../../../framework/ui";
 import { Input } from "../../../framework/ui/input";
 import {
-  supervisorApi, type AccessKeyStatus, type LanPanelStatus,
+  supervisorApi, setStoredAccessKey, type AccessKeyStatus, type LanPanelStatus,
 } from "../../../services/supervisor";
 import { useSupervisorAction } from "../useSupervisorAction";
 import { Card, CardTitle } from "../widgets";
@@ -56,11 +56,15 @@ export function StartupCard() {
   async function saveAccessKey() {
     const key = akInput.trim();
     if (key && key.length < 8) { toast.error("访问密钥至少 8 位（建议 16+ 位随机串）"); return; }
-    await run("akk", () => supervisorApi.setAccessKey(key), {
+    const ok = await run("akk", () => supervisorApi.setAccessKey(key), {
       success: key ? "访问密钥已设置" : "访问密钥已清除",
       refresh: false,
       onDone: () => { setAkInput(""); void load(); },
     });
+    // B8：保存成功后把 key 同步进**本机**缓存（localStorage），此后本面板请求自动带
+    // Authorization: Bearer——否则局域网/公网访问会被后端 401 门卫整体挡死。
+    // 清除密钥（ok 且 key 为空）同步清空缓存。run 的 onDone 成败皆跑，故按返回值落盘。
+    if (ok) setStoredAccessKey(key);
   }
   async function changeCloseAction(v: string) {
     const val = v === "exit" ? "exit" as const : "hide" as const;

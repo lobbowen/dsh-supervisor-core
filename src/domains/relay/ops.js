@@ -18,6 +18,9 @@ function applyRelayToken(host, existing, want) {
   try { s.setToken(want); } catch {}
   existing.token = want;
   if (host.events) host.events.append('lan_token_updated', { id: existing.id, tokenSet: !!want });
+  // frp 公网暴露闸依赖 remoteToken：令牌清空后既有隧道必须随之收敛
+  // （syncFrpc 内 validateFrpExposure 复判，不过闸者跳过并停 frpc）。
+  host.syncFrpc();
   return true;
 }
 

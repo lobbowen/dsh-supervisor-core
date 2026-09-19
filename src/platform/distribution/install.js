@@ -5,6 +5,7 @@
 
 const net = require('node:net');
 const spawnOS = require('../os/spawn');
+const execPath = require('../os/exec-path');
 const { npmBin } = require('../os/exec-path');
 const runtimeContract = require('../contract/runtime');
 const service = require('../os/service').current();
@@ -12,6 +13,21 @@ const { VERSION_RE } = require('../../shared/version');
 const release = require('./release');
 const registry = require('./registry');
 const policies = require('./policies');
+
+/** npm 包名字符集白名单（B11）：范围包 + 小写包名（npm 实际禁止大写，此处从严到安全字符集即可）。
+ *  pkg/version 会流入 argv 与 commandTemplate 的 {pkg}/{version} 替换 —— 不进白名单就是注入面。 */
+const PKG_NAME_RE = /^(@[a-zA-Z0-9._-]+\/)?[a-zA-Z0-9._-]+$/;
+
+/** argv 项的禁用字符集（B11）：空白与全部 shell 元字符/引号/控制符。命中即拒。
+ *  与 commandTemplate **替换前**的形态兼容（模板自带 {pkg}/{version}/{prefix} 花括号）。
+ *  ⚠ 反斜杠例外见 WIN_DRIVE_ABS_RE：win32 盘符路径（D:\\a\\...\\fake-npm.js）是合法 argv，
+ *    CI 实测旧版把 `\\` 一刀切禁用 → windows 升级链确定性判红（win32-only，linux/mac 全绿）。 */
+const BAD_ARGV_CHAR_RE = /[\s;|&<>`'"$(){}\\*?~#]/;
+
+/** 盘符绝对路径整体形态（B11 windows 例外）：仅当该项**完整匹配**此形态时豁免禁用字符集——
+ *  此时 `\\` 是路径分隔符而非转义/元字符；其余禁用字符（`;`、引号、`$` 等）仍被字符类拦截，
+ *  空白也仍禁（盘符路径含空格须走 commandTemplate 拆项，不得借豁免夹带）。 */
+const WIN_DRIVE_ABS_RE = /^[A-Za-z]:\\[^;|&<>`'"$*?~#\s]*$/;
 
 /** npm registry 最新版（用选中镜像；失败回退候选；null 表示不可达）。 */
 async function fetchNpmLatest(state, pkg, opts) {
@@ -27,8 +43,12 @@ async function fetchNpmLatest(state, pkg, opts) {
     origin = await registry.selectRegistry(state, false);
   }
   if (!origin) return null; // 全部镜像不可达：明确失败（checkUpdate 据此报错而非误报最新）
+  // B11：拉元数据前先过协议/形态闸（http(s) 纯 origin，无凭证/路径夹带）与包名字符集白名单。
+  // 覆盖 manualOrigin/契约 selected 等**不经 setRegistryConfig 校验**的来路（拼接 URL 的攻击面）。
+  const base = policies.normalizeOrigin(origin);
+  if (!policies.isValidOrigin(base)) return null;
+  if (!PKG_NAME_RE.test(pkg)) return null;
   try {
-    const base = policies.normalizeOrigin(origin);
     // 拉包完整元数据（dist-tags + versions）；选版算法不在这里：
     //   我们的包走 release.pickReleaseVersion，第三方包取全量最高。
     const res = await fetch(base + '/' + encodeURIComponent(pkg), { signal: AbortSignal.timeout(10000) });
@@ -87,6 +107,10 @@ function runNpmInstall(opts) {
   const o = opts || {};
   const pkg = o.pkg || '@deepseek-ai/dsh';
   if (!o.version) return Promise.resolve({ ok: false, error: 'runNpmInstall: 缺少 version（必须显式携带）', output: [] });
+  // B11 入参白名单（fail-closed）：pkg/version 来自配置/registry 返回值，任何一环被污染
+  // 都会经 argv 或模板替换直达 spawn —— 非法字符（空白/shell 元字符）在构造命令前即拒。
+  if (!PKG_NAME_RE.test(pkg)) return Promise.resolve({ ok: false, error: 'runNpmInstall: 非法包名（字符集白名单不通过）: ' + String(pkg).slice(0, 80), output: [] });
+  if (!VERSION_RE.test(String(o.version))) return Promise.resolve({ ok: false, error: 'runNpmInstall: 非法版本号（须为严格 semver）: ' + String(o.version).slice(0, 80), output: [] });
   // 唯一安装执行器：commandTemplate 支持完整替换命令（测试/特殊环境注入 fake-npm 等）。
   let argv;
   // 经统一解析（Windows 下为 npm.cmd），不得硬编码裸 'npm'（会 ENOENT）。
@@ -96,14 +120,35 @@ function runNpmInstall(opts) {
     // 模板首项通常就是逻辑名 'npm'，同样需要跨平台解析；仅在首项恰为逻辑名时解析。
     bin = (argv[0] === 'npm') ? runtimeContract.npmBin(npmBin) : argv[0];
     argv = argv.slice(1);
+    // B11：argv[0] 的非 'npm' 分支**不再进 spawn 解析器**（历史缺陷：argv[0]='evil' 原样
+    // 交给 PATH 解析执行）。逻辑名 'npm' 走统一 npmBin()（两平台语义一致）；其余项过禁用字符集。
+    if (bin === 'npm' && npmBin() === 'npm' && !execPath.resolveExecutable('npm')) {
+      return Promise.resolve({ ok: false, error: 'runNpmInstall: 未找到可执行的 npm（commandTemplate[0]="npm" 解析失败）', output: [] });
+    }
+    for (const a of argv) {
+      // WIN_DRIVE_ABS_RE：win32 盘符绝对路径整体豁免（`\\` 为路径分隔符）；其余项零豁免。
+      if (BAD_ARGV_CHAR_RE.test(String(a)) && !WIN_DRIVE_ABS_RE.test(String(a))) {
+        return Promise.resolve({ ok: false, error: 'runNpmInstall: commandTemplate 替换后含禁用字符（空白/shell 元字符）: ' + String(a).slice(0, 80), output: [] });
+      }
+    }
   } else {
     argv = ['install', '-g', '--no-audit', '--no-fund'];
+    // B11：安装期不执行包内 pre/post 脚本 ——  registry 内容（含镜像被投毒场景）不再能在
+    // 本机以守卫权限跑任意生命周期脚本。（audit §B-11：无 --ignore-scripts。）
+    argv.push('--ignore-scripts');
     if (o.prefix) argv.push('--prefix', o.prefix);
     argv.push(pkg + '@' + o.version);
   }
   // 契约 PATH 注入（nodeBinDir 首位）：内核自身执行的 npm 也必须能找到 node。
   const envVars = runtimeContract.withPath(process.env);
-  if (o.registry) { envVars.npm_config_registry = o.registry; envVars.NPM_CONFIG_REGISTRY = o.registry; }
+  if (o.registry) {
+    // B11：镜像源只接受 http(s) origin（收紧自「仅查 scheme」→ 无凭证/无路径夹带的完整 URL）；
+    // 非法值不写入 env（npm_config_registry 指向 file:// 等协议同样是攻击面）。
+    if (!policies.isValidOrigin(o.registry)) {
+      return Promise.resolve({ ok: false, error: 'runNpmInstall: 非法 registry origin（须为纯 http(s) origin）: ' + String(o.registry).slice(0, 80), output: [] });
+    }
+    envVars.npm_config_registry = o.registry; envVars.NPM_CONFIG_REGISTRY = o.registry;
+  }
   return new Promise((resolve) => {
     let child;
     try {
@@ -185,6 +230,9 @@ async function waitPortHealthy(opts) {
 }
 
 module.exports = {
+  PKG_NAME_RE,
+  BAD_ARGV_CHAR_RE,
+  WIN_DRIVE_ABS_RE,
   fetchNpmLatest,
   fetchGithubLatest,
   fetchLatestVersion,

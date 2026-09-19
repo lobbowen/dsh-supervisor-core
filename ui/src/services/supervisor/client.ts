@@ -24,6 +24,37 @@ const BASE = "";
 /** 默认请求超时（R2 修复）：此前全部 fetch 无超时/无取消，后端挂起时按钮永久 busy。
  *  轮询 read 与本地写操作均应在该窗口内完成；慢网下由轮询层 in-flight 守卫兜底。 */
 const DEFAULT_TIMEOUT_MS = 15_000;
+
+// ── 访问密钥（B8，AUDIT-2026-09-19）──────────────────────────────────────────
+// 后端 api/transport/server.js 对**非回环**请求 fail-closed：无匹配 key 一律 401
+// （连静态页也被拦），此前 UI 从不携带 key → 局域网面板设置密钥后整页瘫痪。
+// key 仅存本机 localStorage（绝不入仓库/日志）。bootstrap 入口：首次以
+// http://<lan>:<port>/?access_key=KEY 访问，模块加载即把 key 从 URL 搬入存储并
+// replaceState 抹掉参数（不留历史/不刷日志），此后同源请求统一带 Bearer 头。
+const ACCESS_KEY_STORAGE = "dsh.apiAccessKey";
+
+function readStoredAccessKey(): string {
+  try { return globalThis.localStorage?.getItem(ACCESS_KEY_STORAGE) || ""; } catch { return ""; }
+}
+
+/** 写入/清除本机缓存的访问密钥（空串=清除）。存储不可用时静默降级。 */
+export function setStoredAccessKey(key: string): void {
+  try {
+    if (key) globalThis.localStorage?.setItem(ACCESS_KEY_STORAGE, key);
+    else globalThis.localStorage?.removeItem(ACCESS_KEY_STORAGE);
+  } catch { /* 隐私模式/webview 限制：退化为无 key，401 由轮询层显式呈现 */ }
+}
+
+(() => {
+  try {
+    const g = globalThis as unknown as { location?: Location; history?: History };
+    if (!g.location || !g.history) return;
+    const k = new URLSearchParams(g.location.search || "").get("access_key");
+    if (!k) return;
+    setStoredAccessKey(k);
+    g.history.replaceState(null, "", g.location.pathname + g.location.hash);
+  } catch { /* 非浏览器环境 */ }
+})();
 /** 长耗时端点的超时覆盖（如 proxyLoginWait 本身就是服务端轮询等待，需留足等待窗口） */
 export const LONG_TIMEOUT_MS = 210_000;
 
@@ -41,9 +72,13 @@ async function http<T>(method: string, path: string, body?: unknown, opts?: Http
   const timeoutMs = opts?.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   // 同源/壳内直连 fetch（守卫托管同源或壳 asset 源走 CORS 白名单）；统一浏览器 fetch 路径
   const { signal, clear } = withTimeout(timeoutMs);
-  const init: RequestInit = { method, headers: {}, signal };
+  const headers: Record<string, string> = {};
+  // B8：本机存过访问密钥就统一带 Bearer（回环请求后端本就豁免，多带无害且换 IP 访问零配置）。
+  const ak = readStoredAccessKey();
+  if (ak) headers["Authorization"] = "Bearer " + ak;
+  const init: RequestInit = { method, headers, signal };
   if (body !== undefined) {
-    init.headers = { "Content-Type": "application/json" };
+    headers["Content-Type"] = "application/json";
     init.body = JSON.stringify(body);
   }
   let res: Response;
@@ -61,7 +96,14 @@ async function http<T>(method: string, path: string, body?: unknown, opts?: Http
   try { data = await res.json(); } catch { /* 文本/空响应 */ }
   if (!res.ok) {
     const d = data as { error?: string; message?: string } | null;
-    throw new Error(d?.error || d?.message || `HTTP ${res.status} ${path}`);
+    const msg = d?.error || d?.message || `HTTP ${res.status} ${path}`;
+    const err = new Error(
+      res.status === 401
+        ? msg + "（访问密钥缺失或已更新：请用带 ?access_key= 的链接重新进入，或在本机 127.0.0.1 面板重新保存密钥）"
+        : msg,
+    ) as Error & { status?: number };
+    err.status = res.status; // 轮询层据此区分「401 鉴权失败」与「真离线」（B8）
+    throw err;
   }
   return data as T;
 }
@@ -72,8 +114,11 @@ const post = <T>(p: string, body?: unknown, opts?: HttpOptions) => http<T>("POST
  *  故此处直接走 fetch 取原文（保持同源/CSP 与超时语义一致）。 */
 async function getText(path: string): Promise<string> {
   const { signal, clear } = withTimeout(DEFAULT_TIMEOUT_MS);
+  const headers: Record<string, string> = {};
+  const ak = readStoredAccessKey();
+  if (ak) headers["Authorization"] = "Bearer " + ak; // B8：文本端点同过后端 401 门卫
   try {
-    const res = await fetch(BASE + path, { method: "GET", signal });
+    const res = await fetch(BASE + path, { method: "GET", headers, signal });
     const text = await res.text();
     if (!res.ok) throw new Error(`HTTP ${res.status} ${path}`);
     return text;
@@ -172,7 +217,8 @@ export const supervisorApi = {
   // ── lan / frp ──
   // 注（FRP 修复）：enabled 是 frpc 启动的**总闸**（后端 syncFromInstances 要求 settings.enabled=true），
   // 此前 UI 从不提交该字段 → 用户「配置了 frps 却永远不运行」。现必传。
-  frpSettings: (s: { serverAddr: string; serverPort: number; authToken: string; enabled?: boolean }) =>
+  // B7：authToken 为 patch 语义——留空时**必须整体缺省该字段**（提交 '' 会被后端视为清除）。
+  frpSettings: (s: { serverAddr: string; serverPort: number; authToken?: string; enabled?: boolean }) =>
     post<GenericOk>("/lan/frp/settings", s),
   frpInstall: () => post<GenericOk>("/lan/frp/install"),
   // 实例级公网暴露（后端 /lan/frp/expose；此前**零 UI 消费者** → 永远 count=0 → frpc 无代理可跑）

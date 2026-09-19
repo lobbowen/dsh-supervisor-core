@@ -2,7 +2,7 @@
 
 > 本文件是**凭据管理的唯一规范**。每一条都对应一个会失败的门禁
 > （`test/credential-hygiene-test.js`，18 断言，已注入验证）。
-> 工具：仓库 `release/scripts/cred.sh`；库：**真实用户 home** 下的 `.dsh/credentials/`（经 getent/dscl/USERPROFILE 解析；可用 `DSH_CRED_DIR` 覆盖）。
+> 工具：仓库 `release/scripts/cred.sh`；库：**真实用户 home** 下的 `develop/.credentials/`（经 getent/dscl/USERPROFILE 解析；可用 `DSH_CRED_DIR` 覆盖。旧位置 `.dsh/credentials/` 已于 2026-09-19 废弃——与易失的实例 `~/.dsh` 同前缀，易被误认成 ephemeral 副本）。
 
 ---
 
@@ -29,7 +29,7 @@
 
 | # | 铁律 | 门禁 |
 |---|---|---|
-| 1 | 凭据**只允许**存放在规范库 `<REAL_HOME>/.dsh/credentials/`（SSH 密钥可留 `~/.ssh`）。**禁止**放在实例子目录或附件目录 | C-3 |
+| 1 | 凭据**只允许**存放在规范库 `<REAL_HOME>/develop/.credentials/`（SSH 密钥可留 `~/.ssh`）。**禁止**放在实例子目录或附件目录 | C-3 |
 | 2 | 库目录 **0700**、库内文件 **0600**；禁止令牌内嵌进 git remote URL；仓库文件里不得出现令牌值 | C-1 / C-4 / C-6 / C-7 |
 | 3 | 令牌**必须有清单条目**（`index.json`），只存引用不存值；缺失要显式标 `missing` | C-2 / C-5 |
 

@@ -115,6 +115,12 @@ const read = (p) => fs.readFileSync(path.join(ROOT, p), 'utf8');
   const osIdx = read('src/platform/os/index.js');
   check('H-d hasTool 负结果有 TTL（_NEG_TTL_MS）', /_NEG_TTL_MS/.test(osIdx), '有');
   check('H-d 正结果仍永久缓存（工具装好不会自己消失）', /if \(hit === true\) return true/.test(osIdx), '有');
+  // B10（AUDIT-2026-09-19）：存在性优先解析判定，不再对无 --version 约定的内建工具
+  // （taskkill/schtasks/osascript/powershell）执行探测——旧实现把能力恒误降为 false。
+  check('B10 hasTool 先走 resolveExecutable（存在性=解析，不 spawn）',
+    /execPath\.resolveExecutable\(name\)/.test(osIdx), '有');
+  check('B10 反向：解析失败才回退 runOut 实测（顺序锁，判据非空转）',
+    osIdx.indexOf('resolveExecutable(name)') < osIdx.indexOf("ex.runOut(name, args || ['--version']"), 'resolve-first');
   // ⚠ 2026-09-16 步骤8a（DIRECTORY-STRUCTURE-DESIGN §4.5）：instance 域已拆为
   //   core/ops/upgrade + index 门面（getter 留在 core.js 的 class 内）。本组断言的对象
   //   是「域」的 sandboxSupported 纪律，故按域聚合读取，判据不搬走。

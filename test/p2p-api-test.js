@@ -91,8 +91,9 @@ registerDryRunApp();
   r = await api('GET', '/router/status');
   check('P8 status running + usage', r.body.running === true && r.body.usage && typeof r.body.usage.requests === 'number', JSON.stringify({ running: r.body.running, req: r.body.usage && r.body.usage.requests }));
 
-  // 8. 反代账号异步注册（等待 dry-run 实例起来）
-  await new Promise((res) => setTimeout(res, 8000));
+  // 8. 反代账号异步注册（轮询到终态，替代固定 8s sleep——负载下会骑到
+  //    waitHealthy 6×1.5s≈9s 边界造成 P9 偶发假失败）
+  await (async () => { const t0 = Date.now(); while (Date.now() - t0 < 20000) { const rr = await api('GET', '/router/providers'); const pp = (rr.body.providers || []).find((p) => p.kind === 'proxy'); const aa = (pp && pp.accounts) || []; if (aa.length >= 1 && aa.every((a) => a.status !== 'registering')) break; await new Promise((res) => setTimeout(res, 200)); } })();
   r = await api('GET', '/router/providers');
   const proxyP = (r.body.providers||[]).find((p) => p.kind === 'proxy');
   const accs = (proxyP && proxyP.accounts) || [];

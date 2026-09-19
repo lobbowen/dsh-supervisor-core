@@ -26,7 +26,10 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REAL_HOME="$(dsh_real_home)"
 # 归一为 /（Windows 路径含反斜杠）——必须与下方 STORE 的归一保持一致，
 # 否则 IS_REAL 比较（STORE == CANON_STORE）在 Windows 上恒假 → 真机保护被绕过。
-CANON_STORE="$(printf '%s' "$REAL_HOME/.dsh/credentials" | tr '\\' '/')"
+# 规范库根（2026-09-19 用户定稿）：真实 home 下 develop/.credentials（随开发环境长期存在、
+#   多项目共享，不进任何项目仓；旧 ~/.dsh/credentials 位置已废弃）。仍然只由 REAL_HOME 派生，
+#   与 _npm-auth.sh 同源，不得写死任何机器绝对路径。换机/测试经 DSH_CRED_DIR 覆盖。
+CANON_STORE="$(printf '%s' "$REAL_HOME/develop/.credentials" | tr '\\' '/')"
 
 # 凭据库根：默认 = 真实 home 下的规范位置；可用 DSH_CRED_DIR 覆盖（测试 / 换机 / 多套环境）。
 STORE=${DSH_CRED_DIR:-$CANON_STORE}
@@ -105,8 +108,13 @@ case "${1:-list}" in
       echo "  如确需轮换，设 DSH_CRED_FORCE=1（会自动备份旧值到 .bak-<时间戳>）。" >&2
       exit 2
     fi
+    # B25（AUDIT-2026-09-19）：备份是**尽力安全网**，不得成为写入的硬闸 ——
+    #   原实现 cp&&chmod 链任一失败（如通配已有 .bak 不可改、目标FS 不支 chmod）即中止 put，
+    #   把应急轮换路径堵死。降级为 warn 继续；确认项（①）不受影响仍为硬闸。
     if [ -f "$f" ]; then
-      cp -p "$f" "$f.bak-$(date +%Y%m%d%H%M%S)" && chmod 600 "$f".bak-* 2>/dev/null
+      BK="$f.bak-$(date +%Y%m%d%H%M%S)"
+      ( cp -p "$f" "$BK" && chmod 600 "$BK" ) 2>/dev/null \
+        || echo "警告：旧值备份失败（${BK} 未落），写入仍继续；如需保底请先手工复制 ${f}。" >&2
     fi
     umask 077; mkdir -p "$(dirname "$f")"; cat > "$f"; chmod 600 "$f";
     node -e "

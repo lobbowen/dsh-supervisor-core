@@ -28,6 +28,9 @@ class PluginManager {
     this.dshPort = opts.dshPort;
     this.instances = opts.instances || null;   // InstanceManager（实例目标数据源）
     this.onNativeRestart = opts.onNativeRestart || null; // 原生 DSH 重启回调（supervisor 注入）
+    // B16（AUDIT-2026-09-19 §B-16）：INV-S1 退出门谓词（守卫注入 host._exitIntended，E-3 单源）。
+    //   本域注入裸 InstanceManager，门不在域方法上 —— 变更生效路径必须自查，防退出中拉起实例。
+    this.exitIntended = typeof opts.exitIntended === 'function' ? opts.exitIntended : () => false;
     this.logger = opts.logger || console;
     this.events = opts.events || null;
     this.dist = opts.dist || null;

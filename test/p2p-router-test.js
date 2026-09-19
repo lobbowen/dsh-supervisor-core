@@ -128,7 +128,9 @@ const upstream = http.createServer((q, s) => {
   check('B2 反代类型/appId', pp.kind === 'proxy' && pp.proxyAppId === 'test-dry-run', pp.kind + '/' + pp.proxyAppId);
   const actR = await svc.activateProvider(rB.id);
   check('B2b 激活反代供应商（独立端点端口分配）', actR.ok === true && pp.activated === true && !!pp.apiPort, JSON.stringify({ ok: actR.ok, activated: pp.activated, apiPort: pp.apiPort }));
-  await new Promise((r) => setTimeout(r, 8000));
+  // 轮询等待注册落终态：原固定 8s sleep 在负载下会骑到 waitHealthy（6 次 ×1.5s ≈9s）
+  // 的边界上 → B3/B5 偶发假失败；改为带上限的 deadline 轮询。
+  await (async () => { const t0 = Date.now(); while (Date.now() - t0 < 20000) { const a = pp.accounts.find((x) => x.key === 'proxy-key-1'); if (a && a.status !== 'registering') return; await new Promise((r) => setTimeout(r, 200)); } })();
   const pacc = pp.accounts.find((a) => a.key === 'proxy-key-1');
   check('B3 反代账号注册完成', pacc && pacc.status === 'ready', JSON.stringify(pacc && pacc.status));
   const pinst = pp.instances[0];

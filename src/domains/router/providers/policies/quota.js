@@ -168,8 +168,12 @@ function creditsResetDue(acc, now) {
 /** credits 冻结的正向恢复证据 b)：余额较冻结时刻回升（充值场景）。 */
 function creditsRefilled(acc) {
   if (!acc || !acc.limit || acc.limit.kind !== 'credits') return false;
-  const base = Number(acc.limit.creditsAt);
-  if (!Number.isFinite(base)) return false; // 无基线（旧冻结数据）：只认证据 a)
+  // B18（AUDIT-2026-09-19）：基线缺失必须显式判空。Number(null)===0 是有限值，
+  //   冻结时以 null 记录基线（freeze.js 无余额证据分支）会让任意正余额被判「已充值」，
+  //   耗尽账号被重新选路 —— fail-closed：无基线只认证据 a)。
+  const raw = acc.limit.creditsAt;
+  if (raw === null || raw === undefined || typeof raw !== 'number' || !Number.isFinite(raw)) return false;
+  const base = raw;
   const q = acc.quota || {};
   const now = (typeof q.monthlyRemaining === 'number' && Number.isFinite(q.monthlyRemaining))
     ? q.monthlyRemaining

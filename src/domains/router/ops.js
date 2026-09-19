@@ -4,7 +4,7 @@
 // 副作用经注入的 endpoint/scheduler/ports 执行（手法 B），本文件不 require 实现。
 //
 // 契约导出：createState(opts), createOps(deps), findProvider(providers, id)。
-// createOps deps = { state, store, logger, events, dist, ports, endpoint, scheduler,
+// createOps deps = { state, store, logger, events, dist, ports, endpoint, scheduler, usage,
 //                    createDirect, createProxy, apps, presets, save }
 
 /** 域内唯一可变状态的家（纯内存）。 */
@@ -130,6 +130,8 @@ function createOps(deps) {
     scheduler.stop();
     stopAllInstances(); // 服务停止 = 实例一并停止（防孤儿进程残留占用动态端口段）
     for (const id of Object.keys(state.providerServers)) endpoint.stopProviderServer(id); // 供应商独立端点一并关闭
+    // B19：用量账本改节流落盘后，停服前强制 flush，未到点的账不丢。
+    try { if (d.usage && typeof d.usage.flush === 'function') d.usage.flush(); } catch (e) { logger.warn && logger.warn('usage flush: ' + ((e && e.message) || e)); }
     if (events) events.append('router_stopped', {});
     return { ok: true };
   }

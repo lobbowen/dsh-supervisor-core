@@ -18,6 +18,8 @@ function depsOf(host) {
       main() { return host.main; },
       state() { return host.state; },
       session() { return host.session; },
+      // E-3（AUDIT-2026-09-19）：意图轴单源谓词（装配期由 collaborators 安装到 host）。
+      exitIntended() { return host._exitIntended(); },
       events() { return host.events; },
       logger() { return host.logger; },
       ui() { return host.ui; },
@@ -67,9 +69,9 @@ module.exports = {
   async _dshConverge() {
     const d = depsOf(this);
     if (d.readTicking() || d.stopping()) return;
-    // INV-S1（契约 §3.3）：会话退出中/已退出则抑制一切自动拉起，不再驱动 main 收敛。
-    // 这是「退出管家」不再依赖翻 desired 防重拉的结构保证（停止由会话态而非意图态表达）。
-    if (d.session().halting()) return;
+    // INV-S1（契约 §3.3）/E-3：守卫关停中或会话 halting（单源谓词 _exitIntended = stopping ∨ halting）
+    // 则抑制一切自动拉起，不再驱动 main 收敛。（_shellHalted 属桌面壳域，不在此——见 collaborators。）
+    if (d.exitIntended()) return;
     d.writeTicking(true);
     // 影子拍：收敛窗口打开（拍内实际执行动作记账，供影子对比 actual）
     d.writeActWindow(true);
@@ -185,8 +187,11 @@ module.exports = {
           } else if (await monitor.isPortListening(host, port, 1000)) {
             // 端口被不健康进程占用：不硬抢，只告警
             d.daemons().warnOccupied();
-          } else if (d.session().shouldRun()) {
-            // 拉起条件（意图单源，契约 §6）：是否应运行 = (desired == running) && sessionState 允许。
+          } else if (d.session().shouldRun() && !d.exitIntended()) {
+            // 拉起条件（意图单源，契约 §6）：是否应运行 = (desired == running) && 会话非 halting && 非崩溃停靠；
+            // 且守卫/会话未处于退出中（E-3 单源谓词 _exitIntended = stopping ∨ session halting）。
+            // ⚠ _shellHalted 不参与主 DSH 恢复（它是桌面壳域判据，见 collaborators）——
+            //   守卫重启后 desired=running 即恢复（契约 §5/§6），否则 headless 无壳清除路径会死锁。
             // desired 是持久用户意图（重启后据此恢复），只要 desired=running 就无条件拉起，
             // 不要求 guardian 或内存意图解锁。guardian 只约束崩溃后是否自动重启（见 RUNNING/exit 分支）。
             d.intents().consume('start'); d.intents().consume('restart'); d.intents().consume('upgrade-resume'); // 意图一次性消费（加速器，非门槛）
