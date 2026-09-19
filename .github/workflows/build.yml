@@ -212,18 +212,25 @@ jobs:
         shell: bash
         run: bash release/scripts/ci-core.sh
 
-      # 唯一发布入口（原判定条件等价：tag + 有 NPM_TOKEN + 四平台未齐备）。
+      # 唯一发布入口。⚠ 令牌非空判断**必须在 run 内**：step 级 if 的上下文里没有
+      #   secrets（引用即 workflow 解析错误 → 0-job 整文件红，A3-a 首推实测）。
+      #   判定条件与拆分前等价：tag + 有 NPM_TOKEN + need_build。
       # need_build=false 表示已全平台发布 —— 构建照跑（上面的验证步），本步跳过。
       # ci-core.sh --publish-only：只跑 [5/5] 真发布，复用同 workspace 上一步的构建产物
       #   （缺产物时 publish-core.sh 的存在性检查即闸）。
       - name: 内核发布（tag 触发 · NPM_TOKEN 唯一持有步）
-        if: startsWith(github.ref, 'refs/tags/v') && needs.precheck.outputs.need_build == 'true' && secrets.NPM_TOKEN != ''
+        if: startsWith(github.ref, 'refs/tags/v') && needs.precheck.outputs.need_build == 'true'
         shell: bash
         env:
           NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
           # provenance 逃生阀：仓库 variables 设 DSH_NPM_PROVENANCE=0 可关（如无 OIDC 的环境）。
           DSH_NPM_PROVENANCE: ${{ vars.DSH_NPM_PROVENANCE }}
-        run: bash release/scripts/ci-core.sh --publish-only
+        run: |
+          if [ -z "$NPM_TOKEN" ]; then
+            echo '无 NPM_TOKEN：跳过真发布（与拆分前 [ -n "$NPM_TOKEN" ] 分支语义一致，tag 构建仅产 artifacts）'
+            exit 0
+          fi
+          bash release/scripts/ci-core.sh --publish-only
 
       - name: Upload artifacts（内核 launcher 构建物）
         uses: actions/upload-artifact@v4
