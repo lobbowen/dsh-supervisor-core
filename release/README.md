@@ -173,8 +173,9 @@ if (matrix.supportsProcessGroup()) { /* POSIX 进程组 */ }
 - **验证内容**：`ci-core.sh` 内 `verify:versions` → 前端 `verify` → `npm test` → `build:launcher` →
   子包组装 + `npm publish --dry-run`；构建期断言四平台 `core.cjs` 逐字节一致，并做
   self-check + fresh-HOME daemon 自举 + UI 服务端到端冒烟。
-- **发布**：tag `v*` + 有 `NPM_TOKEN` + `need_build=true` 时，各平台 runner 执行
-  `ci-core.sh --publish`。`need_build`（`precheck` 探测「四平台是否已全部发布」）**只作用于发布**，
+- **发布**：tag `v*` + 有 `NPM_TOKEN` + `need_build=true` 时，各平台 runner 由**单独发布步骤**执行
+  `ci-core.sh --publish-only`（A3-a：`NPM_TOKEN` 只挂在该步骤上，验证步骤永不带令牌）。
+  `need_build`（`precheck` 探测「四平台是否已全部发布」）**只作用于发布**，
   用于防同版本重发（npm 409）；它**不再跳过构建**。
 - **本地**：只允许 S0–S3（凭据 / 版本 / 前端产物前置）与 `--dry-run`；**S4 全量回归起一律由 CI 执行**（本机不得执行 `npm test`）；任何真发布都要求 `GITHUB_ACTIONS=true`（见「内核构建模式」）。
 
@@ -247,7 +248,7 @@ release/
 | 项 | 现行（硬标准）|
 |---|---|
 | 构建发生地 | **仅 GitHub CI**（`build` job 的 4 runner 矩阵）|
-| 发布发生地 | **仅 GitHub CI**（tag 触发，各平台 runner 执行 `ci-core.sh --publish`）|
+| 发布发生地 | **仅 GitHub CI**（tag 触发，各平台 runner 的 token-scoped 发布步骤执行 `ci-core.sh --publish-only`）|
 | 本地允许做什么 | S0–S3 与 `--dry-run`（如 `verify:versions` / `build-ui.sh`）；**本机不得执行 `npm test`**（全量回归由 CI 的 test job 经 `xvfb-run -a npm test` 执行） |
 | 本地禁止做什么 | 任何平台构建/发布产物（`--all-platforms` 本地一律 exit 2；`release-core.sh` 已删除）|
 | 四平台同源如何保证 | launcher 为架构无关纯 JS，CI 四平台产物 `core.cjs` 逐字节一致（由 CI 断言）|
@@ -274,7 +275,7 @@ release/
 bash release/scripts/bump.sh --core 0.1.2-BETA.7
 # 3) 一键编排 dry-run（干净树+CHANGELOG 预检 → 委托 ci-core.sh 全部门禁 → 打印发布计划）
 见 `RELEASE-STANDARD.md`（本地只做 S0–S3，S4 起在 CI）
-# 4) 真发（commit + tag v<ver> + push --tags 触发 CI；四个平台全部由 CI 产出并各自 ci-core.sh --publish）
+# 4) 真发（commit + tag v<ver> + push --tags 触发 CI；四个平台全部由 CI 产出并在各自的 token-scoped 发布步骤真发）
 CI（tag 触发）
 ```
 
@@ -291,7 +292,7 @@ CI（tag 触发）
 | darwin-arm64 | GitHub CI | @dsh-sup/dsh-core-darwin-arm64 |
 | darwin-x64 | GitHub CI | @dsh-sup/dsh-core-darwin-x64 |
 
-**四平台全部经 GitHub CI**（2026-09-13 硬标准）：`build` job 的 4 runner 矩阵各自构建并（tag + NPM_TOKEN + need_build 时）`ci-core.sh --publish`；
+**四平台全部经 GitHub CI**（2026-09-13 硬标准）：`build` job 的 4 runner 矩阵各自构建，发布在（tag + NPM_TOKEN + need_build 时的）token-scoped 单独步骤 `ci-core.sh --publish-only`；
 **本地无任何平台构建/发布路径**。GitHub Release 附件由单独 `release` job 汇总四平台 artifact 挂载。
 
 > ✅ **2026-09-13 已执行**：`ubuntu-22.04` 已加回 CI build 矩阵，**四平台全部由 CI 产出**
@@ -303,7 +304,7 @@ CI（tag 触发）
 
 CI 产线（.github/workflows/build.yml → release/scripts/ci-core.sh）：四平台各自
 `verify --core → build-ui → npm test → build:launcher → 子包 dry-run`；**tag 触发 + 存有 NPM_TOKEN 时**
-`--publish` 真发并挂 GitHub Release。内核 launcher 为纯 JS（Node ≥18），无需 Rust/系统库。
+由不带令牌的验证步之后的**单独发布步骤**（`--publish-only`）真发并挂 GitHub Release。内核 launcher 为纯 JS（Node ≥18），无需 Rust/系统库。
 
 ### B. 壳发布（公开仓 dsh-supervisor-launcher）
 

@@ -64,7 +64,7 @@
 | S4 | 全量回归（**由 CI 执行**）| `xvfb-run -a npm test`（本机不得执行）| ✅ | 修缺陷（含注入验证）|
 | S5 | **推向 CI**（commit + tag + push）| `git push origin HEAD --tags` | ✅ | **此后一切构建/发布都在 CI 内完成** |
 | S6 | CI 四平台构建 | 自动（`build` job，4 runner 矩阵）| ✅ | 看该平台日志 |
-| S7 | CI 四平台发布 | 自动（`build` job 内 `ci-core.sh --publish`）| ✅ | npm 同版本不可重发 → 提版本重来 |
+| S7 | CI 四平台发布 | 自动（`build` job 内**单独发布步骤** `ci-core.sh --publish-only`；验证步骤不带令牌 —— A3-a）| ✅ | npm 同版本不可重发 → 提版本重来 |
 | S8 | 发布后验证 | 见 §5 | ✅ | 立即处置（见 §6）|
 
 > **本地只完成 S0–S3**（凭据 / 版本 / 前端产物）；**S4（全量回归）由推送后的 CI test job 执行**，**S5 起全部在 CI 内完成**（见 ACCEPTANCE-STANDARD：本机不得执行任何测试）。
@@ -110,12 +110,12 @@
 |---|---|---|
 | `precheck` | 总是 | 探测「该版本是否已在 npm 全平台发布」→ 输出 `need_build` |
 | `test` | 总是 | 前端产物 + Xvfb + `npm test`（全部门禁；**不检出壳仓**，见 §0 跨仓隔离）|
-| `build` | **总是**（**不受** need_build 门控）| 四平台矩阵各自 `ci-core.sh`：**完整构建 + 验证**（上传制品）；**发布**仅当 tag + NPM_TOKEN + need_build 才执行 |
+| `build` | **总是**（**不受** need_build 门控）| 四平台矩阵各自 `ci-core.sh`：**完整构建 + 验证**（上传制品；验证步**不持有任何发布令牌**）；**发布**由 tag + NPM_TOKEN + need_build 门控的单独步骤执行（`--publish-only`，NPM_TOKEN 唯一持有者，见 AUDIT-2026-09-19 A3-a）|
 | `release` | tag `v*` **且** `need_build` | 挂 GitHub Release 附件 |
 
 **`need_build` 只作用于「发布」，不作用于「构建」**（2026-09-14 修正）：
 
-- `need_build` 是「该版本是否尚未在 npm 全平台发布」的探测，**仅**用于决定是否执行 `--publish`（npm 同版本不可重发）；
+- `need_build` 是「该版本是否尚未在 npm 全平台发布」的探测，**仅**用于决定是否执行发布步骤（npm 同版本不可重发）；
 - **四平台完整构建在每次 push / PR 都跑**（硬标准），不再被它跳过；
 - 故「已发布版本之后的改动」也会经过四平台构建验证 —— 这是删掉原门控的原因。
 
@@ -224,7 +224,7 @@
     },
     {
       "id": "S7",
-      "cmd": "CI: ci-core.sh --publish (per platform)"
+      "cmd": "CI: ci-core.sh --publish-only (per platform, token-scoped step)"
     }
   ],
   "matrixSource": "package.json#npmPublish.packages",

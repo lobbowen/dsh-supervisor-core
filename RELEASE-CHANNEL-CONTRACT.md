@@ -47,7 +47,8 @@
 输入：registry 元数据 { dist-tags, versions }、本机是否在灰度名单
 输出：目标版本（string）
 
-① 若 dist-tags.rollback 存在且为合法版本 → 返回它          【回退：最高优先级】
+① 若 dist-tags.rollback 存在且为合法版本，且通过防降级下限核验（RC-7）→ 返回它 【回退：最高优先级】
+   （不满足 RC-7 的 rollback —— 低于下限版本或发布超出时效窗口 —— 视为不存在，继续走②③④）
 ② 若本机在灰度名单 且 dist-tags.canary 存在且合法 → 返回它   【灰度】
 ③ 若 dist-tags.latest 存在且合法 → 返回它                  【正式：跟随我们的发布】
 ④ 否则（latest 缺失/非法）→ 取 versions 中最高合法版本        【兼容兜底】
@@ -59,11 +60,12 @@
 | # | 不变量 |
 |---|---|
 | **RC-1** | **优先信 `latest`**，不得"取全量最高"（那会绕过通道控制：BETA 的数字可能压过 RC） |
-| **RC-2** | `rollback` 优先级**高于一切**（包括灰度）——紧急回退必须立即全量生效 |
+| **RC-2** | `rollback` 优先级**高于一切**（包括灰度）——紧急回退必须立即全量生效；但须先通过 **RC-7** 防降级下限核验 |
 | **RC-3** | 回退解除 = `npm dist-tag rm <pkg> rollback`，**不依赖版本比较** |
 | **RC-4** | 灰度是**定向**的（名单判定），`canary` tag 全局存在但不影响非名单机器 |
 | **RC-5** | 任一环节失败必须**如实返回错误**，绝不静默降级为"已是最新" |
 | **RC-6** | 正式发布**必须更新 `latest`**（工程纪律，由发布脚本 + 门禁强制） |
+| **RC-7** | `rollback` 须通过**防降级下限**（A3-b，2026-09-19 审计）：目标版本 ≥ 客户端内建 `ROLLBACK_FLOOR_VERSION`，且其 npm 发布时刻距今 ≤ `ROLLBACK_MAX_AGE_DAYS`（元数据无 time 字段时时效无从核验、跳过，下限仍守）。不满足 = 视同无 rollback 走正常链 —— 否则「一条 `dist-tag add <pkg>@<任意旧版> rollback` 即可全员定向降级到漏洞版本」。下限随携带安全修复的发布**同步上调**；若确需回退到下限之下，唯一途径是人工分发（显式安装指定版本），不接受 tag 攻击面换便利 |
 
 ---
 
@@ -79,8 +81,10 @@ npm dist-tag add @dsh-sup/dsh-core-linux-x64@0.1.6-BETA.1 canary
 #   灰度名单内的机器会取它；名单外不受影响
 
 # ── 紧急回退（全员）──
-npm dist-tag add @dsh-sup/dsh-core-linux-x64@0.1.5-BETA.6 rollback
+npm dist-tag add @dsh-sup/dsh-core-linux-x64@0.1.5-BETA.9 rollback
 #   → 全体用户（含灰度）回到该版本；建议同时把 latest 也指回去
+#   ⚠ RC-7：回退目标必须 ≥ 客户端下限版本且发布未超时效窗口（当前基线见
+#     src/platform/distribution/release.js::ROLLBACK_FLOOR_VERSION），否则被客户端忽略
 
 # ── 解除回退 ──
 npm dist-tag rm @dsh-sup/dsh-core-linux-x64 rollback

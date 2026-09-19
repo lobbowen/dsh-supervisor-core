@@ -7,6 +7,8 @@
 // ## 锁定的不变量
 //   RC-1  我们的包**优先信 latest**；latest 合法时绝不返回 versions 最高
 //   RC-2  rollback 优先级**高于一切**（含灰度）
+//   RC-7  rollback 防降级下限（A3-b）：版本 ≥ ROLLBACK_FLOOR_VERSION 且发布未超
+//         ROLLBACK_MAX_AGE_DAYS（time 缺失时仅下限守）——防「令牌失窃→一条 tag 全员降级」
 //   RC-3  第三方包**不得**套用通道语义——取 dist-tags ∪ versions 全量最高（旧语义不变）
 //   RC-4  灰度是**定向**的：名单外机器看到 canary tag 也不得取它
 //   RC-5  任一环节失败必须返回 null（明确失败），绝不猜
@@ -45,15 +47,58 @@ const obj = (arr) => arr.reduce((m, v) => { m[v] = {}; return m; }, {});
   check('归属 第三方代理包 → 非我们的', channel.isOurReleasePackage('commandcode-api-proxy') === false);
 }
 
-// ── §3 ①：rollback 最高优先级 ──
+// ── §3 ①：rollback 最高优先级（受 RC-7 下限约束，见下方 A3-b 块）──
+// fixture 以 ROLLBACK_FLOOR_VERSION 动态构造：日后上调下限（发布纪律）不需要同步改这里。
 {
-  const m = meta({ rollback: '0.1.5-BETA.6', canary: '0.1.6-BETA.1', latest: '0.1.4' }, obj(['0.1.4', '0.1.5-BETA.6', '0.1.6-BETA.1']));
+  const FLOORV = dist.ROLLBACK_FLOOR_VERSION;
+  const m = meta({ rollback: FLOORV, canary: '0.1.6-BETA.1', latest: '0.1.4' }, obj(['0.1.4', FLOORV, '0.1.6-BETA.1']));
   check('① rollback 存在 → 返回它（即使同时有 canary+latest）',
-    channel.pickReleaseVersion(m, { ...OPTS_MINE, canary: true }) === '0.1.5-BETA.6');
+    channel.pickReleaseVersion(m, { ...OPTS_MINE, canary: true }) === FLOORV);
   check('RC-2 rollback 压过灰度（名单内也回退）',
-    channel.pickReleaseVersion(m, { ...OPTS_MINE, canary: true }) === '0.1.5-BETA.6');
-  check('RC-2 rollback 与版本高低无关（可低于 max）',
-    channel.pickReleaseVersion(meta({ rollback: '0.1.0', latest: '0.2.0' }, obj(['0.1.0', '0.2.0'])), OPTS_MINE) === '0.1.0');
+    channel.pickReleaseVersion(m, { ...OPTS_MINE, canary: true }) === FLOORV);
+  check('RC-2 rollback 与 max 无关（可低于 versions 最高，但须 ≥ RC-7 下限）',
+    channel.pickReleaseVersion(meta({ rollback: FLOORV, latest: '9.9.9' }, obj([FLOORV, '9.9.9'])), OPTS_MINE) === FLOORV);
+}
+
+// ── RC-7 / AUDIT-2026-09-19 A3-b：rollback 防降级下限（版本下限 + 发布时效）──
+{
+  const FLOOR = dist.ROLLBACK_FLOOR_VERSION;
+  check('A3b-0 下限常量存在且为合法版本', typeof FLOOR === 'string' && VERSION_RE.test(FLOOR), FLOOR);
+  check('A3b-0b 时效窗口为正值', typeof dist.ROLLBACK_MAX_AGE_DAYS === 'number' && dist.ROLLBACK_MAX_AGE_DAYS > 0);
+  // 攻击形态：令牌失窃后 tag 任意古老版本 → 旧实现无条件服从（全员定向降级），新实现忽略之
+  const attack = meta({ rollback: '0.1.0', latest: '0.2.0' }, obj(['0.1.0', '0.2.0']));
+  check('A3b-1 低于下限的 rollback → 忽略，回落 latest（不降级）',
+    channel.pickReleaseVersion(attack, OPTS_MINE) === '0.2.0');
+  check('A3b-2 反向非空转：无条件服从的旧形态会给 0.1.0（判据有分辨力）',
+    attack['dist-tags'].rollback === '0.1.0' && channel.pickReleaseVersion(attack, OPTS_MINE) !== '0.1.0');
+  check('A3b-3 低于下限 + latest 缺失 → 走 versions 兜底（下限不吞后续链）',
+    channel.pickReleaseVersion(meta({ rollback: '0.1.0' }, obj(['0.1.0', '0.1.4'])), OPTS_MINE) === '0.1.4');
+  check('A3b-4 注入下限生效：rollback=0.2.0 < floor=0.3.0 → 忽略',
+    channel.pickReleaseVersion(meta({ rollback: '0.2.0', latest: '0.2.1' }, obj(['0.2.0', '0.2.1'])),
+      { ...OPTS_MINE, rollbackFloor: '0.3.0' }) === '0.2.1');
+  check('A3b-5 边界：rollback == 下限 → 采纳',
+    channel.pickReleaseVersion(meta({ rollback: '0.3.0', latest: '0.4.0' }, obj(['0.3.0', '0.4.0'])),
+      { ...OPTS_MINE, rollbackFloor: '0.3.0' }) === '0.3.0');
+  const NOW = Date.UTC(2026, 8, 19);
+  const withTime = (daysAgo) => ({
+    ...meta({ rollback: '0.2.0', latest: '0.3.0' }, obj(['0.2.0', '0.3.0'])),
+    time: { '0.2.0': new Date(NOW - daysAgo * 86400000).toISOString() },
+  });
+  check('A3b-6 发布超出时效窗口（180 天前）→ 忽略 rollback',
+    channel.pickReleaseVersion(withTime(180), { ...OPTS_MINE, rollbackFloor: '0.1.0', now: NOW }) === '0.3.0');
+  check('A3b-7 发布在窗口内（7 天前）→ 采纳 rollback',
+    channel.pickReleaseVersion(withTime(7), { ...OPTS_MINE, rollbackFloor: '0.1.0', now: NOW }) === '0.2.0');
+  check('A3b-8 镜像剥掉 time 字段 → 时效核验跳过（下限仍守，不误挡合法回退）',
+    channel.pickReleaseVersion(meta({ rollback: '0.2.0', latest: '0.3.0' }, obj(['0.2.0', '0.3.0'])),
+      { ...OPTS_MINE, rollbackFloor: '0.1.0', now: NOW }) === '0.2.0');
+  check('A3b-9 time 存在但缺该版本条目 → 同样跳过时效',
+    channel.pickReleaseVersion({ ...withTime(7), time: { '9.9.9': withTime(180).time['0.2.0'] } },
+      { ...OPTS_MINE, rollbackFloor: '0.1.0', now: NOW }) === '0.2.0');
+  check('A3b-10 第三方包不套 rollback/下限语义（RC-3 不受影响）',
+    channel.pickReleaseVersion(meta({ rollback: '0.9.0', latest: '1.0.0' }, obj(['0.9.0', '1.0.0'])), OPTS_THIRD) === '1.0.0');
+  const contractRc7 = fs.readFileSync(path.join(ROOT, 'RELEASE-CHANNEL-CONTRACT.md'), 'utf8');
+  check('A3b-11 契约声明 RC-7 防降级下限（防契约单方漂移）',
+    /RC-7/.test(contractRc7) && /防降级下限/.test(contractRc7) && /① [^\n]*RC-7/.test(contractRc7));
 }
 
 // ── §3 ②：灰度定向 ──

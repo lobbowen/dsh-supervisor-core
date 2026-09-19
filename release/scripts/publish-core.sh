@@ -224,7 +224,13 @@ if [ "$PUBLISH" = 1 ]; then
     exit 0
   fi
   echo "== 发布 $PKG_NAME@$VER ${DIST_TAG:-（tag=latest）} → $REGISTRY =="
-  npm publish --access public --registry="$REGISTRY" $DIST_TAG
+  # A3-a（2026-09-19 审计）：--provenance 供应链溯源证明 —— 用 GitHub OIDC 短时令牌
+  #   向 npm 签发「此产物由本仓库此 commit 的这次 CI run 构建」的 attestation，
+  #   npm 侧长期凭证不参与签发；审计/安装方可核。需 build job 已授 id-token: write。
+  #   逃生阀：DSH_NPM_PROVENANCE=0 显式关闭（如无 OIDC 的环境）。
+  PUB_PROV=''
+  if [ "${DSH_NPM_PROVENANCE:-1}" != '0' ]; then PUB_PROV='--provenance'; fi
+  npm publish --access public --registry="$REGISTRY" $DIST_TAG $PUB_PROV
   # RC（正式版）的**附加** rc 标签：npm publish 只接受一个 --tag，故发布后补打。
   #   语义：latest=正式版（用户不写标签装到它）；rc=同一版本的显式别名，便于按通道安装/回滚。
   case "$VER" in

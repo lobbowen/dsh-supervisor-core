@@ -143,6 +143,9 @@ jobs:
     # 本 job 只负责构建与发布 npm 子包（不再直接挂 Release，见文件末尾 release job 的说明）。
     permissions:
       contents: read
+      # A3-a（2026-09-19 审计）：npm --provenance 供应链溯源用 OIDC 短时令牌
+      # （替代 npm 端长存凭据参与证明签发）；仅 id-token: write，其余权限不扩。
+      id-token: write
     strategy:
       fail-fast: false
       matrix:
@@ -177,7 +180,6 @@ jobs:
             arch_override: x64
     runs-on: ${{ matrix.os }}
     env:
-      NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
       DSH_ARCH_OVERRIDE: ${{ matrix.arch_override }}
     steps:
       - uses: actions/checkout@v4
@@ -200,17 +202,28 @@ jobs:
 
       # 发布产线核心逻辑单源：release/scripts/ci-core.sh（本机亦可复跑）。
       # 内核 launcher 为纯 JS（Node ≥18 运行时），无需 Rust/系统库依赖。
-      # tag v<内核> 触发器 + 存有 NPM_TOKEN 时方 --publish 真发（无 token 一律仅验证）。
-      - name: 内核发布产线（verify + build:launcher + 子包发布 / dry-run）
+      #
+      # A3-a（2026-09-19 审计）：**验证腿不带发布令牌**。原实现把 NPM_TOKEN 挂在
+      #   build job env 上 —— ci-core.sh 内的 ui npm ci postinstall 钩子与全量 npm test
+      #   等所有第三方代码进程树都能读到它（供应链失窃面）。
+      #   现拆为两步：本步只跑验证（verify + build:launcher + 子包 dry-run），任何事件
+      #   （push/PR/tag）都跑；发布拆到下一步，令牌仅存在于「内核发布」步骤的进程树。
+      - name: 内核发布产线（verify + build:launcher + 子包 dry-run · 不带发布令牌）
         shell: bash
-        run: |
-          # 发布（唯一入口）需同时满足：tag + 有 NPM_TOKEN + 该版本尚未全平台发布。
-          # need_build=false 表示四平台已齐备 —— 构建照跑（**验证**），但不再重复发布。
-          if [ "${{ startsWith(github.ref, 'refs/tags/v') }}" = "true" ] && [ -n "$NPM_TOKEN" ] && [ "${{ needs.precheck.outputs.need_build }}" = "true" ]; then
-            bash release/scripts/ci-core.sh --publish
-          else
-            bash release/scripts/ci-core.sh
-          fi
+        run: bash release/scripts/ci-core.sh
+
+      # 唯一发布入口（原判定条件等价：tag + 有 NPM_TOKEN + 四平台未齐备）。
+      # need_build=false 表示已全平台发布 —— 构建照跑（上面的验证步），本步跳过。
+      # ci-core.sh --publish-only：只跑 [5/5] 真发布，复用同 workspace 上一步的构建产物
+      #   （缺产物时 publish-core.sh 的存在性检查即闸）。
+      - name: 内核发布（tag 触发 · NPM_TOKEN 唯一持有步）
+        if: startsWith(github.ref, 'refs/tags/v') && needs.precheck.outputs.need_build == 'true' && secrets.NPM_TOKEN != ''
+        shell: bash
+        env:
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+          # provenance 逃生阀：仓库 variables 设 DSH_NPM_PROVENANCE=0 可关（如无 OIDC 的环境）。
+          DSH_NPM_PROVENANCE: ${{ vars.DSH_NPM_PROVENANCE }}
+        run: bash release/scripts/ci-core.sh --publish-only
 
       - name: Upload artifacts（内核 launcher 构建物）
         uses: actions/upload-artifact@v4

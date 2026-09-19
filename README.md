@@ -32,7 +32,7 @@ DeepSeek Harness 生命周期监管工具：独立于 Harness 运行的系统级
 | [ARCHITECTURE-PLAN-session-lifecycle.md](ARCHITECTURE-PLAN-session-lifecycle.md) | 计划（历史） | 会话生命周期重构的根因级计划（已完成） |
 | [INCIDENT-2026-09-13-credential-overwrite.md](INCIDENT-2026-09-13-credential-overwrite.md) | 事故复盘 | 凭据被覆盖事故：时间线 / 根因四层 / 加固与重放验证 |
 | [INCIDENT-2026-09-18-exit-manager-relaunch.md](INCIDENT-2026-09-18-exit-manager-relaunch.md) | 事故复盘 | 退出管家后桌面壳被自动重新拉起：壳 /End 计划任务 + 内核看护门未持久化；修复与残留清单 |
-| [AUDIT-REPORT-2026-09-19.md](AUDIT-REPORT-2026-09-19.md) | 审计报告 | 全仓静态代码审计：P0×4（A1 读失败覆盖×3 / A2 frpc 校验降级 / A3 发布通道 / A4 win32 cmd 注入）+ P1×22 + 分批修复计划；第 1 批 A1/A2/A4 已随本版修复 |
+| [AUDIT-REPORT-2026-09-19.md](AUDIT-REPORT-2026-09-19.md) | 审计报告 | 全仓静态代码审计：P0×4（A1 读失败覆盖×3 / A2 frpc 校验降级 / A3 发布通道 / A4 win32 cmd 注入）+ P1×22 + 分批修复计划；第 1 批 A1/A2/A4 与第 2 批 A3（CI 令牌收敛 + rollback 下限 RC-7）已随本版修复（P0 清零） |
 | [CHANGELOG.md](CHANGELOG.md) | 记录 | 版本变更 |
 
 > **文档可信度不变量**（2026-09-11 确立）：能力声明必须由**可执行断言**支撑；
@@ -317,7 +317,7 @@ POST /shutdown               已由 POST /session/stop 取代（保留供旧版�
 - 守卫只提供**只读**状态：`GET /self-update/status`；写端点 `POST /self-update/apply`、`POST /self-update/restart-guard`
   已下架（`410 KERNEL_UPDATE_SINGLE_WRITER`）。守卫重启（应用新内核）由壳经服务管理器完成（守卫从不重启自己）。
 - 旧 manifest 通道（`selfUpdateManifestUrl`/`selfUpdateDir` 与实现它的自更新模块）**已删除**。
-- 内核发布：`npm run build:launcher` + `npm run publish:core`（Node launcher + npm 平台子包，见「内核发布」节）。发布由 tag 触发 CI：`build` 矩阵四平台各自执行 `ci-core.sh --publish`。
+- 内核发布：`npm run build:launcher` + `npm run publish:core`（Node launcher + npm 平台子包，见「内核发布」节）。发布由 tag 触发 CI：`build` 矩阵四平台先跑不带令牌的验证步，再由 token-scoped 发布步执行 `ci-core.sh --publish-only`。
 - 环境状态：`GET /env/status`（node/npm/git 探针 + 壳写入的 runtime.json）、`GET /env/dsh`（DSH 本体安装/纳管判定）。
 
 ### 跨平台打包（**已移至壳仓**）
