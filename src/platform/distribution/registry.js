@@ -90,10 +90,20 @@ function writeRegistryDoc(state) {
   fs.renameSync(tmp, f);
 }
 
-/** 探测单个 registry 的可达性 + 延迟。探测 URL 由契约决定（与壳同规格）。 */
+/** 探测单个 registry 的可达性 + 延迟。探测 URL 由契约决定（与壳同规格）。
+ *  条 5（AUDIT-2026-09-19 第4批 C）：package-metadata 探测要按平台展开 `{platform}` 标签，
+ *  而 platformTag() 对不可用宿主（freebsd 等）会同步抛 —— 旧实现让抛错穿透
+ *  selectRegistry 的 Promise.all，违不变量 C2「契约不可用绝不阻断选源」；
+ *  可产标但不在发布矩阵（linux-arm64/win32-arm64）时契约探测的包根本不存在 → 恒 404
+ *  全员不可达。两面同修：探不到可信标签就退化为 ping 规格（tag=null 交 resolveProbe 守卫）。
+ *  注意：platformTag() 本体一字不动 —— 其抛错文案是被 arch-validation/P-6 钉死的对外契约。 */
 async function probeRegistry(state, origin) {
   const spec = (state.contract && state.contract.ok && state.contract.probe) || null;
-  const target = policies.resolveProbe(origin, spec, platformTag());
+  let tag = null;
+  try {
+    if (matrix.isSupported()) tag = platformTag();
+  } catch { tag = null; }
+  const target = policies.resolveProbe(origin, spec, tag);
   const start = Date.now();
   try {
     // redirect:'manual' + 显式「非 2xx 即失败」—— 本函数是 SSRF 闭环的另一半：

@@ -6,10 +6,12 @@
 // maxBuffer 默认 1MB，systemctl status 之类冗长输出会被误判为命令失败。
 // 仅限守卫启动早期、CLI 一次性命令或无法异步的调用点；新增调用优先用 execFile + await。
 // run() 同步执行，默认 15s 硬超时，失败或超时返回 null；runOut() 返回 stdout 字符串；
-// runDetail() 返回 { ok, code, stdout, stderr, timedOut, error }。
+// runDetail() 返回 { ok, code, stdout, stderr, timedOut, error }；runAsync() 为其异步同族。
 // runOutAsync()（批 4 C 令牌条 4）：心跳/事件循环敏感路径专用 —— 同步 execFileSync 在长超时下
 //   会冻结整个 tick（journalctl 5s 即守卫心跳停摆 5s），此类调用点必须用异步版。
 //   异步版沿用同一套有界纪律（timeout/SIGKILL/windowsHide/maxBuffer），失败/超时 resolve(null)。
+// 条 6（批 4 C 平台）：K-W2 门禁把异步 execFile 纳入扫描后，本文件是 src 内**唯一**的
+//   execFile/execFileSync 合法调用点（spawn.js 豁免 spawn）；新增异步调用一律经 runAsync/runOutAsync。
 
 const { execFileSync, execFile } = require('node:child_process');
 
@@ -67,34 +69,42 @@ function runOut(bin, args, opts) {
   try { return String(r); } catch { return null; }
 }
 
+/** 异步有界执行（runDetail 的异步同族，绝不 reject）：返回
+ *  { ok, code, stdout, stderr, timedOut, error }。有界纪律与同步版同一套（options()）：
+ *  timeout/SIGKILL/windowsHide/maxBuffer。区分「命令失败」与「超时」的调用方用它。 */
+function runAsync(bin, args, opts) {
+  const o = opts || {};
+  return new Promise((resolve) => {
+    execFile(bin, args, Object.assign({}, options(o), { encoding: 'utf8' }), (err, stdout, stderr) => {
+      if (!err) {
+        resolve({ ok: true, code: '0', stdout: String(stdout == null ? '' : stdout), stderr: String(stderr == null ? '' : stderr), timedOut: false, error: null });
+        return;
+      }
+      if (o.logger && o.logger.warn) {
+        try {
+          o.logger.warn('[exec] (async) ' + bin + ' ' + (args || []).join(' ').slice(0, 80) +
+            ' failed: ' + ((err && err.message) || err));
+        } catch {}
+      }
+      const timedOut = !!(err.code === 'ETIMEDOUT' || err.signal === 'SIGKILL' ||
+        /ETIMEDOUT|timed? ?out/i.test(String(err && err.message)));
+      resolve({
+        ok: false,
+        code: err.status != null ? String(err.status) : null,
+        stdout: String(stdout == null ? (err.stdout || '') : stdout),
+        stderr: String(stderr == null ? (err.stderr || '') : stderr),
+        timedOut,
+        error: (err && err.message) ? String(err.message) : String(err),
+      });
+    });
+  });
+}
+
 /** 异步有界执行，返回 stdout 字符串 Promise（失败/超时 resolve(null)，绝不 reject）。
  *  专供事件循环敏感路径（守卫心跳 tick 内的 journalctl 回填等）：同步 execFileSync 会把
  *  整个进程冻结到 timeout 到期，心跳/定时器全部停摆。选项与同步版同一套有界纪律。 */
 function runOutAsync(bin, args, opts) {
-  const o = opts || {};
-  return new Promise((resolve) => {
-    execFile(bin, args, {
-      timeout: o.timeoutMs || o.timeout || DEFAULT_TIMEOUT_MS,
-      killSignal: o.killSignal || 'SIGKILL',
-      maxBuffer: o.maxBuffer || DEFAULT_MAX_BUFFER,
-      windowsHide: true,
-      encoding: 'utf8',
-      ...(o.cwd ? { cwd: o.cwd } : {}),
-      ...(o.env ? { env: o.env } : {}),
-    }, (err, stdout) => {
-      if (err) {
-        if (o.logger && o.logger.warn) {
-          try {
-            o.logger.warn('[exec] (async) ' + bin + ' ' + (args || []).join(' ').slice(0, 80) +
-              ' failed: ' + ((err && err.message) || err));
-          } catch {}
-        }
-        resolve(null);
-        return;
-      }
-      resolve(stdout == null ? '' : String(stdout));
-    });
-  });
+  return runAsync(bin, args, opts).then((r) => (r.ok ? r.stdout : null));
 }
 
 /** 同 run，但返回结构化结果且不吞错误信息；用于区分命令失败与超时（二者对用户含义不同）。 */
@@ -118,4 +128,4 @@ function runDetail(bin, args, opts) {
   }
 }
 
-module.exports = { run, runOut, runOutAsync, runDetail, options, DEFAULT_TIMEOUT_MS };
+module.exports = { run, runOut, runOutAsync, runDetail, runAsync, options, DEFAULT_TIMEOUT_MS };

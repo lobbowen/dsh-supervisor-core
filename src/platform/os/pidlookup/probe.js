@@ -7,6 +7,7 @@
 
 const fs = require('node:fs');
 const ex = require('../../util/exec');
+const { isExecutableFile } = require('../exec-path');
 const {
   parseProcNetTcpInodes, parseLsofPid, parseNetstatPid, parseSsPid,
   parseWmicCommandLine, parsePowerShellCommandLine,
@@ -71,6 +72,9 @@ function linuxFindSs(port) {
   // systemd user 环境 PATH 可能不含 /usr/sbin（ss 默认位置）——候选路径逐个试
   const candidates = ['ss', '/usr/sbin/ss', '/usr/bin/ss', '/bin/ss'];
   for (const ssBin of candidates) {
+    // 条 3（AUDIT-2026-09-19 第4批 C）：绝对路径候选先判可执行位——无权限的文件
+    //   spawn 只会同步抛 EACCES 白耗一轮；裸名留给 execFile 的 PATH 解析（自行兜底）。
+    if (ssBin.includes('/') && !isExecutableFile(ssBin)) continue;
     try {
       const out = ex.runOut(ssBin, ['-tlnHp', 'sport = :' + port], { timeoutMs: 3000 });
       const pid = parseSsPid(out);

@@ -351,6 +351,52 @@ const TMP = fs.mkdtempSync(path.join(os.tmpdir(), 'platport-'));
     'systemd' !== 'none', 'hit');
 }
 
+// ── X-9：批 4 C 条 3/4 —— 可执行位判定 + spawn 前可用性预检 ──
+{
+  const br = require(path.join(ROOT, 'src', 'platform', 'os', 'browser.js'));
+
+  // 条 3：isExecutableFile 本体
+  const nf = path.join(TMP, 'plain-0644');
+  fs.writeFileSync(nf, 'x', { mode: 0o644 });
+  if (process.platform !== 'win32') {
+    check('X-9 条3 POSIX 0644 普通文件 → isExecutableFile=false（旧 isFile 判定会误报已安装）',
+      ep.isExecutableFile(nf) === false, String(ep.isExecutableFile(nf)));
+    check('X-9 条3 POSIX /bin/sh → true（正反例配对，判据非空转）',
+      ep.isExecutableFile('/bin/sh') === true, String(ep.isExecutableFile('/bin/sh')));
+  }
+  check('X-9 条3 win32 无执行位语义：注入 platform=win32 对 0644 文件恒 true',
+    ep.isExecutableFile(nf, 'win32') === true, String(ep.isExecutableFile(nf, 'win32')));
+  check('X-9 条3 不存在路径 → false（不抛）',
+    ep.isExecutableFile(path.join(TMP, 'no-such-bin')) === false, 'false');
+  // 条 3：pidlookup ss 候选预检（linuxFindSs 要求宿主=linux，注入平台伪造无效 → 静态判据）
+  const ssSrc = fs.readFileSync(path.join(ROOT, 'src', 'platform', 'os', 'pidlookup', 'probe.js'), 'utf8');
+  check('X-9 条3 linuxFindSs 绝对路径候选先判执行位（EACCES 不再白耗一轮 spawn）',
+    /if \(ssBin\.includes\('\/'\) && !isExecutableFile\(ssBin\)\) continue;/.test(ssSrc), '有');
+  check('X-9 条3 裸名候选保留交 execFile 的 PATH 解析（预检不扩大）',
+    /candidates = \['ss',/.test(ssSrc), 'ok');
+
+  // 条 4：launchIsolated spawn 前预检（经 opts.binAvailable 注入，宿主无关）
+  const u9 = 'http://127.0.0.1:28999/x';
+  const plan9 = br.isolatedPlan(process.platform, u9, { profileDir: '/P', antiArgs: ['--a'] });
+  const expected = plan9.kind === 'single' ? plan9.bin
+    : (process.platform === 'win32' ? plan9.bin : plan9.candidates[5].bin); // linux chain → firefox
+  const r1 = br.launchIsolated(u9, { antiArgs: ['--a'], binAvailable: (b) => b === expected });
+  check('X-9 条4 chain：首个可达候选被选中并如实上报',
+    r1.ok === true && r1.bin === expected, JSON.stringify(r1));
+  const r2 = br.launchIsolated(u9, { antiArgs: ['--a'], binAvailable: () => false });
+  check('X-9 条4 全候选不可达 → ok:false/bin:null（旧实现先返回 ok:true/死 bin，error 异步才到）',
+    r2.ok === false && r2.bin === null, JSON.stringify(r2));
+  const r3 = br.launchIsolated('file:///c:/x', { binAvailable: () => true });
+  check('X-9 条4 反向：非法 URL 依旧直接拒（预检不绕过 A4 闸门）',
+    r3.ok === false, JSON.stringify(r3));
+  const brSrc = fs.readFileSync(path.join(ROOT, 'src', 'platform', 'os', 'browser.js'), 'utf8');
+  check('X-9 条4 预检分形态：绝对路径判执行位、裸名走 PATH 解析',
+    /if \(bin\.includes\('\/'\) \|\| bin\.includes\('\\\\'\) \|\| \/\^\[A-Za-z\]:\[\\\\\/\]\/\.test\(bin\)\) return isExecutableFile\(bin\);/.test(brSrc)
+    && /return resolveExecutable\(bin\) !== null;/.test(brSrc), '有');
+  check('X-9 条4 error 处理器不再递归接力（降级判定已前移到 spawn 前）',
+    /child\.on\('error', \(\) => \{\}\);/.test(brSrc) && !/child\.on\('error', \(\) => \{ tryNext\(\); \}\);/.test(brSrc), '有');
+}
+
 fs.rmSync(TMP, { recursive: true, force: true });
 const failed = results.filter((r) => !r);
 console.log(String.fromCharCode(10) + '结果: ' + (results.length - failed.length) + ' passed, ' + failed.length + ' failed');

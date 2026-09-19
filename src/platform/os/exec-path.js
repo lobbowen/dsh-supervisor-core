@@ -24,11 +24,25 @@ function candidateNames(base, platform) {
   return [...new Set(names)];
 }
 
+/** 条 3（批 4 C 平台）：文件存在且**可执行**。旧实现只 statSync().isFile()——POSIX 上
+ *  0644 的普通文件（半截安装、误拷贝）会被当作候选返回，交给 spawn 才以 EACCES 失败，
+ *  且污染上层「已安装」判定。win32 无执行位语义，维持 isFile 即可。
+ *  platform 可注入：宿主与注入平台不一致时（Linux CI 上注入 win32）行为按注入侧走，
+ *  保证纯函数测试可穷举。 */
+function isExecutableFile(p, platform) {
+  try {
+    if (!fs.statSync(p).isFile()) return false;
+    if ((platform || process.platform) === 'win32') return true;
+    fs.accessSync(p, fs.constants.X_OK);
+    return true;
+  } catch { return false; }
+}
+
 function firstExecutable(dir, base, platform) {
   if (!dir) return null;
   for (const name of candidateNames(base, platform)) {
     const p = path.join(dir, name);
-    try { if (fs.statSync(p).isFile()) return p; } catch { /* 不存在/无权：跳过 */ }
+    try { if (isExecutableFile(p, platform)) return p; } catch { /* 不存在/无权：跳过 */ }
   }
   return null;
 }
@@ -76,7 +90,8 @@ function resolveExecutable(base, opts) {
   const E = env || process.env;
   if (o.envVar && E[o.envVar]) {
     const v = E[o.envVar];
-    try { if (fs.statSync(v).isFile()) return v; } catch { /* 覆盖路径无效：继续常规解析 */ }
+    // 条 3：显式覆盖同样必须是可执行文件（不可执行时继续常规解析，而非把 EACCES 留给 spawn）。
+    if (isExecutableFile(v, pl)) return v;
   }
   // platform / env 必须向下传播：否则 npmBin({platform:win32}) 在 Linux 上会按宿主规则
   // 解析出 POSIX 路径，platform 可注入形同虚设。
@@ -264,5 +279,5 @@ function commandEntryViolation(cmdArr, opts) {
 
 module.exports = {
   resolveExecutable, candidateNames, standardDirs, npmBin, npxBin, resolveDsh, dshJsIn,
-  knownDshEntries, commandEntryViolation,
+  knownDshEntries, commandEntryViolation, isExecutableFile,
 };

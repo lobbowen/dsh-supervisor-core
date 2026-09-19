@@ -12,8 +12,10 @@
 // ## 断言（SSOT §4）
 //   K-W1 src/platform/os/spawn.js 的 detached / piped / detachedIgnored
 //        三入口的 options 均含 windowsHide: true（不变量 W-1）。
-//   K-W2 src/** 下裸 spawn( 调用点 = 0（只允许经统一封装；spawn.js 自身豁免）。
-//   K-W3 反向：判据必须能识别旧形态（无 windowsHide 的裸 spawn）→ 门禁非空转。
+//   K-W2 src/** 下裸子进程调用点 = 0：spawn( / spawnSync( / execFile( / execFileSync( /
+//        execSync( / 裸 exec(（条 6 批 4 C 平台扩展——旧判据只匹配 spawn(，异步 execFile
+//        全盲区）；只允许经统一封装（spawn.js 豁免 spawn、util/exec.js 豁免 exec 族）。
+//   K-W3 反向：判据必须能识别旧形态（无 windowsHide 的裸 spawn / 裸 execFile）→ 门禁非空转。
 //
 // 说明：本文件只**读**源码做静态分析，不执行被测代码。
 // ═══════════════════════════════════════════════════════════════════════════
@@ -29,6 +31,8 @@ const check = (n, c, x) => {
 };
 
 const SPAWN_MODULE = 'src/platform/os/spawn.js';
+// 条 6（批 4 C 平台）：exec 族（含异步 execFile）的唯一合法调用点收口于 util/exec.js。
+const EXEC_MODULE = 'src/platform/util/exec.js';
 const ENTRY_FNS = ['detached', 'piped', 'detachedIgnored'];
 const HIDE_RE = /windowsHide\s*:\s*true/;
 const BT = String.fromCharCode(96); // 反引号
@@ -52,27 +56,37 @@ function jsFiles() {
   return out;
 }
 
-/** K-W2 / K-W3 共用判据：逐行找裸 spawn( 调用点。
- *  · 跳过含 child_process 的行（require / 解构导入本身不是调用点）；
- *  · \bspawn\( 不会命中 respawn( 或 spawnSync(。 */
+/** K-W2 / K-W3 共用判据：逐行找裸子进程调用点（spawn 族 + exec 族）。
+ *  · 跳过含 child_process 的行（require / 解构导入本身不是调用点）——已知残留盲区：
+ *    同行「require + 调用」复合形态仍被此规则跳过，与 spawn 时代一致，已在 SSOT §4 登记；
+ *  · \bspawn\( 不会命中 respawn(（词内无边界）；spawnSync( 由独立词形命中；
+ *  · 裸 exec( 用 (?<![.\w$]) 排除 RegExp 属性形态（re.exec( 不是子进程调用）。 */
+const CALL_PATTERNS = [
+  /\bspawn\s*\(/,
+  /\bspawnSync\s*\(/,
+  /\bexecFile\s*\(/,
+  /\bexecFileSync\s*\(/,
+  /\bexecSync\s*\(/,
+  /(?<![.\w$])exec\s*\(/,
+];
 function bareSpawnCallSites(text) {
   const hits = [];
   const lines = text.split('\n');
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
-    if (!/\bspawn\s*\(/.test(line)) continue;
+    if (!CALL_PATTERNS.some((re) => re.test(line))) continue;
     if (/child_process/.test(line)) continue;
     hits.push({ line: i + 1, text: line.trim() });
   }
   return hits;
 }
 
-/** K-W2：扫描 src/**，返回全部裸 spawn( 调用点（spawn.js 自身豁免）。 */
+/** K-W2：扫描 src/**，返回全部裸子进程调用点（spawn.js 豁免 spawn、exec.js 豁免 exec 族）。 */
 function scanBareSpawns() {
   const offenders = [];
   for (const f of jsFiles()) {
     const rel = path.relative(ROOT, f).split(path.sep).join('/');
-    if (rel === SPAWN_MODULE) continue; // 统一封装自身允许调用底层 spawn
+    if (rel === SPAWN_MODULE || rel === EXEC_MODULE) continue; // 统一封装自身允许调用底层 API
     const code = stripComments(fs.readFileSync(f, 'utf8'));
     for (const h of bareSpawnCallSites(code)) offenders.push(rel + ':' + h.line + '  ' + h.text);
   }
@@ -152,12 +166,21 @@ console.log('== K-W1 spawn.js 三入口 windowsHide ==');
   }
 }
 
-// ── K-W2：src 下裸 spawn 计数 = 0 ──
-console.log('== K-W2 src 下裸 spawn( 调用点 ==');
+// ── K-W2：src 下裸子进程调用点 = 0（spawn + exec 族，条 6 扩展）──
+console.log('== K-W2 src 下裸 spawn(/exec*() 调用点 ==');
 {
   const offenders = scanBareSpawns();
-  check('K-W2 src/** 裸 spawn( 调用点 = 0', offenders.length === 0,
+  check('K-W2 src/** 裸 spawn(/spawnSync(/execFile(/execFileSync(/execSync(/exec( 调用点 = 0',
+    offenders.length === 0,
     offenders.length ? (offenders.length + ' 处: ' + offenders.slice(0, 5).join(' | ')) : 'ok');
+  // 收编证据（条 6）：曾经的三处异步 execFile 盲区调用点必须已改走统一封装。
+  const read = (rel) => stripComments(fs.readFileSync(path.join(ROOT, rel), 'utf8'));
+  check('条 6 killTree 的 taskkill 走 exec.runAsync（不再裸 execFile）',
+    /ex\.runAsync\('taskkill'/.test(read('src/platform/os/process.js')), '有');
+  check('条 6 npx 预取走 exec.runOutAsync（不再裸 execFile）',
+    /ex\.runOutAsync\(npxBin\(\)/.test(read('src/domains/router/providers/pkg-cache.js')), '有');
+  check('条 6 git fetch 走 exec.runOutAsync（不再裸 execFile）',
+    /ex\.runOutAsync\('git'/.test(read('src/app/settings/versions.js')), '有');
 }
 
 // ── K-W3：反向 —— 判据必须能识别旧形态 ──
@@ -178,6 +201,24 @@ console.log('== K-W3 反向（门禁非空转）==');
   // 正向：经统一封装的调用点（spawnMod.detached 形态）不应被误报
   const wrapped = "const child = spawnMod.detached(cmd, args, { env });";
   check('K-W3 判据不误报经封装的调用', bareSpawnCallSites(wrapped).length === 0, 'ok');
+  // 条 6（批 4 C 平台）：exec 族形态逐一命中（旧判据只匹配 spawn( → 全盲区）。
+  const execLegacy = [
+    "const child = execFile('git', ['fetch'], { timeout: 10000 }, (err) => {});",
+    "const o = execFileSync('git', ['status']);",
+    "const p = execSync('git log');",
+    "const q = spawnSync('git', ['diff']);",
+    "exec('ls');",
+  ].join('\n');
+  check('K-W3 条 6 判据逐词形命中 execFile/execFileSync/execSync/spawnSync/裸 exec',
+    bareSpawnCallSites(execLegacy).length === 5, bareSpawnCallSites(execLegacy).map((h) => h.line).join(','));
+  // 反向中的反向：RegExp 属性形态 re.exec( 与封装入口 ex.runOut( 不得误报。
+  const notCalls = [
+    "const m = /x/.exec(s);",
+    "const out = ex.runOut('systemctl', ['status']);",
+    "const b = spawnOS.detachedIgnored(bin, args);",
+  ].join('\n');
+  check('K-W3 条 6 不误报 re.exec( / ex.runOut( / spawnOS.detachedIgnored(',
+    bareSpawnCallSites(notCalls).length === 0, 'ok');
 }
 
 const failed = results.filter((r) => !r);

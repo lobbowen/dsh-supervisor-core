@@ -40,7 +40,7 @@
 
 | # | 铁律 |
 |---|---|
-| **W1** | **内核 JS**：不得裸调 `child_process.spawn`。一律经统一封装 `platform/os/spawn.js::detached()` / `::piped()`（**默认 `windowsHide: true`**）。 |
+| **W1** | **内核 JS**：不得裸调 `child_process` 的 `spawn`/`spawnSync`/`execFile`/`execFileSync`/`execSync`/`exec`。spawn 族一律经统一封装 `platform/os/spawn.js::detached()` / `::piped()`（**默认 `windowsHide: true`**）；exec 族一律经 `platform/util/exec.js`（同步 `run/runOut/runDetail`，异步 `runAsync/runOutAsync`）。 |
 | **W2** | **壳 Rust**：不得直接 `Command::spawn()`。一律经 `bounded::prepare()`（加 `CREATE_NO_WINDOW`）或 `bounded::run`；`creation_flags` 只在 `platform/` 与 `bounded.rs` 出现。 |
 | **W3** | `windowsHide`/`CREATE_NO_WINDOW` 的默认值是 **true/加标志**：想弹窗必须**显式**关掉并写明理由（当前全仓无此需求）。 |
 | **W4** | 壳为 GUI 子系统（`windows_subsystem = "windows"`，release），故壳自身不产生控制台；弹窗只可能来自**子进程未隐藏**。 |
@@ -76,8 +76,8 @@ detachedIgnored(cmd, args, opts) -> ChildProcess   // 等价 detached + stdio:'i
 | 门禁 | 断言 |
 |---|---|
 | K-W1 | `platform/os/spawn.js` 三个入口均含 `windowsHide: true` |
-| K-W2 | `src/**` 下 `spawn(` 的**裸调用点 = 0**（只允许经封装；测试可豁免） |
-| K-W3 | 反向：能识别旧形态（无 `windowsHide` 的裸 spawn）→ 门禁非空转 |
+| K-W2 | `src/**` 下裸子进程调用点 = 0：`spawn(` / `spawnSync(` / `execFile(` / `execFileSync(` / `execSync(` / 裸 `exec(`（批 4 条 6 扩展——旧判据只匹配 `spawn(`，异步 `execFile` 是全盲区）。豁免仅两个统一封装：`platform/os/spawn.js`（spawn 族）、`platform/util/exec.js`（exec 族）。已知残留：同行「require(child_process) + 调用」复合形态被「含 child_process 跳过」规则放行（与 spawn 时代一致）。`re.exec(` 形态经 `(?<![.\w$])` 排除，不误报 RegExp 属性调用 |
+| K-W3 | 反向：能识别旧形态（无 `windowsHide` 的裸 spawn、裸 execFile/execFileSync/execSync/spawnSync/裸 exec）→ 门禁非空转 |
 | S-W1 | 壳 `src/**` 下 `Command::spawn` 仅出现在 `bounded.rs` 与 `platform/mod.rs`、`platform/service.rs` |
 | S-W2 | `env.rs::node_version` 不再自行 spawn（改为经统一执行器或显式加标志） |
 

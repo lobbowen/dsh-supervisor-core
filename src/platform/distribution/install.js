@@ -49,8 +49,8 @@ async function fetchNpmLatest(state, pkg, opts) {
   if (!policies.isValidOrigin(base)) return null;
   if (!PKG_NAME_RE.test(pkg)) return null;
   try {
-    // 拉包完整元数据（dist-tags + versions）；选版算法不在这里：
-    //   我们的包走 release.pickReleaseVersion，第三方包取全量最高。
+    // 拉包完整元数据（dist-tags + versions）；选版算法不在这里，一律交
+    //   release.pickReleaseVersion（isOurs 决定是否有 rollback/canary；两侧均 latest 优先）。
     const res = await fetch(base + '/' + encodeURIComponent(pkg), { signal: AbortSignal.timeout(10000) });
     if (!res.ok) return null;
     const j = await res.json();

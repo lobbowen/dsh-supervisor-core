@@ -7,7 +7,9 @@
 const os = require('node:os');
 const path = require('node:path');
 const fs = require('node:fs');
-const { execFile } = require('node:child_process');
+// 条 6（批 4 C 平台）：异步子进程必须走统一有界封装（裸 execFile 无 windowsHide，
+// Windows 上 npx.cmd 会弹控制台窗口，且绕过 timeout/SIGKILL/maxBuffer 纪律）。
+const ex = require('../../../platform/util/exec');
 const { npxBin } = require('../../../platform/os/exec-path');
 
 /** 定位已缓存的包 bin（~/.npm/_npx/<hash>/node_modules/<pkg>，取最新）。无则 null。 */
@@ -40,12 +42,10 @@ async function ensurePkgCached(provider, app) {
   if (cachedPkgBin(app.pkg)) return { ok: true, cached: true };
   try {
     const regOrigin = provider.dist ? await provider.dist.selectRegistry(false).catch(() => null) : null;
-    await new Promise((resolve) => {
-      const env = Object.assign({}, process.env);
-      if (regOrigin) { env.npm_config_registry = regOrigin; env.NPM_CONFIG_REGISTRY = regOrigin; }
-      const child = execFile(npxBin(), ['--yes', app.pkg, '--help'], { env, timeout: 120000 }, () => resolve());
-      child.on('error', () => resolve());
-    });
+    const env = Object.assign({}, process.env);
+    if (regOrigin) { env.npm_config_registry = regOrigin; env.NPM_CONFIG_REGISTRY = regOrigin; }
+    // 预下载成败以下方缓存复检为准，runOutAsync 自身绝不 reject。
+    await ex.runOutAsync(npxBin(), ['--yes', app.pkg, '--help'], { env, timeoutMs: 120000 });
     return { ok: !!cachedPkgBin(app.pkg) };
   } catch { return { ok: false }; }
 }

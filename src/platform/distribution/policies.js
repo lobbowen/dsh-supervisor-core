@@ -82,10 +82,12 @@ function rebuildRegistryConfig(doc, contract, defaultRegistries) {
 
 /** 展开单个镜像的探测目标。契约 probe.kind='package-metadata' 时用与壳完全一致的
  *  真实包元数据 URL，无契约则退化为 `/-/ping` 兜底。实测两种方法延迟差 6.7 倍，
- *  故两侧必须用同一规格，否则会出现「面板显示一个源、实际下载用另一个」。 */
+ *  故两侧必须用同一规格，否则会出现「面板显示一个源、实际下载用另一个」。
+ *  条 5（批 4 C）：platformTag 为 null/空（宿主不可产标或不在发布矩阵，调用方 probeRegistry
+ *  已判定）时同样退化 ping —— 缺守卫会把字面量 `undefined` 拼进 pathTemplate 恒 404。 */
 function resolveProbe(origin, spec, platformTag) {
   const base = normalizeOrigin(origin);
-  if (spec && spec.kind === 'package-metadata' && spec.pathTemplate) {
+  if (spec && spec.kind === 'package-metadata' && spec.pathTemplate && platformTag) {
     return {
       url: base + '/' + spec.pathTemplate.replace('{platform}', platformTag),
       kind: spec.kind,

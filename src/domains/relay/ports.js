@@ -23,6 +23,8 @@ async function claim(segment, owner, opts) {
     bindingPreferred: !!o.bindingPreferred,
     onBindingLost: o.onBindingLost,
     reclaimCmdMark: 'lan-daemon.js',
+    // 条 2（批 4 C 平台）：configPath 为空时 reclaimCfg=''，probe.reclaimByCmdMark 按
+    // fail-closed 不回收（宁可留占用走冲突分支，也不按 cmdMark 全量误杀同名进程）。
     reclaimCfg: o.configPath || '',
     waitMs: 8000,
   });

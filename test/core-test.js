@@ -29,6 +29,15 @@ function testLogger() {
     lines.some((l) => l.includes('[ERROR] error-line')));
   for (let i = 0; i < 30; i++) log.writer.write('pad-line-' + i + ' '.repeat(20));
   check('超限轮转出 .1 备份', fs.existsSync(file + '.1'));
+  // 条 1（AUDIT-2026-09-19 批 4 C）：轮转判定改用「首写 stat + 已写字节记账」，
+  //   必须仍可封住体积（记账失控 = 日志无限增长），且保留一代。
+  for (let i = 0; i < 200; i++) log.writer.write('x'.repeat(60));
+  const logSize = fs.statSync(file).size;
+  check('条1 记账不失控：连写 200 行后当前文件 < 2×maxBytes(400)',
+    logSize < 800, 'size=' + logSize);
+  check('条1 记账下仍保留一代备份且非空',
+    fs.existsSync(file + '.1') && fs.statSync(file + '.1').size > 0,
+    fs.existsSync(file + '.1') ? 'size=' + fs.statSync(file + '.1').size : '无 .1');
   // 行缓冲：半行 chunk 不落盘，拼接后完整
   let got = [];
   const lb = new LineBuffer((l) => got.push(l));
@@ -62,6 +71,17 @@ function testEventsRotation() {
   check('轮转后存在 .1 备份文件', fs.existsSync(file + '.1'));
   check('seq 全局连续（40 条）', ev.seq === 40, String(ev.seq));
   check('新实例续号不重置', new Events(file, 600).seq === 40);
+  // 条 1（AUDIT-2026-09-19 批 4 C）：meta 由「每事件重写」改为节流落盘，必须同时守住
+  //   ① 节流确实生效（否则写放大没收敛）② 轮转点仍即时持久化 ③ 窗口内重启续号单调。
+  const metaDoc = JSON.parse(fs.readFileSync(file + '.meta.json', 'utf8'));
+  check('条1 meta 节流生效：落盘 seq 落后于内存 seq（旧实现每事件重写 meta）',
+    metaDoc.seq < ev.seq, 'meta.seq=' + metaDoc.seq + ' ev.seq=' + ev.seq);
+  check('条1 轮转点即时持久化：meta.rotatedSeq == 内存水位（跨重启 .1 事件仍可见）',
+    ev.rotatedSeq !== null && metaDoc.rotatedSeq === ev.rotatedSeq,
+    'meta=' + JSON.stringify(metaDoc.rotatedSeq) + ' mem=' + JSON.stringify(ev.rotatedSeq));
+  check('条1 节流窗口内重启仍单调：新实例取文件末行 seq 而非落后的 meta.seq',
+    new Events(file, 600).seq === ev.seq && metaDoc.seq < ev.seq,
+    'new=' + new Events(file, 600).seq + ' meta=' + metaDoc.seq + ' ev=' + ev.seq);
   const all = ev.readSince(0, 500);
   check('readSince 跨轮转读全量', all.length === 40 && all[0].seq === 1 && all[39].seq === 40, String(all.length));
   const tail = ev.readSince(all[19].seq, 500);

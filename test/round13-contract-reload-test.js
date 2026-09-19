@@ -92,6 +92,25 @@ const check = (n, c, x) => {
     fs.rmSync(TMP, { recursive: true, force: true });
   }
 
+  console.log('== D 条 5（批 4 C）：platformTag 不可用时探测退化 ping，不阻断选源（不变量 C2）==');
+  {
+    const policies = require(path.join(ROOT, 'src', 'platform', 'distribution', 'policies.js'));
+    const spec = { kind: 'package-metadata', pathTemplate: 'pkg/{platform}', timeoutMs: 6000 };
+    const ping = policies.resolveProbe('https://r.example', spec, null);
+    check('D resolveProbe(tag=null) 退化 ping（旧实现把字面量 undefined 拼进 URL 恒 404）',
+      ping.kind === 'ping' && ping.url === 'https://r.example/-/ping', JSON.stringify(ping));
+    check('D resolveProbe(tag 有效) 仍走 package-metadata 展开（修法不扩大）',
+      policies.resolveProbe('https://r.example', spec, 'linux-x64').url === 'https://r.example/pkg/linux-x64',
+      policies.resolveProbe('https://r.example', spec, 'linux-x64').url);
+    check('D 反向：无契约时照旧 ping 兜底',
+      policies.resolveProbe('https://r.example', null, null).kind === 'ping', 'ping');
+    const regSrc = fs.readFileSync(path.join(distDir, 'registry.js'), 'utf8');
+    check('D probeRegistry 入口有 matrix.isSupported 闸（可产标但不在发布矩阵 → 不投 package-metadata）',
+      /matrix\.isSupported\(\)/.test(regSrc), '有');
+    check('D probeRegistry 取标签包 try/catch（freebsd 等不可产标宿主不得抛穿 Promise.all）',
+      /try \{[\s\S]{0,120}?platformTag\(\)[\s\S]{0,80}?catch \{ tag = null;/.test(regSrc), '有');
+  }
+
   const failed = results.filter((r) => !r);
   console.log('\n结果: ' + (results.length - failed.length) + ' passed, ' + failed.length + ' failed');
   process.exit(failed.length ? 1 : 0);

@@ -4,8 +4,11 @@
 //
 // 契约先划边界：我们的包 '@dsh-sup/dsh-core-<os>-<arch>'（及同 scope 的壳发布包）走本算法
 // （rollback -> canary -> latest -> versions 最高兜底 -> null）；第三方包（DSH 本体、代理/插件包）
-// 维持「取全量最高」语义：他人的 dist-tag 策略不受我们控制，套用 rollback/canary 会把别人的
-// tag 误当我们的发布纪律，故不是漏改。收敛点：fetchNpmLatest（install.js）只负责拉元数据并
+// 不采纳其 rollback/canary —— 他人的 dist-tag 策略不受我们控制，套用会把别人的 tag
+// 误当我们的发布纪律。但选版同样 **latest 优先**（条 7，AUDIT-2026-09-19 批 4 C）：
+// 旧「dist-tags ∪ versions 全量最高」会把他人杂 tag（next/alpha/旧 beta）当候选而装到
+// 未验证版；latest 缺失/非法才回落 versions 最高。
+// 收敛点：fetchNpmLatest（install.js）只负责拉元数据并
 // 调本函数，选版算法只此一份，禁止在任何调用点再写第二套。
 
 const { semverCompare } = require('../../shared/version');
@@ -67,7 +70,8 @@ function highestVersion(candidates, isValid) {
  *   4) 否则 versions 中最高合法版本（兼容兜底）
  *   5) 以上皆无 -> null（明确失败，绝不猜，契约 RC-5）
  *
- * 第三方包（isOurs !== true）取 dist-tags 与 versions 全量最高（旧语义不变）。
+ * 第三方包（isOurs !== true）跳过 1)/2)，按 3) latest 优先 → 4) versions 最高 → 5) null
+ * （条 7 起；旧语义「dist-tags ∪ versions 全量最高」已废）。
  *
  * @param {object} meta npm registry 元数据：{ 'dist-tags': {...}, versions: {...} }
  * @param {object} opts
@@ -104,12 +108,12 @@ function pickReleaseVersion(meta, opts) {
     return highestVersion(versionKeys, isValid);
   }
 
-  // 第三方包：取 dist-tags 与 versions 的全量最高。保留旧语义的唯一理由：我们无法控制他人的
-  // dist-tag 策略，套用 rollback/canary 会把别人的 tag 误当我们的发布纪律。此处不是漏改，是故意为之。
-  return highestVersion(
-    [...Object.values(tags).filter((v) => typeof v === 'string'), ...versionKeys],
-    isValid
-  );
+  // 第三方包（条 7）：不套 rollback/canary，但同样 latest 优先 —— 旧「全量最高」把他人杂 tag
+  // 当候选（next/alpha/被遗忘的旧 beta 都进池），会把未验证版当最新装。latest 缺失/非法
+  // 才回落 versions 最高；两路都无 → null（RC-5）。
+  const thirdLatest = validTag(tags.latest);
+  if (thirdLatest) return thirdLatest;
+  return highestVersion(versionKeys, isValid);
 }
 
 module.exports = {
