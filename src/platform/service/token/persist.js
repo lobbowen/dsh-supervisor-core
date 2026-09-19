@@ -73,22 +73,32 @@ function writeAtomic(file, data) {
   }
 }
 
-/** 轮转：把现有内容完整备份进固定槽位，备份落地成功后才截断原文件。
- *  任一步失败都返回 false 且不截断，宁可文件继续增长，也不丢唯一持久链路。
- *  备份槽位的 mtime 即轮转时刻，故无需在备份内写时间戳头。 */
+/** 轮转：把现有内容**整体改名**进固定备份槽（批 4，令牌条 2）。
+ *  旧实现 readFileSync→写槽→truncateSync 存在跨进程丢失窗口：并发 appendByRotation（升级重叠期的
+ *  新旧守卫）若恰在 read 与 truncate 之间追加，该行既不在备份里也会被 truncate 抹掉。
+ *  rename 是目录项级原子操作：改名后仍持旧 fd 的并发写者把数据落进备份本体（不丢），
+ *  之后的新追加按 O_APPEND 创建目标新文件。任一步失败返回 false 且不截断，宁可文件继续增长。
+ *  极端平台（如 Windows 槽位被占用致 rename 失败）降级为「复制+截断」旧路径——窗口更小但不为零。 */
 function rotateByBackup(file, opts) {
   const fp = path.resolve(file);
   const keep = (opts && opts.keep) || PERSIST_LIMITS.KEEP_BACKUPS;
   try {
-    const content = fs.readFileSync(fp);
     const slot = pickBackupSlot(fp, keep);
-    const w = writeAtomic(slot, content);
-    if (!w.ok) return false;
-    // 备份确实完整落地后才截断，顺序反了就等于清空唯一持久链路。
-    fs.truncateSync(fp, 0);
-    try { fs.chmodSync(fp, 0o600); } catch { /* Windows 无 POSIX 位 */ }
+    fs.renameSync(fp, slot);
+    try { fs.chmodSync(slot, 0o600); } catch { /* Windows 无 POSIX 位 */ }
     return true;
-  } catch { return false; }
+  } catch {
+    try {
+      const content = fs.readFileSync(fp);
+      const slot = pickBackupSlot(fp, keep);
+      const w = writeAtomic(slot, content);
+      if (!w.ok) return false;
+      // 备份确实完整落地后才截断，顺序反了就等于清空唯一持久链路。
+      fs.truncateSync(fp, 0);
+      try { fs.chmodSync(fp, 0o600); } catch { /* Windows 无 POSIX 位 */ }
+      return true;
+    } catch { return false; }
+  }
 }
 
 /** 选备份槽位：优先补空槽；槽位满则覆写 mtime 最旧的那个（固定名，全程无需删除）。 */

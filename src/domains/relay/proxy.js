@@ -6,6 +6,7 @@
 // 使 DSH 信任围栏视为本机流量，访问控制（令牌/来源闸）留在反代层；session.js 换 dsh-auth-* 注入 HTTP/WS。
 
 const http = require('node:http');
+const crypto = require('node:crypto');
 const { isTrustedSource, tokenGateDecision, backoffGate, upstreamPath, POLYFILL_SCRIPT } = require('./core');
 const { createSession } = require('./session');
 const { createTunnelHandler } = require('./tunnel');
@@ -126,6 +127,9 @@ function createRelay(targetHost, targetPort, opts) {
   let token = o.token || '';
   const logger = o.logger || null;
   const authority = targetHost + ':' + targetPort;
+  // 门卫会话盐（批 4，令牌条 5）：每进程随机，dsh_lan_token cookie 只存派生值（sha256(salt|token)），
+  //   门卫令牌原文永不上会话通道；重启/换令牌即全部会话失效（重凭 ?token= 进入）。
+  const gateSalt = crypto.randomBytes(16).toString('hex');
 
   const session = createSession({
     targetHost,
@@ -146,7 +150,7 @@ function createRelay(targetHost, targetPort, opts) {
       return res.end('仅允许局域网（RFC1918）或本机访问');
     }
     const peerIp = (req.socket && req.socket.remoteAddress) || '?';
-    const gate = tokenGateDecision(req, token);
+    const gate = tokenGateDecision(req, token, gateSalt);
     if (!gate.ok) {
       // C-3（批 4）：凭据失败退避——同 IP 60s 窗口内 ≥10 次失败即 429（Retry-After），
       //   封堵门卫令牌的公网侧无限速爆破（frp 通道把公网访客呈现为回环/私网来源）。
@@ -199,6 +203,7 @@ function createRelay(targetHost, targetPort, opts) {
     targetHost,
     targetPort,
     getToken: () => token,
+    getGateSalt: () => gateSalt,
     gateWaitMs: (ip) => gateLedger.waitMsFor(ip),
     onGateFailure: (ip) => gateLedger.recordFailure(ip),
   }));

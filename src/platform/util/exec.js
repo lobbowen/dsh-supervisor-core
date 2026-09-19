@@ -7,8 +7,11 @@
 // 仅限守卫启动早期、CLI 一次性命令或无法异步的调用点；新增调用优先用 execFile + await。
 // run() 同步执行，默认 15s 硬超时，失败或超时返回 null；runOut() 返回 stdout 字符串；
 // runDetail() 返回 { ok, code, stdout, stderr, timedOut, error }。
+// runOutAsync()（批 4 C 令牌条 4）：心跳/事件循环敏感路径专用 —— 同步 execFileSync 在长超时下
+//   会冻结整个 tick（journalctl 5s 即守卫心跳停摆 5s），此类调用点必须用异步版。
+//   异步版沿用同一套有界纪律（timeout/SIGKILL/windowsHide/maxBuffer），失败/超时 resolve(null)。
 
-const { execFileSync } = require('node:child_process');
+const { execFileSync, execFile } = require('node:child_process');
 
 const DEFAULT_TIMEOUT_MS = 15000;
 
@@ -64,6 +67,36 @@ function runOut(bin, args, opts) {
   try { return String(r); } catch { return null; }
 }
 
+/** 异步有界执行，返回 stdout 字符串 Promise（失败/超时 resolve(null)，绝不 reject）。
+ *  专供事件循环敏感路径（守卫心跳 tick 内的 journalctl 回填等）：同步 execFileSync 会把
+ *  整个进程冻结到 timeout 到期，心跳/定时器全部停摆。选项与同步版同一套有界纪律。 */
+function runOutAsync(bin, args, opts) {
+  const o = opts || {};
+  return new Promise((resolve) => {
+    execFile(bin, args, {
+      timeout: o.timeoutMs || o.timeout || DEFAULT_TIMEOUT_MS,
+      killSignal: o.killSignal || 'SIGKILL',
+      maxBuffer: o.maxBuffer || DEFAULT_MAX_BUFFER,
+      windowsHide: true,
+      encoding: 'utf8',
+      ...(o.cwd ? { cwd: o.cwd } : {}),
+      ...(o.env ? { env: o.env } : {}),
+    }, (err, stdout) => {
+      if (err) {
+        if (o.logger && o.logger.warn) {
+          try {
+            o.logger.warn('[exec] (async) ' + bin + ' ' + (args || []).join(' ').slice(0, 80) +
+              ' failed: ' + ((err && err.message) || err));
+          } catch {}
+        }
+        resolve(null);
+        return;
+      }
+      resolve(stdout == null ? '' : String(stdout));
+    });
+  });
+}
+
 /** 同 run，但返回结构化结果且不吞错误信息；用于区分命令失败与超时（二者对用户含义不同）。 */
 function runDetail(bin, args, opts) {
   const o = opts || {};
@@ -85,4 +118,4 @@ function runDetail(bin, args, opts) {
   }
 }
 
-module.exports = { run, runOut, runDetail, options, DEFAULT_TIMEOUT_MS };
+module.exports = { run, runOut, runOutAsync, runDetail, options, DEFAULT_TIMEOUT_MS };

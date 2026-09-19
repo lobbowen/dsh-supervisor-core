@@ -59,8 +59,22 @@ function upstreamPath(rawUrl) {
   } catch { return rawUrl || '/'; }
 }
 
-/** 请求是否携带有效令牌（URL ?token= 或 Cookie）。纯判定，无 IO。 */
-function hasValidToken(req, token) {
+/** 门卫会话 cookie 值（批 4，令牌条 5）：`sha256(salt + '\n' + token)`。
+ *  旧实现把 remoteToken **原文**写进 dsh_lan_token cookie 当会话凭据——静态门卫凭据随每个请求
+ *  上线、落进浏览器 cookie 仓，一次截获永久有效且无法与令牌本身分开轮换。改为加盐派生后：
+ *  cookie 是派生会话凭据（kinds 'lan-gate' 的声明语义「我方签发并校验」），从 cookie 值反推
+ *  不出令牌明文；salt 为 relay 进程随机数，进程重启即全部会话失效（须重凭 ?token= 进入）。
+ *  @returns {string} hex；salt/token 任一缺失返回 ''（调用方据此拒绝匹配）。 */
+function lanGateCookieValue(token, salt) {
+  const t = String(token == null ? '' : token);
+  const s = String(salt == null ? '' : salt);
+  if (!t || !s) return '';
+  return crypto.createHash('sha256').update(s + '\n' + t).digest('hex');
+}
+
+/** 请求是否携带有效令牌（URL ?token= 或派生会话 Cookie）。纯判定，无 IO。
+ *  批 4（令牌条 5）：Cookie 档只认派生值，门卫令牌原文只允许经 ?token= 一次性出示。 */
+function hasValidToken(req, token, salt) {
   if (!token) return true;
   const url = new URL(req.url, 'http://localhost');
   const queryToken = url.searchParams.get('token');
@@ -69,7 +83,8 @@ function hasValidToken(req, token) {
   const m = /(?:^|;\s*)dsh_lan_token=([^;]+)/.exec(cookies);
   if (m) {
     try {
-      return safeEqual(decodeURIComponent(m[1]), token);
+      const want = lanGateCookieValue(token, salt);
+      return !!want && safeEqual(decodeURIComponent(m[1]), want);
     } catch {
       return false;
     }
@@ -78,18 +93,20 @@ function hasValidToken(req, token) {
 }
 
 /** 令牌门卫决策（HTTP 响应路径）。纯函数，应答由调用方落笔。
+ *  @param salt relay 进程随机盐（lanGateCookieValue；缺失 = 无法签发/校验会话 cookie，fail-closed）
  *  @returns {ok:true} 放行；
- *           {ok:false, redirect, cookie} 首次凭 URL 令牌进入，302 种 HttpOnly Cookie；
+ *           {ok:false, redirect, cookie} 首次凭 URL 令牌进入，302 种 HttpOnly 派生会话 Cookie；
  *           {ok:false, unauthorized:true} 401。
  */
-function tokenGateDecision(req, token) {
+function tokenGateDecision(req, token, salt) {
   if (!token) return { ok: true };
   const url = new URL(req.url, 'http://localhost');
   const cookies = req.headers.cookie || '';
   const m = /(?:^|;\s*)dsh_lan_token=([^;]+)/.exec(cookies);
   if (m) {
     try {
-      if (safeEqual(decodeURIComponent(m[1]), token)) return { ok: true };
+      const want = lanGateCookieValue(token, salt);
+      if (want && safeEqual(decodeURIComponent(m[1]), want)) return { ok: true };
     } catch {}
   }
   const queryToken = url.searchParams.get('token');
@@ -97,7 +114,8 @@ function tokenGateDecision(req, token) {
     return {
       ok: false,
       redirect: url.pathname,
-      cookie: 'dsh_lan_token=' + encodeURIComponent(token) + '; Path=/; HttpOnly; SameSite=Lax',
+      // 令牌条 5：种的是派生会话值，绝不是门卫令牌原文。
+      cookie: 'dsh_lan_token=' + lanGateCookieValue(token, salt) + '; Path=/; HttpOnly; SameSite=Lax',
     };
   }
   return { ok: false, unauthorized: true };
@@ -233,6 +251,7 @@ module.exports = {
   cookieByName,
   upstreamPath,
   hasValidToken,
+  lanGateCookieValue,
   tokenGateDecision,
   remoteTokenStrength,
   backoffGate,

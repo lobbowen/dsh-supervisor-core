@@ -49,10 +49,11 @@ function rejectSocket(socket, statusLine) {
  *   - authority: 回环权威 "host:port"
  *   - targetHost/targetPort: 回环 DSH 目标
  *   - getToken: () => string —— 门卫令牌按需读取（proxy 侧可热换）
+ *   - getGateSalt: () => string —— 门卫会话盐（批 4 令牌条 5；cookie 只认派生值）
  *   - gateWaitMs: (ip) => number|null —— C-3 凭据失败退避（与 HTTP 路径共享账本；null=放行）
  *   - onGateFailure: (ip) => void —— 升级被拒时记一次失败
  */
-function createTunnelHandler({ session, authority, targetHost, targetPort, getToken, gateWaitMs, onGateFailure }) {
+function createTunnelHandler({ session, authority, targetHost, targetPort, getToken, getGateSalt, gateWaitMs, onGateFailure }) {
   return function onUpgrade(req, socket, head) {
     // 来源闸：WS 升级同样必须限定回环/私网。
     if (!isTrustedSource(req, socket)) {
@@ -65,8 +66,8 @@ function createTunnelHandler({ session, authority, targetHost, targetPort, getTo
       rejectSocket(socket, 'HTTP/1.1 429 Too Many Requests\r\nConnection: close\r\nContent-Length: 0\r\n\r\n');
       return;
     }
-    // 升级握手无法做 302 种 Cookie：凭 ?token= 或既有 Cookie 放行，否则原始 401。
-    if (!hasValidToken(req, getToken())) {
+    // 升级握手无法做 302 种 Cookie：凭 ?token= 或既有派生会话 Cookie 放行，否则原始 401。
+    if (!hasValidToken(req, getToken(), typeof getGateSalt === 'function' ? getGateSalt() : undefined)) {
       if (typeof onGateFailure === 'function') { try { onGateFailure(ip); } catch {} }
       rejectSocket(socket, 'HTTP/1.1 401 Unauthorized\r\nConnection: close\r\nContent-Length: 0\r\n\r\n');
       return;

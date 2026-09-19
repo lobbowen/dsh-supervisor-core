@@ -275,16 +275,23 @@ async function testRelay() {
   check('C-4 401 响应带 Cache-Control: no-store',
     String(noToken.headers['cache-control'] || '') === 'no-store', JSON.stringify(noToken.headers['cache-control']));
   const withToken = await req(3988, 'GET', '/?token=secret123');
-  check('URL 令牌放行并种 Cookie', withToken.code === 302 && /dsh_lan_token=/.test(withToken.headers['set-cookie'] ? withToken.headers['set-cookie'].join(';') : ''), JSON.stringify(withToken.headers));
+  const sc2 = String((withToken.headers['set-cookie'] || []).join(';'));
+  check('URL 令牌放行并种 Cookie', withToken.code === 302 && /dsh_lan_token=/.test(sc2), JSON.stringify(withToken.headers));
+  // 批 4 令牌条 5：种下的 cookie 是派生会话值，门卫令牌原文（secret123）绝不落 cookie。
+  check('令牌条5 种的 cookie 为派生 64hex 且不含令牌原文', /^dsh_lan_token=[0-9a-f]{64}(;|$)/.test(sc2) && !sc2.includes('secret123'), sc2);
+  const lanCk = 'dsh_lan_token=' + ((/dsh_lan_token=([^;]+)/.exec(sc2) || [])[1] || '');
   check('C-4 302 种 Cookie 响应带 Cache-Control: no-store',
     String(withToken.headers['cache-control'] || '') === 'no-store', JSON.stringify(withToken.headers['cache-control']));
   // C-4（批 4）：门卫令牌不得随 path 泄进上游（DSH 访问日志）；其余查询参数原样保留。
-  await req(3988, 'GET', '/api/x?token=secret123&keep=1', { Cookie: 'dsh_lan_token=secret123' });
+  //   经派生 cookie 放行（不再走 ?token= 的 302 分支），故能观测上游收到的 path。
+  await req(3988, 'GET', '/api/x?token=secret123&keep=1', { Cookie: lanCk });
   check('C-4 上游收到的路径已剥离 token 参数', seenPath2 === '/api/x?keep=1', seenPath2);
   const badToken = await req(3988, 'GET', '/?token=wrong');
   check('错误令牌拒绝', badToken.code === 401, String(badToken.code));
-  const withCookie = await req(3988, 'GET', '/', { Cookie: 'dsh_lan_token=secret123' });
-  check('Cookie 令牌放行', withCookie.code === 200, String(withCookie.code));
+  const withCookie = await req(3988, 'GET', '/', { Cookie: lanCk });
+  check('派生 Cookie 令牌放行', withCookie.code === 200, String(withCookie.code));
+  const rawAsCookie = await req(3988, 'GET', '/', { Cookie: 'dsh_lan_token=secret123' });
+  check('令牌条5 门卫令牌原文冒充 cookie → 401', rawAsCookie.code === 401, String(rawAsCookie.code));
   // C-3（批 4）：同 IP 失败退避——窗口内 ≥10 次 401 后第 11 次起 429（HTTP 与 WS 共享账本）。
   let last429 = 0;
   for (let i = 0; i < 10; i++) last429 = (await req(3988, 'GET', '/?token=bad' + i)).code;

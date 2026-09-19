@@ -77,9 +77,15 @@ async function main() {
   const r3a = await req(p3, 'GET', '/');
   check('场景3: 无 remoteToken → 401', r3a.code === 401, String(r3a.code));
   const r3b = await req(p3, 'GET', '/?token=lan-secret');
-  check('场景3: ?token=lan-secret → 302 种 lan cookie', r3b.code === 302 && /dsh_lan_token=/.test(r3b.headers['set-cookie'] ? r3b.headers['set-cookie'].join(';') : ''), r3b.code + ' ' + JSON.stringify(r3b.headers['set-cookie']));
-  const r3c = await req(p3, 'GET', '/', { Cookie: 'dsh_lan_token=lan-secret' });
-  check('场景3: lan cookie + DSH 桥 → 200', r3c.code === 200, r3c.code + ' ' + r3c.body);
+  const sc3 = String((r3b.headers['set-cookie'] || []).join(';'));
+  check('场景3: ?token=lan-secret → 302 种 lan cookie', r3b.code === 302 && /dsh_lan_token=/.test(sc3), r3b.code + ' ' + JSON.stringify(r3b.headers['set-cookie']));
+  // 批 4 令牌条 5：lan cookie 必须是派生会话值——门卫令牌原文不再有任何会话通道。
+  check('令牌条5: lan cookie 为派生 64hex 且不含门卫令牌明文', /^dsh_lan_token=[0-9a-f]{64}(;|$)/.test(sc3) && !sc3.includes('lan-secret'), sc3);
+  const lanCk = 'dsh_lan_token=' + ((/dsh_lan_token=([^;]+)/.exec(sc3) || [])[1] || '');
+  const r3c = await req(p3, 'GET', '/', { Cookie: lanCk });
+  check('场景3: lan 派生 cookie + DSH 桥 → 200', r3c.code === 200, r3c.code + ' ' + r3c.body);
+  const r3d = await req(p3, 'GET', '/', { Cookie: 'dsh_lan_token=lan-secret' });
+  check('令牌条5: 门卫令牌原文冒充 cookie → 401（原文只容 ?token= 一次性出示）', r3d.code === 401, String(r3d.code));
   await new Promise((r) => relay3.close(r));
 
   // ── 场景 4：setDshToken 热更新（模拟实例重启令牌轮换）──

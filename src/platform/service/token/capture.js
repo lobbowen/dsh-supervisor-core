@@ -5,6 +5,10 @@
 // 顺序不可颠倒：journal 优先会把陈旧或别的 unit 的旧 token 覆盖掉刚由 stdout 捕获的新 token。
 // journal 必须按“最近一条含回环 URL 的行”查询而非固定最近 N 行，否则长驻实例的 token 行滚出窗口后永远捕获不到。
 // 本层只做一次拉取，退避重试与周期兜底由 pool 的 scheduleCapture 与 ensureCaptured 负责。
+// 批 4（令牌条 4）：journalctl 必须**异步**（ex.runOutAsync）——captureOnce 由守卫生命周期 tick 的
+//   ensureCaptured 调用，同步 execFileSync 在 5s 超时下会把整个事件循环冻住，心跳/定时器全部停摆。
+//   因此 captureOnce 只做零外部进程的 stdout/文件两档（同步），journal 档拆成 captureJournal（Promise），
+//   由 pool.capture 在非阻塞回填路径上发射，命中后照常 _commit+广播（TK-8）。
 // TK-7 用户配置类只登记不捕捉：remote-token/api-access-key/frp-auth 权威在配置存储，本层对非 captured 分类直接 no-op。
 
 const ex = require('../../util/exec');
@@ -19,35 +23,31 @@ function parseDshTokenLine(line) {
   return m ? m[1] : null;
 }
 
-/** journald 查询：按单元取“最近一条含回环 URL 的行”。 */
-function captureFromJournal(unit, opts) {
+/** journald 查询（异步，批 4）：按单元取“最近一条含回环 URL 的行”。
+ *  resolve { token, source:'journal', line } 或 null；任何失败（含非 systemd 平台无 journalctl）都 resolve(null)，绝不 reject。 */
+async function captureJournal(unit, opts) {
   const logger = (opts && opts.logger) || console;
-  try {
-    // runOut 失败返回 null 且输出有上限，无需再包 try/catch。
-    const out = ex.runOut('journalctl', ['--user', '-u', unit + '.service', '--no-pager', '-o', 'cat', '-g', '127\.0\.0\.1:.*token=', '-n', '1'], {
-      timeoutMs: 5000,
-      stdio: ['ignore', 'pipe', 'ignore'],
-    });
-    if (!out) {
-      logger.warn && logger.warn('[token] journal capture(' + unit + ') 命令失败或无输出');
-      return null;
-    }
-    const lines = out.split('\n');
-    for (let i = lines.length - 1; i >= 0; i--) {
-      const t = parseDshTokenLine(lines[i]);
-      if (t) return { token: t, source: 'journal', line: lines[i] };
-    }
-    return null;
-  } catch (e) {
-    logger.warn && logger.warn('[token] journal capture(' + unit + ') failed: ' + ((e && e.message) || e));
+  // runOutAsync 失败/超时返回 null 且输出有上限，无需再包 try/catch。
+  const out = await ex.runOutAsync('journalctl', ['--user', '-u', unit + '.service', '--no-pager', '-o', 'cat', '-g', '127\\.0\\.0\\.1:.*token=', '-n', '1'], {
+    timeoutMs: 5000,
+    logger,
+  });
+  if (!out) {
+    logger.warn && logger.warn('[token] journal capture(' + unit + ') 命令失败或无输出');
     return null;
   }
+  const lines = out.split('\n');
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const t = parseDshTokenLine(lines[i]);
+    if (t) return { token: t, source: 'journal', line: lines[i] };
+  }
+  return null;
 }
 
-/** 按来源顺序取“最新一条”URL 行的令牌；desc 形如 { kind, unit, file, lines }，找不到返回 null。 */
+/** 按来源顺序取“最新一条”URL 行的令牌（同步档：stdout + 本地恢复文件）；
+ *  desc 形如 { kind, unit, file, lines }，找不到返回 null。journal 档见 captureJournal。 */
 function captureOnce(desc, opts) {
   const src = desc || {};
-  const logger = (opts && opts.logger) || console;
   // TK-7/TK-3：非捕捉分类（用户配置/派生/自签）只登记不捕捉。
   if (!kinds.isCaptured(src.kind)) return null;
 
@@ -67,13 +67,7 @@ function captureOnce(desc, opts) {
       if (t) return { token: t, source: 'file', line: tail[i] };
     }
   }
-
-  // journald（systemd 托管）：最后的回填兜底，须按单元取最近含 URL 的行。
-  if (src.unit) {
-    const hit = captureFromJournal(src.unit, opts);
-    if (hit) return hit;
-  }
   return null;
 }
 
-module.exports = { parseDshTokenLine, captureOnce };
+module.exports = { parseDshTokenLine, captureOnce, captureJournal };

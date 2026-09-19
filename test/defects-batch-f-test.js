@@ -285,6 +285,39 @@ console.log('== 批4 C-8 isPrivateHostLiteral（SSRF 主机分级单一事实源
     /registryOriginViolation\(/.test(fs.readFileSync(path.join(ROOT, 'src', 'platform', 'distribution', 'registry.js'), 'utf8')), '有');
 }
 
+console.log('== 批4 TK-3/条 5 令牌域形态钉（逐例 + 回显）==');
+{
+  const poolSrc = fs.readFileSync(path.join(ROOT, 'src', 'platform', 'service', 'token', 'pool.js'), 'utf8');
+  check('TK-3 feedLine 隐式源必须先过 kind 登记闸（推断不出或未登记即拒）',
+    /if \(!k \|\| !kinds\.isKnownKind\(k\)\) return null;/.test(poolSrc), '有');
+  const core = require(path.join(ROOT, 'src', 'domains', 'relay', 'core.js'));
+  check('条5 core 导出 lanGateCookieValue', typeof core.lanGateCookieValue === 'function', typeof core.lanGateCookieValue);
+  check('条5 salt 缺省时拒绝签发（返回空串）', core.lanGateCookieValue('tok12345678', undefined) === '', JSON.stringify(core.lanGateCookieValue('tok12345678', undefined)));
+  check('条5 token 缺省时拒绝签发（返回空串）', core.lanGateCookieValue('', 'salt') === '', JSON.stringify(core.lanGateCookieValue('', 'salt')));
+  const v1 = core.lanGateCookieValue('tok12345678', 'salt-A');
+  check('条5 派生值为 64hex（不含令牌原文）', /^[0-9a-f]{64}$/.test(v1) && !v1.includes('tok'), v1);
+  check('条5 同 (token,salt) 幂等（cookie 可在进程内复用）', core.lanGateCookieValue('tok12345678', 'salt-A') === v1, v1);
+  check('条5 换 salt 即换值（进程重启全员失效）', core.lanGateCookieValue('tok12345678', 'salt-B') !== v1, core.lanGateCookieValue('tok12345678', 'salt-B'));
+  check('条5 换 token 即换值（门卫令牌轮换旧 cookie 立即失配）', core.lanGateCookieValue('tok87654321', 'salt-A') !== v1, 'diff');
+  // tokenGateDecision：原文 cookie 不再等于放行
+  const gate = core.tokenGateDecision(
+    { url: 'http://x/', headers: { cookie: 'dsh_lan_token=tok12345678' } }, 'tok12345678', 'salt-A');
+  check('条5 令牌原文冒充 cookie → unauthorized（旧实现此处 ok:true）',
+    gate.ok === false && gate.unauthorized === true, JSON.stringify(gate));
+  const gate2 = core.tokenGateDecision(
+    { url: 'http://x/', headers: { cookie: 'dsh_lan_token=' + v1 } }, 'tok12345678', 'salt-A');
+  check('条5 派生值 cookie → 放行', gate2.ok === true, JSON.stringify(gate2));
+  const gate3 = core.tokenGateDecision(
+    { url: 'http://x/?token=tok12345678', headers: {} }, 'tok12345678', 'salt-A');
+  check('条5 首次 ?token= → 302 且所种 cookie 为派生值（非原文）',
+    gate3.ok === false && gate3.redirect === '/' && gate3.cookie.includes('dsh_lan_token=' + v1) && !gate3.cookie.includes('tok12345678'),
+    JSON.stringify(gate3));
+  const proxySrc = fs.readFileSync(path.join(ROOT, 'src', 'domains', 'relay', 'proxy.js'), 'utf8');
+  const tunnelSrc = fs.readFileSync(path.join(ROOT, 'src', 'domains', 'relay', 'tunnel.js'), 'utf8');
+  check('条5 HTTP 路径传盐给 tokenGateDecision', /tokenGateDecision\(req, token, gateSalt\)/.test(proxySrc), '有');
+  check('条5 WS 升级路径传盐给 hasValidToken', /hasValidToken\(req, getToken\(\), typeof getGateSalt === 'function' \? getGateSalt\(\) : undefined\)/.test(tunnelSrc), '有');
+}
+
 const failed = results.filter((r) => !r);
 console.log(String.fromCharCode(10) + '结果: ' + (results.length - failed.length) + ' passed, ' + failed.length + ' failed');
 process.exit(failed.length ? 1 : 0);
