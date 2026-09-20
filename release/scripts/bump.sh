@@ -24,6 +24,9 @@ case "$MODE" in
     CUR="$(node -p "require('./package.json').version")"
     ver_lt "$NEW" "$CUR" && { echo "拒绝回退：$NEW < 当前内核 $CUR"; exit 1; }
     node -e "const fs=require('fs');const p='package.json';const j=JSON.parse(fs.readFileSync(p));j.version='$NEW';fs.writeFileSync(p,JSON.stringify(j,null,2)+'\n')"
+    # lock 的两处 version 必须随 package.json 一起提升：只改 package.json 会让 P-9 B26「lock 与之同步」
+    # 判据到 CI 才触红，而 bump 是唯一合法写入点，应在源头保持两者一致。
+    node -e "const fs=require('fs');const p='package-lock.json';const j=JSON.parse(fs.readFileSync(p));j.version='$NEW';j.packages[''].version='$NEW';fs.writeFileSync(p,JSON.stringify(j,null,2)+'\n')"
     node release/scripts/verify-versions.js --core
     echo "=== 内核版本已提升: $CUR → $NEW ==="
     echo "  1) CHANGELOG.md：整理 [未发布] 段为 [$NEW] 并新开 [未发布]"
