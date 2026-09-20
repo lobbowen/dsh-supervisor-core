@@ -36,6 +36,9 @@
   改为标注复算口径、且不承载放行结论。
 - `release/runbooks/publish-and-verify.md`：`build-ui` 缺失的后果写成「直接跑 `npm test` 会得到 503」，
   在本机禁跑测试的硬标准下这是对不存在的动作下判据。改为「链上缺这一步 → **CI 的** `npm test` 得到 503」。
+- 同表的 `RELEASE-CHANNEL-CONTRACT.md` 行抄着「RC-1..6」，而正文在 A3-b 修复后已有 **RC-7**
+  （rollback 防降级下限）—— 索引抄编号必然再漂移，故改为指向正文 §3「关键不变量」表并声明不抄条数。
+  （`DG-1..DG-16` / `R1..R12` / `TK-1..8` / 能力矩阵 14 项 × 3 平台等其余索引计数已逐条复核为实。）
 
 另核三条无需改动的：`RELEASE-CHANNEL-CONTRACT.md` §5.4 说 `@dsh-sup/canary-allowlist` 尚未发布 ——
 registry 实测 404，说法成立；`release/README.md` 与两份标准文档里所有 `docs/*.md` 引用都带「壳仓」限定词，
