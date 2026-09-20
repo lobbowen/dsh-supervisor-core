@@ -52,7 +52,7 @@ console.log('== T1 平台矩阵（单一事实源）==');
 //
 // 硬标准：**任何平台构建/发布都必须经 GitHub CI**；本地不得有全平台路径。
 // 故：
-//   - build-launcher.sh --all-platforms  **仅 CI 内允许**（CI test job 需四平台产物）
+//   - build-launcher.sh（含单平台形态）      **仅 CI 内允许**（CI test job 需四平台产物）
 //   - publish-core.sh --all-platforms     **一律拒绝**（本地不得全平台发布）
 //   - ci-core.sh --all-platforms          **一律拒绝**
 //   - release-core.sh                     **已删除**（纯本地编排器，CI 从不调用）
@@ -69,6 +69,17 @@ console.log('== T2 硬标准：本地无全平台构建/发布路径 ==');
     /GITHUB_ACTIONS:-\}\" != 'true'/.test(build) && /只允许在 GitHub CI 内运行/.test(build), 'ok');
   check('T2-a3 CI 内仍放行（CI test job 需四平台产物供 T6-d/T6-e）',
     /ALL=1/.test(build), 'ok');
+  // 守卫必须**覆盖全部调用形态**，不只是 `--all-platforms`：单平台 `build:launcher` 同样产发布产物。
+  // 判据取「守卫在参数解析之前」这一结构事实，而非再数一遍字面量。
+  const guardedEarly = (s) => {
+    const g = s.indexOf("!= 'true'");
+    const loop = s.indexOf('while [ $# -gt 0 ]');
+    return g >= 0 && loop >= 0 && g < loop;
+  };
+  check('T2-a4 单平台构建也被守卫拦下（GITHUB_ACTIONS 判定在参数解析之前）',
+    guardedEarly(build), 'ok');
+  check('T2-a4 反向：守卫只在某分支内时不通过（合成）',
+    !guardedEarly('while [ $# -gt 0 ]\n  case "$1" in\n    --all-platforms) if [ \"${GITHUB_ACTIONS:-}\" != \'true\' ]; then exit 2; fi ;;\ndone\n'), 'miss');
   check('T2-b publish-core 的 --all-platforms 一律拒绝（本地不得全平台发布）',
     /--all-platforms\)/.test(pub) && /已废弃/.test(pub) && /exit 2/.test(pub), 'ok');
   check('T2-d ci-core 的 --all-platforms 一律拒绝',

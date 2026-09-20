@@ -11,7 +11,7 @@
 | 要求 | 实现 | 门禁 |
 |---|---|---|
 | 四平台构建只在 CI 内发生 | `build` job 的 4 runner 矩阵，各 runner 只构建**自己**的平台 | `all-platforms-test` T2-a/T2-a2 |
-| 本地不得全平台构建 | `build-launcher.sh --all-platforms` 受 `GITHUB_ACTIONS` 守卫，本地 exit 2 | T2-a2 |
+| 本地不得构建任何平台（含单平台）| `build-launcher.sh` 整体受 `GITHUB_ACTIONS` 守卫：守卫在参数解析之前，`--all-platforms` 与单平台调用在本机一律 exit 2 | T2-a2 / T2-a4 |
 | 本地不得全平台发布 | `publish-core.sh --all-platforms` 一律 exit 2 | T2-b |
 | 无本地发布编排器 | `release-core.sh` **已删除** | T2-e |
 | npm scripts 无本地发布入口 | `release:core*` 与 `publish:core:all` 全部移除 | T2-g |
@@ -68,7 +68,7 @@
 | S8 | 发布后验证 | 见 §5 | ✅ | 立即处置（见 §6）|
 
 > **本地只完成 S0–S3**（凭据 / 版本 / 前端产物）；**S4（全量回归）由推送后的 CI test job 执行**，**S5 起全部在 CI 内完成**（见 ACCEPTANCE-STANDARD：本机不得执行任何测试）。
-> 本地可用 `npm run build:launcher:all` 仅在 **CI 内**生效（有 `GITHUB_ACTIONS` 守卫，本地一律 exit 2）。
+> `build:launcher` / `build:launcher:all` 在 CI 外**一律被脚本自身拒绝**（exit 2），不依赖操作者自觉。
 
 ## 2. 平台矩阵（单一事实源）
 

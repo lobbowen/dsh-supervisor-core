@@ -35,8 +35,10 @@ git push origin HEAD --tags   # 触发 CI 四平台构建+发布
 
 ```bash
 # 1) 本地：提升版本（单源 = package.json.version，只允许递增）
-bash release/scripts/bump.sh --core 0.1.5-BETA.1
-#    然后整理 CHANGELOG.md：[未发布] → [0.1.5-BETA.1]
+bash release/scripts/bump.sh --core <下一版本>
+#    只允许递增：低于 package.json 当前值时脚本直接以「拒绝回退」退出。
+#    本手册刻意不写具体版本号 —— 写死必然过期（此处曾写 0.1.5-BETA.1，低于当前值，照抄必被拒）。
+#    然后整理 CHANGELOG.md：[未发布] → [<下一版本>]
 
 # 2) 本机不得执行 npm test；全量回归由 CI 的 test job 经 xvfb-run -a npm test 执行
 #    （ci-core.sh 内含 npm test 与构建，同样只在 CI 内运行）
