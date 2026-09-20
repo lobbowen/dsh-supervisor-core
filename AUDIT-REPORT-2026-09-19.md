@@ -663,6 +663,39 @@ design-notes 是**带日期的过程记录**（非现行规范、不在 DR-1 扫
 4. **本批不发布**：registry 仍 0.1.5-BETA.10，第 3/4/5 批的修复不在任何已发布产物里。发布需另行确认，
    且带安全语义的版本必须同时抬 `ROLLBACK_FLOOR_VERSION`。
 
+## J. 工具链可见性（用户报出的现场缺陷，壳 + 内核同根因，两仓各一 PR）
+
+### J-0 缺陷起点
+
+用户在桌面壳环境检测里「完全看不到 npm 的检测，也没有 npm 的安装」。逐层取证后确认这不是单点缺失，
+而是同一条事实在两仓各自断链：壳装了 npm 却不回读版本、事件把 node 版本念成 npm 版本、引导层把
+node/npm 拆成两个松字段（成功路径只写 node）；内核侧把 npm 各自解析四处、`/env/status` 的 npm 只有
+一段事实、面板环境卡硬编码只念 Node 版本。故按 §C 的批次口径单列，不并入 C 类。
+
+### J-1 内核侧发现（本轮修）
+
+| 编号 | 位置 | 缺陷 | 修法 | 判据 |
+|---|---|---|---|---|
+| J-1a | `platform/contract/runtime.js` | `npmBin()` 只回程序，丢掉 `npmArgs`：壳以「node + 包内 npm-cli.js」投放时降级成裸跑 node | 改 `npmLauncher()` 成对返回 `{program,args,version,source}`，`read()` 补 `npmVersion`/`source`/`installedAt` | `runtime-contract-test` R-2/R-5/R-8 |
+| J-1b | `app/native/npm.js` | `npmExe()` 完全绕开契约、只走 ambient PATH，与 `npmExeArgs()` 各读各的（GUI 环境装了也解析不到） | 合并为 `npmLaunch(host)`，注入即接管整对，未注入取契约 | R-4（program/args 同源一次解析 + 拆读反向夹具） |
+| J-1c | `platform/service/env-catalog.js` | 契约缺席时退回**裸 'npm'**（Windows ENOENT，装了也误报 missing）；`whichVersion` 无参数维 | npm 探测经解析口；`whichVersion/cachedWhichVersion` 带 args（缓存键含 args） | `npm-resolution` C-c（sink 集补版本探测绕过面）、R-4 |
+| J-1d | `app/settings/env.js` | 另起一处手拼 `dirname(stateFile) + 'runtime.json'` 读契约；npm 只有 `detected` 一段 | 统一经 `contract/runtime` 读取；npm 与 node 同构三段 `{detected,runtime,path}` | `cross-platform-test` A5-h/A5-i/A5-a-c |
+| J-1e | `ui/.../OverviewPage.tsx` + `types.ts` | 环境卡只念 `/env/node-lts` 的 Node 版本；把 npm 标成 `required:true` 的声明式目录零消费；`EnvStatus.npm` 少声明两段 | 卡改为遍历 `catalog.items` 必填项渲染，类型与后端产出对齐 | A5-j~A5-q（含「只念 Node」旧形状反向夹具） |
+| J-1f | `design-notes/*`、`round13` 头注、`types.ts` 注释 | 错误引导：仍记 `npmExe`/`npmExeArgs` 为现存导出；指向不存在的 `guard/supervisor/settings-view.js` | 就地改指真实模块 | 文档门禁 + 人工复核 |
+
+### J-2 壳侧发现（同批在壳仓修，见壳仓 CHANGELOG「装了 npm 却看不见 npm」条目）
+
+契约 `runtime.json` 增 `npm.version`（只有真实执行过 npm 才有，未执行为 null，与空串严格区分）；
+安装管线以 `NodeRuntime` 为返回类型（不再返回 bool+文案）；`install_done` 按 kind 各发一条、
+版本字段为该 kind 的事实（npm 未回读即发 null，「版本未回读」文案只在 UI 唯一出口生成）；
+引导层工具链快照 `{node,npm}` 单写单读；门禁 G-2/G-7/G-8 同批改（判据只看代码行 + 旧形状反向夹具）。
+
+### J-3 证据上限
+
+两仓改动均以 CI 四平台矩阵裁决，本机只做 `node --check` 与静态判据复算。跨仓的 npm 版本事实由
+`SUPPORTED_SCHEMA`/契约键名握手锁定，但不做跨仓源码读取（`no-cross-repo` 纪律）。
+**本批不发布**：registry 仍 0.1.5-BETA.10。
+
 ## 附录：分域审计明细索引
 
 | 域 | 范围 | 规模 | 主要文件锚点 |
