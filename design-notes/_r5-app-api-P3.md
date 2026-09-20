@@ -47,7 +47,7 @@
 - settings/domain-config.js `defaults`/`aliases`：外部仅经 `extension()` 使用；二者为通用词，存在门禁/文档动态枚举风险 -> 保留并报告，建议后续以门禁确认后再删。
 - daemons/scripts.js `DAEMON_REL`：test/directory-structure-gate-test.js 引用 -> 保留。
 - daemons 方法中仅 this. 内部调用的 `_lanLockPath`/`_routerDaemonLockPath`/`_daemonEnsureResult`/`_stopMainDsh`/`_stopAllSandboxes`：经 facets.js 装入 host 后以 this. 调用 -> 保留。
-- native/upgrade.js `PKG_DEFAULT`（ops.js 使用）、native/npm.js `npmExe`/`npmExeArgs`（ops.js 使用）-> 保留。
+- native/upgrade.js `PKG_DEFAULT`（ops.js 使用）、native/npm.js `npmExe`/`npmExeArgs`（ops.js 使用）-> 保留。（后续已合并为单一解析口 `npmLaunch`，成对返回 program/args，见 CHANGELOG「装了 npm 却看不见 npm」条目）
 - 孤儿文件：无。分区内 .js 均被 facets.js / require 引用。
 - 死分支：未发现确定者。`_warnOccupied` 经 collaborators.js THIN_SPEC 暴露为 daemons.warnOccupied，被 main/process.js、main/controller.js 调用 -> 非死代码。
 

@@ -6,6 +6,34 @@
 
 ## [未发布]
 
+### 工具链可见性（内核侧）：npm 的版本走完「契约 / 状态 / 面板」整条链
+
+- **缺陷（与壳侧「装了 npm 却看不见 npm」同根因的另一半）**：内核把同一份 npm 事实各自解析四处
+  —— 分发安装经契约但只取 `npmPath` 丢掉 `npmArgs`（「node + 包内 npm-cli.js」被降级成裸跑 node）、
+  原生管理 `npmExe()` 完全绕开契约只走 ambient PATH、环境探测在契约缺席时退回**裸 'npm'**
+  （Windows 上即 ENOENT，装了也误报 missing）、`app/settings/env.js` 另起一处手拼
+  `path.dirname(stateFile) + 'runtime.json'` 读契约（与真实落点不同源，状态根一挪即静默读空）。
+- **单一解析口**：`platform/contract/runtime.js` 的 `npmBin()`（只回程序）换成 `npmLauncher()`，
+  成对返回 `{ program, args, version, source }`；`read()` 补出 `npmVersion` / `nodeVersion` / `source` / `installedAt`。
+  分发安装、原生管理（`app/native/npm.js::npmLaunch`，保留 `_npmBin`/`_npmBinArgs` 注入且「注入即接管整对」）、
+  环境探测三处消费者一律经该口，程序与前缀参数同源一次解析。
+- **版本探测带上 args**：`env-catalog` 的 `whichVersion/cachedWhichVersion` 增加参数维（缓存键含 args），
+  npm 条目改经解析口；不再退回裸 'npm'，也不再在契约指向的文件跑不通时静默退回 PATH 洗成「就绪」。
+- **三段事实对齐**：`/env/status` 的 `npm` 与 `node` 同构为 `{ detected, runtime, path }`
+  （runtime = 壳实跑回读的 npm 版本，未回读为 null，不拿 node 版本或占位文案顶上），
+  前端 `EnvStatus.npm` 同步声明并新增 `EnvCatalogItem`。
+- **面板环境卡改声明式消费**：`OverviewPage::EnvDetect` 不再硬编码只念 Node 版本，
+  改为遍历 `/env/status` 的 `catalog.items` 必填项渲染（node / npm / DSH 本体同现，非 ok 态出警示芯片），
+  LTS 线提示仍取 `/env/node-lts`。仓库里那份把 npm 标成 `required: true` 的声明式目录首次有了消费方。
+- **门禁（判据并入既有文件，未新增链条目）**：`runtime-contract-test` 重写 R-2/R-4/R-5 并新增
+  R-7（src 内除解析层与唯一口外不得直呼 `npmBin()`）、R-8（版本不得编造），全部配旧形状反向夹具；
+  `npm-resolution-test` C-c 的 sink 集补 `whichVersion('npm')` 这类**版本探测**绕过面（旧版盲区），
+  C-d 判据改钉 `npmLauncher` 的 program+args 成对取用；`cross-platform-test` 新增 A5 组（契约在场/缺席
+  两轮真实 `envStatus()` + 前端类型与面板渲染判据）。
+- **文档与设计笔记纠错**：`design-notes/EXEC3-native-domain.md` 与 `_r5-app-api-P3.md` 仍把
+  `npmExe`/`npmExeArgs` 记为现存导出（已合并为 `npmLaunch`）；`round13-node-lts-contract-test` 头注与
+  `types.ts` 注释指向不存在的 `guard/supervisor/settings-view.js`（实为 `src/app/settings/node-lts.js`）。
+
 ### 注释纪律 + 三处收口（AUDIT-2026-09-19 第 5 批，裁决登记见 AUDIT-REPORT §I）
 
 - **注释纪律门禁（CS 组）**：注释只写「为何」与不可见约束，不写修复过程；字符白名单 = ASCII 可打印

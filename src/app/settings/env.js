@@ -5,8 +5,8 @@ const platform = require('../../platform/os/index');
 // 环境状态门面（壳写 runtime.json；EnvCatalog 声明式探测）。
 // 导出形态 { methods }，方法经 this 协作。
 const fs = require('node:fs');
-const path = require('node:path');
 const { EnvCatalog } = require('../../platform/service/env-catalog');
+const runtimeContract = require('../../platform/contract/runtime');
 
 function envCatalogSummary(that) {
   const cat = new EnvCatalog(that.config);
@@ -20,16 +20,20 @@ function envCatalogSummary(that) {
 module.exports = {
   methods: {
     envStatus() {
-      const rt = {};
-      try { const f = path.join(path.dirname(this.config.stateFile), 'runtime.json'); if (fs.existsSync(f)) Object.assign(rt, JSON.parse(fs.readFileSync(f, 'utf8'))); } catch {}
+      // 契约唯一读取口 = platform/contract/runtime。旧实现在此手写
+      //   path.dirname(stateFile) + 'runtime.json'：与契约真实落点（<产品状态根>/supervisor）
+      //   不必然同源，状态根一挪就静默读空。
+      const c = runtimeContract.read() || {};
       const cat = new EnvCatalog(this.config).probe();
       const en = this.nativeManager && typeof this.nativeManager.checkEnvironment === 'function' ? this.nativeManager.checkEnvironment() : null;
       return {
-        node: { detected: cat.node.detail || null, runtime: rt.nodeVersion || null, path: rt.nodePath || null },
-        npm: { detected: cat.npm.detail || null },
+        node: { detected: cat.node.detail || null, runtime: c.nodeVersion || null, path: c.nodePath || null },
+        // npm 与 node 同构三段：detected = 本机实跑版本；runtime = 壳实跑后投放的版本
+        //   （null 表示壳未回读，不得拿 node 版本或占位文案顶上）；path = 契约解析到的可执行。
+        npm: { detected: cat.npm.detail || null, runtime: c.npmVersion || null, path: c.npmPath || null },
         git: { detected: cat.git.detail || null },
-        installedAt: rt.installedAt || null,
-        source: rt.source || null,
+        installedAt: c.installedAt || null,
+        source: c.source || null,
         ok: cat.node.state === 'ok' && cat.npm.state === 'ok',
         npmRoot: en ? en.npmRoot : null,
         // EnvCatalog 声明式视图（面板环境卡用）

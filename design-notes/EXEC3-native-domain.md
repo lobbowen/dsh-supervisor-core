@@ -25,7 +25,7 @@
       installer.js  125  门面：NativeManager 组合 + 互斥守卫 + 导出面逐字保持
       ops.js        239  install / startInstall / startUninstall / uninstall / status / checkUpdate
       upgrade.js    268  upgrade / rollbackNative / handleUpgradeFailure（先停后装、验证、回滚）
-      npm.js         66  npmExe/npmExeArgs/resolveNpmRoot/checkEnvironment/latestVersion/selectRegistry/runInstall
+      npm.js         66  npmLaunch/resolveNpmRoot/checkEnvironment/latestVersion/selectRegistry/runInstall
       manifest.js    67  read/save（原子写 0600）/record/claimDataPaths
       probe.js       83  detected/binPath/installedVersion/targetPort/mainUnit/waitNativeHealthy
       policies.js    65  纯：busy/upgradeBrief/versionInfo/isBareCommand/isValidVersion/isNewer/isUpToDate/needsRollback

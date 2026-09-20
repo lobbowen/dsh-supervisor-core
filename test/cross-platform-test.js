@@ -185,6 +185,90 @@ const check = (n, c, x) => { results.push(!!c); console.log((c ? 'PASS' : 'FAIL'
     check('A4-d 后端话术命名与 UI 位置统一', guardApi.includes('概览 · 版本与升级'), 'ok');
   }
 
+  // -- A5 工具链可见性：npm 的事实走完「契约 -> /env/status -> 面板」整条链 --
+  //   壳侧曾「装了 npm 却看不见 npm」；内核侧是同根因的另一半：/env/status 的 node 有三段、
+  //   npm 只有 detected；env.js 另起一处手写契约路径；面板只念 Node 版本，而把 npm 标成
+  //   required 的声明式目录零消费。三处各自都能自洽，合起来是「面板说就绪、实机跑不通」。
+  console.log('== A5 工具链可见性（npm 与 node 同现）==');
+  {
+    const rc = require(path.join(ROOT, 'src', 'platform', 'contract', 'runtime'));
+    const savedRoot = process.env.DSH_SUPERVISOR_HOME;
+    process.env.DSH_SUPERVISOR_HOME = path.join(TMP, 'tcroot');
+    fs.mkdirSync(path.dirname(rc.file()), { recursive: true });
+    const TC_NODE_DIR = path.join(TMP, 'tcnode');
+    fs.mkdirSync(TC_NODE_DIR, { recursive: true });
+    const TC_NODE = path.join(TC_NODE_DIR, 'node');
+    const TC_NPM_CLI = path.join(TC_NODE_DIR, 'npm-cli.js');
+    fs.writeFileSync(TC_NODE, '#!/bin/sh\n');
+    fs.writeFileSync(TC_NPM_CLI, '\n');
+    fs.writeFileSync(rc.file(), JSON.stringify({
+      schema: 2, writtenBy: 'test',
+      nodePath: TC_NODE, nodeVersion: 'v22.12.0', nodeBinDir: TC_NODE_DIR, minNode: 'v22.12.0',
+      npmPath: TC_NODE, npmArgs: [TC_NPM_CLI],
+      npm: { path: TC_NODE, args: [TC_NPM_CLI], version: '10.9.2' },
+    }), null, 2);
+
+    const env = s.envStatus();
+    check('A5-a npm 与 node 同构三段（detected/runtime/path）',
+      ['detected', 'runtime', 'path'].every((k) => k in env.npm) && ['detected', 'runtime', 'path'].every((k) => k in env.node),
+      JSON.stringify(env.npm));
+    check('A5-b npm.runtime 取契约回读的 npm 版本（不得念成 node 版本）',
+      env.npm.runtime === '10.9.2' && env.node.runtime === 'v22.12.0', 'npm=' + env.npm.runtime + ' node=' + env.node.runtime);
+    check('A5-c npm.path 与契约解析到的可执行同源', env.npm.path === TC_NODE, String(env.npm.path));
+    const items = (env.catalog && env.catalog.items) || {};
+    const required = Object.keys(items).filter((k) => items[k] && items[k].required);
+    check('A5-d catalog 必填项同时含 node 与 npm（面板按必填项渲染）',
+      required.includes('node') && required.includes('npm'), required.join(','));
+    check('A5-e npm 条目有 label/state（声明式目录形状稳定）',
+      !!(items.npm && items.npm.label && typeof items.npm.state === 'string'), JSON.stringify(items.npm));
+
+    // 反向：契约缺席时 runtime/path 必须是 null（不编造、不拿 node 版本或占位文案顶上）。
+    fs.unlinkSync(rc.file());
+    const bareEnv = s.envStatus();
+    check('A5-f 无契约时 npm/node 的 runtime 与 path 均为 null',
+      bareEnv.npm.runtime === null && bareEnv.npm.path === null && bareEnv.node.runtime === null,
+      JSON.stringify(bareEnv.npm));
+    check('A5-g 无契约时 envStatus 不抛且仍给 detected',
+      typeof bareEnv.npm.detected === 'string' || bareEnv.npm.detected === null, String(bareEnv.npm.detected));
+    if (savedRoot === undefined) delete process.env.DSH_SUPERVISOR_HOME;
+    else process.env.DSH_SUPERVISOR_HOME = savedRoot;
+
+    // 契约读取口唯一：env.js 必须经 platform/contract/runtime，不得再手拼 runtime.json。
+    //   判据只看代码行：本组说明注释必然提到 runtime.json 与旧的拼法，不剥离即自匹配。
+    const envJsAll = fs.readFileSync(path.join(ROOT, 'src', 'app', 'settings', 'env.js'), 'utf8');
+    const envJs = envJsAll.split(String.fromCharCode(10))
+      .filter((l) => !l.trim().startsWith('//') && !l.trim().startsWith('*')).join(String.fromCharCode(10));
+    check('A5-h env.js 经契约模块读取',
+      /require\([^)]*contract\/runtime[^)]*\)/.test(envJs) && /runtimeContract\.read\(\)/.test(envJs), 'ok');
+    check('A5-i env.js 不再手拼契约路径（第二处读取口）',
+      !/['"]runtime\.json['"]/.test(envJs) && !/dirname\(this\.config\.stateFile\)/.test(envJs), 'ok');
+
+    // 前端类型与后端产出对齐（round13 同类缺陷：声明与实现分叉，tsc 不会报错）。
+    const typesTs = fs.readFileSync(path.join(ROOT, 'ui', 'src', 'services', 'supervisor', 'types.ts'), 'utf8');
+    check('A5-j EnvStatus.npm 声明三段（防前端拿不到新字段）',
+      /npm\?:\s*\{[^}]*runtime\??:[^}]*path\??:/.test(typesTs), 'ok');
+    check('A5-k 目录条目独立成类 EnvCatalogItem 且被 EnvStatus 引用',
+      /export interface EnvCatalogItem/.test(typesTs) && /items\?:\s*Record<string,\s*EnvCatalogItem>/.test(typesTs), 'ok');
+    check('A5-l 反向：只声明 detected 的旧形状被同一把尺拒',
+      !/npm\?:\s*\{[^}]*runtime\??:[^}]*path\??:/.test('export interface EnvStatus { npm?: { detected?: string }; }'), '已拒');
+
+    // 面板环境卡：按必填项遍历渲染，不得再硬编码只念 Node（判据只看代码行，注释必然提旧形状）。
+    const ovTsx = fs.readFileSync(path.join(ROOT, 'ui', 'src', 'features', 'supervisor', 'OverviewPage.tsx'), 'utf8');
+    const ovCode = ovTsx.split(String.fromCharCode(10))
+      .filter((l) => !l.trim().startsWith('//') && !l.trim().startsWith('*')).join(String.fromCharCode(10));
+    check('A5-m 环境卡消费 /env/status 的 catalog',
+      /supervisorApi\.envStatus\(\)/.test(ovCode) && /catalog\?\.items/.test(ovCode), 'ok');
+    check('A5-n 环境卡按必填项遍历渲染（不点名具体工具）',
+      /\.filter\(\(\[, it\]\) => it\.required\)/.test(ovCode) && /required\.map\(\(\[id, it\]\)/.test(ovCode)
+        && /\{it\.label\}/.test(ovCode), 'ok');
+    check('A5-o 环境卡不再使用硬编码的 Node 单值行', !/环境检测 · Node v\{/.test(ovCode), 'ok');
+    check('A5-p 反向：只念 Node 的旧形状必被抓到',
+      /环境检测 · Node v\{/.test('      <span>环境检测 · Node v{node.current}</span>')
+        && !/\.filter\(\(\[, it\]\) => it\.required\)/.test('  const n = node.current;'), '已抓到');
+    check('A5-q LTS 线提示仍取 /env/node-lts（工具链清单与 LTS 建议不互相顶替）',
+      /supervisorApi\.nodeLts\(\)/.test(ovCode) && /ltsLine === false/.test(ovCode), 'ok');
+  }
+
   const failed = results.filter((r) => !r);
   console.log('\n结果: ' + (results.length - failed.length) + ' passed, ' + failed.length + ' failed');
   process.exit(failed.length ? 1 : 0);

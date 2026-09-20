@@ -6,7 +6,7 @@
 const fs = require('node:fs');
 const spawnOS = require('../../platform/os/spawn');
 const { killTree } = require('../../platform/os/process');
-const { npmExe, npmExeArgs } = require('./npm');
+const { npmLaunch } = require('./npm');
 const policies = require('./policies');
 
 const PKG_DEFAULT = '@deepseek-ai/dsh';
@@ -205,7 +205,8 @@ async function uninstall(host) {
     const exitCode = await new Promise((resolve) => {
       let child;
       try {
-        child = spawnOS.piped(npmExe(host), npmExeArgs(host).concat(uninstallArgs));
+        const np = npmLaunch(host); // 程序与前缀参数必须同源于一次解析（拆开读=两份事实）
+        child = spawnOS.piped(np.program, np.args.concat(uninstallArgs));
       } catch (e) { return resolve(-1); }
       child.stdout.resume(); child.stderr.resume();
       let done = false;

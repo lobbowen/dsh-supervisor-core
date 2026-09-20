@@ -481,12 +481,30 @@ export interface PlatformCapabilities {
   /** 宿主服务形态 */
   hostService?: string;
 }
+/** EnvCatalog 条目（platform/service/env-catalog 的 probe/summary 形状）。
+ *  state 五态 ok/outdated/missing/configured/unconfigured；required 项必须在前端同现，
+ *  不得只挑 Node 渲染（环境卡曾因此对 npm 失明）。 */
+export interface EnvCatalogItem {
+  label: string;
+  required?: boolean;
+  state: string;
+  detail?: string;
+  /** 有门槛条目（Node）才有：实测版本、门槛、是否达标。 */
+  version?: string;
+  min?: string;
+  meets?: boolean;
+}
 export interface EnvStatus {
   node?: { detected?: string; runtime?: string | null; path?: string | null };
-  npm?: { detected?: string };
+  /** npm 与 node 同构三段：detected = 本机实跑版本，runtime = 壳投放的实跑版本（null = 未回读），
+   *  path = 契约解析到的可执行。旧形状只有 detected，面板因此无从区分「没装」与「壳没回读」。 */
+  npm?: { detected?: string; runtime?: string | null; path?: string | null };
   git?: { detected?: string };
   ok?: boolean;
-  catalog?: { ready?: boolean; items?: Record<string, { label: string; required?: boolean; state: string; detail?: string }> };
+  npmRoot?: string | null;
+  installedAt?: string | null;
+  source?: string | null;
+  catalog?: { ready?: boolean; items?: Record<string, EnvCatalogItem> };
   capabilities?: PlatformCapabilities | null;
   /** 桌面壳看护的观测快照：壳反复拉起失败时面板可见。 */
   shellWatchdog?: {
@@ -506,7 +524,7 @@ export interface EnvStatus {
  *
  *   正契约（此前声明了后端**从不产出**的字段）：
  *    旧声明含 latestLts / ltsName / updateAvailable，而内核
- *    `guard/supervisor/settings-view.js::nodeLtsStatus()` **明确不做远端查询**
+ *    `src/app/settings/node-lts.js::nodeLtsStatus()` **明确不做远端查询**
  *    （避免守卫启动依赖网络），实返只有 { ok, current, major, ltsLine, suggested,
  *    fetchedAt, cached }。于是前端那两个分支恒不可达、类型声明与实现分叉。
  *    现按真实返回对齐。若产品确需「官方最新 LTS」，应另开端点或改走壳 env_status 契约。 */
