@@ -238,16 +238,33 @@ const TMP = fs.mkdtempSync(path.join(os.tmpdir(), 'platport-'));
   const fp = require(path.join(ROOT, 'src', 'platform', 'os', 'file-protect.js'));
   check('X-6 hasIcacls(linux/darwin) 恒 false（POSIX 绝不探测 icacls）',
     fp.hasIcacls('linux') === false && fp.hasIcacls('darwin') === false, 'false');
-  // Windows 分支：在 Linux 上伪造 win32 时 icacls 不存在 → 必须**如实失败**（不静默 ok）
+  // Windows 分支：伪造 win32 后必须**如实失败**（不得静默 ok）。
+  //   ⚠ 宿主自感知（第 4 批预防，与 D-11/D-10 同族的「平台分裂」缺陷）：原两条断言的前提是
+  //   「icacls 不可用」，这只在**非 win32 宿主**成立——真 Windows 上 icacls.exe 在 System32，
+  //   CreateProcess 即使把 PATH 清空也会命中系统目录，hasIcacls() 为 true、mode 变 'icacls-*'，
+  //   于是本块在 windows job 必红（链位 #102，此前从未被 CI 执行到）。
+  //   现两侧各验各自那半边：POSIX 宿主验「不可用 → mode=none 且不静默成功」；
+  //   win32 宿主验「可用 → 绝不谎报 none」，并把无法在本机证明的那半边显式记为缺口。
+  const winMissing = path.join(TMP, 'nonexistent-xyz');
   const wOut = underFake('win32', [
     "const fp = require('./src/platform/os/file-protect.js');",
-    "process.stdout.write(JSON.stringify({ f: fp.protectFile('/tmp/nonexistent-xyz'), d: fp.protectDir('/tmp/nonexistent-xyz') }));",
+    'const f = ' + JSON.stringify(winMissing) + ';',
+    "process.stdout.write(JSON.stringify({ i: fp.hasIcacls(), f: fp.protectFile(f), d: fp.protectDir(f) }));",
   ].join(String.fromCharCode(10)));
   let w = null; try { w = JSON.parse(wOut); } catch { /* EXECFAIL */ }
-  check('X-6 Windows 且 icacls 不可用 → protectFile 如实 ok=false/mode=none（不静默成功）',
-    !!w && w.f.ok === false && w.f.mode === 'none' && !!w.f.reason, w ? JSON.stringify(w.f) : wOut.slice(0, 70));
-  check('X-6 Windows 且 icacls 不可用 → protectDir 同上',
-    !!w && w.d.ok === false && w.d.mode === 'none' && !!w.d.reason, w ? JSON.stringify(w.d) : '-');
+  if (process.platform !== 'win32') {
+    check('X-6 前提：POSIX 宿主伪造 win32 时 icacls 探测不可用（判据前提，非空转）',
+      !!w && w.i === false, w ? 'hasIcacls=' + w.i : wOut.slice(0, 70));
+    check('X-6 Windows 且 icacls 不可用 → protectFile 如实 ok=false/mode=none（不静默成功）',
+      !!w && w.f.ok === false && w.f.mode === 'none' && !!w.f.reason, w ? JSON.stringify(w.f) : '-');
+    check('X-6 Windows 且 icacls 不可用 → protectDir 同上',
+      !!w && w.d.ok === false && w.d.mode === 'none' && !!w.d.reason, w ? JSON.stringify(w.d) : '-');
+  } else {
+    console.log('SKIP X-6「icacls 不可用」两例（win32 宿主 System32 必有 icacls；该形态只在 POSIX 宿主可证）');
+    check('X-6 win32 宿主：icacls 可用 → protectFile/protectDir 绝不谎报 mode=none',
+      !!w && w.i === true && w.f.mode !== 'none' && w.d.mode !== 'none',
+      w ? JSON.stringify({ f: w.f, d: w.d }) : wOut.slice(0, 70));
+  }
   // POSIX 分支（仅本机为 POSIX 时才有意义）——断言模式名契约
   if (process.platform !== 'win32') {
     const t = fs.mkdtempSync(path.join(os.tmpdir(), 'fp-'));
