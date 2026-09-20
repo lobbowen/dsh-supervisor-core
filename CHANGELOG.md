@@ -6,6 +6,32 @@
 
 ## [未发布]
 
+### 第 3e 轮：分支保护落成服务端事实（2026-09-21）
+
+用户定案「分支保护必须做」。此前状态是：2026-09-19 迁仓把旧账号的服务端配置留在原地，两仓主干
+`GET .../protection` 均 404（内核 AUDIT §K-1 记为「待定案」），而多份文档仍把保护写成现行保证或写成
+「待恢复的目标态」—— 两种读法都会跑偏。现已 `PUT` 写入并 `GET` 读回（`PAT` 具 `Administration: Read and write`）：
+
+| 仓 · 主干 | required checks | 其余字段 |
+|---|---|---|
+| `dsh-supervisor-core @ master` | `precheck`、`test` + 4 条 `build (...)` | `strict` / `enforce_admins` / `required_conversation_resolution` 开，审批数 0，禁 force push 与删除分支 |
+| `dsh-supervisor-launcher @ main` | `version` + 4 条 `build (...)` | 同上 |
+
+两点与旧文档口径不同，按现状改写而不是照抄旧表：
+
+- **内核把 4 条 `build` 也设为 required**。原表只设 `precheck` + `test`，理由是 `build` 当时受
+  `need_build` 门控（条件 job 设 required → GitHub 等一个永不出现的状态 → PR 永久阻塞）。
+  2026-09-14 起 `build` 每次 push / PR 都跑，该理由消失；「四平台全由 CI 产出」是硬标准，
+  设为 required 才由服务端兜住。`release`（内核）/ `publish`（壳）在 PR 上 `skipped`，**永不设 required**。
+- **审批数设 0**：放行裁决者是 CI，单人仓设 ≥1 会把「CI 绿后合入」变成死锁；保护的实际作用是
+  关掉不经 PR 的直推（`DEVELOPMENT-TRACK.md` §7 保留 2026-09-13 的实测：直推路径也评估 required）。
+
+登记维护规则：**改 `build.yml` 平台矩阵必须在同一次变更里同步 required contexts** —— 矩阵 job 显示名
+内嵌 `os/arch/bundles` 参数，旧语境永不出现即所有 PR 卡死。据此纠正：`DEVELOPMENT-TRACK.md` §7（含
+「恢复保护时要写入的字段」表改为读回值）、`RELEASE-STANDARD.md` §4、`CROSS-PLATFORM-BUILD-AND-UPDATE.md`
+V3、`release/runbooks/publish-and-verify.md` §0（改为「服务器端配置不随仓迁移」的一般教训）、
+`AUDIT-REPORT-2026-09-19.md` §K-1 加 dated 勘误（历史 404 证据保留）。壳仓对应纠正随壳 PR 走。
+
 ### 第 3d 轮：把「已完成」写成待办、把「已删除」写成风险面
 
 三份文档里的现状陈述与当前代码对不上，读的人会按它们重复施工或防一个不存在的敌人：

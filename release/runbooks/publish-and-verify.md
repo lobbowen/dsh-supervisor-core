@@ -11,7 +11,9 @@
 | **桌面壳** | `lobbowen/dsh-supervisor-launcher` | 公开 | `src-tauri/`（Tauri 引导器，MIT）+ 壳文档与脚本 |
 
 > 两仓曾分属 `wasi7mglns` / `advgyxqamf`，2026-09-19 统一到 `lobbowen`。旧账号下的同名仓已停更，
-> 不要向它们推送，也不要以其中内容为准（历史配置在迁仓时**未随迁**，尤其分支保护，见 `RELEASE-STANDARD.md` §4）。
+> 不要向它们推送，也不要以其内容为准。**服务器端配置不随仓迁移**（迁仓后两仓主干一度无保护，
+> 2026-09-21 才在新仓重新写入，见 `RELEASE-STANDARD.md` §4）—— 同理，旧账号仓上的 secrets / 保护 /
+> 环境设置一律不能当作新仓已具备。
 
 两仓**不共享目录**：壳的构建、签名、发布、测试全部由壳仓自持；
 内核仓只保留对接代码（`src/domains/shell/`、`src/api/domains/shell.js`）。

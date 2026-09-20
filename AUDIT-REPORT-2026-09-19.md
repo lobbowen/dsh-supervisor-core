@@ -728,6 +728,13 @@ node/npm 拆成两个松字段（成功路径只写 node）；内核侧把 npm �
 **未擅自恢复**：分支保护会同时限制直推与管理员，属共享状态变更，需单独定案；
 文档已改为「下表是旧账号仓配置，待在新仓恢复」。旧仓是公开且停更的副本，容易被误当现仓，文档已点名。
 
+> **勘误（2026-09-21）**：用户定案「分支保护必须做」，本节已收口。两仓主干经
+> `PUT /branches/{master,main}/protection` 写入并 `GET` 读回：内核 `master` = `precheck` + `test`
+> + 4 条 `build (...)`（比原表更强：`build` 自 09-14 起已是无条件 job，当年只设两个 job 的理由消失），
+> 壳 `main` = `version` + 4 条 `build (...)`；两仓 `strict` / `enforce_admins` /
+> `required_conversation_resolution` 开启、审批数 0、禁 force push 与删除分支。
+> 上方两条 404 是本节取证当时的实测，保留为历史证据；现值与判据见 `DEVELOPMENT-TRACK.md` §7。
+
 ### K-2 门禁把 owner 钉死导致空转 P2
 
 `test/no-cross-repo-test.js` 的 X-2 判据写死 `repository:\s*wasi7mglns/dsh-supervisor-launcher`。
@@ -761,8 +768,8 @@ X-5 反向夹具同时投喂新旧两个 owner，且断言内核仓自身不被�
 内核 registry 仍 `0.1.5-BETA.10`，壳不发 tag、不动 npm 包。
 
 裁决：内核侧 K-2/K-3（X-2 判据去 owner 硬编码 + 三处现状文档）走 PR #9，CI（precheck + test +
-四平台 build）全绿后合入 `master` = `4cef6d9`，分支已清理。K-1（恢复分支保护）按上文**保持待定案**，
-未擅自动服务端。壳侧产线修复随壳 PR #1 走。
+四平台 build）全绿后合入 `master` = `4cef6d9`，分支已清理。K-1（恢复分支保护）按上文**当时保持待定案**、
+未擅自动服务端（2026-09-21 已定案并写入两仓主干，见 §K-1 勘误）。壳侧产线修复随壳 PR #1 走。
 
 ## L. 凭据工具链本身不可用 + 配套门禁空转（2026-09-20 继续清扫时顺藤摸出）
 
