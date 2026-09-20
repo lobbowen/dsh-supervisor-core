@@ -78,12 +78,12 @@ xdg-open http://127.0.0.1:36360/   # 浏览器直接开面板（默认端口；�
 
 > **弃 SEA 原因（铁证）**：Node SEA 单文件二进制在 macOS 上注入后 `self-check` 即段错误——即使最小 hello-world SEA 亦崩（CI 双 arch 验证，与 useCodeCache/codesign/Node 版本均无关，为 Node SEA 的 macOS 上游缺陷）。为彻底消除平台差异、保证 macOS/Windows（产品主力）可用，全平台改发 Node launcher。
 
-- **构建**：`npm run build:launcher`（`release/scripts/build-launcher.sh`）→ esbuild CJS bundle（`--define:__DSH_VERSION__` 注入版本）→ 组装 `bin/dsh-supervisor`（node 启动脚本）+ `core.cjs` + `ui-react/` → 自带冒烟（self-check + fresh-HOME daemon + UI 服务断言）。
+- **构建**：`npm run build:launcher`（`release/scripts/build-launcher.sh`，**仅 CI 内**：脚本对任何调用形态在 CI 外一律 exit 2）→ esbuild CJS bundle（`--define:__DSH_VERSION__` 注入版本）→ 组装 `bin/dsh-supervisor`（node 启动脚本）+ `core.cjs` + `ui-react/` → 自带冒烟（self-check + fresh-HOME daemon + UI 服务断言）。
 - **产物**：`dist/launcher/dsh-supervisor-<ver>-<platform>-<arch>/`（bin + core.cjs + ui-react + version.txt），整包发布可辨识。
 - **运行时依赖**：Node.js ≥18（launcher 需目标机 node；SEA 免运行时优势已弃，换取三端可运行可发布）。
 - **版本自包含**：esbuild 编译期注入 `__DSH_VERSION__`，launcher 任意 cwd 自报正确版本；提升走 `release/scripts/bump.sh --core`（单源 = `package.json.version`）。
 - **平台命名**：npm 内核子包按平台分（`@scope/dsh-core-linux-x64` / `darwin-arm64` / `darwin-x64` / `win-x64`；`process.platform` 的 `win32` 需映射 `win`）。四平台各由对应 runner 产出，**不做交叉编译**；唯一例外是 darwin-x64 目前在 `macos-14`（arm64 runner）上以 `DSH_ARCH_OVERRIDE=x64` 产出 —— 因为 launcher 是架构无关纯 JS，两形产物等价（切 `macos-15-intel` 需真实构建验证，见 `CROSS-PLATFORM-BUILD-AND-UPDATE.md` §三）。
-- **平台生产分工（2026-09-13 硬标准）**：**四平台全部由 GitHub CI 产出**（`build` job 的 4 runner 矩阵：ubuntu-22.04 / windows-latest / macos-latest / macos-14）；**本地不再有任何平台构建/发布路径**（`--all-platforms` 本地 exit 2，`release-core.sh` 已删除）。
+- **平台生产分工（2026-09-13 硬标准）**：**四平台全部由 GitHub CI 产出**（`build` job 的 4 runner 矩阵：ubuntu-22.04 / windows-latest / macos-latest / macos-14）；**本地不再有任何平台构建/发布路径**（`build-launcher.sh` 对单平台与 `--all-platforms` 调用在 CI 外都 exit 2，`release-core.sh` 已删除）。
 - **许可**：内核 **UNLICENSED**（闭源构建物，主 `package.json`/`LICENSE` 声明）；壳 **MIT**（`src-tauri/LICENSE`）。
 - **双仓库（壳开源引流）**：壳源码位于公开仓库 `lobbowen/dsh-supervisor-launcher`（MIT 许可）；
   本仓库为内核（**同为公开仓库** `lobbowen/dsh-supervisor-core`；公开是为了 CI 免额度跑四平台矩阵，
@@ -331,7 +331,7 @@ POST /shutdown               已由 POST /session/stop 取代（保留供旧版�
 - 守卫只提供**只读**状态：`GET /self-update/status`；写端点 `POST /self-update/apply`、`POST /self-update/restart-guard`
   已下架（`410 KERNEL_UPDATE_SINGLE_WRITER`）。守卫重启（应用新内核）由壳经服务管理器完成（守卫从不重启自己）。
 - 旧 manifest 通道（`selfUpdateManifestUrl`/`selfUpdateDir` 与实现它的自更新模块）**已删除**。
-- 内核发布：`npm run build:launcher` + `npm run publish:core`（Node launcher + npm 平台子包，见「内核发布」节）。发布由 tag 触发 CI：`build` 矩阵四平台先跑不带令牌的验证步，再由 token-scoped 发布步执行 `ci-core.sh --publish-only`。
+- 内核发布：`npm run build:launcher` + `npm run publish:core`（Node launcher + npm 平台子包，见「内核发布」节；两者**只在 CI 内运行**，本机调用被脚本自身的 `GITHUB_ACTIONS` 守卫拒绝）。发布由 tag 触发 CI：`build` 矩阵四平台先跑不带令牌的验证步，再由 token-scoped 发布步执行 `ci-core.sh --publish-only`。
 - 环境状态：`GET /env/status`（node/npm/git 探针 + 壳写入的 runtime.json）、`GET /env/dsh`（DSH 本体安装/纳管判定）。
 
 ### 跨平台打包（**已移至壳仓**）

@@ -22,6 +22,9 @@
   `publish-core.sh` 缺产物时提示「请先构建：npm run build:launcher」、`release.sh` 结尾也如此建议。
   现把守卫**上移到参数解析之前**、覆盖全部调用形态（新增门禁 T2-a4 以「守卫在 while 之前」这一结构事实钉住，
   并配反向合成样本），三处提示与命令表同步改为「仅 CI 内」。
+  `README.md` 里仍以现在时态把 `npm run build:launcher` 当本机入口的三处（构建条目、平台生产分工条、
+  单写入者节的发布条），以及 `RELEASE-STANDARD.md` §0 表格里只承诺「本地不得**全平台**构建」的那一行，
+  一并改为「任何调用形态仅 CI 内」，并把门禁列指向 T2-a2 / T2-a4。
 - **分支保护假象**：`bump.sh` 成功后打印「master 有分支保护」，`DEVELOPMENT-TRACK.md` §7 一边写
   「两个 required check 通过后合并」、一边留着一份「本次启用的完整设置」表。实测两仓 protection API
   均返回 404 Branch not protected。改为：该表题为「恢复保护时要写入的字段（当前一项都没生效）」，
