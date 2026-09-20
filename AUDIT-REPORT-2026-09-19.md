@@ -289,8 +289,12 @@
 
 1. **`241446d` 是本批能合入的前提**：runs `35471888496` / `35472954250` / `35474631569` / `35478336653` 四连红的**全链唯一 FAIL** 都是 `round8-fixes-test.js:351` 的「C-8 manual+元数据地址 → mode 未被改」。它是真回归（别名 vs 副本），不是假红。
 2. **链位序教训（登记为纪律）**：`round8-fixes-test` 在 `scripts.test` 第 57/129 位，`&&` 链在此中断 → **第 4 批 B/C/D 三组并入 58–128 位入链文件的断言此前一次都没被 CI 执行过**（D-8、ML-2/ML-3、SC-1…3 等）。一条早退红的代价不是 1 个用例，而是 72 个文件的覆盖面。
-3. **⚠ 待 CI 裁决（本机严禁验证）**：D-10 的新行为块在 Windows runner 上可能因 tmpdir 短名含 `~`（`RUNNER~1`）被 B-11 的 argv 禁用字符集拒绝；红则按平台差异取证后再修（§G-6-9 同族）。
+3. **⚠ D-10 windows tmpdir `~` 风险仍未裁决（本条为勘误）**：`npm test` 是一条 `&&` 链，run `35480363198` 各 job 都在链首红处**中断**——windows 停在 #28 `adopt-token-reclaim-test`（D-11 权限位）、其余三平台 + test job 停在 #31 `daemon-lifecycle-test`（D-12 反向例）。因此 #46 `uninstall-timeout-behavior-test` / #56 `graceful-shutdown-test` 的 D-10 行为块在该 run **一次都没执行**，不能据「日志里没有它的 FAIL」判绿（见 H-7-2 同族教训）。裁决推迟到修复这两条红之后的下一个 run。
 4. **E-1 迁移的连带改判**：`provider-gateway-gate-test` PG-7 与 `npm-resolution-test` C-f 都曾因「判据钉住旧实现字面量」而在搬家后**静默抓空**——已改为「调用点问闸 + 单源存在 + 反向样本命中」三段式，并把「搬家即空转」写进两个门禁的缺口清单。
+5. **run `35480363198`（HEAD `06162f8`）四平台 + test job 全红的唯一红因取证**（各 job 只有一条 FAIL，属**平台分裂**而非同一缺陷）：
+   - `test/daemon-lifecycle-test.js` D-12 反向例（test job + ubuntu + 两个 macos）：断言「锁不存在 → 取锁失败」。定性为**产品对、断言错**——`identity.js` 用 `fs.openSync(p,'wx')`，父目录存在而锁不存在时**首次创建必成功**（同文件 :151 正例早已断言），该期望与自家正例互斥。修法：反向例改指真正的失败路径「父目录缺失 → ENOENT ≠ EEXIST → 判 false 且不建锁、不补目录」，并按 §G-6-9 逐例拆分 + 判据回显（null 路径、失败不建锁、失败不建目录、释放不存在锁 no-op 四条）。
+   - `test/adopt-token-reclaim-test.js` D-11「落盘权限 0600」（windows 独有，实测 `666`）：定性为**夹具缺平台门控**——Windows 的 `chmod` 只切换只读位，POSIX mode 语义不成立，产品侧 `writeAtomic` 的显式 `chmodSync(0o600)` 在 POSIX 上仍正确。修法按既有先例（`round13-discipline-gaps-test` ③、`install-id-test` ID-3b、`frp-resilience-test` R5-b）：POSIX 做真实行为断言，win32 打显式 `SKIP` 行，不静默变绿。
+   - **纪律提取**：凡「权限位 / mode」断言必须平台自感知；凡「反向例」必须在写完后确认它与同文件正例不互斥——本机只读代码推不出来，CI 是唯一裁判。
 
 ### H-8 残留与诚实声明
 

@@ -278,8 +278,12 @@ async function main() {
       .filter((x) => x.startsWith(path.basename(f) + '.tmp'));
     check('D-11 原子写：不留 .tmp 残留（按派生名枚举，不依赖具体命名）',
       ownerStrays.length === 0, ownerStrays.join(',') || 'clean');
-    check('D-11 落盘权限 0600', (fs.statSync(f).mode & 0o777) === 0o600,
-      (fs.statSync(f).mode & 0o777).toString(8));
+    // 权限位是 POSIX 语义：Windows 的 chmod 只切换只读位（mode 恒 666），在此断言既不可能成立也无意义。
+    //   收口纪律由 §E.1 writeAtomic 单源 + J-n 门禁保证；POSIX 上仍做真实行为断言（先例 install-id-test ID-3b）。
+    if (process.platform !== 'win32') {
+      check('D-11 落盘权限 0600', (fs.statSync(f).mode & 0o777) === 0o600,
+        (fs.statSync(f).mode & 0o777).toString(8));
+    } else console.log('SKIP D-11 权限位断言（Windows 无 POSIX mode；chmodSync 仅切换只读位）');
 
     // 「另一个存活的守卫」：起一个真实子进程当它（跨平台；win 上 pid 1 是空闲进程，不能拿来代表存活）
     const other = spawn(process.execPath, ['-e', 'setTimeout(function () {}, 5000);'], { stdio: 'ignore' });

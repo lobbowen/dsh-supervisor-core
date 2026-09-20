@@ -185,8 +185,22 @@ const waitCtl = async (ms = 8000) => { const t0 = Date.now(); while (Date.now() 
   releaseLock(lock);
 
   // 反向（判据有牙）：旧缺陷形态必被识破
-  check('D-12 反向：不存在锁时取锁失败但绝不创建半成品',
-    acquireLock(path.join(dir, 'missing-dir-ghost.lock')) === false, 'null 路径安全');
+  //   ⚠ 勘误（第 4 批 CI 裁决）：原写法「锁不存在 -> 取锁失败」把期望倒置了。
+  //   父目录存在而锁不存在时 `'wx'` 首次创建**必成功**（上面第 151 行已断言），
+  //   真正的失败路径是「父目录都不存在」——那里 ENOENT ≠ EEXIST，取锁必须判 false 且不留任何半成品。
+  check('D-12 反向：路径为 null -> 安全返回 false（不触碰 fs）',
+    acquireLock(null) === false, 'null 路径安全');
+  const ghostDir = path.join(TMP, 'd12-no-such-dir');
+  const ghost = path.join(ghostDir, 'router-daemon.lock');
+  fs.rmSync(ghostDir, { recursive: true, force: true });
+  check('D-12 反向：父目录缺失（ENOENT 非 EEXIST）-> 取锁判 false',
+    acquireLock(ghost) === false, 'false');
+  check('D-12 反向：失败路径不创建锁文件（无半成品 pid 锁）',
+    !fs.existsSync(ghost), 'absent');
+  check('D-12 反向：失败路径不擅自补出目录（自愈只清锁、不建目录）',
+    !fs.existsSync(ghostDir), 'absent-dir');
+  check('D-12 反向：对不存在的锁释放 -> no-op 且不创建',
+    (releaseLock(ghost), !fs.existsSync(ghost)), 'absent');
   const idSrc = fs.readFileSync(path.join(ROOT, 'src', 'app', 'daemons', 'identity.js'), 'utf8');
   const lines = idSrc.split(String.fromCharCode(10)).filter((l) => !l.trim().startsWith('//'));
   const bareWrite = lines.filter((l) => /fs\.writeFileSync\(.*pid/.test(l));
