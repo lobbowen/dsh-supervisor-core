@@ -7,6 +7,7 @@
  *
  * 协议与来源/目标校验在壳侧（docs/DESIGN-SHELL-ARCHITECTURE.md §3.2c）；
  * 两侧各自持协议版本并由门禁锁定（壳 SW-1、内核 SW）。
+ * 收方向同样有来源校验：面板只接受 `ev.source === window.parent` 的消息（E-6，门禁 SW-8）。
  */
 
 /** 协议版本：任何语义变更必须递增；须与壳 src/bridge.rs 的常量一致。 */
@@ -48,6 +49,12 @@ export function requestKernelUpdate(timeoutMs = 6 * 60 * 1000): Promise<KernelUp
     const onMessage = (ev: MessageEvent) => {
       const d = ev.data as Record<string, unknown> | null;
       if (!d || typeof d !== "object") return;
+      // E-6（AUDIT-2026-09-19 第 4 批）：来源校验不能只做在壳侧。面板此前只验
+      //   协议版本/类型/requestId —— requestId 的随机片段是弱标识（Math.random），
+      //   任何能向本 iframe 派发 message 的上下文都能伪造「更新成功」。
+      //   这里用 ev.source === window.parent 作硬判据：壳主帧的 origin 是 Tauri 自定义
+      //   协议、面板无从预知（见下方 postMessage 的 '*' 说明），故 origin 白名单不可用。
+      if (ev.source !== window.parent) return;
       if (d.v !== BRIDGE_PROTOCOL_VERSION) return;
       if (d.type !== RESULT && d.type !== PROGRESS) return;
       if (d.requestId !== requestId) return;

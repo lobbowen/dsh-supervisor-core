@@ -136,14 +136,34 @@ const obj = (arr) => arr.reduce((m, v) => { m[v] = {}; return m; }, {});
     channel.pickReleaseVersion(meta({ latest: '0.2.0-RC.1' }, obj(['0.2.0-RC.1'])), OPTS_MINE) === '0.2.0-RC.1');
 }
 
-// ── §3 ④：latest 缺失/非法 → versions 最高（兼容兜底）──
+// ── §3 ④：latest 缺失/非法 → versions 最高（兼容兜底；我们的包排除 -BETA.，E-4 改判）──
 {
-  check('④ latest 缺失 → versions 最高',
-    channel.pickReleaseVersion(meta({}, obj(['0.1.3', '0.1.5-BETA.7', '0.1.4'])), OPTS_MINE) === '0.1.5-BETA.7');
-  check('④ latest 非法 → versions 最高',
+  // E-4（AUDIT-2026-09-19 第 4 批）改判说明：本例原期望 '0.1.5-BETA.7'（全量最高），
+  //   即「镜像响应里 latest 缺失 → 稳定版机器被静默升到测试版」。现按契约 §3 ④ 排除 BETA。
+  const m142 = meta({}, obj(['0.1.3', '0.1.5-BETA.7', '0.1.4']));
+  check('④ latest 缺失 → versions 最高，但**不越过 BETA**（E-4 改判）',
+    channel.pickReleaseVersion(m142, OPTS_MINE) === '0.1.4',
+    channel.pickReleaseVersion(m142, OPTS_MINE));
+  check('④ 反向非空转：旧「全量最高」形态会给出 0.1.5-BETA.7（判据有分辨力）',
+    Object.keys(m142.versions).includes('0.1.5-BETA.7') &&
+    channel.pickReleaseVersion(m142, OPTS_MINE) !== '0.1.5-BETA.7',
+    channel.pickReleaseVersion(m142, OPTS_MINE));
+  check('④ latest 非法 → versions 最高（无 BETA 时候选不变）',
     channel.pickReleaseVersion(meta({ latest: 'garbage' }, obj(['0.1.3', '0.1.4'])), OPTS_MINE) === '0.1.4');
   check('④ 兜底只认 versions（不含 dist-tags 中的低值）',
     channel.pickReleaseVersion(meta({ bad: '0.9.9' }, obj(['0.1.1', '0.1.2'])), OPTS_MINE) === '0.1.2');
+  // ③ 与 ④ 的分工：latest **显式指向** BETA（当前线上实况）时照原样采纳，不受 E-4 影响。
+  check('③ latest 显式指向 BETA 仍采纳（tag 值是声明，排除只作用于兜底）',
+    channel.pickReleaseVersion(meta({ latest: '0.1.5-BETA.7' }, obj(['0.1.5-BETA.7', '0.1.4'])), OPTS_MINE) === '0.1.5-BETA.7',
+    channel.pickReleaseVersion(meta({ latest: '0.1.5-BETA.7' }, obj(['0.1.5-BETA.7', '0.1.4'])), OPTS_MINE));
+  // 我们的正式版形态是 -RC.n（同为 semver prerelease），故排除只认 -BETA. 字面，不得按「含连字符」判。
+  check('④ 排除只认 -BETA. 形态：-RC.n 是我们的正式版，不得一并排除',
+    channel.pickReleaseVersion(meta({}, obj(['0.1.5-BETA.9', '0.1.5-RC.1'])), OPTS_MINE) === '0.1.5-RC.1',
+    channel.pickReleaseVersion(meta({}, obj(['0.1.5-BETA.9', '0.1.5-RC.1'])), OPTS_MINE));
+  // 第三方包不套 BETA 排除（他人无我们的通道纪律）——对照例，钉住「排除只在 isOurs 分支」。
+  check('④ 第三方包不套 BETA 排除（对照：latest 缺失仍取 versions 最高）',
+    channel.pickReleaseVersion(meta({}, obj(['1.0.0', '1.1.0-beta.2'])), OPTS_THIRD) === '1.1.0-beta.2',
+    channel.pickReleaseVersion(meta({}, obj(['1.0.0', '1.1.0-beta.2'])), OPTS_THIRD));
 }
 
 // ── §3 ⑤：皆无 → null（绝不猜）──
@@ -152,6 +172,10 @@ const obj = (arr) => arr.reduce((m, v) => { m[v] = {}; return m; }, {});
   check('⑤ 全为非法版本 → null', channel.pickReleaseVersion(meta({ latest: 'x' }, obj(['1.0', 'v2'])), OPTS_MINE) === null);
   check('⑤ 缺 meta → null', channel.pickReleaseVersion(null, OPTS_MINE) === null);
   check('⑤ latest 非法且 versions 空 → null', channel.pickReleaseVersion(meta({ latest: 'garbage' }, {}), OPTS_MINE) === null);
+  // E-4：④ 排除 BETA 后无候选 → 落到 ⑤ 明确失败（RC-5：如实报错，不得静默当成"已是最新"）。
+  check('⑤ versions 只有 BETA 且 latest 缺失 → null（宁可失败也不猜测试版）',
+    channel.pickReleaseVersion(meta({}, obj(['0.1.5-BETA.9', '0.1.5-BETA.10'])), OPTS_MINE) === null,
+    String(channel.pickReleaseVersion(meta({}, obj(['0.1.5-BETA.9', '0.1.5-BETA.10'])), OPTS_MINE)));
 }
 
 // ── 第三方包：RC-3（条 7 改判）不套 rollback/canary，但 latest 优先 ──

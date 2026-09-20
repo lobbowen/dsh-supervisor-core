@@ -126,11 +126,13 @@ function createDshInstall(deps) {
     } catch { return null; }
   }
 
-  /** 查询 @deepseek-ai/dsh 的最高可用版本（含 alpha/rc，走统一镜像源）。带 30s 内存缓存。 */
+  /** 查询 @deepseek-ai/dsh 的目标版本（第三方包语义：dist-tags.latest 优先，缺失/非法才回落
+   *  versions 最高；不套 rollback/canary）。带 30s 内存缓存。 */
   async function latestDshVersion() {
     if (_latestDshVer && Date.now() - _latestDshVerAt < 30000) return _latestDshVer;
     let v = null;
-    // '@deepseek-ai/dsh' 是**第三方包**：维持「取全量最高」语义不变（不套 rollback/canary）。
+    // '@deepseek-ai/dsh' 是**第三方包**：语义由契约 §3 第三方段落 + release.js 单源决定
+    // （条 7 改判为 latest 优先；旧「全量最高」会把他人杂 tag 当候选，已废）。
     try { if (dist) v = await dist.fetchNpmLatest('@deepseek-ai/dsh'); } catch {}
     _latestDshVer = v;
     _latestDshVerAt = Date.now();

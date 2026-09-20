@@ -1,9 +1,9 @@
 /**
- * client.ts 单元测试：错误归一化 / 请求超时
+ * client.ts 单元测试：错误归一化 / 请求超时 / 2xx 假成功判据（E-5）
  * 不依赖真实后端：vi.stubGlobal 注入 fetch。
  */
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { supervisorApi, setStoredAccessKey, LONG_TIMEOUT_MS } from "./client";
+import { failureFromResult, supervisorApi, setStoredAccessKey, LONG_TIMEOUT_MS } from "./client";
 
 function jsonResponse(status: number, body: unknown): Response {
   return new Response(JSON.stringify(body), {
@@ -118,5 +118,43 @@ describe("B8 访问密钥携带与 401 语义", () => {
     const err = await supervisorApi.status().then(() => null, (e: Error & { status?: number }) => e);
     expect(err!.status).toBe(500);
     expect(err!.message).not.toContain("access_key");
+  });
+});
+
+/**
+ * E-5（AUDIT-2026-09-19 第 4 批）：2xx 响应体里的 `{ ok: false }` 是「假成功」形态。
+ * http() 只看状态码（探测类端点的 ok:false 属于数据，不是请求失败），所以判失败
+ * 的责任在 failureFromResult —— 由共享动作 hook run() 消费（其接线由内核侧
+ * test/round8-fixes-test.js 的 E-5 静态门禁锁定，vitest 环境为 node 无法挂载 React hook）。
+ */
+describe("E-5 假成功判据 failureFromResult", () => {
+  it("ok:false + error → 返回后端拒因", () => {
+    expect(failureFromResult({ ok: false, error: "安全策略：仅允许公网地址" })).toBe("安全策略：仅允许公网地址");
+  });
+
+  it("ok:false 无 error 时回退 message", () => {
+    expect(failureFromResult({ ok: false, message: "源已停用" })).toBe("源已停用");
+  });
+
+  it("ok:false 且无文案 → 兜底原因（绝不返回空串=静默成功）", () => {
+    const msg = failureFromResult({ ok: false });
+    expect(typeof msg).toBe("string");
+    expect((msg || "").length).toBeGreaterThan(0);
+  });
+
+  it("反向非空转：ok:true / 无 ok 键 / null / 字符串 都不算失败", () => {
+    expect(failureFromResult({ ok: true, latencyMs: 12 })).toBeNull();
+    expect(failureFromResult({ dshPid: 1 })).toBeNull();
+    expect(failureFromResult(null)).toBeNull();
+    expect(failureFromResult("boom")).toBeNull();
+  });
+
+  it("ok 缺省（undefined）不等于 ok:false（只读端点无 ok 键）", () => {
+    expect(failureFromResult({ ok: undefined, error: "陈旧字段" })).toBeNull();
+  });
+
+  it("http() 对 200 + ok:false 不抛错（分工：判失败由调用方负责）", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse(200, { ok: false, origin: "http://x", latencyMs: null })));
+    await expect(supervisorApi.registryProbe("http://x")).resolves.toMatchObject({ ok: false });
   });
 });

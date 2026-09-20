@@ -9,7 +9,7 @@
  */
 import { useCallback, useState } from "react";
 import { toast } from "sonner";
-import { supervisorStore } from "../../services/supervisor";
+import { failureFromResult, supervisorStore } from "../../services/supervisor";
 
 export type ActionBusy = string | null;
 
@@ -33,7 +33,11 @@ export function useSupervisorAction() {
     setBusy(key);
     let ok = true;
     try {
-      await fn();
+      // E-5：后端部分写端点在 HTTP 200 里回 `{ ok: false, error }`（http() 只看状态码），
+      // 必须按返回值判失败，否则被拒的操作也弹成功 toast。页面自管的分支反馈（回调返回
+      // undefined）不受影响。
+      const rejected = failureFromResult(await fn());
+      if (rejected) throw new Error(rejected);
       if (opts?.success) toast.success(opts.success);
     } catch (e) {
       ok = false;

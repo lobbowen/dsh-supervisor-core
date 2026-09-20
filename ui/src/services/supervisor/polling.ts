@@ -2,7 +2,8 @@
  * ============================================================================
  * supervisor 运行态轮询中心（对齐老 UI unifiedTick 语义：单源快照 → 视图只读）
  * ============================================================================
- * - start() 每 2s 并行拉运行态 + 增量事件（after=seq），写入快照并发给订阅者
+ * - start() 并行拉运行态 + 增量事件（after=seq），写入快照并发给订阅者；一轮结束后
+ *   自排下一轮：链路健康时 2s，连续失败按 2s→4s→8s…退避（封顶 30s，E-6）
  * - 任意写操作后可 refresh()（立即同步一次）
  * - 纯 JS 事件订阅（set 通知），页面用 useSyncExternalStore 或 useEffect 消费
  * ============================================================================
@@ -42,14 +43,49 @@ type Listener = (snap: SupervisorSnapshot) => void;
 const listeners = new Set<Listener>();
 let snap = empty();
 let started = false;
-let timer: ReturnType<typeof setInterval> | null = null;
+let timer: ReturnType<typeof setTimeout> | null = null;
 let busy = false;
 /** 事件增量拉取的 in-flight 守卫：refreshEvents 与 syncAll 相互独立，
  *  防止慢网下并发 refresh()/心跳交叠导致同批事件双插（R1 修复）。 */
 let eventsBusy = false;
 
+/** 心跳基准/上限间隔（E-6 退避） */
+const BASE_TICK_MS = 2000;
+const MAX_TICK_MS = 30_000;
+/** 连续 syncAll 失败次数：成功后清零，是退避的唯一依据（E-6）。
+ *  此前用固定 setInterval(2s)，守卫离线时仍每 2s 打满 7 个请求（且慢网下轮次交叠）。 */
+let failStreak = 0;
+
+/** 下一轮心跳间隔：第 2 次连续失败起翻倍，封顶 MAX_TICK_MS。 */
+function tickDelayMs(): number {
+  if (failStreak <= 1) return BASE_TICK_MS;
+  return Math.min(MAX_TICK_MS, BASE_TICK_MS * 2 ** (failStreak - 1));
+}
+
+/** 事件游标归一化（E-6）：后端异常时 r.seq 可能是 null/字符串/NaN。
+ *  NaN 一旦写进 eventsSeq 就永久污染——Math.max(NaN, x) 恒为 NaN，
+ *  下一轮拼出 `?after=NaN` 再也拉不到事件，且界面表现为「事件流静默停摆」。
+ *  故写入前统一过滤，非法值退回当前游标（不猜测、不回退到 0 造成重放）。 */
+function safeSeq(v: unknown, fallback: number): number {
+  const n = typeof v === "number" ? v : Number(v);
+  return Number.isFinite(n) ? n : fallback;
+}
+
 function emit() { for (const l of listeners) l(snap); }
 function setPartial(p: Partial<SupervisorSnapshot>) { snap = { ...snap, ...p }; emit(); }
+
+/** 心跳链世代号：stop() 后在途的那一轮不得再排下一轮（否则 start() 会同时跑两条链）。 */
+let epoch = 0;
+
+/** 统一心跳：一轮跑完再按退避间隔排下一轮（E-6）。
+ *  并行语义与原 setInterval 实现一致；改为自排 setTimeout 是为了能在每轮结束后
+ *  依据失败次数调整间隔，同时避免慢网下轮次堆叠。 */
+async function heartbeat() {
+  const mine = epoch;
+  await Promise.all([refreshEvents(), syncAll()]);
+  if (mine !== epoch || !started) return;
+  timer = setTimeout(() => { void heartbeat(); }, tickDelayMs());
+}
 
 async function syncAll() {
   if (busy) return;
@@ -71,10 +107,14 @@ async function syncAll() {
       supervisorApi.ports().catch(onReadError),
     ]);
     const online = !!status;
+    // E-6：退避只看「运行态是否读到」——status 读到即认为链路健康，个别域读失败
+    // 由快照的 null 字段如实呈现，不该拖慢整条心跳。
+    failStreak = online ? 0 : failStreak + 1;
     // R4 修复：心跳不再附带 /tasks —— snap.tasks 无消费者（TasksPage 自管本地 state + 手动刷新），
     // 每 2s 白拉一次低频任务列表属于无效网络开销。
     setPartial({ status, instances, lan, frp, router, providers, ports, online, authFailed: !online && authHit });
   } catch {
+    failStreak += 1;
     setPartial({ online: false });
   } finally {
     busy = false;
@@ -99,7 +139,7 @@ async function refreshEvents() {
       }
       setPartial({
         events: merged.slice(0, 60),
-        eventsSeq: Math.max(snap.eventsSeq, r.seq),
+        eventsSeq: Math.max(snap.eventsSeq, safeSeq(r.seq, snap.eventsSeq)),
       });
     }
   } catch { /* 静默 */ }
@@ -113,33 +153,31 @@ export const supervisorStore = {
     listeners.add(listener);
     return () => listeners.delete(listener);
   },
-  /** 启动 2s 统一轮询（事件高频 + 运行态）；首次立即同步 */
+  /** 启动统一心跳（事件高频 + 运行态）；首轮立即同步，之后按退避间隔自排（E-6） */
   start() {
     if (started) return;
     started = true;
-    void refreshEvents();
-    void syncAll();
-    timer = setInterval(() => {
-      void refreshEvents();
-      void syncAll();
-    }, 2000);
+    void heartbeat();
   },
   stop() {
-    if (timer) clearInterval(timer);
+    if (timer) clearTimeout(timer);
     timer = null; started = false;
     // 卸载后彻底清场：事件保留（宿主重挂载时可续看），但复位运行态守卫标记
-    busy = false; eventsBusy = false;
+    epoch += 1; busy = false; eventsBusy = false; failStreak = 0;
   },
-  /** 任意写操作后立即同步一次（操作 → 同步 → 渲染） */
+  /** 任意写操作后立即同步一次（操作 → 同步 → 渲染）；不参与退避，始终即时 */
   refresh() {
     void refreshEvents();
     void syncAll();
   },
+  /** 测试专用：当前应等待的心跳间隔（退避曲线可断言，不依赖真实计时器） */
+  _delayMsForTest() { return tickDelayMs(); },
   /** 测试专用：清空快照与订阅（仅在 vitest 中调用） */
   _resetForTest() {
     listeners.clear();
     snap = empty();
-    busy = false; eventsBusy = false; started = false;
-    if (timer) clearInterval(timer); timer = null;
+    busy = false; eventsBusy = false; started = false; failStreak = 0;
+    epoch += 1;
+    if (timer) clearTimeout(timer); timer = null;
   },
 };

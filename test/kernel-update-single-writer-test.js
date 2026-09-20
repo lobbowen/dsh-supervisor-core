@@ -17,6 +17,7 @@
 //   SW-5  CLI self-update 不再安装（apply → 指引 + 退出码 2；check 保留）
 //   SW-6  面板经消息桥请壳代执行（kernelUpdateBridge + AboutCard），不再调内核写端点
 //   SW-7  反向：判据能识别旧的写实现（门禁非空转）
+//   SW-8  面板侧消息来源校验（E-6，批 4）：收方向只认 ev.source === window.parent
 // ═══════════════════════════════════════════════════════════════════════════
 
 const fs = require('node:fs');
@@ -100,6 +101,18 @@ const guardHasWritePath = (src) => {
 const legacy = '  async guardSelfUpdateApply() {\n    return this.dist.runNpmInstall({});\n  }';
 check('SW-7 旧写实现必须被识别（非空转）', guardHasWritePath(legacy), 'ok');
 check('SW-7 当前实现不被误判', !guardHasWritePath(settings), 'ok');
+
+// ── SW-8（批 4 / E-6）：面板收方向的来源校验 ──
+//   桥的出站用 '*'（壳主帧是 Tauri 自定义协议 origin，面板无从预知），入向若只验
+//   requestId（Math.random 弱标识）+ 协议字段，任何能向面板 iframe 派发 message 的
+//   上下文都能伪造「内核更新成功」。故要求硬判据 ev.source === window.parent。
+//   ⚠ 判据只在**代码行**上取（codeOnly 已剥注释）——注释里复述旧缺陷不该算通过。
+const hasSourceGuard = (src) => /ev\.source\s*[!=]==\s*window\.parent/.test(codeOnly(src));
+check('SW-8 面板侧只接受来自父帧的消息', hasSourceGuard(bridge),
+  (codeOnly(bridge).match(/[^\n]*ev\.source[^\n]*/) || ['无 ev.source 判定'])[0].trim());
+check('SW-8 反向非空转：无来源校验的旧形态判为违规',
+  !hasSourceGuard('const onMessage = (ev) => {\n      if (d.requestId !== requestId) return;\n    };'),
+  '旧形态确实不含 ev.source 判定');
 
 const failed = results.filter((r) => !r);
 console.log(String.fromCharCode(10) + '结果: ' + (results.length - failed.length) + ' passed, ' + failed.length + ' failed');

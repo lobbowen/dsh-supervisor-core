@@ -18,6 +18,8 @@ export type { SupervisorSnapshot } from "./polling";
 export { supervisorApi } from "./client";
 // B8：访问密钥本机持久化入口（保存成功后写入 localStorage，供 client 统一带 Bearer）
 export { setStoredAccessKey } from "./client";
+// E-5：2xx 响应体里的 `{ok:false}` 假成功统一判据（写操作由 run() 消费）
+export { failureFromResult } from "./client";
 export { supervisorStore } from "./polling";
 // 任务进度轮询（A2/A3 断点修复）：插件/反代 job 的「提交→轮询→终态」闭环。
 export { pollJob } from "./jobs";
