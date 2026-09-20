@@ -342,7 +342,7 @@ git switch master && git pull --ff-only
   **PR 完全不跑 CI**；若不补而直接设 required，GitHub 会等一个**永不出现的状态** → 所有 PR 永久阻塞。
 - 其 `build` 是**无条件 4 平台矩阵**（每次必跑）→ 与内核仓同样设为 required。
 
-> ⚠ 陷阱：壳仓 required context **内嵌矩阵参数**（如 `build (ubuntu-22.04, linux-x64, deb,rpm, 2.35)`），
+> ⚠ 陷阱：壳仓 required context **内嵌矩阵参数**（如 `build (ubuntu-22.04, linux-x64, deb, 2.35)`；Linux 腿只出 deb），
 > 增删平台或改 arch/组合后旧语境变为「预期但永不出现」→ 所有 PR 合不进去。
 > **改 `build.yml` 矩阵（含内核仓）的同一个提交里必须同步更新 contexts**；
 > 两仓 contexts 的逐字现值见下表与壳仓 `docs/RELEASE-AND-BUILD-DECISION.md` 的对应附录。

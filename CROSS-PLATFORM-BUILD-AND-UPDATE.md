@@ -15,7 +15,8 @@
 
 > **这三条现在的状态（G1/G2 已收口，G3 仍开）**：
 > G1 —— 壳 CI 的 Linux 基座已钉 `ubuntu-22.04` + `glibc_max: "2.35"`，并由壳仓 `ci/check-glibc.sh`
-> 在打包后拦截「只能在新发行版上跑」的退化；G2 —— Linux 出 deb + rpm 两种形态，架构按矩阵分列
+> 在打包后拦截「只能在新发行版上跑」的退化；G2 —— Linux **只出 `deb` 一种形态**（支持面 = Ubuntu，
+> 见 §5.2 与 §十 N2b 的收口），架构按矩阵分列
 > （Linux arm64 runner 当时被注释停用，未产线）；G3 —— 四平台构建与产物装配已在产线，签名链路**曾产线工作、现已断供**：
 > 已发布的 `@dsh-sup/shell-*@1.0.1…1.1.11` 四平台产物全部由 key id `96DE3EF26F389F70` 签名且更新清单在线可取，
 > 但**私钥只在旧账号仓的 CI 里配置过**，迁仓后 `lobbowen` 两仓无该 secret、本机也没有副本，
@@ -225,7 +226,7 @@ $ bash ci/check-glibc.sh <binary> 2.35
 | # | 平台 / 架构 | Runner | 产物 | npm 包名 |
 |---|---|---|---|---|
 | 1 | Linux x64 | `ubuntu-22.04` | `.deb` | `@dsh-sup/shell-linux-x64` |
-| 2 | Linux x64 | `ubuntu-22.04` | `.rpm`（可选，N2b） | 同上 |
+| 2 | ~~Linux x64 第二形态~~ | — | **不产**：Linux 支持面 = Ubuntu + `deb` 一种形态（§十 N2b 收口） | — |
 | 3 | Linux arm64 | `ubuntu-22.04-arm` | `.deb` | `@dsh-sup/shell-linux-arm64` |
 | 4 | macOS arm64 | `macos-latest` | `.app.tar.gz` + `.dmg` | `@dsh-sup/shell-darwin-arm64` |
 | 5 | macOS x64 | **`macos-15-intel`** | `.app.tar.gz` + `.dmg` | `@dsh-sup/shell-darwin-x64` |
@@ -253,7 +254,7 @@ $ bash ci/check-glibc.sh <binary> 2.35
 平台差异全部封装在 Tauri 插件内，壳不写平台分支。
 ```
 
-### 5.2 Linux（deb / rpm）
+### 5.2 Linux（只 `deb`）
 
 | 项 | 内容 |
 |---|---|
@@ -294,7 +295,7 @@ $ bash ci/check-glibc.sh <binary> 2.35
 ```
 【壳发布】公开仓 dsh-supervisor-launcher（CI 免费额度）
   ① git push origin HEAD && git tag v0.2.0 && git push origin v0.2.0
-  ② GitHub Actions 矩阵（4 平台：linux-x64 deb,rpm / darwin-arm64 app,dmg / darwin-x64 app,dmg / win-x64 nsis,msi），每个 job：
+  ② GitHub Actions 矩阵（4 平台：linux-x64 deb / darwin-arm64 app,dmg / darwin-x64 app,dmg / win-x64 nsis,msi），每个 job：
        - 装系统依赖（Linux 22.04 的 webkit2gtk-4.1-dev 等）
        - Rust 工具链（dtolnay/rust-toolchain）
        - npx tauri build（tag 构建须有 TAURI_SIGNING_PRIVATE_KEY；非 tag 构建撤掉该变量并关掉 updater 产物）
@@ -385,12 +386,12 @@ $ bash ci/check-glibc.sh <binary> 2.35
 
 | # | 项 | 说明 |
 |---|---|---|
-| **V1** | Tauri 是否为 **deb/rpm** 生成 `.sig` | **deb 已确证**（不必等 tag 构建重验）：线上清单 `@dsh-sup/shell-release@1.2.0` 的 `linux-x86_64` 条目 URL 与该签名 trusted comment 都是 `dsh-supervisor_1.2.0_amd64.deb`，即 Tauri 确实为 deb 产出并使用了 `.sig`（Release 附件里 rpm 也带 `.sig`，但它不在清单槽位内）。**rpm 未进更新清单**：清单每平台只有一个槽位，Linux 放的是 deb —— 壳同时产 deb + rpm，但**用 rpm 装上的客户端在现清单下拿到的更新包是 deb**。这一条待壳侧定案（「未验」不等于「没问题」，此处是缺口不是疑问）|
-| **V5** | 清单声明的**双 CDN 回退**是否对四平台成立 | **不成立，Windows 只有 unpkg 一条路**：1.2.0 出厂后分端点复测，jsdelivr 对 `.exe` 返 **403 Forbidden**（`1.1.11` 同样复现，与版本无关），而清单本身、`.deb`、`.app.tar.gz`、同包 `.sig` 在 jsdelivr 都取得到。Tauri 按 endpoints 顺序回退，主端点 unpkg 正常 ⇒ 日常更新无感，但「unpkg 挂了就换下一个」对 win 是空操作。已登记于壳仓 `CHANGELOG.md` `[1.2.0]` 缺口条目；修法（第三镜像 / 自建镜像 / 换 win 产物形态）待壳侧定案 |
+| **V1** | Tauri 是否为 **deb** 生成 `.sig` | **已确证**（不必等 tag 构建重验）：线上清单 `@dsh-sup/shell-release@1.2.0` 的 `linux-x86_64` 条目 URL 与该签名 trusted comment 都是 `dsh-supervisor_1.2.0_amd64.deb`，即 Tauri 确实为 deb 产出并使用了 `.sig`。**原登记的「rpm 装了却拿不到自己的更新包」已随 rpm 停发而消失**（不是缓解，是不再存在该形态），见 §十 N2b |
+| **V5** | 清单声明的**双 CDN 回退**是否对四平台成立 | **对「拿得到清单」成立，对「拿得到安装包」不成立**：1.2.0 逐源复测，jsdelivr 对 `.exe` 返 **403 Forbidden**（`1.1.11` 同样复现，与版本无关 —— 是它按扩展名的策略，不是我们包的问题），而清单本身、`.deb`、`.app.tar.gz`、同包 `.sig` 在 jsdelivr 都取得到。且 `endpoints` 的回退**只覆盖取清单那一次请求**，插件下载阶段拿着清单里那一条绝对 URL 不会换源 ⇒ 「两条端点」从来不等于「两条下载源」。**已修**：壳按实测候选源换源取安装包（声明源永远第一 → npm 同路径换主机 → GitHub Release 同名资产），验签仍在插件内按字节做，换源不换内容。逐源实测与全部排除理由见壳仓 `docs/SHELL-UPDATE-CHANNEL-VERIFICATION.md` §九 |
 | ~~V2~~ | ~~`ubuntu-22.04` 上能否顺利构建~~ | **已由 CI 确证**：`ubuntu-22.04` job 在壳仓 main 上反复全绿（含 glibc 2.35 门禁与打包）。~~原「本机 24.04 基座 cargo build --release 成功」~~ —— 那既不能证明 22.04 基座，也违反「一律 CI 构建/测试」，不作为依据保留 |
 | ~~V3~~ | ~~Linux arm64 是否有用户需求~~ | **未纳入矩阵**（Linux 只有 x64）。纳入新平台属矩阵变更：两仓主干保护已于 2026-09-21 恢复，required contexts 逐字内嵌矩阵参数，**改矩阵必须同批改 contexts**，否则旧语境永不出现 → 所有 PR 阻塞（现值见 `DEVELOPMENT-TRACK.md` §7、壳仓 `docs/RELEASE-AND-BUILD-DECISION.md`）|
 | ~~V4~~ | ~~Windows arm64 是否纳入~~ | **未纳入矩阵**（Windows 只有 x64，bundles `nsis,msi`），变更约束同上 |
-| ~~N2b~~ | ~~是否发 rpm~~ | **现状：deb + rpm 一起发**（Linux job 的 `bundles: deb,rpm`）|
+| ~~N2b~~ | ~~是否发 rpm~~ | **定案：不发**。Linux job 的 `bundles` 收窄为 `deb`，`tauri.conf.json` 的 `targets` 同步去掉 rpm。当初 rpm 与 deb 一起产却没有自己的清单槽位，等于产一个更新通道覆盖不到的形态 —— 支持面 = Ubuntu 一种形态；真要扩发行版，先解决清单每平台单槽位（壳仓 `docs/RELEASE-STANDARD.md` §2）|
 | **N4** | 是否建 apt/yum 仓库 | 后续加分项，未立项 |
 | **W4** | macOS 最低支持版本（10.15 / 11.0 / 12.0） | 影响构建 target 与测试面 |
 

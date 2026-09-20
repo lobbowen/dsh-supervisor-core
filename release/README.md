@@ -24,9 +24,9 @@
 | | 内核仓 `dsh-supervisor-core` | 壳仓 `dsh-supervisor-launcher` |
 |---|---|---|
 | 职责 | 产品逻辑 + 守护：API/路由/relay/实例/插件/端口/更新编排 | **仅**桌面体验：引导页、托盘、安装程序、原生能力（systemd/launchctl/schtasks） |
-| 技术栈 | JS（CommonJS），运行时依赖 **0**、原生扩展 **0** | Rust（Tauri 2）+ TS/React 前端 |
-| 产物 | npm 平台子包 `@dsh-sup/dsh-core-{linux-x64,darwin-arm64,darwin-x64,win-x64}` | 安装程序 `deb/rpm`、`dmg/app`、`msi/nsis` + 壳 npm 包 `@dsh-sup/shell-*` |
-| 分发通道 | **npm registry** | **GitHub Release**（安装包）+ npm（自更新产物） |
+| 技术栈 | JS（CommonJS），运行时依赖 **0**、原生扩展 **0** | Rust（Tauri 2）+ 纯 HTML/CSS/JS 引导页（无构建步骤）|
+| 产物 | npm 平台子包 `@dsh-sup/dsh-core-{linux-x64,darwin-arm64,darwin-x64,win-x64}` | 安装程序 `deb`（Linux 支持面 = Ubuntu 一种形态）、`dmg/app`、`msi/nsis` + 壳 npm 包 `@dsh-sup/shell-*` |
+| 分发通道 | **npm registry** | **npm + CDN**（自更新的清单与产物）+ **GitHub Release**（手动下载点，同时是自动更新取安装包的回退源） |
 | 节奏 | **高频**（小步快跑，可单独 hotfix） | **低频**（安装程序，用户不常更新） |
 | 构建负担 | 轻（纯 JS，一次构建派生四平台） | 重（Rust 编译 + 各平台系统库） |
 | 门禁侧重 | 行为/契约/跨进程 | 平台分支编译 + 引导流程 + 签名/清单 |
@@ -326,7 +326,7 @@ node scripts/verify-shell-versions.js     # 自洽校验
 git add -A && git commit && git tag v<ver> && git push origin main && git push origin v<ver>
 ```
 
-→ tag 触发壳仓 `.github/workflows/build.yml`：四平台 Tauri bundle（deb/rpm/.dmg/.app/.msi/nsis）
+→ tag 触发壳仓 `.github/workflows/build.yml`：四平台 Tauri bundle（deb / .dmg / .app / .msi / nsis）
 + npm 壳包（`@dsh-sup/shell-*`）+ `shell-manifest.json`。
 壳仓已**自持**打包工具（`shell-release/`）、CI（`.github/workflows/build.yml`）、
 文档（`docs/`）与版本脚本（`scripts/`），不依赖内核仓。
