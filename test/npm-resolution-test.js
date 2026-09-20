@@ -20,8 +20,8 @@
 // ## 锁定不变量
 //   C-a  `npmBin()` 存在且：非 Windows 返回 'npm'，Windows 返回带扩展名的可执行
 //   C-b  解析结果是**绝对路径或带扩展名**（Windows）—— 不能是裸 'npm'
-//   C-c  源码里不得再出现裸 npm 调用（runOut('npm')/spawn('npm')/bin='npm'）
-//   C-d  模板路径（commandTemplate 首项为 'npm'）同样被解析
+//   C-c  源码里不得再出现裸 npm 调用（runOut('npm')/spawn('npm')/bin='npm'/whichVersion('npm')）
+//   C-d  模板路径（commandTemplate 首项为 'npm'）同样被解析，且程序与前缀参数成对取用
 //   C-e  npx 与 npm 同构（Windows 上是 npx.cmd）
 //   C-f  安装执行器入参白名单：pkg/version/argv 项/registry origin 在 spawn 前全部过闸
 //   C-g  --prefix 与模板分支对称：前缀过路径形态尺（绝对 + 无控制符 + 不以 - 开头），
@@ -73,25 +73,40 @@ function walk(dir, out) {
   }
   return out;
 }
+/** 一行的裸 npm/npx 使用判定（纯函数：真实源码与合成旧形状走同一把尺）。
+ *  B11：判定必须覆盖「逻辑名字符串出现在执行参数位」的全部写法 —— 旧版只认 spawn/execFile，
+ *   于是 env-catalog 的 `whichVersion('npm')`（版本探测）长期绕过本门禁，
+ *   而它的缺陷与三处硬编码**完全相同**：Windows 上 npm 是 npm.cmd，裸名一律 ENOENT。 */
+const BARE_SINK_RE = /(runOut|runDetail|run|runOutAsync|execFile|exec|spawn|whichVersion|cachedWhichVersion)\s*\(\s*'(npm|npx)'|(let|const)\s+bin\s*=\s*'(npm|npx)'/;
+function bareNpmCalls(src) {
+  const hits = [];
+  const lines = String(src).split(String.fromCharCode(10));
+  lines.forEach((l, i) => {
+    const s = l.trim();
+    if (s.startsWith('//') || s.startsWith('*')) return; // 注释里的说明不算
+    if (BARE_SINK_RE.test(l)) hits.push((i + 1) + '  ' + s.slice(0, 66));
+  });
+  return hits;
+}
 const files = walk(path.join(ROOT, 'src'), []);
 const bare = [];
 for (const f of files) {
-  const t = fs.readFileSync(f, 'utf8');
-  const rel = f.replace(ROOT + path.sep, '');
-  const lines = t.split(String.fromCharCode(10));
-  lines.forEach((l, i) => {
-    const s = l.trim();
-    if (s.startsWith('//')) return; // 注释里的说明不算
-    //  P复：原正则只匹配 'npm' —— **对 'npx' 是盲区**，
-    //   于是反代路径的裸 `execFile('npx', ...)` 长期绕过本门禁，
-    //   而它的问题是**完全相同**的（Windows 上 npx 也是 .cmd）。
-    //   现同时覆盖两者。
-    if (/(runOut|runDetail|run|execFile|exec)\s*\(\s*'(npm|npx)'|spawn\s*\(\s*'(npm|npx)'|(let|const)\s+bin\s*=\s*'(npm|npx)'/.test(l)) {
-      bare.push(rel + ':' + (i + 1) + '  ' + s.slice(0, 66));
-    }
-  });
+  for (const h of bareNpmCalls(fs.readFileSync(f, 'utf8'))) bare.push(f.replace(ROOT + path.sep, '') + ':' + h);
 }
-check('C-c 源码无裸 npm/npx 调用', bare.length === 0, bare.length ? bare.join(' | ') : '已全部经 npmBin()/npxBin()');
+check('C-c 源码无裸 npm/npx 调用（含版本探测 sink）', bare.length === 0, bare.length ? bare.join(' | ') : '已全部经 npmLauncher()/npxBin()');
+// 反向：判据必须能识别**旧形状**，否则只是此刻恰好为真的空转门禁。
+{
+  const oldShapes = [
+    "const bin = 'npm';",
+    "const v = ex.runOut('npm', ['--version']);",
+    "return cachedWhichVersion('npm');",           // B11 漏检面：版本探测绕过执行器门禁
+    "child = spawn('npx', ['--yes']);",
+  ];
+  const missed = oldShapes.filter((s) => bareNpmCalls(s).length === 0);
+  check('C-c 反向：四种旧裸调用形状全部被抓到', missed.length === 0, missed.join(' | ') || '4/4');
+  check('C-c 反向：合法写法不误伤（经解析口取变量）',
+    bareNpmCalls("const l = npmLauncher(); ex.runOut(l.program, l.args);").length === 0, 'ok');
+}
 
 // -- C-e：npx 与 npm 同构（P1-4）--
 const { npxBin } = require(path.join(ROOT, 'src', 'platform', 'os', 'exec-path.js'));
@@ -111,9 +126,17 @@ check("C-e 非 Windows 返回 'npx'", npxBin({ platform: 'linux' }) === 'npx', n
   //  （域结构第三轮）：distribution 已拆分，按目录聚合读取（安装执行器落在 install.js）。
   const distDir = path.join(ROOT, 'src', 'platform', 'distribution');
   const dist = fs.readdirSync(distDir).filter((f) => f.endsWith('.js')).sort().map((f) => fs.readFileSync(path.join(distDir, f), 'utf8')).join(String.fromCharCode(10));
-  check('C-d commandTemplate 首项为 npm 时经统一 npm 解析（runtimeContract.npmBin(npmBin)）',
-    /argv\[0\] === 'npm'\s*\)\s*\?\s*runtimeContract\.npmBin\(npmBin\)/.test(dist),
+  // 钉代码行（不钉注释）：模板首项为逻辑名 npm 时，程序与前缀参数一并取自解析口。
+  check('C-d commandTemplate 首项为 npm 时经统一启动形态解析（npmLauncher 的 program+args）',
+    /const launcher = runtimeContract\.npmLauncher\(\);/.test(dist)
+      && /bin = fromTemplate \? argv\[0\] : launcher\.program;/.test(dist)
+      && /launcher\.args/.test(dist),
     '已接入');
+  check('C-d 反向：只取 program（丢 args）的旧形状会被同一把尺拒',
+    !/bin = fromTemplate \? argv\[0\] : launcher\.program;/.test('bin = argv[0];'), '已拒');
+  // 模板自带解释器（首项非 'npm'）时不得把契约的 npm 前缀参数塞给它 —— 那是第二种拆半错误。
+  check('C-d 契约前缀参数只在前置给契约程序（模板程序不继承）',
+    /fromTemplate \? \[\] : launcher\.args/.test(dist), '有');
 }
 
 // -- C-f：B11 —— 安装执行器入参白名单 + --ignore-scripts + 纯 origin 闸 --
