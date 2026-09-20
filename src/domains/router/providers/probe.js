@@ -152,20 +152,6 @@ async function healthInstance(provider, inst) {
   }
 }
 
-/** 同进程组判定（Linux/POSIX）：detached spawn 的子孙进程 pgid == 子进程 pid。 */
-function sameProcessGroup(pid, pgidLeader) {
-  if (!pid || !pgidLeader || process.platform === 'win32') return false;
-  try {
-    const st = fs.readFileSync('/proc/' + pid + '/stat', 'utf8');
-    // comm 字段可含空格且自带括号：以最后一个 ") " 为锚点，其后依次为 state/ppid/pgrp
-    //   ⇒ fields[0]=state、fields[1]=ppid、fields[2]=pgrp（写成 fields[1] 会误比父 pid）
-    const idx = st.lastIndexOf(') ');
-    if (idx < 0) return false;
-    const fields = st.slice(idx + 2).trim().split(/\s+/);
-    return Number(fields[2]) === Number(pgidLeader);
-  } catch { return false; }
-}
-
 /** 实例生命周期监控：进程存活 + 端口监听 + HTTP 卡死检测（连续 ≥3 次 kill 重拉）。 */
 async function monitorLifecycle(provider) {
   if (provider._stopping || provider.activated !== true) return;
@@ -187,9 +173,10 @@ async function monitorLifecycle(provider) {
       //   误判后果不是「重启」而是**留下孤儿**：此处把 pid 抹掉后，stopInstance 的 kill 段
       //   以 inst.pid 为判据（instance-lifecycle.js:38），真实进程恒不可达地继续占端口。
       //   改判据：监听者与被管实例**不同进程组**才算被外部进程占住（detached 子孙同组，放行）。
+      //   进程组判定是平台事实，经 pidlook 门面取（CP-1：业务域不得自带 process.platform//proc）。
       //   监听者查不到（inet-diag 回退）不改判：交给下方 HTTP 探活（进程活着但不健康
       //   连续 3 次即 kill 重拉），避免探测工具缺失时误杀。
-      if (listening && listening !== inst.pid && !sameProcessGroup(listening, inst.pid)) {
+      if (listening && listening !== inst.pid && !pidlook.sameProcessGroup(listening, inst.pid)) {
         if (provider.logger && provider.logger.warn) provider.logger.warn('[proxy-instance] 生命周期监控：端口被外部进程占住 key=' + inst.maskedKey + ' port=' + inst.port + ' pid=' + inst.pid + ' listener=' + listening);
         inst.pid = null; inst.healthy = false; inst._monitorFails = 0; inst.status = INSTANCE_STATES.COLD;
         continue;

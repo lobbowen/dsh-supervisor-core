@@ -54,7 +54,9 @@ function underFake(platform, body, opts) {
   const o = opts || {};
   const code = [
     "Object.defineProperty(process, 'platform', { value: " + JSON.stringify(platform) + " });",
-    "process.env.PATH = ''; delete process.env.Path;",
+    // realPath：保留宿主 PATH。缺省清空 PATH 是「探测类能力必须如实失败」的夹具形态；
+    //   但 win32 宿主需要「真实环境」那一侧的证据（X-6 icacls 一致性），此时必须留着 PATH。
+    o.realPath ? '' : "process.env.PATH = ''; delete process.env.Path;",
     o.home ? ("process.env.HOME = " + JSON.stringify(o.home) + "; delete process.env.USERPROFILE;") : '',
     body,
   ].filter(Boolean).join(String.fromCharCode(10));
@@ -238,32 +240,47 @@ const TMP = fs.mkdtempSync(path.join(os.tmpdir(), 'platport-'));
   const fp = require(path.join(ROOT, 'src', 'platform', 'os', 'file-protect.js'));
   check('X-6 hasIcacls(linux/darwin) 恒 false（POSIX 绝不探测 icacls）',
     fp.hasIcacls('linux') === false && fp.hasIcacls('darwin') === false, 'false');
-  // Windows 分支：伪造 win32 后必须**如实失败**（不得静默 ok）。
-  //   ⚠ 宿主自感知（第 4 批预防，与 D-11/D-10 同族的「平台分裂」缺陷）：原两条断言的前提是
-  //   「icacls 不可用」，这只在**非 win32 宿主**成立——真 Windows 上 icacls.exe 在 System32，
-  //   CreateProcess 即使把 PATH 清空也会命中系统目录，hasIcacls() 为 true、mode 变 'icacls-*'，
-  //   于是本块在 windows job 必红（链位 #102，此前从未被 CI 执行到）。
-  //   现两侧各验各自那半边：POSIX 宿主验「不可用 → mode=none 且不静默成功」；
-  //   win32 宿主验「可用 → 绝不谎报 none」，并把无法在本机证明的那半边显式记为缺口。
+  // Windows 分支：探测不到 icacls 时必须**如实失败**（不得静默 ok）。
+  //   ⚠ 本块的前提在 CI 上被证伪过一次（run 35487214678，windows job）：原先写的「win32 宿主
+  //   System32 必有 icacls，故清空 PATH 后仍可用」是**推演**，实测该 job 里 hasIcacls()=false
+  //   （execFileSync('icacls') 在 PATH 清空后没被解析到）。教训：环境事实不能靠推演写进判据。
+  //   现在两侧各验自己的不变量，并把「icacls 到底可不可用」降级为**回显的事实**而非前提：
+  //     POSIX 宿主 —— 清空 PATH → 探测必不可用 → 必须如实 ok=false/mode=none（不静默成功）；
+  //     win32 宿主 —— 真实 PATH → 「可用 ⇒ 绝不谎报 none」且「不可用 ⇒ 绝不假称收紧」（一致性）。
   const winMissing = path.join(TMP, 'nonexistent-xyz');
-  const wOut = underFake('win32', [
+  const probeBody = [
     "const fp = require('./src/platform/os/file-protect.js');",
+    "const ex = require('./src/platform/util/exec.js');",
     'const f = ' + JSON.stringify(winMissing) + ';',
-    "process.stdout.write(JSON.stringify({ i: fp.hasIcacls(), f: fp.protectFile(f), d: fp.protectDir(f) }));",
-  ].join(String.fromCharCode(10)));
+    "const d = ex.runDetail('icacls', ['/?'], { timeoutMs: 5000 });",
+    'process.stdout.write(JSON.stringify({ i: fp.hasIcacls(), f: fp.protectFile(f), d: fp.protectDir(f),',
+    "  p: { ok: d.ok, code: d.code, timedOut: d.timedOut, err: String(d.error || '').slice(0, 120), stderr: String(d.stderr || '').slice(0, 80) } }));",
+  ].join(String.fromCharCode(10));
+  const wOut = underFake('win32', probeBody);
   let w = null; try { w = JSON.parse(wOut); } catch { /* EXECFAIL */ }
   if (process.platform !== 'win32') {
     check('X-6 前提：POSIX 宿主伪造 win32 时 icacls 探测不可用（判据前提，非空转）',
-      !!w && w.i === false, w ? 'hasIcacls=' + w.i : wOut.slice(0, 70));
+      !!w && w.i === false, w ? 'hasIcacls=' + w.i + ' p=' + JSON.stringify(w.p) : wOut.slice(0, 70));
     check('X-6 Windows 且 icacls 不可用 → protectFile 如实 ok=false/mode=none（不静默成功）',
       !!w && w.f.ok === false && w.f.mode === 'none' && !!w.f.reason, w ? JSON.stringify(w.f) : '-');
     check('X-6 Windows 且 icacls 不可用 → protectDir 同上',
       !!w && w.d.ok === false && w.d.mode === 'none' && !!w.d.reason, w ? JSON.stringify(w.d) : '-');
   } else {
-    console.log('SKIP X-6「icacls 不可用」两例（win32 宿主 System32 必有 icacls；该形态只在 POSIX 宿主可证）');
-    check('X-6 win32 宿主：icacls 可用 → protectFile/protectDir 绝不谎报 mode=none',
-      !!w && w.i === true && w.f.mode !== 'none' && w.d.mode !== 'none',
-      w ? JSON.stringify({ f: w.f, d: w.d }) : wOut.slice(0, 70));
+    const realOut = underFake('win32', probeBody, { realPath: true });
+    let wr = null; try { wr = JSON.parse(realOut); } catch { /* EXECFAIL */ }
+    check('X-6 前提：win32 宿主能求值本探针（JSON 解析成功，否则一致性判据空转）',
+      !!wr, wr ? 'ok' : realOut.slice(0, 90));
+    // 环境事实也立判据（不留「绿着掩盖生产退化」的缝）：真实 PATH 下 icacls 必须可用。
+    //   若此例判红，回显里的 探针 字段区分两种根因——err 含 ENOENT = 解析不到（路径/环境问题）；
+    //   code 非 0 = icacls 自身对 /? 的退出码不为 0，那就是**产品缺陷**（hasIcacls 探测方式要改）。
+    check('X-6 win32 真实 PATH：icacls 可用（生产机拿不到 ACL 收紧即为缺陷，不静默放行）',
+      !!wr && wr.i === true, wr ? JSON.stringify({ icacls可用: wr.i, 探针: wr.p }) : '-');
+    check('X-6 win32 真实 PATH：icacls 可用 ⇒ protectFile/protectDir 绝不谎报 mode=none',
+      !!wr && (wr.i === false || (wr.f.mode !== 'none' && wr.d.mode !== 'none')),
+      wr ? JSON.stringify({ icacls可用: wr.i, f: wr.f, d: wr.d, 探针: wr.p }) : '-');
+    check('X-6 win32 真实 PATH：icacls 不可用 ⇒ 如实 ok=false/mode=none（不假称已收紧）',
+      !!wr && (wr.i === true || (wr.f.ok === false && wr.f.mode === 'none' && wr.d.ok === false && wr.d.mode === 'none')),
+      wr ? JSON.stringify({ icacls可用: wr.i, f: wr.f, d: wr.d, 探针: wr.p }) : '-');
   }
   // POSIX 分支（仅本机为 POSIX 时才有意义）——断言模式名契约
   if (process.platform !== 'win32') {
@@ -399,13 +416,29 @@ const TMP = fs.mkdtempSync(path.join(os.tmpdir(), 'platport-'));
   //   所以 linux 恰好相等，**darwin 与 win32 宿主必红**；且未注入 spawn 时还会在 CI 机器上
   //   真起一次浏览器。现改注入 spawn 缝，断言「被真 spawn 的是哪个 bin」+「返回值与计划一致」。
   const u9 = 'http://127.0.0.1:28999/x';
-  const plan9 = br.isolatedPlan(process.platform, u9, { profileDir: '/P', antiArgs: ['--a'] });
+  // ⚠ 第 4 批二次改判（run 35487214678，windows job）：夹具规划必须与产品规划**同源**，
+  //   且不能依赖「这台机器装了什么」。原先夹具按「无 chrome」算出 explorer.exe，而产品内部
+  //   自己调 findChromeWin()（win runner 装了 Chrome → 计划变成 chrome.exe 绝对路径、label='chrome'），
+  //   于是注入的 binAvailable 对产品真正询问的 bin 恒 false → 一个进程都不起、返回 ok:false，
+  //   看起来像产品缺陷。现把 chromeBin 变成显式入参（缺省仍为运行期探测），夹具固定注入探测结果，
+  //   两侧规划同一入参即同一计划；Chrome 在/不在两种形态由 isolatedPlan 的纯函数用例覆盖。
+  const chromeBin9 = br.findChromeWin();
+  const plan9 = br.isolatedPlan(process.platform, u9, { profileDir: '/P', antiArgs: ['--a'], chromeBin: chromeBin9 });
   const pick = plan9.kind === 'single' ? plan9 : plan9.candidates[5]; // 本例的可达候选只有一个
   const wantSpawn = pick.bin;
   const wantReport = plan9.kind === 'single' ? plan9.label : pick.bin;
   const spawned9 = [];
   const fakeSpawn = (bin) => { spawned9.push(bin); return { on() {}, unref() {} }; };
-  const r1 = br.launchIsolated(u9, { antiArgs: ['--a'], binAvailable: (b) => b === wantSpawn, spawn: fakeSpawn });
+  const asked9 = [];
+  const r1 = br.launchIsolated(u9, {
+    antiArgs: ['--a'], chromeBin: chromeBin9,
+    binAvailable: (b) => { asked9.push(b); return b === wantSpawn; }, spawn: fakeSpawn,
+  });
+  // 前提例：把「夹具规划 == 产品规划」本身变成可判事实。没有它，不同源只会表现为
+  //   「一个进程都不起 + ok:false」，读起来像产品缺陷（本次就是这样绕了一个 run）。
+  check('X-9 条4 前提：产品预检所问的 bin 与夹具规划同源',
+    asked9.length > 0 && asked9[0] === wantSpawn,
+    '产品问=' + JSON.stringify(asked9) + ' 夹具规划=' + wantSpawn + ' 形态=' + plan9.kind);
   check('X-9 条4 首个可达候选真的被 spawn（宿主无关，三端同形）',
     spawned9.length === 1 && spawned9[0] === wantSpawn, JSON.stringify(spawned9) + ' want=' + wantSpawn);
   check('X-9 条4 返回值如实上报（single 报 label / chain 报 bin，皆取自计划）',

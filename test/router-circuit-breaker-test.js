@@ -184,21 +184,29 @@ check('反向：markInstanceProblem 仍累加（熔断本身没被删）',
   check('D-4 无缓冲写入器不需要 end()（close 里遗留的 logStream.end 已删）',
     !/logStream/.test(probe), 'ok');
 
-  const m = probe.match(/function sameProcessGroup\(pid, pgidLeader\) \{[\s\S]*?\n\}/);
-  check('D-6 定位到 sameProcessGroup 实现', !!m, m ? 'ok' : '未找到');
+  // D-6 的实现落在平台层（run 35487214678 的 CP-1 五 job 同点红：`process.platform` 出现在
+  //   src/domains/** 即架构越界）。判据随之搬家：从平台文件取本体，业务域只验「问了闸 + 没留副本」。
+  const pidProbe = fs.readFileSync(path.join(ROOT, 'src', 'platform', 'os', 'pidlookup', 'probe.js'), 'utf8');
+  const pidIndex = fs.readFileSync(path.join(ROOT, 'src', 'platform', 'os', 'pidlookup', 'index.js'), 'utf8');
+  const m = pidProbe.match(/function sameProcessGroup\(pid, pgidLeader\) \{[\s\S]*?\n\}/);
+  check('D-6 定位到 sameProcessGroup 实现（平台层 pidlookup/probe.js）', !!m, m ? 'ok' : '未找到');
+  check('D-6 门面导出该能力（业务域经 pidlook 取，不各自实现）',
+    /sameProcessGroup/.test(pidIndex), 'pidlookup/index.js 导出');
+  check('D-6 反向：业务域不再自带进程组判定实现',
+    !/function sameProcessGroup/.test(probe), '已下沉平台层');
   let impl = null;
   if (m) {
     try {
       const inner = m[0].replace(/^function sameProcessGroup\(pid, pgidLeader\) \{/, '');
-      impl = new Function('pid', 'pgidLeader', 'fs', 'process', inner.slice(0, inner.lastIndexOf(String.fromCharCode(10) + '}')));
+      impl = new Function('pid', 'pgidLeader', 'fs', 'isWindows', inner.slice(0, inner.lastIndexOf(String.fromCharCode(10) + '}')));
     } catch { impl = null; }
-    check('D-6 行为断言前提：本体可在沙箱求值（fs/process 经参数注入）', typeof impl === 'function', typeof impl);
+    check('D-6 行为断言前提：本体可在沙箱求值（fs/isWindows 经参数注入）', typeof impl === 'function', typeof impl);
   }
   if (typeof impl === 'function') {
     // /proc/<pid>/stat 真实形态：pid (comm with spaces) state ppid pgrp session …
     const stubFs = (text) => ({ readFileSync: () => text });
-    const posix = { platform: 'linux' };
-    const win = { platform: 'win32' };
+    const posix = false;   // isWindows=false（POSIX 分支）
+    const win = true;
     const stat = '2001 (my proxy bin) S 1990 2001 2001 0 -1 4194304';
     check('D-6 行为：子孙进程（pgrp==leader）判为同组放行',
       impl(2002, 2001, stubFs('2002 (node) S 2001 2001 2001 0 -1'), posix) === true, 'true');
@@ -210,12 +218,14 @@ check('反向：markInstanceProblem 仍累加（熔断本身没被删）',
       impl(2001, 2001, stubFs(stat), win) === false, 'false');
     check('D-6 行为：stat 读取失败 -> false（交给 HTTP 探活兜底，不静默放行外部占用）',
       impl(2001, 2001, { readFileSync: () => { throw new Error('ENOENT'); } }, posix) === false, 'false');
-    check('D-6 行为：实参缺失（pid=0/null）-> false',
-      impl(null, 2001, stubFs(stat), posix) === false && impl(2001, 0, stubFs(stat), posix) === false, 'false');
+    check('D-6 行为：pid 缺失 -> false',
+      impl(null, 2001, stubFs(stat), posix) === false, 'false');
+    check('D-6 行为：leader 缺失 -> false（不得把 0 当成合法 pgid）',
+      impl(2001, 0, stubFs(stat), posix) === false, 'false');
   }
   // 判据替换：等值比较必须被「不同进程组」限定，且查不到监听者时不改判
-  const judged = /if\s*\(listening && listening !== inst\.pid && !sameProcessGroup\(listening, inst\.pid\)\)/.test(probe);
-  check('D-6 监控判据 = listening 存在 && 非本 pid && 非本进程组', judged, judged ? 'ok' : '仍是 exact-pid 等值判据');
+  const judged = /if\s*\(listening && listening !== inst\.pid && !pidlook\.sameProcessGroup\(listening, inst\.pid\)\)/.test(probe);
+  check('D-6 监控判据 = listening 存在 && 非本 pid && 非本进程组（经平台门面）', judged, judged ? 'ok' : '仍是 exact-pid 等值判据');
   check('D-6 反向：裸等值判据（无进程组限定）不得残留',
     !/if\s*\(listening !== inst\.pid\)/.test(probe), '已替换');
 }

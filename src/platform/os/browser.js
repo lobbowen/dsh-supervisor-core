@@ -122,9 +122,11 @@ function binAvailable(bin) {
 /**
  * 以隔离 profile + 无痕打开浏览器（OAuth 反指纹登录用）。
  * @param {{profileDir?:string, antiArgs?:string[], antiEnv?:object, sysEnv?:object,
- *          onExit?:Function, binAvailable?:Function, spawn?:Function}} [o]
+ *          onExit?:Function, binAvailable?:Function, spawn?:Function, chromeBin?:string|null}} [o]
  *        binAvailable 可注入（条 4：行为测试不依赖宿主装了什么浏览器）；
- *        spawn 亦可注入（同条：否则 darwin/win32 宿主上本用例会在 CI 机器里真起浏览器）
+ *        spawn 亦可注入（同条：否则 darwin/win32 宿主上本用例会在 CI 机器里真起浏览器）；
+ *        chromeBin 亦可注入（缺省 = findChromeWin() 运行期探测）——夹具必须与产品用同一份计划
+ *        输入，否则「产品问的 bin」与「夹具认定的候选」不同源，预检恒 false 表现为不起进程
  * @returns {{ok:boolean, bin:string|null, isolated:boolean}} bin=null 表示全部候选失败
  */
 function launchIsolated(url, o) {
@@ -138,7 +140,8 @@ function launchIsolated(url, o) {
   const avail = typeof opts.binAvailable === 'function' ? opts.binAvailable : binAvailable;
   const spawnWith = typeof opts.spawn === 'function' ? opts.spawn : _spawnDetached;
   try {
-    const chromeBin = process.platform === 'win32' ? findChromeWin() : null;
+    const chromeBin = 'chromeBin' in opts ? opts.chromeBin
+      : (process.platform === 'win32' ? findChromeWin() : null);
     const plan = isolatedPlan(process.platform, url, { profileDir, antiArgs, chromeBin });
     if (plan.kind === 'single') {
       // 条 4：single 分支同预检——不可用即如实 ok:false，不 spawn 必死的 bin

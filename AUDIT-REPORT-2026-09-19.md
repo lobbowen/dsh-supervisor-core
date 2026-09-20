@@ -307,11 +307,14 @@
    `platform/os/process.killTree` 单源」），「不得再自写负 pid」的反向职责由 D-10 结构闸承担。
    **纪律（登记为改判必查项）**：跨文件**对照例**的价值就是「那个模块没变」；动任何被当作样本的模块，必须同批改完
    以它为锚的对照判据，否则假红会伪装成「新改动有罪」并再吃掉一个四平台 run。
-8. **⚠ 预防性修复（静态推演，尚未经 CI 裁决）**：`platform-layer-portability-test` X-6 的「icacls 不可用 → mode=none」
-   两例，前提只在**非 win32 宿主**成立（真 Windows 的 `icacls.exe` 在 System32，`CreateProcess` 清空 PATH 也会命中系统目录），
+8. **⚠ 预防性修复（静态推演）→ 已被 run `35487214678` 证伪，见 §H-7-15**：`platform-layer-portability-test` X-6 的「icacls 不可用 → mode=none」
+   两例，前提只在**非 win32 宿主**成立（推演依据：真 Windows 的 `icacls.exe` 在 System32，`CreateProcess` 清空 PATH 也会命中系统目录），
    在 windows job 必红（链位 #102，本批此前从未执行到）。已改宿主自感知：POSIX 宿主补一条前提例（防判据空转）后照旧验 `none`，
    win32 宿主显式 SKIP 并改验「icacls 可用 → 绝不谎报 none」；缺失路径目标不再硬编码 `/tmp`。此项属**盲区预防**，
    不构成证据——下一 run 才是裁决。
+   **裁决结果（2026-09-20）**：推演的那半边**错了**。windows job 里 `hasIcacls()` 实测 `false`（清空 PATH 的夹具形态下 `icacls` 未被解析到），
+   于是「win32 宿主必有 icacls」这一**前提**不成立，我据此立的 win32 分支判据反过来判红。当时留的 SKIP 文案
+   （「win32 宿主 System32 必有 icacls」）本身就是会造成错误引导的文档，已随 §H-7-15 一并删除。
 9. **run `35484641560`（HEAD `70c25a7`）—— 链推进到 #63，五个 job 同点红（平台无关，故是一次干净的定性）**：
    `FAIL C-3 行为：4 位令牌 patch main → 拒且未再落盘（written 仍 1） ← {"weak":{"ok":false,"error":"远程访问令牌（remoteToken）至少 8 位"},"written":2}`。
    回显本身就把责任分清：**产品判得对**（弱令牌 `ok:false` + 精确错误），**夹具的账算错**——`written` 是同一夹具的
@@ -381,6 +384,35 @@
     - `release-spec-consistency-test` 即上一条 #97 的实红。
     **纪律（§H-7-11 的时间维度推广）**：断言「某异步动作发生了没有」之前，必须先明确**它在哪一拍发生**并显式推进事件循环；
     改写 `global.setTimeout`/`setInterval` 的夹具必须把桩窗口压到**只包住被测调用**，且块内的用例顺序不得依赖前一条遗留的排程。
+15. **run `35487214678`（HEAD `4f7b756`）—— 五 job 剩两处红，且 #78–#103 首次全绿**：链推进到 #104，
+    test job + ubuntu + 两个 macos 同点红在 `cross-platform-architecture-gate-test` **CP-1**，windows 独红在
+    `platform-layer-portability-test` **#102 的 X-6/X-9**（共 5 条 FAIL，同源于 2 处）。逐条定性：
+    - **CP-1（真违规，第 4 批 D 组带进来的）**：`src/domains/router/providers/probe.js:157` 的
+      `sameProcessGroup` 自带 `process.platform === 'win32'` 与 `/proc/<pid>/stat` 读取——`process.platform`
+      出现在 `src/domains/**` 即架构越界（CP-1 的立项理由：平台知识只允许一个家）。**不是**门禁过严，
+      也不是夹具失效：这条门禁绿了这么久，第一次响就是它该响的形态。修法按门禁自己的指引做——
+      实现下沉到 `platform/os/pidlookup/probe.js`（与 `isAlive`/`readCmdline` 同族，那里 `process.platform` 合法），
+      经 `pidlookup/index.js` 门面导出，业务域改调 `pidlook.sameProcessGroup(...)`；逐字搬运不改判据（macOS 无
+      `/proc` 仍走 catch 返回 false，与迁移前同形）。D-6 判据随之搬家：从平台文件取本体求值（注入 `fs`/`isWindows`
+      取代原 `fs`/`process`），并新增两条反向——「业务域不再自带该实现」「门面确实导出」；原 `pid=0/null` 二合一
+      按 §G-6-9 拆成两条。本机静态复扫 `src/`（`src/platform/**` 之外）违规计数 0。
+    - **X-6（§H-7-8 的推演前提被证伪）**：win32 分支以「清空 PATH 后 System32 仍会命中 icacls」为前提立判据，
+      windows job 回显直接给否：`{"mode":"none","reason":"icacls 不可用"}`。**产品侧无已证缺陷**——真正未证的是
+      「真实 PATH 下 windows 能否解析到 `icacls`」，而它若为假，意味着生产机上 ACL 收紧静默退化成 `none`，
+      属必须看见的事。修法：① 删除该 SKIP 文案（错误引导）；② `underFake` 增 `realPath` 选项（不清 PATH）；
+      ③ 探针带回 `runDetail('icacls', ['/?'])` 的 `{ok,code,timedOut,err,stderr}` 回显；④ 三条判据并把环境事实本身
+      立成判据（可用 / 可用⇒不谎报 none / 不可用⇒如实 none），使下一 run 无论朝哪边都有牙、且回显能分根因
+      （`err` 含 ENOENT = 解析问题；`code` 非 0 = `hasIcacls` 探测方式有产品缺陷）。
+    - **X-9 条 4（夹具与产品规划不同源，windows 4 条 FAIL 同根）**：产品 `launchIsolated` 内部自己调
+      `findChromeWin()`，GitHub windows runner 装了 Chrome → 计划是 `...chrome.exe`（label `chrome`），
+      而夹具按「无 chrome」算出 `explorer.exe`，注入的 `binAvailable` 对产品真正询问的 bin 恒 false →
+      **一个进程都不起**、`ok:false`，症状与「预检闸门失效」几乎同形（连带把累计 spawn 计数钉在 1 的两条反向例一起红）。
+      修法：给 `launchIsolated` 开 `opts.chromeBin` 注入缝（缺省仍为运行期探测，行为不变），夹具与产品显式共用同一份
+      `chromeBin` 输入，并新增**前提例**：回显「产品预检所问的 bin」==「夹具认定的候选」——把不同源从「像产品缺陷」
+      变成一条指名道姓的红。本机以注入替身跑通 Chrome 在/不在两种形态（含 win32 伪造平台），四断言全对。
+    - **正向证据**：本 run 里 #78–#103（含 #97 `release-spec-consistency`、#98–#101）在**全部** job 首次被 CI 执行且全绿。
+    **纪律（固化进 ACCEPTANCE-STANDARD §10 第 4、5 条）**：凡依赖宿主环境事实的判据，该事实本身必须是一条带回显的
+    判据而不是另一条的前提；凡夹具重算被测计划，计划的全部**输入**都要与产品同源。
 
 ### H-8 残留与诚实声明
 
@@ -392,6 +424,10 @@
 6. **C-3 首版断言是夹具误设**：`a7a31f4` 记录——429 出现在第 11 发而非第 10 发，且循环起点账本已被前序 cookie 放行 clear；修法为前置清零断言 + 11 发循环拆两条（§G-6-9 逐例拆分 + 判据回显）。
 7. **registry 版本**：本批**不发布**（npm 仍 0.1.5-BETA.10）。合入与发布分两步，发布另需确认。
 8. **B-11 闸门的对称性缺口（本轮取证时发现，未在本批修）**：`runNpmInstall` 只在 **commandTemplate 分支**逐项过禁用字符集；默认分支的 `argv.push('--prefix', o.prefix)` 完全不过闸（install.js:149）。因 spawn 不经 shell，实际不构成注入面，但它与 B-11「任何一环被污染都直达 spawn」的立项理由不对称——prefix 来自配置/环境（win 上含空白的安装前缀是常态）。修法有两种且语义相反（放宽=给绝对路径豁免；收紧=prefix 也过同一判据并明确要求引号语义），属裁决题不是手到活，留第 5 批立项。
+9. **挂账（下一 run 裁决，本机不可证）：真实 PATH 下 windows 能否解析到 `icacls`**。§H-7-15 已把这一环境事实
+   本身立成带回显的判据，因此两种结果都是有效结论而不是空转：可用 → 顺带坐实「绝不谎报 none」；
+   不可用 → 判红并**按回显分根因**（`err` 含 ENOENT 属 runner 环境，需另判是否只影响夹具；`code` 非 0 属
+   产品 `hasIcacls` 的探测方式缺陷，生产机上 ACL 收紧会静默退化为 `none`，届时按 P1 立项）。本批不预判结论。
 
 ## 附录：分域审计明细索引
 
