@@ -300,6 +300,18 @@
    - 同文件 **D-3 反向**（同上四平台）：夹具 `restartInstance() { restarts++; }` / `markInstanceNetFail() { netFails++; }` 对 **const 数组**自增 → 抛 TypeError → 被产品侧 `try {} catch {}` 吞掉 → 计数恒 0。定性为**夹具恒假、判据没有牙**（断言的是 `restarts === 1`，而 state() 取的是 `.length`，两侧都拿不到真值），产品逻辑本身正确（forward.js:139-141 的超时分支确实存在）。修法：改 push（同文件 :112 既有范式），并在注释里留下「为何原先恒 0」。**教训**：桩件的累加器要么写 `arr.push(x)` 要么写 `let n = 0; n++`，混用即恒假；且**产品侧的 try/catch 会吞掉夹具异常**，所以「PASS 数符合预期」不构成证据，必须看回显值。
    - `uninstall-timeout-behavior-test` **D-10**（windows 独有，四条同红）：见本节前第 3 条 —— 夹具把临时脚本路径塞进 `commandTemplate`，被 B11 的 fail-closed 字符闸拒（win runner tmpdir 为 8.3 短名含 `~`）。修法：假 npm 改复用仓库内夹具 `test/fake-npm.js` 的新增 `FAKE_MODE=hang` 模式，pid 文件路径经 `FAKE_PID_FILE` 环境变量传入，argv 只留仓库内路径（POSIX 纯路径、win 盘符绝对路径均由 `WIN_DRIVE_ABS_RE` 豁免，本机以 `argvViolation()` 逐例验证：新路径 PASS / 旧 tmp 路径 REJECT）。**产品不改**：B11 的「宁误杀不漏放」是有意裁决，改判属放宽 fail-closed 闸门，需单独立项。
    - **顺带修掉的 Windows 产品缺陷（同一取证带出）**：`distribution/install.js` 的在途 npm 中止原本是 `process.kill(-pid)` + `child.kill` 两段兜底 —— Windows 无进程组语义，负 pid 必抛、只杀得到 `npm.cmd` 那层壳，真正写 `node_modules`/全局前缀的 node 孙进程照旧存活（正是 D-10 要消灭的对象）。现改调平台层 `os/process.killTree(pid,'SIGKILL',cb,{ownGroup:true})`（B13 已给它 `taskkill /T /F`），并保留 `child.kill` 作同步兜底；新增结构闸：`install.js` 源码（剥注释）必须含 `procOS.killTree(child.pid` 且**不得**再有 `process.kill(-`。
+7. **run `35483861183`（HEAD `74ba817`）—— 五个 job 只剩一条红，且是我自己带出的**：`round8-fixes-test` J-i 的对照例
+   `FAIL 对照：dist 的 npm 安装早已用 detached + -pid ← 是`（链位 #57）。定性为**改判连带**：H-7-6 把 `install.js`
+   的负 pid 收口到平台层 `killTree` 后，这条拿 dist 当「既有正确做法」样本的对照判据失去了第二个从句（它钉的正是被删掉的那行字面量）——
+   **产品无缺陷、对照样本失效**。修法：拆成两条独立判据并回显判据值（「dist 自成进程组（detached）」/「dist 的杀树走
+   `platform/os/process.killTree` 单源」），「不得再自写负 pid」的反向职责由 D-10 结构闸承担。
+   **纪律（登记为改判必查项）**：跨文件**对照例**的价值就是「那个模块没变」；动任何被当作样本的模块，必须同批改完
+   以它为锚的对照判据，否则假红会伪装成「新改动有罪」并再吃掉一个四平台 run。
+8. **⚠ 预防性修复（静态推演，尚未经 CI 裁决）**：`platform-layer-portability-test` X-6 的「icacls 不可用 → mode=none」
+   两例，前提只在**非 win32 宿主**成立（真 Windows 的 `icacls.exe` 在 System32，`CreateProcess` 清空 PATH 也会命中系统目录），
+   在 windows job 必红（链位 #102，本批此前从未执行到）。已改宿主自感知：POSIX 宿主补一条前提例（防判据空转）后照旧验 `none`，
+   win32 宿主显式 SKIP 并改验「icacls 可用 → 绝不谎报 none」；缺失路径目标不再硬编码 `/tmp`。此项属**盲区预防**，
+   不构成证据——下一 run 才是裁决。
 
 ### H-8 残留与诚实声明
 

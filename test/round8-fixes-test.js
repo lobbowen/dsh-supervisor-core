@@ -293,10 +293,17 @@ const readDomain = (dir) => fs.readdirSync(path.join(ROOT, dir)).filter((f) => f
   // 反向：确认旧的「只 kill 直接子进程」写法已消失
   check('J-i 超时分支不再只用 child.kill（单进程）',
     !/try \{ child\.kill\('SIGTERM'\); \} catch \{\}/.test(pg), '已改');
-  // 对照：dist/index.js 的 npm 安装早已用同模式（证明这才是本仓的既有正确做法）
+  // 对照：dist 的 npm 安装同样自成进程组 —— 证明「整树终止」是本仓既有正确做法，不是本处新造的规矩。
+  //   ⚠ 第 4 批改判（run 35483861183 四平台 + test job 唯一红）：原第二判据钉的是 dist 里那行
+  //   自写 `process.kill(-child.pid, 'SIGKILL')`。该行已按 §H-7-6 收口到平台层 killTree
+  //   （Windows 无进程组语义，自写负 pid 只杀得到 npm.cmd 那层壳），故对照点随之换成「走平台层单源」。
+  //   反向钉住「不得再自写负 pid」的职责移交给 uninstall-timeout-behavior-test 的 D-10 结构闸。
   const dist = readDomain('src/platform/distribution');
-  check('对照：dist 的 npm 安装早已用 detached + -pid',
-    /detached: o\.detached !== false/.test(dist) && /process\.kill\(-child\.pid, 'SIGKILL'\)/.test(dist), '是');
+  const distDetached = /detached: o\.detached !== false/.test(dist);
+  const distViaPlatformKillTree = /procOS\.killTree\(child\.pid/.test(dist);
+  check('对照：dist 的 npm 安装自成进程组（detached）', distDetached, distDetached ? '是' : '否');
+  check('对照：dist 的杀树走 platform/os/process.killTree 单源',
+    distViaPlatformKillTree, distViaPlatformKillTree ? '是' : '否');
 }
 
 // ── J-j：内核写 registry.json 时必须保留壳的 v2 字段（P2 双写）──
