@@ -3,12 +3,13 @@
 # 用法（仓库根执行）：
 #   bash release/scripts/configure-credentials.sh --npm     # NPM_TOKEN 环境变量 -> ~/.npmrc（0600）
 #
-# ：已删除 --git 模式（原「GH_TOKEN -> git credential helper store」）。
-#   理由：它与现行标准冲突且多余 ——
-#     - 两仓 push 走 SSH 部署密钥（repo-local core.sshCommand），不用 https 凭据；
-#     - GitHub 凭据的现行唯一标准是 CREDENTIALS-STANDARD.md + release/scripts/cred.sh
-#       （规范库 0700/0600、清单化管理）。
-#   保留旧机制会诱导「把令牌写进 ~/.git-credentials」—— 那正是标准要消灭的散落副本。
+# ：已删除 --git 模式（原「GH_TOKEN -> 写 ~/.git-credentials 并设全局 helper」）。
+#   理由不是「HTTPS 凭据不该用」——恰恰相反，**两仓 push 现在就走 HTTPS 凭据**。
+#   删它是因为它把凭据落到**规范库之外**的第二个副本：
+#     - 现行推送通道 = HTTPS + 两仓 repo-local `credential.helper store --file <规范库>/git-credentials`，
+#       文件由 cred.sh 管理（0700/0600、清单化、doctor 审计）；
+#     - 本脚本的 --git 会另写一份 `$REAL_HOME/.git-credentials` 并动全局 helper，
+#       正是标准要消灭的散落副本（历史事故形态）。
 #   bash release/scripts/configure-credentials.sh --check   # 只读自检（不含任何值）
 # 原则：本脚本不接收命令行明文参数、不打印 token、不写仓库内任何文件。
 #
@@ -25,7 +26,9 @@ cd "$ROOT"
 
 REAL_HOME="$(dsh_real_home)"
 NPMRC="$(dsh_canonical_npmrc)"          # 规范位置：真实 home/.npmrc
-CRED="$REAL_HOME/.git-credentials"
+# 权限位读取：`stat -c %a` 是 GNU 专有（macOS 的 BSD stat 不认 -c，Windows 没有 stat），
+#   与本仓 cred.sh 同源改用 node —— 三平台一致。
+perm_of() { node -e "try{process.stdout.write((require('fs').statSync(process.argv[1]).mode & 0o777).toString(8).padStart(3,'0'))}catch(e){process.stdout.write('?')}" "$1"; }
 
 write_npmrc() {
   [ -n "${NPM_TOKEN:-}" ] || { echo "❌ NPM_TOKEN 环境变量为空（请先 export NPM_TOKEN=...）"; exit 1; }
@@ -57,20 +60,29 @@ check() {
     echo "NPM: ✅ 命中认证来源 → $(dsh_npm_auth_describe)"
     dsh_npm_auth_cleanup
   else
-    echo "NPM: ❌ 无任何可用认证（需 configure-credentials.sh --npm 或 npm login）"
+    # 本机没有 npm 认证**不是缺陷**：四平台发布全部在 CI 上经仓库 secret `NPM_TOKEN` 完成，
+    #   本仓已无「本地发布」路径。只有要手工 `npm publish`（不属标准流程）时才需要配。
+    echo "NPM: 本机无认证来源（正常：发布走 CI 的 NPM_TOKEN；仅本机手工 publish 才需 --npm）"
   fi
   if [ -f "$NPMRC" ]; then
-    echo "NPM: 规范文件 ${NPMRC}（权限 $(stat -c %a "$NPMRC" 2>/dev/null || stat -f %Lp "$NPMRC")）"
+    echo "NPM: 规范文件 ${NPMRC}（权限 $(perm_of "$NPMRC")）"
   else
     echo "NPM: 规范文件 $NPMRC 不存在"
   fi
-  # git 全局配置同样以真实 home 为准（沙箱 $HOME 会读到不同/空的全局配置）
-  local gh_helper; gh_helper="$(HOME="$REAL_HOME" git config --get credential.helper 2>/dev/null || true)"
-  if [ -n "$gh_helper" ]; then
-    echo "Git: credential helper = $gh_helper"
-    [ -f "$CRED" ] && echo "Git: $CRED 存在（权限 $(stat -c %a "$CRED" 2>/dev/null || stat -f %Lp "$CRED")）"
+  # git 凭据以**规范库**为准：本仓不用全局 helper，两仓各自配 repo-local
+  #   `credential.helper = store --file <规范库>/git-credentials`，所以只看全局会误报「未配置」。
+  local cred_file gh_helper_local
+  cred_file="$(bash "$ROOT/release/scripts/cred.sh" path git-credentials 2>/dev/null || true)"
+  gh_helper_local="$(git config --get credential.helper 2>/dev/null || true)"
+  if [ -n "$gh_helper_local" ]; then
+    echo "Git: 本仓 repo-local credential.helper = $gh_helper_local"
   else
-    echo "Git: 未配置 credential helper（本仓 push 走 SSH，通常不需要）"
+    echo "Git: 本仓未配 repo-local credential.helper（推送会退回交互输入或失败）"
+  fi
+  if [ -n "$cred_file" ] && [ -f "$cred_file" ]; then
+    echo "Git: 规范库推送凭据存在（权限 $(perm_of "$cred_file")）：$cred_file"
+  else
+    echo "Git: ❌ 规范库缺少 git-credentials 条目或文件（见 CREDENTIALS-STANDARD.md §5）"
   fi
   if command -v gh >/dev/null 2>&1; then
     echo "gh: 已安装（gh auth status 查登录态）"

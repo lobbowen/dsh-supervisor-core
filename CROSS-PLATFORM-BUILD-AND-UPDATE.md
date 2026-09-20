@@ -280,11 +280,11 @@ $ bash ci/check-glibc.sh <binary> 2.35
 ```
 【壳发布】公开仓 dsh-supervisor-launcher（CI 免费额度）
   ① git push origin HEAD && git tag v0.2.0 && git push origin v0.2.0
-  ② GitHub Actions 矩阵（7 个 job，见 §4.1），每个 job：
+  ② GitHub Actions 矩阵（4 平台：linux-x64 deb,rpm / darwin-arm64 app,dmg / darwin-x64 app,dmg / win-x64 nsis,msi），每个 job：
        - 装系统依赖（Linux 22.04 的 webkit2gtk-4.1-dev 等）
        - Rust 工具链（dtolnay/rust-toolchain）
-       - npx tauri build（设置 TAURI_SIGNING_PRIVATE_KEY）
-       - 产出：安装包 + 更新产物 + .sig
+       - npx tauri build（tag 构建须有 TAURI_SIGNING_PRIVATE_KEY；非 tag 构建撤掉该变量并关掉 updater 产物）
+       - 产出：安装包（tag 构建再附更新产物 + .sig）
   ③ 汇总 job：组装 npm 包 + shell-manifest.json → npm publish
   ④ 同时挂 GitHub Release（人工下载通道）
 
@@ -351,10 +351,10 @@ $ bash ci/check-glibc.sh <binary> 2.35
 | # | 缺陷 | 修正 |
 |---|---|---|
 | **F1** | Linux 构建基座过新（glibc 2.39）—— **已实测确证**（产物无法在 Ubuntu 22.04 加载） | ✅ **已修**：壳仓 CI 基座改 `ubuntu-22.04` + 门禁断言 `glibc_max=2.35`；`ci/check-glibc.sh` 单源导出到壳仓 |
-| **F2** | 壳仓 CI 缺 `createUpdaterArtifacts` | ⏳ 待密钥：CI 已接 `TAURI_SIGNING_PRIVATE_KEY` 环境变量与 `.sig` 收集；**未配密钥时不产 .sig 并告警**（不阻断构建） |
+| **F2** | 壳仓 CI 缺 `createUpdaterArtifacts` | ✅ **产线语义已修（2026-09-20）**：配置里内置了 pubkey 时 Tauri 见「有公钥无私钥」直接失败，且未配置的 secret 会展开成空串被 CLI 当成非法私钥——所以缺密钥分支必须**同时** `unset TAURI_SIGNING_*` 并用 `--config` 把 `bundle.createUpdaterArtifacts` 关掉，`.sig` 的强校验只在 tag 构建生效（壳门禁 C-f/C-g 锁定）。**密钥本身仍缺失**：tag 发布按设计被 workflow 拦下，见壳仓 `docs/UPDATER-SIGNING-KEY.md` §〇 |
 | **F3** | 无 macOS 签名/公证 | ⏸ **暂缓**（用户定案 2026-09-11：暂无证书）。不阻塞构建与手动安装（有拦截提示，用户可手动放行）；自动更新链路由 minisign 保障完整性，与此无关 |
 | **F4** | 无 Windows 代码签名；MSI 需管理员 | ⏸ **暂缓**（同上，无证书）。CI 已改主推 NSIS per-user（免提权）；无签名时 SmartScreen 会提示，用户可继续 |
-| **F5** | CI 触发为 `push main + tags`（浪费构建） | ✅ **已修**：改为仅 `tags: ['v*']` + `workflow_dispatch` |
+| **F5** | CI 触发口径 | ✅ **已按硬标准定稿（两仓一致）**：`push`（各自主干 + `v*` tag）+ `pull_request` + `workflow_dispatch`。曾短暂收为「仅 tag 触发」以省构建，但那使 PR 完全不跑 CI、无法把 `build` 设为 required，故 2026-09-13 起恢复**每次 push / PR 都跑完整矩阵**（省额度的正解是公开仓，不是砍触发） |
 | **F6** | 内核 `desktop/` 模板路径与 deb 实况不符 | ✅ **已修（2026-09-16）**：模板内嵌进 `autostart.js`，Exec/Icon 按实际安装解析；外置 `desktop/` 目录已删 |
 | **F7** | 壳零落盘日志、无版本上报 | P0.1 / P0.2（执行方案） |
 
@@ -364,12 +364,12 @@ $ bash ci/check-glibc.sh <binary> 2.35
 
 | # | 项 | 说明 |
 |---|---|---|
-| **V1** | Tauri 是否为 **deb/rpm** 生成 `.sig` | 官方文档 v2 产物列表未列 deb；若未生成则用 `tauri signer sign` 自签（清单的 signature 只要求能被 pubkey 验过） |
-| ~~V2~~ | ~~`ubuntu-22.04` 上能否顺利构建~~ | **部分验证 ✅**：本机（24.04 基座）`cargo build --release` **成功，3m52s**；系统依赖齐全；根因已定位（见 2.6），故 22.04 基座必然消除 2.39 需求。**仍需 CI 实跑一次确认端到端**（含 `tauri build` 打包与 `.sig` 生成） |
-| **V3** | Linux arm64 是否有用户需求 | 影响是否保留 job 3 |
-| **V4** | Windows arm64 是否纳入 | 影响是否保留 job 7 |
-| **N2b** | 是否发 rpm | 建议先只发 deb |
-| **N4** | 是否建 apt/yum 仓库 | 后续加分项 |
+| **V1** | Tauri 是否为 **deb/rpm** 生成 `.sig` | **仍未验**：两仓从未配过签名私钥，也就没有任何一份 `.sig` 可证。只有在**配好密钥的 tag 构建**上顺带验一次，禁止用本地构建替代（本机不得构建）|
+| ~~V2~~ | ~~`ubuntu-22.04` 上能否顺利构建~~ | **已由 CI 确证**：`ubuntu-22.04` job 在壳仓 main 上反复全绿（含 glibc 2.35 门禁与打包）。~~原「本机 24.04 基座 cargo build --release 成功」~~ —— 那既不能证明 22.04 基座，也违反「一律 CI 构建/测试」，不作为依据保留 |
+| ~~V3~~ | ~~Linux arm64 是否有用户需求~~ | **未纳入矩阵**（Linux 只有 x64）。纳入新平台属矩阵变更：若已恢复分支保护，必须同步改 required status checks 的 contexts（两仓当前无保护，见 `AUDIT-REPORT-2026-09-19.md` §K-1）|
+| ~~V4~~ | ~~Windows arm64 是否纳入~~ | **未纳入矩阵**（Windows 只有 x64，bundles `nsis,msi`），变更约束同上 |
+| ~~N2b~~ | ~~是否发 rpm~~ | **现状：deb + rpm 一起发**（Linux job 的 `bundles: deb,rpm`）|
+| **N4** | 是否建 apt/yum 仓库 | 后续加分项，未立项 |
 | **W4** | macOS 最低支持版本（10.15 / 11.0 / 12.0） | 影响构建 target 与测试面 |
 
 ---

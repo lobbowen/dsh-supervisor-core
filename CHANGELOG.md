@@ -6,6 +6,32 @@
 
 ## [未发布]
 
+### 凭据工具链根因修复：库 / 工具 / 门禁三方方言对齐（配套门禁此前恒绿）
+
+- **缺陷（工具侧）**：规范库 `index.json` 用 `ref` 作键、`file` 为相对形态，而 `cred.sh` 按 `name`
+  寻址并要求库内绝对路径 —— 结果 `path` / `get` / `verify` 对**每一个**真实条目都报「未知条目」，
+  凭据库经自己的 CLI 完全不可用。同时 `doctor` 的权限枚举与 `backup` 的文件复制都只扫 `*.pat`，
+  而真实推送凭据是无扩展名的 `git-credentials`：权限放宽查不出，**备份里根本不含推送凭据**。
+  `verify` 又依赖本机不存在的 `curl`，把「无探测手段」洗成状态码 000，未知条目还零退出。
+- **修复**：清单补齐 `name` / 绝对 `file` / `status` / `verify` / `schemaNote`（令牌值一字未动，
+  改前副本 `/tmp/credentials-index.pre-sweep.json` 0600）；`doctor` 第 2 段改判「条目可寻址 +
+  清单内文件是否都在库内」，权限面与备份改为枚举库内**全部常规文件**；`verify` 收口为单进程 node
+  `fetch`（URL/期望码由清单给，未知条目与非预期码均非零退出，只回显身份/路径/状态码）。
+- **门禁空转（本条最危险）**：真机审计 `R-4` 用 `l.indexOf('FAIL') === 0` 匹配，而 `doctor` 的 FAIL 行
+  **带缩进** ⇒ 该断言永不失败，上面三处缺陷全在「凭据门禁全绿」下存活。判据改为先 trim 再匹配，
+  并新增 D-14（无扩展名文件的权限面）/ D-15（条目必须可寻址）/ D-16（审计不按 `kind` 挑食）/
+  D-17（`verify` 不用 curl 且未知条目非零退出），每条配旧形状反向夹具。
+  本轮真机实测：`doctor` rc=0 且逐个审计四个文件均 0600，`verify github-pat` 回 `OK (HTTP 200)`。
+- **文档纠错（删掉以现在时态描述已不成立状态的内容）**：`CREDENTIALS-STANDARD.md` §2 改为「一处凭据、
+  两种用法」（`github-pat` 与 `git-credentials` 实测是同一枚 PAT 的两种形态）并登记 D-14 ~ D-17；
+  `HANDOFF.md` 删掉 `cred.sh get kernel`、`GIT_SSH_COMMAND=<部署密钥>` 与旧账号 PR 链接；
+  `release/README.md` 删重复的「通道定稿」块并把 SSH-over-443 降为历史注；
+  `CROSS-PLATFORM-BUILD-AND-UPDATE.md` 纠正 F2/F5（无私钥构建须 `unset` + `createUpdaterArtifacts:false`；
+  触发是 push(main+tags)/PR/dispatch 而非仅 tag）与 §十 V2（本机 `cargo build` 证据既不足证又违反
+  「运行期结论只由 CI 裁决」）；`configure-credentials.sh` 不再把「本机无 npm 认证」当缺陷；
+  `README.md`/`NO-CONSOLE-WINDOW-STANDARD.md`/`RELEASE-STANDARD.md`/发布 runbook 的仓库地址与现状同步。
+  取证与逐条裁决见 `AUDIT-REPORT-2026-09-19.md` §L。
+
 ### 门禁纠正：跨仓判据不得钉死已废弃的账号名（迁仓残留）
 
 - **缺陷**：`test/no-cross-repo-test.js` 的 X-2 判据写死 `repository: wasi7mglns/dsh-supervisor-launcher`。

@@ -121,12 +121,17 @@
 
 **唯一仍受 `need_build` 影响的是 `release` job**（挂 Release 附件，避免对同一版本重复挂载）。
 
-分支保护（服务器端放行条件）：
+分支保护（服务器端放行条件）**设计为**：
 
 | 仓库 | branch | required checks |
 |---|---|---|
-| `advgyxqamf/dsh-supervisor-core` | `master` | `precheck`、`test`（strict + enforce_admins）|
-| `wasi7mglns/dsh-supervisor-launcher` | `main` | `version` + 4 条 `build (...)`（strict + enforce_admins）|
+| `lobbowen/dsh-supervisor-core` | `master` | `precheck`、`test`（strict + enforce_admins）|
+| `lobbowen/dsh-supervisor-launcher` | `main` | `version` + 4 条 `build (...)`（strict + enforce_admins）|
+
+> **当前实测两仓均未设**（2026-09-20 REST `/branches/{master,main}/protection` 均返回
+> 404 `Branch not protected`）：迁到 `lobbowen` 后服务器端配置没有跟着搬过来，
+> 因此**目前没有任何放行条件**，PR 可绕过 CI 直接合入。上表是**待恢复的目标态**；
+> 恢复需仓库 admin 令牌，属用户决策，不是产线缺陷（内核侧记录见 AUDIT §K-1）。
 
 > required 只能设**每次都会跑**的 job。`build` 矩阵如今**每次 push / PR 都跑**（不再是条件 job），
 > 故它可作为 required；**唯一仍受 `need_build` 影响的是 `release` job**（见 §4 上文），

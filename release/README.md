@@ -5,13 +5,14 @@
 
 
 > 本目录是 **dsh-supervisor 内核发布自动化**的唯一事实源：构建、版本、发布、CI、验收流程全部收拢于此。
-> 双仓：内核仓 **`advgyxqamf/dsh-supervisor-core`**（**公开**，本仓）只管内核 npm 子包；
-> 壳仓 `wasi7mglns/dsh-supervisor-launcher`（**公开** MIT）管桌面安装程序（见壳仓自身 workflow）。
-> （2026-09-11：内核仓由 `wasi7mglns` 迁至 `advgyxqamf` —— 原账号私有仓 Actions 额度耗尽；
->   迁移动机与事故处置见 `CHANGELOG.md` 的「仓库迁移至新账号」一节。
->   **2026-09-13：内核仓转为公开** —— 公开仓 Actions 免额度（含 macOS），原「私有仓倍数计费」
->   约束随之解除；本文中以额度为动因的段落已改写。转公开前已做安全审计：
->   工作树与全历史均无密钥模式命中，仓库 14M、最大跟踪文件 212K。）
+> 双仓同属账号 **`lobbowen`**：内核仓 **`lobbowen/dsh-supervisor-core`**（**公开**，本仓）只管内核 npm 子包；
+> 壳仓 `lobbowen/dsh-supervisor-launcher`（**公开** MIT）管桌面安装程序（见壳仓自身 workflow）。
+> （仓库地址历史：2026-09-11 内核仓由 `wasi7mglns` 迁至 `advgyxqamf`（原账号私有仓 Actions 额度耗尽）；
+>   **2026-09-13 内核仓转为公开** —— 公开仓 Actions 免额度（含 macOS），原「私有仓倍数计费」
+>   约束随之解除；转公开前做过安全审计：工作树与全历史均无密钥模式命中，仓库 14M、最大跟踪文件 212K；
+>   2026-09-19 两仓统一迁到 `lobbowen`（凭据事故后的账号收敛）。
+>   **旧账号 `wasi7mglns` / `advgyxqamf` 下的同名仓仍可公开访问但已停更（最后 push 2026-09-18）**，
+>   不要向它们推送，也不要以其内容为准；迁移动机与事故处置见根目录 `CHANGELOG.md`。）
 > 命令**统一在仓库根执行**；所有脚本以仓库根为基准定位产物（绝对 ROOT 解析），可任意 cwd 调用。
 
 ---
@@ -313,7 +314,7 @@ CI 产线（.github/workflows/build.yml → release/scripts/ci-core.sh）：四�
 壳仓完全独立运营（内核仓不参与）：
 
 ```bash
-cd <壳仓>                                  # 公开仓 wasi7mglns/dsh-supervisor-launcher
+cd <壳仓>                                  # 公开仓 lobbowen/dsh-supervisor-launcher
 bash scripts/bump-shell.sh <ver>          # 三处互锁同号：Cargo.toml / tauri.conf.json / Cargo.lock
 node scripts/verify-shell-versions.js     # 自洽校验
 git add -A && git commit && git tag v<ver> && git push origin main && git push origin v<ver>
@@ -329,29 +330,31 @@ git add -A && git commit && git tag v<ver> && git push origin main && git push o
 - 全量回归：由 CI 的 `test` job 经 `xvfb-run -a npm test` 执行（mock 目标，不触碰真实 DSH/npm）；**本机不得执行 `npm test`**。
 - 发布状态追踪：`release/runbooks/publish-and-verify.md`。
 
-## 推送通道（固定标准，2026-09-10 定案）
+## 推送通道（固定标准，2026-09-20 实测校准）
 
-**所有 git push 走 SSH over 443（ssh.github.com:443）**——国内网络稳定，弃用 github.com git HTTPS 直连（间歇断连）。
-核仓/壳仓本地 clone 均已配置 `core.sshCommand`（密钥 `<repo>/.ssh/id_ed25519_dshpush`）与
-`remote = ssh://git@ssh.github.com:443/<owner>/<repo>.git`。REST api.github.com 稳定但**不能** push 分支/触发 tag CI。
+**所有 git push 走 HTTPS + git credential helper**：两仓 repo-local 配置
+`credential.helper = store --file <规范库>/git-credentials`，remote 为
+`https://github.com/<owner>/<repo>.git`（**令牌值不内嵌进 remote URL** —— CREDENTIALS-STANDARD 铁律 2）。
+
+> 历史：2026-09-10 曾定案「push 走 SSH over 443（`ssh.github.com:443`）+ repo-local `core.sshCommand` 部署密钥」，
+> 因国内 HTTPS 直连间歇断连。**该通道已于 2026-09-19 事故后废弃且未重建**（本机 `~/.ssh` 已无私钥），
+> 现在 HTTPS 直连实测可用；不要再按 SSH 口径配置或排障。
+
+REST（`api.github.com`）与 push 用的是同一枚 Fine-grained PAT 的两种形态（见 `CREDENTIALS-STANDARD.md` §2）：
+API 侧可查 CI、设 secret、改分支保护；git 侧只能读写仓库。tag 触发的 CI 由 push tag 产生，无需 API。
 
 ## 凭据与令牌（**认证单源**，2026-09-10 标准化）
 
 发布链路需要的令牌**值不存仓库目录**，按根目录 **`CREDENTIALS-STANDARD.md`** 管理（工具 `release/scripts/cred.sh`，规范库为真实用户 home 下的 `develop/.credentials/`，0700/0600）。
 
-> ⚠ **2026-09-19 凭据事故后的通道定稿（以下 SSH 部署密钥段落已废弃，仅存史）**：
-> SSH 部署密钥随旧机器环境全部丢失，未重建。现行通道：
-> · **git push = HTTPS + credential store**（`credential.helper store --file <规范库>/git-credentials`，令牌值不内嵌 remote URL —— 铁律 2）；
-> · **REST API（查 CI / 设 secret / 分支保护）= 同一枚 GitHub 细粒度 PAT**（规范库 `github-pat`，两公开仓共用）；
-> · **npm 发布 = Granular Access Token**（`@dsh-sup`，须勾选 bypass 2FA；Classic Automation 已被 npm 新政拒发），
->   CI 侧经仓库 secret `NPM_TOKEN` 注入，不依赖本机库。
-
-| 令牌 | 消费方 | 最小权限 |
+| 令牌 | 消费方 | 最小权限（实测）|
 |---|---|---|
-| GitHub PAT | REST 查状态/建 secret/管部署密钥（不用于 git push） | `advgyxqamf` 账号（内核仓）；壳仓用 `wasi7mglns` PAT |
-| SSH key | `git push`（SSH 443，**repo-local `core.sshCommand`**） | **仓库级部署密钥**（非账号级）：内核仓 `~/.ssh/id_ed25519_advgyxqamf`、壳仓 `~/.ssh/id_ed25519_wasi7` |
+| GitHub Fine-grained PAT（库内 `github-pat`；同一值以 URL 形态存 `git-credentials` 供 push）| REST 查 CI / 建 secret / 改分支保护 + `git push` | 账号 `lobbowen`，**两仓共用同一枚**：`dsh-supervisor-core` + `dsh-supervisor-launcher`，含 `Administration: Read and write`（否则设不了 required checks / secrets）|
 | `GITHUB_TOKEN` | CI 挂 Release 附件 | Actions 自动注入（workflow 声明 contents: write） |
-| NPM token | npm 真发子包（四平台全部由 CI 真发） | `Automation`，仅 `@dsh-sup` scope |
+| npm 发布令牌（库内 `npm-token`）| npm 真发子包（四平台全部由 CI 真发） | **Granular Access Token + bypass 2FA**，账号 `lob.bowen`，作用域 `@dsh-sup`，`rotateBy` 2026-12-18；以 repo secret `NPM_TOKEN` 注入 CI，不依赖本机库。**Classic `Automation` 已不可用**：npm 2026-09 新政拒发（BETA.10 首发实测 E403 后更换）|
+| 壳自更新签名 `TAURI_SIGNING_PRIVATE_KEY(_PASSWORD)` | 壳仓 tag 构建产 `.sig` | **当前缺失**（两仓 secrets 实测只有 `NPM_TOKEN`）：非 tag 构建已改为不因此变红，tag 发布由 workflow 主动拦下；见壳仓 `docs/UPDATER-SIGNING-KEY.md` |
+
+> 历史上的「SSH 仓库部署密钥」行已删除：该通道随 2026-09-19 事故丢失且未重建，见上一节。
 
 ### npm 认证解析（唯一顺序，`release/scripts/_npm-auth.sh` 单源实现）
 
@@ -372,7 +375,7 @@ git add -A && git commit && git tag v<ver> && git push origin main && git push o
 
 ```bash
 # 规范配置（一次性；写入真实 home/.npmrc 0600）
-export NPM_TOKEN='<npm automation token>'
+export NPM_TOKEN='<npm Granular token（bypass 2FA），见 CREDENTIALS-STANDARD.md §5>'
 bash release/scripts/configure-credentials.sh --npm
 # 自检（只读，不含值；与发布用同一解析器判定，不会出现「自检说没配、发布却成功」）
 bash release/scripts/configure-credentials.sh --check
