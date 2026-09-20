@@ -272,7 +272,12 @@ async function main() {
     const o = sup2._readMainOwner();
     check('D-11 写后读回 {guardPid=本守卫, dshPid, port}',
       !!o && o.dshPid === 4242 && o.guardPid === process.pid && o.port === 3080, JSON.stringify(o));
-    check('D-11 原子写：不留 .tmp 残留', !fs.existsSync(f + '.' + process.pid + '.tmp'), 'clean');
+    // E-1（原子写单源）：调用点不再自拼 tmp 名，旧判据（猜 `<file>.<pid>.tmp`）会退化成永真的空转。
+    //   改为枚举目录：该文件的任何派生 tmp（单源命名 <file>.tmp.<pid>.<ts>）都不得残留。
+    const ownerStrays = fs.readdirSync(path.dirname(f))
+      .filter((x) => x.startsWith(path.basename(f) + '.tmp'));
+    check('D-11 原子写：不留 .tmp 残留（按派生名枚举，不依赖具体命名）',
+      ownerStrays.length === 0, ownerStrays.join(',') || 'clean');
     check('D-11 落盘权限 0600', (fs.statSync(f).mode & 0o777) === 0o600,
       (fs.statSync(f).mode & 0o777).toString(8));
 

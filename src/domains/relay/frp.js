@@ -11,6 +11,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 // SSOT §3：异步 spawn 统一封装（固定 windowsHide:true）；需读 frpc 输出，故用 piped。
 const spawnOS = require('../../platform/os/spawn');
+const { writeAtomic } = require('../../platform/util/fs');
 const { buildFrpcToml, validateFrpServerSettings } = require('./core');
 const { frpPlatformTag, download, installFrpc } = require('./frp-install');
 
@@ -65,11 +66,7 @@ class FrpManager {
     fs.mkdirSync(this.dir, { recursive: true });
     // frp.json 含 authToken 明文：tmp 必须带 pid（防并发写互踩/预测名劫持）且以 0600 建立——
     // 与 syncFromInstances 的 frpc.toml 写法同规（旧实现默认 umask 落盘，存在明文窗口）。
-    const tmp = this.settingsFile + '.' + process.pid + '.tmp';
-    fs.writeFileSync(tmp, JSON.stringify(s, null, 2), { mode: 0o600 });
-    try { fs.chmodSync(tmp, 0o600); } catch {}
-    fs.renameSync(tmp, this.settingsFile);
-    try { fs.chmodSync(this.settingsFile, 0o600); } catch {}
+    writeAtomic(this.settingsFile, JSON.stringify(s, null, 2), { mode: 0o600 });
   }
 
   status() {
@@ -96,11 +93,8 @@ class FrpManager {
     const settings = this.loadSettings();
     const { text, count } = this.buildConfig(settings, instances);
     fs.mkdirSync(this.dir, { recursive: true });
-    const tmp = this.configFile + '.tmp';
     // frpc.toml 含 auth.token 明文：与 frp.json 同级 0600。
-    fs.writeFileSync(tmp, text, { mode: 0o600 });
-    try { fs.chmodSync(tmp, 0o600); } catch {}
-    fs.renameSync(tmp, this.configFile);
+    writeAtomic(this.configFile, text, { mode: 0o600 });
     this._lastCount = count; // 供兜底重启判定「是否还有代理值得拉起」
     if (!settings.enabled || count === 0) {
       this.stop();

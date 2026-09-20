@@ -13,21 +13,15 @@ const { VERSION_RE } = require('../../shared/version');
 const release = require('./release');
 const registry = require('./registry');
 const policies = require('./policies');
+const input = require('../util/input');
 
-/** npm 包名字符集白名单（B11）：范围包 + 小写包名（npm 实际禁止大写，此处从严到安全字符集即可）。
- *  pkg/version 会流入 argv 与 commandTemplate 的 {pkg}/{version} 替换 —— 不进白名单就是注入面。 */
-const PKG_NAME_RE = /^(@[a-zA-Z0-9._-]+\/)?[a-zA-Z0-9._-]+$/;
-
-/** argv 项的禁用字符集（B11）：空白与全部 shell 元字符/引号/控制符。命中即拒。
- *  与 commandTemplate **替换前**的形态兼容（模板自带 {pkg}/{version}/{prefix} 花括号）。
- *  ⚠ 反斜杠例外见 WIN_DRIVE_ABS_RE：win32 盘符路径（D:\\a\\...\\fake-npm.js）是合法 argv，
- *    CI 实测旧版把 `\\` 一刀切禁用 → windows 升级链确定性判红（win32-only，linux/mac 全绿）。 */
-const BAD_ARGV_CHAR_RE = /[\s;|&<>`'"$(){}\\*?~#]/;
-
-/** 盘符绝对路径整体形态（B11 windows 例外）：仅当该项**完整匹配**此形态时豁免禁用字符集——
- *  此时 `\\` 是路径分隔符而非转义/元字符；其余禁用字符（`;`、引号、`$` 等）仍被字符类拦截，
- *  空白也仍禁（盘符路径含空格须走 commandTemplate 拆项，不得借豁免夹带）。 */
-const WIN_DRIVE_ABS_RE = /^[A-Za-z]:\\[^;|&<>`'"$*?~#\s]*$/;
+/** 字符集白名单取自 E-4 单源（platform/util/input）：pkg/version 会流入 argv 与
+ *  commandTemplate 的 {pkg}/{version} 替换 —— 不进白名单就是注入面。此处保留**同名导出**
+ *  （行为级门禁 npm-resolution 直接 inst.PKG_NAME_RE 判定），但尺子只有一把。
+ *  BAD_ARGV_CHAR_RE 的 win32 盘符例外（WIN_DRIVE_ABS_RE）同源于 input，见其注释。 */
+const PKG_NAME_RE = input.PKG_NAME_RE;
+const BAD_ARGV_CHAR_RE = input.ARGV_UNSAFE_RE;
+const WIN_DRIVE_ABS_RE = input.WIN_ABS_PATH_RE;
 
 /** npm registry 最新版（用选中镜像；失败回退候选；null 表示不可达）。 */
 async function fetchNpmLatest(state, pkg, opts) {

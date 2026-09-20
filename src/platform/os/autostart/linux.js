@@ -6,6 +6,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
 const ex = require('../../util/exec');
+const { writeAtomic } = require('../../util/fs');
 
 /** XDG 自启条目模板（内嵌，不依赖外置 desktop/ 目录，launcher 发行态不携带它）。
  *  @HOME@ 与 Exec/Icon 行在写入前按实际安装路径重写（见 setGuiAutostart）。 */
@@ -73,7 +74,7 @@ function setGuiAutostart(on, deps) {
       const icon = iconCandidates.find((c) => { try { return fs.statSync(c).isFile(); } catch { return false; } });
       if (icon) entry = entry.split(/^Icon=.*$/m).join('Icon=' + icon);
       fs.mkdirSync(path.dirname(file), { recursive: true });
-      const atmp2 = file + '.tmp'; fs.writeFileSync(atmp2, entry); fs.renameSync(atmp2, file);
+      writeAtomic(file, entry, { mode: 0o644 });
     } else { try { fs.unlinkSync(file); } catch {} }
     return { ok: true, enabled: !!on, exec: deps.guiCommand() };
   } catch (e) { return { ok: false, error: e.message }; }

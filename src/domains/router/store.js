@@ -9,6 +9,7 @@
 
 const fs = require('node:fs');
 const path = require('node:path');
+const { writeAtomic } = require('../../platform/util/fs');
 
 class RouterStore {
   constructor(opts) {
@@ -62,9 +63,7 @@ class RouterStore {
     }
     fs.mkdirSync(path.dirname(this.file), { recursive: true });
     // 注意：tmp 名必须唯一；固定 '.tmp' 会让两个进程并发写同一临时文件，rename 出混合内容。
-    const tmp = this.file + '.tmp.' + process.pid + '.' + Date.now();
-    fs.writeFileSync(tmp, JSON.stringify({ providers: providers.map((p) => p.serialize()) }, null, 2), { mode: 0o600 });
-    fs.renameSync(tmp, this.file);
+    writeAtomic(this.file, JSON.stringify({ providers: providers.map((p) => p.serialize()) }, null, 2), { mode: 0o600 });
     return true;
   }
 
@@ -88,9 +87,7 @@ class RouterStore {
   writeUsage(totals) {
     if (!this.canPersist() || !totals || !this.usageFile) return false;
     fs.mkdirSync(path.dirname(this.usageFile), { recursive: true });
-    const tmp = this.usageFile + '.tmp.' + process.pid + '.' + Date.now();
-    fs.writeFileSync(tmp, JSON.stringify(totals), { mode: 0o600 });
-    fs.renameSync(tmp, this.usageFile);
+    writeAtomic(this.usageFile, JSON.stringify(totals), { mode: 0o600 });
     return true;
   }
 }

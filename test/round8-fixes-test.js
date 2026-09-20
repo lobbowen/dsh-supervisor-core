@@ -422,6 +422,142 @@ const readDomain = (dir) => fs.readdirSync(path.join(ROOT, dir)).filter((f) => f
     (polling.match(/epoch \+= 1;/g) || []).length === 2, 'epoch += 1 出现 ' + (polling.match(/epoch \+= 1;/g) || []).length + ' 次');
 }
 
+// ── J-n（批 4 / E-1）：状态落盘的原子写必须**单源**，且不得用可预测的固定 .tmp 名 ──
+//   缺陷机理：全仓 31 处「tmp + rename」各自实现，其中 26 处拼的是**固定** `file + '.tmp'`。
+//   升级重叠期新旧两个守卫进程同时写同一份状态 → 两者写的是同一个临时文件 → rename 出去的
+//   是两次序列化字节的**交错混合体**（既不是新版也不是旧版）；另有实现未带 mode，令牌/URL 落 0644。
+//   收敛：platform/util/fs 的 writeAtomic（tmp 名含 pid+毫秒、默认 0600、rename 后收口、失败抛错）。
+//   豁免（保留自有实现，但 tmp 名同样含 pid）：token/persist.js（返回 {ok} 契约，TK-G3 口径）、
+//   os/file-protect.js（Windows icacls 与 rename 交错，无法套统一 helper）。
+{
+  const walk = (d) => fs.readdirSync(d, { withFileTypes: true }).flatMap((e) =>
+    e.isDirectory() ? walk(path.join(d, e.name)) : (e.name.endsWith('.js') ? [path.join(d, e.name)] : []));
+  const codeOf = (f) => fs.readFileSync(f, 'utf8').split('\n').filter((l) => {
+    const t = l.trim(); return !t.startsWith('//') && !t.startsWith('*') && !t.startsWith('/*');
+  }).join('\n');
+  const relOf = (f) => path.relative(ROOT, f).split(path.sep).join('/');
+  const srcFiles = walk(path.join(ROOT, 'src'));
+  // 判据：代码行里出现**裸** `'.tmp'` 字面量，且该行没有任何唯一化因子（pid / 毫秒 / UUID / 模板插值）
+  const fixedTmpLines = (src) => src.split('\n').filter((l) => /['"`]\.tmp['"`]/.test(l)
+    && !/process\.pid|Date\.now|randomUUID|\$\{/.test(l));
+  const offenders = srcFiles.filter((f) => fixedTmpLines(codeOf(f)).length > 0).map(relOf);
+  check('E-1 src/ 下无「固定 .tmp 名」旁路（唯一 tmp 名 = 单源不变量）',
+    offenders.length === 0, offenders.join(',') || '无');
+  const LEGACY = "  const tmp = file + '.tmp';\n  fs.writeFileSync(tmp, data);\n  fs.renameSync(tmp, file);";
+  check('E-1 反向非空转：旧的固定 .tmp 写法必须被同一判据命中',
+    fixedTmpLines(LEGACY).length === 1, '命中 ' + fixedTmpLines(LEGACY).length + ' 行');
+  const helper = codeOf(path.join(ROOT, 'src', 'platform', 'util', 'fs.js'));
+  check('E-1 单源实现：tmp 名含 pid+毫秒，rename 前不暴露半个目标文件',
+    /\.tmp\.'\s*\+\s*process\.pid\s*\+\s*'\.'\s*\+\s*Date\.now\(\)/.test(helper) && /renameSync\(tmp, fp\)/.test(helper), 'ok');
+  check('E-1 单源实现：mode 默认 0600 并在 rename 后二次收口（部分平台 rename 重写权限位）',
+    /:\s*0o600/.test(helper) && (helper.match(/chmodSync\(\w+, mode\)/g) || []).length === 2, 'chmod 次数=2');
+  const selfWriters = srcFiles.filter((f) => /renameSync\(\s*\w*[Tt]mp\w*\b/.test(codeOf(f))).map(relOf);
+  const EXEMPT = ['src/platform/util/fs.js', 'src/platform/service/token/persist.js', 'src/platform/os/file-protect.js'];
+  check('E-1 自带 tmp+rename 的文件只能落在显式豁免清单内（新增旁路必须先进清单并被审）',
+    selfWriters.slice().sort().join(',') === EXEMPT.slice().sort().join(','), selfWriters.join(','));
+  const uniqOk = (f) => /process\.pid/.test(codeOf(f));
+  check('E-1 豁免项也必须 tmp 名含 pid（豁免只豁免「用哪个 helper」，不豁免唯一性）',
+    EXEMPT.every(uniqOk), EXEMPT.filter((f) => !uniqOk(path.join(ROOT, f))).join(',') || '全部含 pid');
+  const users = srcFiles.filter((f) => /writeAtomic\(/.test(codeOf(f)) && !/function writeAtomic/.test(codeOf(f)));
+  check('E-1 覆盖面不缩水：经单源落盘的模块数 >= 25（迁移被逐点回退会在这里红）',
+    users.length >= 25, '当前 ' + users.length + ' 个模块');
+  check('E-1 代表调用点确在单源路径上（令牌/凭据/用量三类明文）',
+    users.some((f) => relOf(f) === 'src/domains/relay/frp.js')
+    && users.some((f) => relOf(f) === 'src/app/main/signals.js')
+    && users.some((f) => relOf(f) === 'src/domains/router/store/usage.js'),
+    ['relay/frp.js', 'app/main/signals.js', 'router/store/usage.js'].filter((k) => !users.some((f) => relOf(f).endsWith(k))).join(',') || 'ok');
+}
+
+// ── J-o（批 4 / E-2）：静态门禁必须显式登记自己的覆盖缺口（制度化防复发）──
+//   审计 §E-2 的病灶不是判据写错，而是**门禁的名字比判据大**：文件叫 xxx-gate-test，
+//   读者把绿当成「xxx 已被验证」，于是这道「看起来存在的防线」阻止了下一次检查
+//   （glibc 声称产线校验、CI 零调用；TK-G4 白名单放行；K-W2 只匹配 spawn(；发布包 README 违 RC-1）。
+//   规则落在 ACCEPTANCE-STANDARD.md §7，本节是其执法点：缺口块必须存在、在头部、且是可核对的逐条清单。
+{
+  const MARKER = '覆盖缺口（E-2 制度化登记';
+  const GAP_GATES = [
+    'test/glibc-gate-test.js',
+    'test/token-contract-gate-test.js',
+    'test/no-console-window-gate-test.js',
+    'test/exec-bounded-gate-test.js',
+  ];
+  // 判据：头部注释区里出现标记，且其后连续注释块内至少 3 条编号项（防空壳标题）。
+  const gapBlock = (src) => {
+    const at = src.indexOf(MARKER);
+    if (at < 0) return null;
+    const head = src.slice(0, src.indexOf('\nconst ', at) < 0 ? src.length : src.indexOf('\nconst ', at));
+    const lines = head.split('\n').filter((l) => /^\s*(\/\/|\*)\s/.test(l));
+    return { items: lines.filter((l) => /^\s*(\/\/|\*)\s+\d+\./.test(l)).length, at };
+  };
+  for (const rel of GAP_GATES) {
+    const b = gapBlock(read(rel));
+    check('E-2 ' + rel + ' 头部有可核对的覆盖缺口清单（>=3 条编号项）',
+      !!b && b.items >= 3, b ? b.items + ' 条' : '无缺口块');
+  }
+  check('E-2 执法清单非空转：无缺口块的门禁必须被判出',
+    gapBlock('// 门禁\n// 断言 A1\nconst fs = 1;\n') === null, 'hit');
+  check('E-2 执法清单非空转：有标记但只有空壳标题（0 条编号项）同样被判出',
+    (() => { const b = gapBlock('// ## ' + MARKER + '）\n// 随便写点说明\nconst fs = 1;\n'); return !!b && b.items < 3; })(),
+    'hit');
+  const std = read('ACCEPTANCE-STANDARD.md');
+  check('E-2 规则本体在 ACCEPTANCE-STANDARD §7 且指向本执法点',
+    /## 7\.[^\n]*覆盖缺口/.test(std) && /round8-fixes-test\.js[^\n]*J-o|J-o/.test(std), 'ok');
+}
+
+// ── J-p（批 4 / E-4）：外部输入的字符集白名单必须单源，且真的拦住注入 ──
+//   审计 §E-4：version / unit 名 / URL / model 名 / commandTemplate「各自散防」——
+//   病灶不是某一份写错，而是**新增入口时无处可抄**，于是每个新调用点都要重新赌一次校验。
+//   现：platform/util/input.js 是字符集/形态判定的唯一存放处；语义级闸（SSRF、semver 比较）
+//   仍留在各域，但不得再复制字符集。判据 = 对象同一性 + 「同一字符集只有一个定义处」+ 行为表。
+{
+  const input = require(path.join(ROOT, 'src', 'platform', 'util', 'input.js'));
+  const inst = require(path.join(ROOT, 'src', 'platform', 'distribution', 'install.js'));
+  const svc = require(path.join(ROOT, 'src', 'platform', 'os', 'service.js'));
+  const walkAll = (d) => fs.readdirSync(d, { withFileTypes: true }).flatMap((e) =>
+    e.isDirectory() ? walkAll(path.join(d, e.name)) : (e.name.endsWith('.js') ? [path.join(d, e.name)] : []));
+  const relOf2 = (f) => path.relative(ROOT, f).split(path.sep).join('/');
+  const ownerOf = (re, files) => (files || walkAll(path.join(ROOT, 'src')))
+    .filter((f) => fs.readFileSync(f, 'utf8').includes(re.source)).map(relOf2);
+  const RULERS = [input.PKG_NAME_RE, input.ARGV_UNSAFE_RE, input.UNIT_NAME_RE, input.WIN_ABS_PATH_RE];
+  check('E-4 每条字符集白名单在 src/ 中只有一个定义处（就是 input.js）',
+    RULERS.every((re) => { const o = ownerOf(re); return o.length === 1 && o[0] === 'src/platform/util/input.js'; }),
+    RULERS.map((re) => ownerOf(re).join('+') || '无').join(' | '));
+  check('E-4 消费方拿到的就是同一个 RegExp 对象（无复制粘贴的第二把尺子）',
+    inst.PKG_NAME_RE === input.PKG_NAME_RE && inst.BAD_ARGV_CHAR_RE === input.ARGV_UNSAFE_RE
+    && inst.WIN_DRIVE_ABS_RE === input.WIN_ABS_PATH_RE && svc.UNIT_NAME_RE === input.UNIT_NAME_RE, 'ok');
+  // 反向（§G-6-9 非空转）：造一个「把 UNIT_NAME_RE 抄进别的文件」的样本，同一判据必须数出 2 个定义处。
+  const CLONE_DIR = fs.mkdtempSync(path.join(require('node:os').tmpdir(), 'e4-clone-'));
+  try {
+    const CLONE = path.join(CLONE_DIR, 'second-ruler.js');
+    fs.writeFileSync(CLONE, 'const CLONE_RE = /' + input.UNIT_NAME_RE.source + '/;\n');
+    const both = ownerOf(input.UNIT_NAME_RE, [CLONE].concat(walkAll(path.join(ROOT, 'src'))));
+    check('E-4 反向：抄一份字符集立刻被「唯一定义处」判据数出来（2 处）',
+      both.length === 2 && both.some((p) => p.endsWith('second-ruler.js')), both.join(','));
+  } finally {
+    try { fs.rmSync(CLONE_DIR, { recursive: true, force: true }); } catch { /* 临时目录清理尽力 */ }
+  }
+  // 行为表：逐例独立 + 判据值回显（§G-6-9）。
+  const CASES = [
+    ['argv posix 路径放行', input.argvViolation('/tmp/fake-npm.js'), null],
+    ['argv win 盘符路径放行（CI run17 误杀对象）', input.argvViolation('D:\\a\\x\\fake-npm.js'), null],
+    ['argv 盘符+命令链 拒', !!input.argvViolation('D:\\a\\x;y'), true],
+    ['argv 空白 拒', !!input.argvViolation('/tmp/a b'), true],
+    ['argv 命令替换 拒', !!input.argvViolation('$(id)'), true],
+    ['pkg 合法 scope 放行', input.pkgNameViolation('@deepseek-ai/dsh'), null],
+    ['pkg 空格 拒', !!input.pkgNameViolation('bad pkg'), true],
+    ['unit 实例名放行', input.unitNameViolation('dsh-web@inst-1757-842'), null],
+    ['unit 路径穿越 拒', !!input.unitNameViolation('../../etc/x'), true],
+    ['unit 非 service 后缀 拒', !!input.unitNameViolation('x.timer'), true],
+    ['ledger __proto__ 键折进 other', input.ledgerKey('__proto__', { unsafe: '(other)' }), '(other)'],
+    ['ledger 控制符键折进 other', input.ledgerKey('a\u0000b', { unsafe: '(other)' }), '(other)'],
+    ['ledger 正常键原样（仅超长截断）', input.ledgerKey('deepseek-chat'), 'deepseek-chat'],
+    ['ledger 空/非字符串归 empty', input.ledgerKey(null, { empty: 'unknown' }), 'unknown'],
+  ];
+  for (const [n, got, want] of CASES) {
+    check('E-4 行为 ' + n, JSON.stringify(got) === JSON.stringify(want), 'got=' + JSON.stringify(got));
+  }
+}
+
 const failed = results.filter((r) => !r);
 console.log(String.fromCharCode(10) + '结果: ' + (results.length - failed.length) + ' passed, ' + failed.length + ' failed');
 process.exit(failed.length ? 1 : 0);

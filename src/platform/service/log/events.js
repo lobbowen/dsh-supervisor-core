@@ -2,6 +2,7 @@
 
 const fs = require('node:fs');
 const path = require('node:path');
+const { writeAtomic } = require('../../util/fs');
 
 // 事件日志：append-only JSONL，每行 { seq, ts, type, data }。seq 从既有日志最大序号
 // 续号，供 /events?after= 增量拉取。按大小轮转（超过 maxBytes 改名 <file>.1，保留
@@ -56,9 +57,7 @@ class Events {
   _saveMeta() {
     if (!this.metaFile) return;
     try {
-      const tmp = this.metaFile + '.tmp';
-      fs.writeFileSync(tmp, JSON.stringify({ seq: this.seq, rotatedSeq: this.rotatedSeq }));
-      fs.renameSync(tmp, this.metaFile);
+      writeAtomic(this.metaFile, JSON.stringify({ seq: this.seq, rotatedSeq: this.rotatedSeq }), { mode: 0o600 });
       this._metaSavedSeq = this.seq;
     } catch (e) {
       console.error('[events] meta save failed:', e.message);

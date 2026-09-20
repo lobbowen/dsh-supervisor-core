@@ -4,6 +4,7 @@
 
 const fs = require('node:fs');
 const path = require('node:path');
+const { writeAtomic } = require('../../platform/util/fs');
 
 function createStore(deps) {
   const g = deps || {};
@@ -30,9 +31,7 @@ function createStore(deps) {
       snap.updatedAt = updatedAt;
       const dir = path.dirname(config().stateFile);
       fs.mkdirSync(dir, { recursive: true });
-      const tmp = config().stateFile + '.tmp';
-      fs.writeFileSync(tmp, JSON.stringify(snap, null, 2), { mode: 0o600 });
-      fs.renameSync(tmp, config().stateFile);
+      writeAtomic(config().stateFile, JSON.stringify(snap, null, 2), { mode: 0o600 });
     } catch (e) {
       const l = logger();
       if (l && l.error) l.error('state write failed: ' + e.message);

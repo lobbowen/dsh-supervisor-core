@@ -10,6 +10,7 @@ const spawnOS = require('../../platform/os/spawn');
 const fs = require('node:fs');
 const path = require('node:path');
 const pidlook = require('../../platform/os/pidlookup');
+const { writeAtomic } = require('../../platform/util/fs');
 // 等待原语（IO）与 cmdline 标记派生（纯）各自拆到独立模块，本文件只留生命周期编排。
 const { waitProcessExit, waitPortFree } = require('./process-wait');
 const { deriveCmdMarks } = require('./process-marks');
@@ -57,9 +58,7 @@ class DaemonLifecycle {
     try {
       const dir = path.dirname(this.identityFile);
       try { fs.mkdirSync(dir, { recursive: true }); } catch {}
-      const tmp = this.identityFile + '.tmp';
-      fs.writeFileSync(tmp, JSON.stringify({ guardPid: process.pid, daemonPid, startedAt: Date.now() }), { mode: 0o600 });
-      fs.renameSync(tmp, this.identityFile);
+      writeAtomic(this.identityFile, JSON.stringify({ guardPid: process.pid, daemonPid, startedAt: Date.now() }), { mode: 0o600 });
     } catch (e) {
       // D-13：身份文件写失败**必须留痕**。它决定下次守卫重启能否按 owner 连续接管该 daemon；
       //   静默失败会让接管判定退回 cmdline 形态（异主/双监督风险变成不可见的），正是 9-13 同族。

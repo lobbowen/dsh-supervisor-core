@@ -8,6 +8,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const matrix = require('../contract/matrix');
 const registryContract = require('../contract/registry');
+const { writeAtomic } = require('../util/fs');
 const policies = require('./policies');
 
 /** 壳投放契约的重载 TTL（ms）：壳会在运行中重写 registry.json，内核必须能看到。 */
@@ -75,7 +76,6 @@ function saveRegistryConfig(state) {
 /** 读回原文档（保留壳字段与未来新增字段），只覆盖内核拥有的三键，原子写回。 */
 function writeRegistryDoc(state) {
   const f = state.registryFile;
-  const tmp = f + '.tmp';
   let doc = {};
   try {
     const raw = fs.readFileSync(f, 'utf8');
@@ -86,8 +86,7 @@ function writeRegistryDoc(state) {
   doc.mode = rc.mode;
   doc.origins = rc.origins;
   doc.manualOrigin = rc.manualOrigin;
-  fs.writeFileSync(tmp, JSON.stringify(doc, null, 2) + '\n', { mode: 0o600 });
-  fs.renameSync(tmp, f);
+  writeAtomic(f, JSON.stringify(doc, null, 2) + '\n', { mode: 0o600 });
 }
 
 /** 探测单个 registry 的可达性 + 延迟。探测 URL 由契约决定（与壳同规格）。

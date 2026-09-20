@@ -28,6 +28,21 @@
 // 说明：分析基于**括号配对**提取完整调用表达式，并先剥离注释 ——
 //   否则「注释里提到 execFileSync」会被误报，
 //   而「调用跨多行、timeout 写在第三行」会被漏报。
+//
+// ## 覆盖缺口（E-2 制度化登记，AUDIT-2026-09-19 第 4 批）
+//   G9 绿只证明「同步调用都进了执行器 + 执行器源码里有那四个字段」，不证明有界这件事成立：
+//   1. **零行为级验证**：没有任何测试真正起一个挂起子进程去证明 timeout 到点会 SIGKILL
+//      （全仓无 test require platform/util/exec）。G9-c/d 全是执行器源码的字面量判据。
+//   2. 本闸的调用名清单只有同步两个（execFileSync / spawnSync）：**异步** execFile / exec 的
+//      有界性靠第 6 条把调用点收进 exec.js 的异步包装来保证，而那条收编不在本闸判据里
+//      （由 K-W2 的「裸调用点=0」间接守）；`os/spawn.js` 三入口是长驻子进程语义，**无超时概念**，
+//      挂起的长驻进程由域侧看护逻辑负责，本闸不管。
+//   3. 调用表达式靠**字面量名** `execFileSync(` / `spawnSync(` 抓取：解构改名
+//      （`const { execFileSync: ex } = require(…); ex(…)`）不命中；改名后连「绕过执行器」都查不出。
+//   4. 执行器内部是 `o.killSignal || 'SIGKILL'` / `o.timeoutMs || o.timeout || 默认` 形态：
+//      **调用方可覆盖**。killSignal 可被降成 SIGTERM；timeout 只能被改大（传 0 因 falsy 落回默认）。
+//      本闸只看默认值，不看逐次实参。
+//   5. 扫描面 = `src/**.js` + `bin/*`（P2 后补）；`release/scripts/`、`ui/`、插件 CLI 不在内。
 // ═══════════════════════════════════════════════════════════════════════════
 
 const fs = require('node:fs');

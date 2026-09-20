@@ -7,6 +7,7 @@
 // 方法名/{ methods }/逐字体保留，装配路径不变；process-tree-kill-test 的两条形态钉子同批改为**按符号名**。
 const pidlook = require('../../platform/os/pidlookup');
 const platform = require('../../platform/os/index');
+const { writeAtomic } = require('../../platform/util/fs');
 const fs = require('node:fs');
 const path = require('node:path');
 
@@ -63,18 +64,17 @@ module.exports = {
   },
 
   /** 落归属凭据：声明「pid=<dshPid> 的主 DSH 由本守卫（guardPid）负责」。
-   *  spawn 与 adopt 两条取得所有权的路线都要写。tmp 名含 pid（多实例并发不互相覆盖）
-   *  + rename 原子替换——与 daemon 身份文件同法，E-1（原子写统一）落地时一并归口。 */
+   *  spawn 与 adopt 两条取得所有权的路线都要写。落盘走 E-1 原子写单源（platform/util/fs 的
+   *  writeAtomic：tmp 名含 pid+时间戳，多实例并发不互相覆盖，rename 原子替换）+ 0600
+   *  ——与 daemon 身份文件同法。 */
   _writeMainOwner(dshPid, port) {
     const d = depsOf(this);
     try {
       const p = d.mainOwnerFile();
       if (!p || !dshPid) return;
-      const tmp = p + '.' + process.pid + '.tmp';
-      fs.writeFileSync(tmp, JSON.stringify({
+      writeAtomic(p, JSON.stringify({
         guardPid: process.pid, dshPid, port: port || null, startedAt: Date.now(),
       }), { mode: 0o600 });
-      fs.renameSync(tmp, p);
     } catch (e) {
       d.logger() && d.logger().warn && d.logger().warn('writeMainOwner: ' + ((e && e.message) || e));
     }

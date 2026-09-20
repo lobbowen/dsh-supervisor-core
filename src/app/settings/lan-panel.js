@@ -6,6 +6,7 @@
 // 阶段六 B-5：直接调用与属性访问去 this（改经按 host 缓存的**惰性 deps**）。方法名/{ methods }/逐字体保留。
 const fs = require('node:fs');
 const netInfo = require('../../platform/os/netinfo');
+const { writeAtomic } = require('../../platform/util/fs');
 
 const DEPS = new WeakMap();
 function depsOf(host) {
@@ -75,9 +76,7 @@ module.exports = {
           try {
             const doc = JSON.parse(fs.readFileSync(d.configPath(), 'utf8'));
             doc.apiHost = host;
-            const ctmp = d.configPath() + '.tmp';
-            fs.writeFileSync(ctmp, JSON.stringify(doc, null, 2), { mode: 0o600 });
-            fs.renameSync(ctmp, d.configPath()); // 原子 + 0600
+            writeAtomic(d.configPath(), JSON.stringify(doc, null, 2), { mode: 0o600 }); // 原子 + 0600
           } catch (e) {
             persistError = 'persist apiHost: ' + e.message;
             d.logger().error(persistError);

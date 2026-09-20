@@ -50,9 +50,24 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     } else console.log('SKIP R5-b（Windows 无 POSIX 权限位）');
     const strays5 = fs.readdirSync(D5).filter((f) => /\.tmp/.test(f));
     check('R5-c 写完成无 .tmp 残留（rename 原子替换）', strays5.length === 0, strays5.join(','));
+    // E-1（原子写单源，2026-09-20）：frp.js 不再自拼 tmp 名，落盘统一走 platform/util/fs 的 writeAtomic。
+    //   旧判据直接正则 `settingsFile + '.' + process.pid` 与 `writeFileSync(tmp, …mode:0o600)`——
+    //   单源化后两处字面量都搬进 helper，判据会**静默变空转**（永远 FAIL 或永远 PASS 都不对）。
+    //   现判据拆成两条真实不变量，各配反向例：① 调用点经单源且显式收口 0600；② 单源 tmp 名唯一（pid+ts）。
     const frpSrc = fs.readFileSync(path.join(ROOT, 'src', 'domains', 'relay', 'frp.js'), 'utf8');
-    check('R5-d saveSettings tmp 名含 pid（防预测名劫持/并发互踩；旧形态固定 .tmp）',
-      /settingsFile\s*\+\s*'\.'\s*\+\s*process\.pid/.test(frpSrc) && /writeFileSync\(tmp,[\s\S]{0,80}mode:\s*0o600/.test(frpSrc), 'ok');
+    const fsuSrc = fs.readFileSync(path.join(ROOT, 'src', 'platform', 'util', 'fs.js'), 'utf8');
+    const goesThroughSingleSource = (src) => /writeAtomic\(\s*this\.settingsFile,[\s\S]{0,140}mode:\s*0o600/.test(src);
+    const tmpNameIsUnique = (src) => /'\.tmp\.'\s*\+\s*process\.pid\s*\+\s*'\.'\s*\+\s*Date\.now\(\)/.test(src);
+    check('R5-d frp.json 经单源 writeAtomic 落盘并显式 0600（authToken 明文）',
+      goesThroughSingleSource(frpSrc), 'ok');
+    check('R5-d2 单源 tmp 名含 pid+时间戳（防预测名劫持/新旧守卫并发互踩）',
+      tmpNameIsUnique(fsuSrc), 'ok');
+    const LEGACY_CALLSITE = "    fs.writeFileSync(this.settingsFile + '.tmp', JSON.stringify(s));\n    fs.renameSync(this.settingsFile + '.tmp', this.settingsFile);";
+    const LEGACY_HELPER = "  const tmp = fp + '.tmp';\n  fs.writeFileSync(tmp, data, { mode: 0o600 });";
+    check('R5-d3 反向：判据能识别旧的固定 .tmp 名写法（非空转）',
+      !goesThroughSingleSource(LEGACY_CALLSITE) && !tmpNameIsUnique(LEGACY_HELPER), 'hit');
+    check('R5-d4 反向：当前写法不被旧判据误判（单源确已替换自拼 tmp）',
+      !/settingsFile\s*\+\s*'\.'\s*\+\s*process\.pid/.test(frpSrc), 'ok');
     const st5 = m5.status();
     check('R5-e status().settings 不回显 authToken 明文，只报 authTokenSet（AUDIT B-7，与 access.js 同规）',
       !('authToken' in st5.settings) && st5.settings.authTokenSet === true && !JSON.stringify(st5).includes('S3CR3T-frp'),

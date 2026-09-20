@@ -4,6 +4,7 @@
 
 const fs = require('node:fs');
 const path = require('node:path');
+const { writeAtomic } = require('../../util/fs');
 
 /** 归一化一条记录；不合法返回 null。 */
 function normRecord(r) {
@@ -32,9 +33,7 @@ function loadRecords(file) {
 function saveRecords(file, records) {
   try {
     fs.mkdirSync(path.dirname(file), { recursive: true });
-    const tmp = file + '.tmp';
-    fs.writeFileSync(tmp, JSON.stringify({ records }, null, 2), { mode: 0o600 });
-    fs.renameSync(tmp, file);
+    writeAtomic(file, JSON.stringify({ records }, null, 2), { mode: 0o600 });
   } catch { /* 持久化失败不阻塞运行 */ }
 }
 

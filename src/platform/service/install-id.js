@@ -8,6 +8,7 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const crypto = require('node:crypto');
+const { writeAtomic } = require('../util/fs');
 const { supervisorDir } = require('./state-root');
 
 /** 标识文件名（位于内核状态根下；壳读同一文件，见契约跨仓一致性）。 */
@@ -67,12 +68,7 @@ function readInstallId() {
     const dir = path.dirname(fp);
     fs.mkdirSync(dir, { recursive: true });
     const id = crypto.randomUUID();
-    const tmp = fp + '.tmp';
-    fs.writeFileSync(tmp, id + '\n', { mode: 0o600 });
-    // mode 只对新建生效：目标文件若已存在（竞态）须写后收口。
-    try { fs.chmodSync(tmp, 0o600); } catch {}
-    fs.renameSync(tmp, fp);
-    try { fs.chmodSync(fp, 0o600); } catch {}
+    writeAtomic(fp, id + '\n', { mode: 0o600 });
     _cached = { id: id.toLowerCase(), source: 'created' };
     return _cached;
   } catch (e) {

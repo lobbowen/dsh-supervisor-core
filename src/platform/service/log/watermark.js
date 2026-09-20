@@ -3,6 +3,7 @@
 // 聚合流水位持久化（纯 IO）：读回数字水位；原子写（tmp + rename，失败只告警）。
 
 const fs = require('node:fs');
+const { writeAtomic } = require('../../util/fs');
 
 // 从文件读回水位（仅数字键）；文件缺失/损坏静默。
 function loadWatermark(file, sources, into) {
@@ -16,9 +17,7 @@ function loadWatermark(file, sources, into) {
 function saveWatermark(dir, file, wm, logger) {
   try {
     fs.mkdirSync(dir, { recursive: true });
-    const tmp = file + '.tmp';
-    fs.writeFileSync(tmp, JSON.stringify(wm));
-    fs.renameSync(tmp, file);
+    writeAtomic(file, JSON.stringify(wm), { mode: 0o600 });
   } catch (e) { logger && logger.warn && logger.warn('[hub] watermark save: ' + (e && e.message)); }
 }
 

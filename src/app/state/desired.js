@@ -3,6 +3,7 @@
 // 用户意图写入工厂（真 ctor 注入）：可只 require 本模块 + 假 deps 直测。
 
 const fs = require('node:fs');
+const { writeAtomic } = require('../../platform/util/fs');
 
 function createDesired(deps) {
   const g = deps || {};
@@ -89,9 +90,7 @@ function createDesired(deps) {
       }
       Object.assign(cur, patch);
       delete cur.switcherAutoStart; // 旧键随持久化收敛删除
-      const tmp = p + '.tmp';
-      fs.writeFileSync(tmp, JSON.stringify(cur, null, 2), { mode: 0o600 });
-      fs.renameSync(tmp, p);
+      writeAtomic(p, JSON.stringify(cur, null, 2), { mode: 0o600 });
       return true;
     } catch (e) {
       const l = logger();

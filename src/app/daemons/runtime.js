@@ -15,6 +15,7 @@ const scripts = require('./scripts');
 const fs = require('node:fs');
 const path = require('node:path');
 const pidlook = require('../../platform/os/pidlookup');
+const { writeAtomic } = require('../../platform/util/fs');
 // process.js 导出命名导出 `{ DaemonLifecycle }`，且与本文件同目录。
 const { DaemonLifecycle } = require('./process');
 
@@ -138,9 +139,7 @@ module.exports = {
         })), tokens }, null, 1);
         if (body === d.readLastLanStateJson()) return;
         fs.mkdirSync(dir, { recursive: true });
-        const tmp = file + '.tmp';
-        fs.writeFileSync(tmp, body, { mode: 0o600 });
-        fs.renameSync(tmp, file);
+        writeAtomic(file, body, { mode: 0o600 });
         d.writeLastLanStateJson(body);
       } catch (e) {
         d.logger() && d.logger().warn && d.logger().warn('_syncLanState: ' + (e && e.message));

@@ -19,6 +19,7 @@
 
 const fs = require('node:fs');
 const path = require('node:path');
+const { writeAtomic } = require('../../platform/util/fs');
 // 纯模型（词表/entry/所有权）已拆到 managed-object.js（DF-2：registry ≤400；DF-3：纯/IO 分离）。
 // 公开导出面不变（本文件 re-export createEntry/kindMeta/...）。
 const { DESIRED, MANAGED_KINDS, kindMeta, registerKind: registerManagedKind, isDomainA, createEntry, normalizeOwnership } = require('./managed-object');
@@ -132,9 +133,7 @@ class ManagedRegistry {
           startedAt: o.startedAt, createdAt: o.createdAt, updatedAt: o.updatedAt,
         }, isDomainA(o.kind) ? { guardian: o.guardian === true } : {})),
       }, null, 2);
-      const tmp = this.file + '.tmp';
-      fs.writeFileSync(tmp, body, { mode: 0o600 });
-      fs.renameSync(tmp, this.file);
+      writeAtomic(this.file, body, { mode: 0o600 });
     } catch (e) { this._log('warn', 'managed-objects 持久化失败: ' + (e && e.message)); }
   }
 
