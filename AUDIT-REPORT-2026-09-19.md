@@ -857,6 +857,89 @@ PR #10 以 squash 合入 `master` = `a8d8ce8`，合入前核对 `git diff --stat
 
 **本批不含发布动作**：registry 仍 `0.1.5-BETA.10`，L-1 ~ L-4 的修复不在任何已发布产物内。
 
+## M. 第 3 轮残留清扫：把「以现在时态写着的假现状」逐条对齐代码
+
+两份独立的事实核查举报（内核 / 壳各一份）经**逐条读代码复核**后落地。复核是必要的：
+举报里有相当一部分不成立，照单全收会把新错误写进规范文档。
+
+### M-1 指引本机跑测试（直接违反 §0 硬标准）P0（引导性）
+
+`PLATFORM-CAPABILITY-MATRIX.md` §七 标题就是「如何运行审计」，正文给
+`node test/platform-capability-audit-test.js # 任意平台可跑` 等三条本机命令 ——
+与 `ACCEPTANCE-STANDARD.md:11`「所有测试一律不得在本机执行」正面对撞。
+单跑还绕过 `_preload.js` 的沙箱 HOME 注入（§G-6-8 记过的写穿真实状态根即此路径）。
+断言条数一并删除：多数断言在循环里展开，静态数不出来，写了就是会过期的数。
+
+同类：`RELEASE-STANDARD.md` §3「入口命令」把 `ci-core.sh`（内含 `npm test` 与构建）、
+`build:launcher`、`publish:core` 三行写成本机日常入口，而 §4 禁止事项明确列着本机执行
+`build:launcher`。现逐行标 **仅 CI 内**，只读的 `verify:versions` / `cred.sh doctor` 标「本机可跑」。
+
+### M-2 状态根前缀漂移（`~/.dsh/supervisor` 已是「仅用于一次性迁移」的旧位置）P1
+
+单源 `src/platform/service/state-root.js`：新根为 `DSH_SUPERVISOR_HOME` 覆盖，否则
+Linux `~/.local/state/dsh-supervisor`、macOS `~/Library/Application Support/dsh-supervisor`、
+Windows `%LOCALAPPDATA%\dsh-supervisor`；`legacySupervisorDir()` 只服务 `migrateLegacy()`。
+仍以现在时态写旧位置的：`README.md`（安装节 + 配置节 4 处）、
+`RELEASE-AND-UPDATE-MECHANISM.md` §6「隔离证明」、`release/README.md` 的「为什么要真实 home」、
+`release/scripts/_npm-auth.sh` 与 `release.sh` 的头注。全部改为 `<产品状态根>/supervisor/…` 并注明单源。
+**事故记录不改写**：`CREDENTIALS-STANDARD.md` §1 的泄漏现场路径按当时形态保留，只在其后加迁移说明。
+
+同段还有一处更硬的假：README 安装步骤写「`dsh-supervisor install` … 并写入 systemd unit、启用自启」
++「`systemctl --user start dsh-supervisor`」，而 `bin/dsh-supervisor:392-397` 明写 install
+**不再**部署任何服务定义（所有者是壳，D6）。照此执行的人会在没有 unit 的机器上等一个不存在的服务。
+
+### M-3 已整体移除的机制仍写成现行安全网 P1
+
+`CROSS-PLATFORM-BUILD-AND-UPDATE.md` §七 第 ⑤ 步与 §十一「安全网：内核预取 + … 有界回退」
+描述的 `attempts>2 判坏 -> pinnedVersions += v -> 用缓存重装 previous` 链已不存在
+（`domains/shell/journal.js:11`「无预取、无缓存、无回退，只有 pending->confirmed」，
+`pinnedVersions` 在 `src/` 零引用，反回归由 `shell-safety-net-test` R4/R10 守）。
+紧急回退的真实契约是 `rollback` dist-tag + RC-2 优先级 + RC-7 防降级下限。
+同文 §3.2 另一处：「三平台并行」+「命令行 `export TAURI_SIGNING_PRIVATE_KEY=<CI secret>`」
++「触发条件仅 tags + workflow_dispatch」三条同时错 —— 壳矩阵是四平台，触发是 push main / PR / tag /
+dispatch（F5 行早已纠正，本段没跟着改），而**在命令行 export 私钥**本身违铁律；
+当前两仓 secrets 实测只有 `NPM_TOKEN`，tag 发布由 workflow 主动拦下。
+
+### M-4 与自身产线矛盾的断言 P2
+
+| 位置 | 断言 | 实测 |
+|---|---|---|
+| `CROSS-…` §2.7 | 两仓 `ci/check-glibc.sh`「内容当前一致」 | `diff` 不同（注释与输出行已各走各路） |
+| `CROSS-…` §三 | 「不要用 `macos-14`」 | `build.yml:205-207` darwin-x64 腿**正在用** `macos-14` + `DSH_ARCH_OVERRIDE=x64`；`README.md` 亦据此把「无交叉编译」写死 |
+| `RELEASE-STANDARD` §4 | 「**唯一**仍受 `need_build` 影响的是 `release` job」 | `build.yml:249` 的 `--publish-only` 发布步骤同样受门控（同文 113 行自己就写着） |
+| `ACCEPTANCE-STANDARD:19` | 引用 build.yml「139-142 行」 | 该行号段是 precheck 的版本探测；被引内容在 build job 注释（160-164）→ 改为按位置引用，不再记行号 |
+| `release/README` §scripts | 目录树自称「唯一可执行集」 | 漏 `cred.sh`、`export-consumers.sh` 两个真实存在的脚本 |
+| `RELEASE-STANDARD` §5（S8） | 给 `npm view` / `gh release view` 当发布后验证 | 本机无 `gh`/`curl` 且 registry 不可达（§G-6-5）→ 补「执行位置」限定，防把「本机查不到」当发布失败 |
+
+### M-5 `NO-CONSOLE-WINDOW-STANDARD` 的「当前实现位置」清单已失效 P2
+
+清单标着「以下路径为**当前实现位置**」，但其中 `domains/dist/index.js`、`domains/relay/frpmgr.js`、
+`guard/native/manager.js`、`guard/proc/daemon-lifecycle.js` 四条**文件根本不存在**（重构后改名/搬走）。
+改为：两份清单标注为立规时（2026-09-16）现场记录，当前缺口以门禁 K-W2 的实际扫描为准
+（`src/**` 裸子进程调用点 = 0，K-W3 反向夹具保证该判据不空转）。
+§1 的「14 处裸 spawn / 13 处缺 windowsHide」**不改**：13 = 14 − `exec.js` 里判据自身那处，
+与 K-W2 的计数方式一致，举报所称「应为 13/12」不成立。
+
+### M-6 否决的举报（登记以免下一轮当真）
+
+- 「workflow 用 `github-server-role` 作为 `pull_request_target` 的 branches 值 -> 永不匹配 -> 静默失去 CI」：
+  全仓 grep 无 `github-server-role` / `server_remote_url` 命中，build.yml 无该形态。**不成立**。
+- 「文档称产线不再调用 `npm view`」：precheck（`build.yml:148-151`）与 `publish-core.sh:102/126` 都在调 ——
+  这条举报本身是假的。
+- 「`ARCHITECTURE-ACCEPTANCE` 有 `npm run check:glibc` 这一不存在的脚本」「`DEVELOPMENT-TRACK` 说 `dist/`
+  经 `files` 字段发布」：两份文档均无此内容（grep 无命中）。
+- 「`release/README:92` 的 `frpmgr.js` / `dist/index.js` 是失效路径」：该句是「曾散落 5 份」的历史归因，非现状断言。
+- 「`KERNEL-DAEMON-CONTRACT` C1-C4 表现为现状」：表前已有「保留为**审计记录**（写的是修复前状态）」。
+- 「文档指引把令牌写进 `~/.npmrc` 违凭据规范」：`_npm-auth.sh` 是单源解析器，且发布脚本**绝不** `npm config set`；
+  真发布走临时 userconfig（0600、进程退出即删）。与规范一致。
+
+### M-7 本轮验证口径
+
+改动全为文档与两处脚本头注，**不含行为代码、不含发布动作**。本机只跑了纯静态门禁
+（`acceptance-standard-gate` / `docs-reference-gate` / `standards-uniqueness` /
+`release-spec-consistency` 各全绿，`comment-pin-gate` hard 0 失败）＋ `bash -n`；
+其余结论按常规由 CI 四平台矩阵裁决。
+
 ## 附录：分域审计明细索引
 
 | 域 | 范围 | 规模 | 主要文件锚点 |

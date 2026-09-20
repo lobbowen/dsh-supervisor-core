@@ -110,24 +110,30 @@ dsh-supervisor: /usr/bin/dsh-supervisor-gui      # 当前生产就是 deb 安装
 ### 3.2 发布流程（从 commit 到用户可更新）
 
 ```
-① 开发完成 → push 到壳仓 main
-② 打 tag：git tag v0.2.0 && git push origin v0.2.0
-    ⚠ **必须先 `git push origin main`**：实测（2026-09-11）若 tag 指向的提交不在任何分支上，
+① 开发完成 → PR 合入壳仓 main（壳 CI 在 push main / PR / `v*` tag / 手动 dispatch 都跑）
+② 打 tag：git push origin HEAD --tags
+    ⚠ **tag 指向的提交必须在某分支上**：实测（2026-09-11）若提交不在任何分支，
     **GitHub 不会为该 tag 推送触发 workflow**（run 数为 0）。原 `release-core.sh` 只 `git push --tags`
-    正是踩了这个坑；已改为 `git push origin HEAD --tags`。
-    （CI 触发条件从「push main + tags」**改为仅 tags + workflow_dispatch**——省配额，见 P4.3）
-③ 壳仓 CI（三平台并行）：
-      export TAURI_SIGNING_PRIVATE_KEY=<CI secret>
-      npx tauri build            # createUpdaterArtifacts: true → 产出安装包 + 更新产物 + .sig
+    正是踩了这个坑。
+③ 壳仓 CI（**四平台并行**：ubuntu-22.04 / windows-latest / macos-latest / macos-15-intel）
+    产安装包 + 更新产物 + `.sig` —— 前提是本机之外的 CI 里配好 minisign 私钥：
+    **当前两仓 secrets 实测只有 `NPM_TOKEN`**，故 tag 发布被 workflow 主动拦下，
+    非 tag 构建按「无密钥即不产签名、也不判红」执行（见壳仓 `docs/UPDATER-SIGNING-KEY.md`）。
 ④ 组装 npm 包：
       @dsh-sup/shell-linux-x64@0.2.0/
         ├── artifact/dsh-supervisor_0.2.0_amd64.deb    （更新产物本体）
         ├── artifact/....deb.sig                       （minisign 签名）
         └── shell-manifest.json                        （Tauri 静态清单）
-⑤ npm publish --access public --tag <beta|rc|latest>
+⑤ 发布（CI 内，持 `NPM_TOKEN`）：npm publish --access public --tag <beta|rc|latest>
 ⑥ 清单即通过 CDN 直达用户：
       https://unpkg.com/@dsh-sup/shell-linux-x64@latest/shell-manifest.json
 ```
+
+> **本节此前写的是「③ 壳仓 CI（三平台并行）+ 在命令行里 `export TAURI_SIGNING_PRIVATE_KEY=<CI secret>`
+> + `npx tauri build`，并把触发条件记成「仅 tags + workflow_dispatch」**：三平台是旧矩阵（现已四平台），
+> 触发口径在 2026-09-13 已恢复为「每次 push / PR 都跑完整矩阵」（省额度的正解是公开仓，不是砍触发，
+> 见 `CROSS-PLATFORM-BUILD-AND-UPDATE.md` F5），而**在命令行 export 私钥**更与「密钥只进 CI secret、
+> 不落任何命令行/文件」的铁律相违。按旧写法执行会得到一个不存在的签名产物加一次假成功。
 
 ### 3.3 清单格式（Tauri 静态 JSON 语义）
 
@@ -251,7 +257,8 @@ dsh-supervisor: /usr/bin/dsh-supervisor-gui      # 当前生产就是 deb 安装
 4. P1 复用 `dist` 仅限**只读**（`fetchLatestVersion`）；壳安装内核走 `core.rs::install_version`，
    **不调用**内核 `dist.runNpmInstall`。
 
-**隔离证明**：壳状态 `~/.dsh/shell/` vs 内核状态 `~/.dsh/supervisor/`（物理隔离）；
+**隔离证明**：壳状态 `<产品状态根>/shell/` vs 内核状态 `<产品状态根>/supervisor/`（同根不同目录，
+物理隔离；状态根单源 `src/platform/service/state-root.js`，旧位置 `~/.dsh/{shell,supervisor}` 只用于一次性迁移）；
 壳账本 `update-journal.json` vs 内核事件流（不同命名空间）。（历史注：`pinnedVersions` 拉黑机制已整体移除——壳现在只有 pending→confirmed；紧急回退改由 `rollback` dist-tag 显式触发。）
 内核 npm 包是**共享产物**，故以「单一写入者」而非物理隔离来保证一致性。
 

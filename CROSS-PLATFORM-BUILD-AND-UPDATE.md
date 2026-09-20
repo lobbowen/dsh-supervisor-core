@@ -160,8 +160,8 @@ $ bash ci/check-glibc.sh <binary> 2.35
   Linux 侧真正生效的防线仍是**矩阵基座固定 ubuntu-22.04**（由 `test/release-auth-test.js` R6-a3 钉死）。
   落点存在性由 `test/glibc-gate-test.js` 的 §E.2 静态断言执法（跨平台计分）。
 - **同步方式（2026-09-11 变更）**：`export-shell.sh` 已随双仓隔离删除，两仓不再自动同步。
-  内核 `ci/check-glibc.sh` 与壳仓同名脚本现为**各自维护**（内容当前一致）；
-  如需再单源化，应改用显式同步手段而非隐式导出目录。
+  内核 `ci/check-glibc.sh` 与壳仓同名脚本**内容已经各自演化**（2026-09-20 `diff` 实测不同），
+  不要再按「同一份脚本」理解两边行为；如需单源化，应改用显式同步手段而非隐式导出目录。
 
 ### 2.8 至此确认的结论
 
@@ -191,7 +191,11 @@ $ bash ci/check-glibc.sh <binary> 2.35
 
 > **重要修正**：此前方案假设「GitHub 已无 Intel macOS runner，darwin-x64 需交叉编译」。
 > **实测表显示 `macos-15-intel` 存在** → darwin-x64 可**原生构建**（更可靠，避免交叉编译的签名问题）。
-> 注意：macOS 14 镜像已进入弃用流程，**不要用 `macos-14`**。
+>
+> **但本仓当前不是这么跑的**：`build.yml` 的 darwin-x64 腿仍用 `macos-14`（arm64 runner）
+> \+ `DSH_ARCH_OVERRIDE: x64`，理由是 launcher 为架构无关纯 JS、两形产物等价，且该组合自
+> 0.1.5-BETA.1 起连续多轮 tag 构建实测成功。切 `macos-15-intel` 属**矩阵行为变更**，
+> 需真实构建验证后才写进本表 —— 在改完之前，「不要用 macos-14」只是**目标**，不是现状。
 
 ### 3.1 一个关键的额度事实
 
@@ -320,13 +324,20 @@ $ bash ci/check-glibc.sh <binary> 2.35
 ② 门 0：check(清单) → 有新版？
      否 / 离线 / 已达阈值 → 放行（落盘记录原因）
      是 → 备份当前产物 → download(CDN) → minisign 验签 → 平台安装 → app.restart()
-③ 新版本启动 → 写 shell.log + identity.json(attempt 自增) → 引导
+③ 新版本启动 → 写 shell.log + identity.json → 内核账本置 pending → 引导
 ④ 达 finish_boot → POST /shell/health {phase:ready, version}
 ⑤ 内核（若在运行，systemd 常驻）：
-     · 确认：version == journal.to → confirmed=true，清 journal，打 .ok
-     · 回退：未确认 且 attempts>2 → 判坏 → pinnedVersions += v → 用缓存重装 previous → 事件+通知
+     · 确认：version == journal.to → confirmed=true，清 journal
+     · **只做到这一步**：无预取、无缓存、无自动回退（见下方说明）
 ⑥ 失败（下载/验签/安装/提权拒绝）→ 选择页【重试】【继续】
 ```
+
+> **本节此前写的「attempts 自增 / attempts>2 判坏 / pinnedVersions 拉黑 / 用缓存重装 previous」
+> 整套机制已随双仓契约修订整体移除**，源码依据：`src/domains/shell/journal.js` 头注
+> 「无预取、无缓存、无回退，只有 pending->confirmed 状态机」，且 `pinnedVersions` 在 `src/` 已无任何引用。
+> **紧急回退现在走发布通道**：人工设 `rollback` dist-tag，客户端按 RC-2 优先级高于一切读取它，
+> 并须通过 RC-7 防降级下限（`RELEASE-CHANNEL-CONTRACT.md` §3/§4）。
+> 把它想成「内核会替你回滚壳」是错的：内核只是壳更新状态的**观察与审计方**。
 
 ---
 
@@ -381,7 +392,8 @@ $ bash ci/check-glibc.sh <binary> 2.35
   关键修复：Linux 基座从 24.04 降到 22.04 → 覆盖从「仅 24.04+」扩到「22.04+ / Debian 12+」
 签名：三平台都要（Linux 用 minisign；macOS 用 Developer ID + 公证；Windows 用代码签名）
 分发：产物发 npm 包 → unpkg 清单 → 壳直连自更新（实测 1.71MB/s）
-安全网：内核预取 + 备份 + 健康确认 + 有界回退（不受监督方由受监督方兜底）
+安全网：备份产物 + 健康确认（pending->confirmed）+ `rollback` dist-tag 显式紧急回退
+       （**无预取、无自动回退**，见 §七；不受监督方由受监督方兜底只到「观察 + 审计」为止）
 边界：壳管壳、内核管内核；绝不互相降级
 ```
 

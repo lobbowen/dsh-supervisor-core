@@ -92,13 +92,18 @@
 
 | 用途 | 命令 |
 |---|---|
-| CI 产线核心（测试 job 与 build 矩阵共用）| `bash release/scripts/ci-core.sh` |
-| 本地构建 launcher（本机平台）| `npm run build:launcher` |
+| CI 产线核心（测试 job 与 build 矩阵共用）| `bash release/scripts/ci-core.sh`（**仅 CI 内**：内含 `npm test` 与构建，本机执行即违反 §0 硬标准）|
+| 构建 launcher（**仅 CI 内**）| `npm run build:launcher` |
 | 四平台 launcher（**仅 CI 内**；本地 exit 2）| `npm run build:launcher:all` |
-| 本地子包组装 + dry-run | `npm run publish:core` |
+| 子包组装 + dry-run（**仅 CI 内**；本地跑到这一步即已产出发布形态）| `npm run publish:core` |
 | 真发布（**仅 CI 内**；本地 exit 2）| `npm run publish:core -- --publish` |
-| 版本一致性 | `npm run verify:versions` |
-| 凭据自检 | `bash release/scripts/cred.sh doctor` |
+| 版本一致性（只读校验，本机可跑）| `npm run verify:versions` |
+| 凭据自检（只读，本机可跑）| `bash release/scripts/cred.sh doctor` |
+
+> 上表的「仅 CI 内」不是提醒而是**判据来源**：`ACCEPTANCE-STANDARD.md` §4 把在本机执行
+> `build:launcher` / `build:launcher:all` 列为禁止事项（产生发布产物），真发布另有
+> `GITHUB_ACTIONS` 守卫（`ci-core.sh:40`、`build-launcher.sh` 本地 exit 2）。
+> 本表此前把前三行写成本机日常入口，与 §0「所有测试一律不得在本机执行」直接矛盾。
 
 > **红线**：不得绕过上述入口直接 `npm publish` / 手写 dist` —— 元数据与版本单源都在入口脚本里。
 
@@ -119,7 +124,7 @@
 - **四平台完整构建在每次 push / PR 都跑**（硬标准），不再被它跳过；
 - 故「已发布版本之后的改动」也会经过四平台构建验证 —— 这是删掉原门控的原因。
 
-**唯一仍受 `need_build` 影响的是 `release` job**（挂 Release 附件，避免对同一版本重复挂载）。
+**受 `need_build` 影响的两处都在「发布/挂载」侧：`build` job 内的真发布步骤（`--publish-only`）与 `release` job（挂 Release 附件）**；构建本身不受它管（上表）。
 
 分支保护（服务器端放行条件）**设计为**：
 
@@ -134,7 +139,7 @@
 > 恢复需仓库 admin 令牌，属用户决策，不是产线缺陷（内核侧记录见 AUDIT §K-1）。
 
 > required 只能设**每次都会跑**的 job。`build` 矩阵如今**每次 push / PR 都跑**（不再是条件 job），
-> 故它可作为 required；**唯一仍受 `need_build` 影响的是 `release` job**（见 §4 上文），
+> 故它可作为 required；`release` job 只在 tag 上跑（且受 `need_build` 门控，见 §4 上文），
 > 把它设为 required 会让 PR **永久阻塞**。
 
 ## 5. 发布后验证（S8）
@@ -146,6 +151,12 @@
 | GitHub Release | `gh release view v<ver>` 或 API | 4 个附件 |
 | CI 结论 | tag run 全绿 | precheck + test + 四平台 build + release |
 | 凭据仍有效 | `bash release/scripts/cred.sh verify` | 全部 OK |
+
+> **执行位置**：前三行的 registry / Release 查询需要**能访问公网 registry 与 GitHub API 的环境**，
+> 且本机既无 `gh` 也无 `curl`（`npm` 走内网代理亦不可达，见 `AUDIT-REPORT-2026-09-19.md` §G-6-5）。
+> 因此这套 S8 由**发布操作者所在环境**执行，或用 node `fetch` 查 API
+> （令牌经 `cred.sh path github-pat` 取路径后从文件读，不上 argv）；**不要**把「本机查不到」当成发布失败。
+> 最后一行的 `cred.sh verify` 走的是打点 URL，同样需要出网。
 
 > **⚠ 查询 npm 必须容忍传播延迟**（2026-09-14 实测）：刚发布后立即查询可能返回 E404 或旧版本列表 ——
 > 这是 **registry / CDN 传播延迟**，不代表发布失败。判据顺序：**先看 CI 的 publish 日志**
