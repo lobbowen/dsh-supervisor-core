@@ -80,7 +80,7 @@ class ManagedRegistry {
       // 逐条容错：单条坏 entry（缺 id/字段异常）不得中断整份加载，否则其后合法条目全部静默丢失。
       try {
         if (!o || !kindMeta(o.kind)) continue; // 未知类型/损坏条目：跳过（不阻断启动）
-        // guardian 只在域 A 传：域 B 的旧残留（早期版本曾写 true）由此被自然丢弃——
+        // guardian 只在域 A 传：域 B 的旧残留（早期版本曾写 true）经 createEntry 自然丢弃，
         //   配合 _save 不写该字段，升级后首次落盘即完成归一，无需一次性迁移脚本。
         const e = createEntry({ kind: o.kind, id: o.id, name: o.name, desired: o.desired, guardian: isDomainA(o.kind) ? o.guardian : undefined, ownership: o.ownership });
         // 恢复持久化的受管阶段(仅合法值;观测不恢复)
@@ -115,7 +115,6 @@ class ManagedRegistry {
           ownership: o.ownership,
           phase: o.phase, backoffLevel: o.backoffLevel,
           backoffUntil: (o.backoffUntil && o.backoffUntil > Date.now()) ? o.backoffUntil : null,
-          // 崩溃保护字段以目录为唯一副本（主 DSH 崩溃计数/窗跨守卫重启保持），不再只落 state.json
           restartCount: Number.isInteger(o.restartCount) ? o.restartCount : 0,
           crashWindowStart: o.crashWindowStart || null,
           crashWindowRestarts: Number.isInteger(o.crashWindowRestarts) ? o.crashWindowRestarts : 0,
