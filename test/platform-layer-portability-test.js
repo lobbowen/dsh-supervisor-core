@@ -436,9 +436,14 @@ const TMP = fs.mkdtempSync(path.join(os.tmpdir(), 'platport-'));
   });
   // 前提例：把「夹具规划 == 产品规划」本身变成可判事实。没有它，不同源只会表现为
   //   「一个进程都不起 + ok:false」，读起来像产品缺陷（本次就是这样绕了一个 run）。
-  check('X-9 条4 前提：产品预检所问的 bin 与夹具规划同源',
-    asked9.length > 0 && asked9[0] === wantSpawn,
-    '产品问=' + JSON.stringify(asked9) + ' 夹具规划=' + wantSpawn + ' 形态=' + plan9.kind);
+  //   ⚠ 三次改判（run 35488336734，chain 形态宿主）：chain 分支产品对**全部**候选做预检
+  //   （`filter` 语义，问完 7 个才挑第一个可用的），故「问的第一个 == 可达的第一个」恒假 ——
+  //   产品对、判据错。同源的正确表述是**序列逐位相同**，与可达位在哪一格无关。
+  const seq9 = plan9.kind === 'single' ? [plan9.bin] : plan9.candidates.map((c) => c.bin);
+  check('X-9 条4 前提：产品预检所问的 bin 序列与夹具规划逐位同源',
+    asked9.length > 0 && seq9.indexOf(wantSpawn) >= 0 && asked9.join('|') === seq9.join('|'),
+    '产品问=' + JSON.stringify(asked9) + ' 计划=' + JSON.stringify(seq9)
+    + ' 可达=' + wantSpawn + ' 形态=' + plan9.kind);
   check('X-9 条4 首个可达候选真的被 spawn（宿主无关，三端同形）',
     spawned9.length === 1 && spawned9[0] === wantSpawn, JSON.stringify(spawned9) + ' want=' + wantSpawn);
   check('X-9 条4 返回值如实上报（single 报 label / chain 报 bin，皆取自计划）',

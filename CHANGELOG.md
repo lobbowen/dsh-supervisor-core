@@ -42,9 +42,9 @@
   `epoch` 断在途轮次；内核更新桥补面板侧来源校验。
 - **凭据脚本（B-25 残留收口）**：`cred.sh put` 空 stdin 一律 fail-closed —— 先读唯一临时文件、
   校验非空才写穿目标，不再落 0 字节并把 status 置 active。
-- **CI 裁决补录（六轮红 + 一次崩溃，取证见 §H-7-5/6/9/11/12/13/14/15）**：在途 npm 的中止改走平台层整树终止
+- **CI 裁决补录（七轮红 + 一次崩溃，取证见 §H-7-5/6/9/11/12/13/14/15/16）**：在途 npm 的中止改走平台层整树终止
   （Windows 无进程组语义，旧 `process.kill(-pid)` 只杀得到 `npm.cmd` 壳，孙进程照旧写盘）；
-  测试夹具侧修十处「判据/夹具自身失效」——D-12 反向例期望倒置、D-11 权限位缺 win32 门控、
+  测试夹具侧修十一处「判据/夹具自身失效」——D-12 反向例期望倒置、D-11 权限位缺 win32 门控、
   D-1b 把函数声明数成调用点、D-3 桩件对 const 数组自增（被产品 try/catch 吞掉后恒判 0）、
   C-3 用绝对落盘计数当判据（漏算前一条合法写；改相对增量 + 逐例回显）、
   C-3 backoffGate 把形参**时刻** `now` 当成**已耗时长**（产品剩余 56000ms 算得对；期望翻正 +
@@ -57,7 +57,19 @@
   现把该事实本身立成带回显的判据、`underFake` 增 `realPath` 选项，并删掉那句已写进 SKIP 文案的错误引导）、
   X-9 条 4 的夹具与产品**规划不同源**（产品内部自己 `findChromeWin()`，win runner 装了 Chrome ⇒
   注入的 `binAvailable` 对产品真正询问的 bin 恒 false ⇒「一个进程都不起」伪装成产品缺陷；
-  现 `launchIsolated` 开 `opts.chromeBin` 注入缝、夹具与产品共用同一份输入，并补「产品所问 == 夹具所认」前提例）。
+  现 `launchIsolated` 开 `opts.chromeBin` 注入缝、夹具与产品共用同一份输入，并补「产品所问 == 夹具所认」前提例）、
+  X-9 条 4 的**前提例自身只验了一条分支**（chain 分支的产品先对**全部**候选做预检再挑首个可用者，
+  故「产品问的第一个 == 夹具规划的可达者」在 linux/macos 必红、windows 的 single 反而绿——run `35488336734`
+  回显给出全部 7 个询问；改断言**询问序列与计划序列逐位相同**，single/chain 两形同一条判据成立）。
+- **机器绑定清零（`no-dev-path` #110 首次被 CI 执行到即抓红，取证见 §H-7-16）**：① 本批 D 组写进
+  `native-dsh-binding-test` 的 `/home/.dsh/sessions` 夹具字面量（3 处）改为宿主中性的 `CLAIM` 常量
+  （期望值与写入值同源，不再复制字面量）；② 审计报告里逐字抄录的 windows 日志原文含 runner 账号目录，
+  改写为占位形态（事实与判据不变）。改前按**门禁同一口径**（同 `HOME_RE`、同 GENERIC 集合、同剥离器、同
+  SKIP 列表）在本机穷举 464 个代码文件与全仓 `.md`，确认零 offender——不吃「修一个再红一个」的 run。
+- **ACL 收紧挂账结案（§H-8-9 → 实测）**：windows job 真实 PATH 下 `hasIcacls()=true`、`icacls /?` 探针
+  `{ok:true, code:"0"}`，「可用 ⇒ `protectFile/protectDir` 绝不谎报 `mode=none`」成立；上一轮靠推演立的前提
+  换成实测事实，同时如实登记 win32 那一支「不可用 ⇒ 如实 none」是恒不触发的蕴含式（其证据在 POSIX 宿主伪造
+  win32 + 清空 PATH 那一支）。
 - **架构越界收口（CP-1 首次判红即真违规）**：第 4 批 D 组在 `domains/router/providers/probe.js` 自带的
   `sameProcessGroup` 含 `process.platform === 'win32'` 与 `/proc/<pid>/stat` 读取——平台知识的家只有一处。
   实现下沉 `platform/os/pidlookup`（与 `isAlive`/`readCmdline` 同族）并经门面导出，业务域改调

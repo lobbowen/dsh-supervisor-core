@@ -160,14 +160,16 @@ check('B21 反向：旧无绑定形态被判失败', oldS.indexOf('host._bindNat
     config: { command: ['node', path.join(mdir, 'no-such-bin')], packageName: '@deepseek-ai/dsh' },
   };
   const readM = () => { try { return JSON.parse(fs.readFileSync(mfFile, 'utf8')); } catch { return null; } };
+  // 认领路径取自夹具目录（宿主中性）：本仓 X-1 门禁禁止测试里钉死操作者的绝对路径。
+  const CLAIM = [path.join(mdir, 'dsh-home', 'sessions')];
 
-  mf.record(host, '1.0.0', ['/home/.dsh/sessions'], '/npmroot');
+  mf.record(host, '1.0.0', CLAIM, '/npmroot');
   const m1 = readM();
-  check('D-9 首装显式传认领被写入', !!m1 && JSON.stringify(m1.dataPaths) === JSON.stringify(['/home/.dsh/sessions']), JSON.stringify(m1 && m1.dataPaths));
+  check('D-9 首装显式传认领被写入', !!m1 && JSON.stringify(m1.dataPaths) === JSON.stringify(CLAIM), JSON.stringify(m1 && m1.dataPaths));
 
   mf.record(host, '1.0.1', undefined, '/npmroot');
   const m2 = readM();
-  check('D-9 升级（不传 dataPaths）继承上一代认领', !!m2 && JSON.stringify(m2.dataPaths) === JSON.stringify(['/home/.dsh/sessions']) && m2.version === '1.0.1', JSON.stringify(m2 && m2.dataPaths));
+  check('D-9 升级（不传 dataPaths）继承上一代认领', !!m2 && JSON.stringify(m2.dataPaths) === JSON.stringify(CLAIM) && m2.version === '1.0.1', JSON.stringify(m2 && m2.dataPaths));
 
   mf.record(host, '1.0.2', [], '/npmroot');
   const m3 = readM();
