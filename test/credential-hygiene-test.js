@@ -230,9 +230,14 @@ const TMP = fs.mkdtempSync(path.join(os.tmpdir(), 'credgate-'));
   check('D-10 不给目标目录 -> 拒绝且不用默认值', r10a.code !== 0 && /用法/.test(r10a.out), 'exit=' + r10a.code);
   const inInst = path.join(TMP, 'inst-root', 'supervisor', 'instances', 'inst-1', 'bak');
   const r10b = runCredIn(d1, ['backup', inInst], '');
-  check('D-10 目标在实例目录内 -> 拒绝（ephemeral 无意义）',
-    r10b.code !== 0 && /实例目录/.test(r10b.out), 'exit=' + r10b.code);
+  check('D-10 目标在实例目录内 -> 拒绝（ephemeral 无意义）', r10b.code !== 0,
+    'exit=' + r10b.code + ' msg=' + r10b.out.trim().slice(-40));
+  check('D-10 拒绝理由点名「实例目录」', /实例目录/.test(r10b.out), r10b.out.trim().slice(0, 40));
   check('D-10 拒绝时不创建目标目录', !fs.existsSync(inInst), 'ok');
+  // 反斜杠形态：Windows 传进来的就是这种路径，闸若只认 POSIX 分隔符则在 win 上整条漏判。
+  const r10w = runCredIn(d1, ['backup', 'X:\\ephemeral\\supervisor\\instances\\inst-9\\bak'], '');
+  check('D-10 反斜杠路径同样被拒（闸与分隔符无关）', r10w.code !== 0,
+    'exit=' + r10w.code + ' msg=' + r10w.out.trim().slice(-40));
   const okBak = path.join(TMP, 'persist-bak');
   const r10c = runCredIn(d1, ['backup', okBak], '');
   const outs = r10c.code === 0 ? fs.readdirSync(okBak) : [];

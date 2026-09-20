@@ -152,8 +152,11 @@ case "${1:-list}" in
     [ -n "$DEST" ] || DEST="${DSH_CRED_BACKUP_DIR:-}"
     [ -n "$DEST" ] || { echo "用法: cred.sh backup <目标目录>（或设 DSH_CRED_BACKUP_DIR）" >&2
       echo "  拒绝用默认值：历史事故就是把凭据放进了**实例目录**（ephemeral，换会话即失效）。" >&2; exit 2; }
-    case "$DEST" in
-      */.dsh/supervisor/instances/*|*/instances/inst-*) 
+    # 分隔符归一后再判：Windows 侧传进来的是反斜杠路径，POSIX 形态的 glob 闸会整体漏判，
+    # 而这条闸防的正是「把凭据备份进 ephemeral 实例子目录」——漏判即失效。
+    DEST_NORM=${DEST//\\//}
+    case "$DEST_NORM" in
+      */.dsh/supervisor/instances/*|*/instances/inst-*)
         echo "拒绝：目标在**实例目录**内（${DEST}）—— 那是 ephemeral 的，备份无意义。" >&2; exit 2;;
     esac
     STAMP=$(date +%Y%m%d%H%M%S)
