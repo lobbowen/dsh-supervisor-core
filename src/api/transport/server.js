@@ -37,9 +37,9 @@ function safeFail(res, err, where) {
  */
 function createServer(sup) {
   return http.createServer((req, res) => {
-    // 本地壳源 CORS 白名单（C-7，批 4）：判定与 CSRF 深化层（api/security.js 的
+    // 本地壳源 CORS 白名单：判定与 CSRF 深化层（api/security.js 的
     // isShellOrigin）共用同一事实源。旧版此处自带更宽字面量（`*.tauri.localhost` 通配），
-    // 造成 CORS 集合 ⊋ CSRF 集合的分裂：通配子源能读到响应却驱动不了写请求。
+    // 造成 CORS 集合 > CSRF 集合的分裂：通配子源能读到响应却驱动不了写请求。
     // 收敛后仅 tauri://localhost 与 tauri.localhost（http/https）放行，其余零 CORS。
     const shellOrigin = (() => {
       const o = req.headers.origin;

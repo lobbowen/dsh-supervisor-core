@@ -16,7 +16,7 @@ const { DistributionManager } = require('../../../platform/distribution/index');
 const shellDomain = require('../../../domains/shell/index');
 const { TaskRegistry } = require('../../../platform/service/tasks');
 const { IntentLedger } = require('../../../app/state/intents');
-// DS-G4（§4.2 反转法）：日志汇聚业务源名单 / 令牌分类的唯一声明处，require 即注入 platform。
+// DS-G4（反转法）：日志汇聚业务源名单 / 令牌分类的唯一声明处，require 即注入 platform。
 // 必须在 LogCore.init（构造 EventHub）与 new DshTokenService 之前。
 require('../log-sources');
 const { TOKEN_FILE_NAME } = require('../../../app/settings/token-kinds');
@@ -25,8 +25,8 @@ function composeCore(host, rawConfig, configPath) {
     host.config = normalize(rawConfig, domainConfigExtension());
     host.configPath = typeof configPath === 'string' ? configPath : null;
     // 数据目录访问保护（目录级一次，覆盖全部新建/既有子文件）。
-    //   Unix    ：chmod 0700（他人无法穿越目录，内部文件即使 0644 也不可达）。
-    //   Windows ：icacls 移除继承 (/inheritance:r) + 仅当前用户 (OI)(CI)；POSIX mode 在
+    //   Unix：chmod 0700（他人无法穿越目录，内部文件即使 0644 也不可达）。
+    //   Windows：icacls 移除继承 (/inheritance:r) + 仅当前用户 (OI)(CI)；POSIX mode 在
     //             Windows 被忽略，而本目录含 config.json(apiAccessKey)、
     //             dsh-main.json(remoteToken)、dsh-main-token.log(DSH 会话令牌)、frpc.toml(auth.token) 等敏感文件。
     //   NTFS 继承是动态的：对父目录设置继承 ACE 会同时作用于既有子项与后续新建子项，
@@ -72,18 +72,18 @@ function composeCore(host, rawConfig, configPath) {
     // 取代旧 _explicitAction 时间窗布尔（漏消费竞态已根治）。
     host.intents = new IntentLedger();
     host._stopping = false;
-    // 会话生命周期（契约 ARCHITECTURE-CONTRACT-phase0 §3）：
+    // 会话生命周期（契约 ARCHITECTURE-CONTRACT-phase0）：
     //   starting -> running -> stopping -> stopped；stopping/stopped 期间抑制一切自动拉起（INV-S1）。
     //   唯一入口 /session/stop；唯一读取口 /session/status（INV-S2/S4）。
     host._sessionState = 'starting';
     // 未守护崩溃停靠标记（意图单源，瞬态不持久）：guardian=false 时进程崩溃则置 true，
     // 使「desired=running 无条件拉起」不违背守护语义（崩溃不自救）；任何显式启动/重启/进入运行清除。
-    // 不持久化：守卫重启后按 desired 恢复运行（desired 是持久用户意图，契约 §5）。
+    // 不持久化：守卫重启后按 desired 恢复运行（desired 是持久用户意图，契约）。
     host._crashHalted = false;
-    // 用户「退出管家」的持久标记（2026-09-18 修）：退出后若守卫被外部/登录**重新拉起**，
+    // 用户「退出管家」的持久标记：退出后若守卫被外部/登录**重新拉起**，
     //   内存会话态会遗忘退出意图 -> 看护 90s 后把刚退出的桌面壳拉回（"很久以后又启动"）。
     //   退出时落盘本标记，boot 经 loadState 继承；看护**只在观测到壳已在线**时清除
-    //   （用户重新打开了壳）。只抑制看护，不影响 desired/main 恢复语义（契约 §5/§6）。
+    //   （用户重新打开了壳）。只抑制看护，不影响 desired/main 恢复语义。
     host._shellHalted = false;
     host._upgradeHold = false;      // 升级"先停后装"期间暂停自动拉起
     host._upgradeHoldSince = null;  // 兜底自愈：hold 卡死超时自动释放
@@ -141,7 +141,7 @@ function composeCore(host, rawConfig, configPath) {
     host.events = logCore.events;
     host.logger = logCore.logger;
     host.dshWriter = logCore.dshWriter;
-    // 守卫侧聚合读路径（契约 §3.6）：真实 hub 或 EventReader 降级适配器，永不为 null，
+    // 守卫侧聚合读路径：真实 hub 或 EventReader 降级适配器，永不为 null，
     // 消费方（api/lifecycle.js）无需再写 if(hub)...else... 双语义分支。
     host.eventHub = logCore.reader || logCore.hub;
     // 唯一令牌节点：全系统 DSH 访问令牌的统一获取/存储/分发（原生与沙箱共用同一服务，
@@ -164,7 +164,7 @@ function composeCore(host, rawConfig, configPath) {
       registryFile: path.join(swDir, 'registry.json'),
       events: host.events,
       logger: host.logger,
-      // 灰度名单事实（契约 §5）：本机配置 canary:true。仅对 @dsh-sup/* 生效。
+      // 灰度名单事实：本机配置 canary:true。仅对 @dsh-sup/* 生效。
       canary: host.config.canary === true,
     });
     // 桌面壳更新安全网门面（状态/账本/健康/审计）。纯函数式模块：

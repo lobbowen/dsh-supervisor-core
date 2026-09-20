@@ -26,7 +26,7 @@ function loadTokens(file) {
   const out = [];
   for (const id of Object.keys(tokens)) {
     const t = tokens[id] || {};
-    // TK-7：池文件中任何非 captured 分类一律不加载，否则配置值/派生值会经 get/list 回流。
+    // 池文件中任何非 captured 分类一律不加载，否则配置值/派生值会经 get/list 回流。
     if (!kinds.isCaptured(t.kind)) continue;
     if (!t.value) continue;
     out.push({

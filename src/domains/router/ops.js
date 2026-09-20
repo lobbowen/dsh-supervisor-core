@@ -130,7 +130,7 @@ function createOps(deps) {
     scheduler.stop();
     stopAllInstances(); // 服务停止 = 实例一并停止（防孤儿进程残留占用动态端口段）
     for (const id of Object.keys(state.providerServers)) endpoint.stopProviderServer(id); // 供应商独立端点一并关闭
-    // B19：用量账本改节流落盘后，停服前强制 flush，未到点的账不丢。
+    // 用量账本改节流落盘后，停服前强制 flush，未到点的账不丢。
     try { if (d.usage && typeof d.usage.flush === 'function') d.usage.flush(); } catch (e) { logger.warn && logger.warn('usage flush: ' + ((e && e.message) || e)); }
     if (events) events.append('router_stopped', {});
     return { ok: true };

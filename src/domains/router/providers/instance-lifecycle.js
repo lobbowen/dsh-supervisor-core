@@ -17,7 +17,7 @@ function canStopInstance(provider, acc) {
   return true;
 }
 
-// B20（AUDIT-2026-09-19）：延后停止的有界期限。本地反代进程持有真实上游 key，冻结/非期望
+// 延后停止的有界期限。本地反代进程持有真实上游 key，冻结/非期望
 //   实例若被悬挂在途请求无限续命，可活过冻结很久。到期后 force kill（丢在途请求是预期语义）。
 const STOP_PENDING_MAX_MS = 5 * 60 * 1000;
 

@@ -1,6 +1,6 @@
 'use strict';
 
-// relay 域端口段声明（DIRECTORY-STRUCTURE-DESIGN §4.2「反转法」）。
+// relay 域端口段声明（DIRECTORY-STRUCTURE-DESIGN 「反转法」）。
 // 结构门禁 DS-G4 要求 platform 源码（去注释）不得出现业务域名词，relay 段作为域知识在此申报；
 // platform 端口注册表只提供通用池与分配算法。require 即申报（顶层副作用，模块缓存保证幂等）。
 // 未申报时行为与反转前一致：未注册段回退通用池 managed（relay 本就落在该池）。

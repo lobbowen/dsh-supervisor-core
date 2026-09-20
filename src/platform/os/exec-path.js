@@ -24,7 +24,7 @@ function candidateNames(base, platform) {
   return [...new Set(names)];
 }
 
-/** 条 3（批 4 C 平台）：文件存在且**可执行**。旧实现只 statSync().isFile()——POSIX 上
+/** 条 3：文件存在且**可执行**。旧实现只 statSync().isFile()——POSIX 上
  *  0644 的普通文件（半截安装、误拷贝）会被当作候选返回，交给 spawn 才以 EACCES 失败，
  *  且污染上层「已安装」判定。win32 无执行位语义，维持 isFile 即可。
  *  platform 可注入：宿主与注入平台不一致时（Linux CI 上注入 win32）行为按注入侧走，
@@ -90,7 +90,7 @@ function resolveExecutable(base, opts) {
   const E = env || process.env;
   if (o.envVar && E[o.envVar]) {
     const v = E[o.envVar];
-    // 条 3：显式覆盖同样必须是可执行文件（不可执行时继续常规解析，而非把 EACCES 留给 spawn）。
+    // 显式覆盖同样必须是可执行文件（不可执行时继续常规解析，而非把 EACCES 留给 spawn）。
     if (isExecutableFile(v, pl)) return v;
   }
   // platform / env 必须向下传播：否则 npmBin({platform:win32}) 在 Linux 上会按宿主规则
@@ -215,14 +215,14 @@ function knownDshEntries(opts) {
  *  「沙箱内可写文件被守卫执行」（相对入口按沙箱可写的 workingDir 解析）。
  *
  *  判据（**保守即拒绝**，代价不对称：误放行=执行任意代码，误拒绝=一次可读错误）：
- *    · 形态：`[node, <entry>, ...]` 取 entry = cmdArr[1]；否则 entry = cmdArr[0]（DSH 自身打头）。
- *    · **裸名**（不含路径分隔符，如 'dsh'）→ 放行：交 exec 的 PATH 解析，本层无法 realpath；
+ *    - 形态：`[node, <entry>, ...]` 取 entry = cmdArr[1]；否则 entry = cmdArr[0]（DSH 自身打头）。
+ *    - **裸名**（不含路径分隔符，如 'dsh'）-> 放行：交 exec 的 PATH 解析，本层无法 realpath；
  *      内核默认命令 defaultCommand 的 dshBin 正是此形态（native/main 依赖它，不得误拒）。
- *    · **相对路径**（含分隔符但不绝对）→ 拒绝：会按调用方 workingDir 解析；沙箱实例的 workingDir
- *      是**沙箱内可写**的 data 目录 ⇒「沙箱写文件 → 守卫重启执行」的低权限→高权限面。
- *    · **绝对路径** → 依次：① 调用方策略 allowEntry 放行；② realpath 后**精确等于** files 之一，
- *      或**位于** roots 之下；③ 否则拒绝。root/file 两侧均过 realpath，防「安装根内软链指向 /tmp」。
- *    · **ENOENT / realpath 失败** → 拒绝（fail-closed）：否则「先提交、后由外部创建」可绕过。
+ *    - **相对路径**（含分隔符但不绝对）-> 拒绝：会按调用方 workingDir 解析；沙箱实例的 workingDir
+ *      是**沙箱内可写**的 data 目录 =>「沙箱写文件 -> 守卫重启执行」的低权限->高权限面。
+ *    - **绝对路径** -> 依次：1) 调用方策略 allowEntry 放行；2) realpath 后**精确等于** files 之一，
+ *      或**位于** roots 之下；3) 否则拒绝。root/file 两侧均过 realpath，防「安装根内软链指向 /tmp」。
+ *    - **ENOENT / realpath 失败** -> 拒绝（fail-closed）：否则「先提交、后由外部创建」可绕过。
  *
  *  @param {string[]} cmdArr 有效启动命令（sandbox.effectiveCommand 的产出）
  *  @param {{

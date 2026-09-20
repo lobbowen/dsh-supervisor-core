@@ -20,7 +20,7 @@ function loopbackListening(port) {
 }
 
 /** bind 探测：回环双栈 + IPv6 any 都可绑定才判「可分配」；任何 bind 错误（EADDRINUSE 等）即不可分配。
- *  B14：分别试 127.0.0.1 与 ::1（漏 IPv6 侧会把 IPv6-only 监听者的端口分出去）；再试 `::`
+ *  分别试 127.0.0.1 与::1（漏 IPv6 侧会把 IPv6-only 监听者的端口分出去）；再试 `::`
  *  （Linux 非 V6ONLY 的 any 绑定同时占住 v4 端口，只试 specifics 会误判空闲）。
  *  剩余 TOCTOU（bind 成功后、消费方真正 listen 前被抢）无法在探测层根除：分配登记处已做
  *  「登记后二次确认、被抢即撤销」的有界复检（alloc.js）；消费方启动仍须按 bind 失败如实报错。 */
@@ -51,7 +51,7 @@ function listeningPid(port) {
 }
 
 /** 按 cmdline 特征回收「本工程旧代」进程（YAMA 免疫）；返回终止数。
- *  条 2（批 4 C 平台）fail-closed：cmdMark 与 cfgStr **二者皆必填**。旧实现只闸 cmdMark，
+ *  条 2fail-closed：cmdMark 与 cfgStr **二者皆必填**。旧实现只闸 cmdMark，
  *  cfgStr 缺省时过滤条件（`cfg && 不含则跳过`）整条失效 —— 等价「全部匹配」，
  *  pgrepList 命中的任何同名脚本进程（含他人/其它配置的 lan-daemon）一律被 SIGTERM 误杀。 */
 function reclaimByCmdMark(cmdMark, cfgStr) {

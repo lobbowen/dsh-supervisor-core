@@ -1,6 +1,6 @@
 'use strict';
 
-// app/settings/token-kinds.js —— 令牌分类/恢复文件名/源推断的业务声明（DS-G4 §4.2 反转法唯一声明处）。
+// app/settings/token-kinds.js —— 令牌分类/恢复文件名/源推断的业务声明（DS-G4 反转法唯一声明处）。
 // platform 令牌组件只保留注册接口（kinds/pool），值须与 platform 同名字面量逐字一致。
 // 注入时机：require 即注入（模块顶层副作用），app/assembly/compose.js 构造 DshTokenService 前 require 本模块；
 //   Node 模块缓存保证只注入一次。未注入时 kind 注册表为空、无推断映射。
@@ -11,7 +11,7 @@
 const kinds = require('../../platform/service/token/kinds');
 const pool = require('../../platform/service/token/pool');
 
-/** §1 全部 kind（顺序与 SSOT 表格一致）；值须与 platform kinds.js 同名对象逐字一致。 */
+/** 全部 kind（顺序与 SSOT 表格一致）；值须与 platform kinds.js 同名对象逐字一致。 */
 const KINDS = {
   // 1) 原生 main 会话令牌：DSH 进程自己生成，我方只能捕捉；每次 DSH 重启轮换。
   'dsh-main': {

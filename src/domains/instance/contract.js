@@ -1,6 +1,6 @@
 'use strict';
 
-// instance 域契约声明（DOMAIN-STRUCTURE-DESIGN §10 / design-notes/domain-contract-and-gates.md B.1）。
+// instance 域契约声明（DOMAIN-STRUCTURE-DESIGN /domain-contract-and-gates.md B.1）。
 // **纯数据，零 require、零副作用**（DF-3），数据来源均为实测：exports 取自 index.js 的 module.exports
 // 字面量键（DG-9 双向一致）；PUBLIC_API 为全仓消费点与对外契约面（DG-10）；classApi 为 InstanceManager
 // 公开方法/访问器；deps 为 ctor 的 opts.* 读取集与出站 hooks；pure 为零 IO require 的纯文件（DG-3）。
@@ -10,12 +10,12 @@
 module.exports = {
   domain: 'instance',
 
-  // 门面对外导出面（≡ index.js module.exports 字面量键；DG-9 双向一致）
+  // 门面对外导出面（== index.js module.exports 字面量键；DG-9 双向一致）
   exports: ['InstanceManager'],
 
-  // 域间契约（被 app/**、api/**、其它域消费；DG-10 消费方成员必须 ⊆ 本表）
+  // 域间契约（被 app/**、api/**、其它域消费；DG-10 消费方成员必须 <= 本表）
   PUBLIC_API: [
-    // instances 活数组（EXECUTION-CONTRACT §3.3 冻结接口：store 唯一持有，getter 每次返回当前数组）
+    // instances 活数组（EXECUTION-CONTRACT 冻结接口：store 唯一持有，getter 每次返回当前数组）
     'instances',
     // 查询接口（DG-11 契约面：跨域消费方只经这些方法访问，不直读活数组）
     'all', 'forEach', 'find', 'map',
@@ -43,7 +43,7 @@ module.exports = {
     ],
   },
 
-  // ctor 依赖（DG-9 的 deps ≡ opts.* 检查；hooks 为 DG-4b 豁免出处）
+  // ctor 依赖（DG-9 的 deps == opts.* 检查；hooks 为 DG-4b 豁免出处）
   deps: {
     dir: '实例根目录（守卫状态目录下的 instances/）',
     logger: '日志器',
@@ -65,7 +65,7 @@ module.exports = {
     },
   },
 
-  // 出站 hooks 别名（与 deps.hooks 同源；门禁读 deps.hooks ∪ hooks）
+  // 出站 hooks 别名（与 deps.hooks 同源；门禁读 deps.hooks 并 hooks）
   hooks: {
     onRemoteChange: true, onRemove: true, onInstanceStart: true,
     onInstanceStop: true, onCreate: true, onDestroy: true,

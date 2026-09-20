@@ -140,16 +140,16 @@ function installSession(host) {
   host.sessionState = () => session.state();
   host._setSessionState = (s) => { session.setState(s); };
   host._sessionHalting = () => session.halting();
-  // E-3（AUDIT-2026-09-19）：意图轴单源谓词——「守卫/会话正在退出」的唯一判据。
-  //   两原子：_stopping（守卫自身关停）∨ session halting（stopping/stopped）。
+  // 意图轴单源谓词——「守卫/会话正在退出」的唯一判据。
+  //   两原子：_stopping（守卫自身关停）或 session halting（stopping/stopped）。
   //   一切自愈/拉起/收敛/补做入口一律经本谓词门禁，禁止再在调用点各自拼合子集
-  //   （9-18 事故的根因形态就是谓词漂移）。
-  //   ⚠ _shellHalted 不在此谓词内：它是**桌面壳域**的持久退出意图（跨守卫重启），
-  //     只否决「壳看护」自愈；主 DSH 的恢复权威是 desired（契约 §5/§6：守卫重启后
+  //   （谓词漂移会让门禁失效）。
+  //   _shellHalted 不在此谓词内：它是**桌面壳域**的持久退出意图（跨守卫重启），
+  //     只否决「壳看护」自愈；主 DSH 的恢复权威是 desired（守卫重启后
   //     desired=running 即恢复），若把 _shellHalted 混入本谓词会破坏恢复语义，且
   //     headless（无壳看护、_shellHalted 无清除路径）下形成永久死锁。壳域判据见 _shellExitIntended。
   host._exitIntended = () => !!(host._stopping || session.halting());
-  // 桌面壳域退出判据：通用退出 ∨ 持久 _shellHalted。仅供壳看护（bootstrap）使用。
+  // 桌面壳域退出判据：通用退出 或 持久 _shellHalted。仅供壳看护（bootstrap）使用。
   host._shellExitIntended = () => !!(host._exitIntended() || host._shellHalted);
   host._shouldRun = () => session.shouldRun();
   Object.defineProperty(host, '_sessionState', {

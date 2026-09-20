@@ -1,20 +1,20 @@
 'use strict';
 
 const platform = require('../../platform/os/index');
-// 执行边界的单一事实源：形态/路径类判定与启动期复校共用 exec-path 的同一纯函数（见 §8.4）。
+// 执行边界的单一事实源：形态/路径类判定与启动期复校共用 exec-path 的同一纯函数。
 const execPath = require('../../platform/os/exec-path');
 
 // 域：实例管理 API（沙箱实例 CRUD/启停/open-web/版本更新）。
 const crypto = require('node:crypto');
-// dsh-auth 换取（§1 派生令牌）直接引令牌组件的 exchange 子模块：
+// dsh-auth 换取（派生令牌）直接引令牌组件的 exchange 子模块：
 // 换取是令牌组件的职责（不是 platform/os 的平台差异）；不走 token/index.js 门面是因为
-// §4 冻结 API 只导出 DshTokenService/parseDshTokenLine，新增门面导出会扩大冻结面。
+// 冻结 API 只导出 DshTokenService/parseDshTokenLine，新增门面导出会扩大冻结面。
 const { bootstrapDshCookie } = require('../../platform/service/token/exchange');
 
 // 本机浏览器「一次性授权码」表（open-web 专用）。
 // 为什么需要它：open-web 要把本机系统浏览器带到实例的 DSH 页面。若把 DSH 令牌拼进 URL
 //   交给 platform.browser.open，该 URL 会原样进入 spawn argv，同机任意进程 ps 即可看到
-//   会话令牌（违反 SSOT §6 TK-G6，也与 router/providers/proxy.js 的「api-key 绝不进
+//   会话令牌（违反 SSOT TK-G6，也与 router/providers/proxy.js 的「api-key 绝不进
 //   cmdline」冲突）。现在令牌不出本进程：只把一次性、限时、用后即删的随机码交给浏览器，
 //   浏览器凭码回 /open，由服务端完成令牌换取 dsh-auth cookie。码泄露也几乎无用
 //   （30s TTL + 一次性 + 只能换到本机回环会话 cookie）。键=码，值={ id, exp }；仅内存不落盘。
@@ -78,7 +78,7 @@ function handleOpen(ctx) {
   return bootstrapDshCookie('127.0.0.1', it.port, tok).then((cookie) => {
     if (!cookie) return deny(400, '令牌换取失败');
     res.writeHead(303, {
-      // C-6（批 4）：SameSite=Strict——cookie 跨端口共享是本设计意图（回环同源，
+      // SameSite=Strict——cookie 跨端口共享是本设计意图（回环同源，
       // 端口不参与 site 判定），但必须杜绝跨站导航/子资源携带（旧值缺省=Lax）。
       'Set-Cookie': cookie + '; Path=/; HttpOnly; SameSite=Strict',
       'Location': 'http://127.0.0.1:' + it.port + '/',
@@ -92,18 +92,18 @@ function handleOpen(ctx) {
 // 信任边界：/instances/add 已经 originAllowed + （LAN 时）access key 鉴权，属操作者信任边界；
 //   但「任意可执行 / 任意脚本」不由本端点承担。路径存在性不作为放行依据。
 // 允许的两种形态（UI「启动命令」占位符即形态 A）：
-//   A. node 族打头 → [node, <绝对路径的 DSH 入口>, ...其后为参数]
-//   B. DSH 入口打头 → [<DSH 入口>, ...其后为参数]
+//   A. node 族打头 -> [node, <绝对路径的 DSH 入口>, ...其后为参数]
+//   B. DSH 入口打头 -> [<DSH 入口>, ...其后为参数]
 // 形态 A 的三重校验（缺一即 400）：
 //   1) command[1] 必须存在且是**绝对路径** —— 相对入口会按沙箱 workingDir（data 目录，
-//      沙箱内可写）解析，形成「沙箱写文件 → 守卫重启执行」的二级面；
+//      沙箱内可写）解析，形成「沙箱写文件 -> 守卫重启执行」的二级面；
 //   2) 必须是 DSH 入口，三者之一：官方包内入口（<前缀>/node_modules/@deepseek-ai/dsh/lib/bin.js，
 //      即内核 exec-path.dshJsIn()/resolveDsh() 的产出形态）、dsh 族 basename、或配置的 dshBin；
 //   3) 否则 ["node", "/tmp/evil.js"] 之类等于任意脚本执行。
-// 已知残留（如实登记，见 design-notes/_p3-c-api-hardening.md §1.4）：basename 判据仍可被
+// 已知残留（如实登记，见 design-notes/_p3-c-api-hardening.md）：basename 判据仍可被
 //   「把脚本命名为 dsh*.js / dsh / dsh-supervisor」绕过；真正的结构解是启动期（inst.id 可得后）
 //   用 realpath + 安装根前缀复校，属 domains/instance 范围。
-// 400 契约：结构非法、入口不在白名单、或 node 族缺少/非绝对/错配 DSH 入口 → 400 { ok:false, error }；
+// 400 契约：结构非法、入口不在白名单、或 node 族缺少/非绝对/错配 DSH 入口 -> 400 { ok:false, error }；
 //   缺失/[] = 走沙箱默认命令（默认命令由域内 effectiveCommand 生成，不经本闸）。
 function commandShapeError(command, dshBin) {
   if (command === undefined || command === null) return null;
@@ -163,7 +163,7 @@ function commandShapeError(command, dshBin) {
     return 'command[0] 为 node 时 command[1] 必须是 DSH 入口（dsh / dsh.js / dsh-supervisor / dsh-supervisor.js，'
       + '或 <前缀>/node_modules/@deepseek-ai/dsh/lib/bin.js）；' + FORMS;
   }
-  // 形态 B：入口自身即 DSH。相对路径（含分隔符）会被按沙箱可写工作目录解析 ⇒ 由共享判据拒绝（较 P4 收紧）。
+  // 形态 B：入口自身即 DSH。相对路径（含分隔符）会被按沙箱可写工作目录解析 => 由共享判据拒绝（较 P4 收紧）。
   return sharedErr + '；' + FORMS + '；需要其它可执行请走插件安装通道';
 }
 
@@ -178,7 +178,7 @@ function handle(ctx) {
     if (req.method === 'GET' && pathname === '/instances') {
       // 附加打开链接：本机直连（带 DSH 认证 token）与局域网 relay（免认证）。
       // token 一律从唯一令牌节点按实例解析（见 tokOf）：原生与沙箱同源。
-      // L3b：sup.listLan() 在 lan-daemon 监督模式为异步（ctl 委托），统一 Promise.resolve 兼容。
+      // sup.listLan() 在 lan-daemon 监督模式为异步（ctl 委托），统一 Promise.resolve 兼容。
       // 概念清分：
       //   instances[] = 沙箱实例（管理对象：CRUD/启停/升级全属沙箱 API）
       //   native      = 原生主干 main（唯一；其生命周期/升级不属 /instances 沙箱 API：

@@ -1,7 +1,7 @@
 'use strict';
 
 // STEP7 分片 F —— 沙箱实例监督适配（heartbeat 拍 -> 实例域 + 目录同步）
-// 导出形态按 STEP7-INTERFACE-CONTRACT §2 统一为 { methods }；方法内部继续使用 this。
+// 导出形态按 STEP7-INTERFACE-CONTRACT 统一为 { methods }；方法内部继续使用 this。
 //
 // 阶段六 B-5：宿主绑定切面去 this（改经按 host 缓存的**惰性 deps**）。方法名/{ methods }/逐字体保留。
 const DEPS = new WeakMap();
@@ -33,7 +33,7 @@ module.exports = {
     async _sandboxSuperviseOnce(entry) {
       const d = depsOf(this);
       if (d.stopping()) return { ok: false, error: 'guard stopping' };
-      // INV-S1 全域（契约 §3.3）/E-3：退出意图（单源谓词 _exitIntended = stopping ∨ session halting）-> 沙箱不再监督收敛。
+      // INV-S1 全域/E-3：退出意图（单源谓词 _exitIntended = stopping 或 session halting）-> 沙箱不再监督收敛。
       if (d.exitIntended()) return { ok: false, error: 'exit intended' };
       if (entry && d.instances() && typeof d.instances().supervise === 'function') {
         try {
@@ -56,7 +56,7 @@ module.exports = {
     },
     /** 目录项 <- 实例域状态对齐（heartbeat 监督拍后调用）：实例已删 -> 注销（防死登记）；
      *  实例存在 -> name/guardian/ownership 经 _managedSandboxSpec 申报，phase 落目录唯一词表。
-     *  ⚠ **desired 不同步**（D-8/铁律 1）：观测推导的应然写回目录会让「崩溃进 BACKOFF」被
+     *   **desired 不同步**（D-8/铁律 1）：观测推导的应然写回目录会让「崩溃进 BACKOFF」被
      *    误判成「用户想停它」。意图只由 entry 的 start()/stop() 与动作路径改。 */
     _syncSandboxRegistryEntry(entry) {
       const d = depsOf(this);

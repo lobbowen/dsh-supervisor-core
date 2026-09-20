@@ -10,7 +10,7 @@
 // 无 Node 内建依赖：仅用 relay/core 的暴露闸判定 + shared/credential 的强度下限 + 注入的 deps。
 
 const { validateFrpExposure } = require('../../domains/relay/core');
-// 强度下限是 L0 纯判定，住在 shared/credential 与 relay/instance 域同源（app→domains 只取暴露闸）。
+// 强度下限是 L0 纯判定，住在 shared/credential 与 relay/instance 域同源（app->domains 只取暴露闸）。
 const { remoteTokenStrength } = require('../../shared/credential');
 
 /** patchDshMain 工厂。
@@ -26,7 +26,7 @@ function createMainActions(deps) {
       const views = g.getViews();
       const meta = state.readMainMeta();
       const prev = { ...meta };
-      // C-3（批 4）：remoteToken 写入口强度闸（与实例域 ops.updateInstance 同规）——
+      // remoteToken 写入口强度闸（与实例域 ops.updateInstance 同规）——
       //   非空但过短的令牌拒绝落盘；空串=清除（放行，暴露闸另判）。校验前置于任何变更。
       if (p.remoteToken !== undefined) {
         const tk = String(p.remoteToken || '');

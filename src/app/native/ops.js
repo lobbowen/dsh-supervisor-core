@@ -80,7 +80,7 @@ async function install(host, version) {
   // 锁释放统一走 finally：本函数缺它时与 uninstallOrCleanup 不对称，而锁一旦滞留，
   //   startInstall/startUninstall 与升级的并发闸会永久拒绝全部安装类操作。
   //   现状「每一环调用都自带守卫」，故暂无已知可达的抛出路径（逐路径核验见
-  //   design-notes/_p4-e-uncertain.md §1.2）；此处是补健壮性，不是修在跑的故障。
+  //   design-notes/_p4-e-uncertain.md）；此处是补健壮性，不是修在跑的故障。
   //   下方三处显式置 null 保留：冗余但无害，删它们需先证分支覆盖。
   try {
     if (!target) {
@@ -105,12 +105,12 @@ async function install(host, version) {
       return { ok: false, error: res.error, output: res.output };
     }
     // 数据认领：仅首装（manifest 尚不存在）尝试；~/.dsh 已有用户数据时不认领（防误删）。
-    // D-9（AUDIT-2026-09-19 第4批）：升级/重装**绝不能传 []** —— manifest.record 的继承分支
-    //   判据是「未显式传 dataPaths」，而 Array.isArray([]) 为真 ⇒ 空数组会把上一代认领记录
+    // 升级/重装**绝不能传 []** —— manifest.record 的继承分支
+    //   判据是「未显式传 dataPaths」，而 Array.isArray([]) 为真 => 空数组会把上一代认领记录
     //   抹成 []，卸载清理（ops 的 UNINSTALL 读 dataPaths）从此静默失效、目录永久残留。
     const isFirstInstall = !host._manifest();
     host._recordManifest(target, isFirstInstall ? host._claimDataPaths() : undefined);
-    // N2/B21（AUDIT-2026-09-19）：安装成功后立即复跑「检测 -> 绑定」——裸 config.command
+    // N2/B21：安装成功后立即复跑「检测 -> 绑定」——裸 config.command
     //   首装后若不绑定，DSH 永不起、60s 冷静期无限循环，直到守卫重启（boot 期唯一旧调用点）。
     try { if (typeof host._bindNativeDshCommand === 'function') host._bindNativeDshCommand(); }
     catch (e) { host.logger.warn && host.logger.warn('安装后原生绑定失败: ' + (e && e.message)); }

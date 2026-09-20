@@ -15,10 +15,10 @@ function handle(ctx) {
       return send(200, sup.statusSummary());
     }
 
-    // 会话生命周期（契约 ARCHITECTURE-CONTRACT-phase0 §3/§4）
+    // 会话生命周期（契约 ARCHITECTURE-CONTRACT-phase0）
     // GET  /session/status：{ sessionState }，会话态唯一读取口（INV-S4）。
     // POST /session/stop：进入 stopping，停全部被管对象，置 stopped 并回执（INV-S2）。
-    //   守卫不停止自己；壳收到本回执后执行 systemctl --user stop（契约 §4.1）。
+    //   守卫不停止自己；壳收到本回执后执行 systemctl --user stop。
     if (req.method === 'GET' && pathname === '/session/status') {
       return send(200, { sessionState: sup.sessionState ? sup.sessionState() : 'unknown' });
     }
@@ -69,7 +69,7 @@ function handle(ctx) {
         }
         if (action === 'start') { lm.start(id).then((r) => send(r.ok === false ? 409 : 200, r)).catch((e) => send(500, { error: e.message })); return; }
         if (action === 'stop') { lm.stop(id, 'user').then((r) => send(r.ok === false ? 409 : 200, r)).catch((e) => send(500, { error: e.message })); return; }
-        if (action === 'restart') { lm.restart(id).then((r) => send(r && r.ok === false ? 409 : 200, r)).catch((e) => send(500, { error: e.message })); return; } // B1：不可启停模块 409 而非 200
+        if (action === 'restart') { lm.restart(id).then((r) => send(r && r.ok === false ? 409 : 200, r)).catch((e) => send(500, { error: e.message })); return; } // 不可启停模块 409 而非 200
         return send(400, { error: '未知动作: ' + action + '（start|stop|restart）' });
       }
       return send(400, { error: '非法请求' });
@@ -100,7 +100,7 @@ function handle(ctx) {
       // /events 对外读守卫 EventHub 聚合流（gseq 全局有序；跨守卫重启连续）。
       // 默认过滤内部簿记事件（heartbeat 影子 shadow_* / 注册机 managed_object_*，
       // 聚合时打 internal 标）：它们只进审计（/logs/export、internal=1），UI 时间线只显示业务事件。
-      // 统一读路径（契约 §3.6）：sup.eventHub 是真实 EventHub 或 EventReader 降级适配器，
+      // 统一读路径：sup.eventHub 是真实 EventHub 或 EventReader 降级适配器，
       // 两者同接口同语义，不再有 if/else 双分支（旧 fallback 会忽略 source/type filter）。
       const hub = sup.eventHub;
       if (!hub) return send(200, { seq: (sup.events && sup.events.seq) || 0, events: [] });

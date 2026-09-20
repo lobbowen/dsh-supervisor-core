@@ -23,7 +23,7 @@ function startLanServer(host, inst) {
   const server = createRelay('127.0.0.1', inst.dshPort, {
     id: inst.id,
     token: inst.token || '',
-    dshTokenOf: () => host.tokenOf(inst.id) || '', // TK-4：传按需读取函数而非令牌值
+    dshTokenOf: () => host.tokenOf(inst.id) || '', // 传按需读取函数而非令牌值
     logger: host.logger,
     events: host.events,
   });

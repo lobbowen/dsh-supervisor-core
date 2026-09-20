@@ -1,9 +1,9 @@
 'use strict';
 
-// api/identity —— re-export shim（DIRECTORY-STRUCTURE-DESIGN §2.2/§3）：
+// api/identity —— re-export shim（DIRECTORY-STRUCTURE-DESIGN）：
 // 纯 IP 事实转出 src/shared/ip.js，HTTP 身份转出 src/platform/security/identity.js。
 //
-// 实际消费者（2026-09-17 复核）：生产侧 src/api/security.js（isPrivateIpv4）与
+// 实际消费者：生产侧 src/api/security.js（isPrivateIpv4）与
 //   src/api/transport/server.js（identify）；测试侧 test/relay-source-gate-test.js 与
 //   test/lan-access-boundary-test.js **按路径 require 本文件**。
 //   （原头注称消费者含 api/index.js —— 实测零引用，已更正。）

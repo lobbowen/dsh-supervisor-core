@@ -7,10 +7,10 @@
 // 仅限守卫启动早期、CLI 一次性命令或无法异步的调用点；新增调用优先用 execFile + await。
 // run() 同步执行，默认 15s 硬超时，失败或超时返回 null；runOut() 返回 stdout 字符串；
 // runDetail() 返回 { ok, code, stdout, stderr, timedOut, error }；runAsync() 为其异步同族。
-// runOutAsync()（批 4 C 令牌条 4）：心跳/事件循环敏感路径专用 —— 同步 execFileSync 在长超时下
+// runOutAsync()：心跳/事件循环敏感路径专用 —— 同步 execFileSync 在长超时下
 //   会冻结整个 tick（journalctl 5s 即守卫心跳停摆 5s），此类调用点必须用异步版。
 //   异步版沿用同一套有界纪律（timeout/SIGKILL/windowsHide/maxBuffer），失败/超时 resolve(null)。
-// 条 6（批 4 C 平台）：K-W2 门禁把异步 execFile 纳入扫描后，本文件是 src 内**唯一**的
+// K-W2 门禁把异步 execFile 纳入扫描后，本文件是 src 内**唯一**的
 //   execFile/execFileSync 合法调用点（spawn.js 豁免 spawn）；新增异步调用一律经 runAsync/runOutAsync。
 
 const { execFileSync, execFile } = require('node:child_process');

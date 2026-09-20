@@ -11,7 +11,7 @@ function statusSummary(host) {
     return {
       desired: host._mDesired(),
       phase: host._mPhase(),
-      // 会话生命周期（契约 §3，INV-S4）：与 phase 正交——phase 是 main 状态机相位，
+      // 会话生命周期（契约 ，INV-S4）：与 phase 正交——phase 是 main 状态机相位，
       // sessionState 是整个服务链的运行相位（前端/壳据此表达「退出中/已退出」）。
       sessionState: host._sessionState,
       // 数据目录保护状态（Windows 无 icacls 时可观测降级）。
@@ -19,7 +19,7 @@ function statusSummary(host) {
         ? (host._fileProtectStatus.length > 0 && host._fileProtectStatus.every((r) => r.ok))
         : null,
       guardVersion: host.guardVersion,
-      // 安装标识：面板底部状态栏外显（运行状态之前），用户据此申请灰度（契约 §5.2）。
+      // 安装标识：面板底部状态栏外显（运行状态之前），用户据此申请灰度。
       // 取不到时为 null —— 前端优雅降级，绝不伪造一个值（那会让灰度匹配到错的机器）。
       installId: installId(),
       dshPid: dshPidNow,

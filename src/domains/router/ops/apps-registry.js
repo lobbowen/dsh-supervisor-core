@@ -61,7 +61,7 @@ function createAppsRegistryOps(deps) {
     const targets = (getProviders() || []).filter((p) => p.kind === 'proxy' && p.proxyAppId === appId && (p.instances || []).length);
     if (!targets.length) return { ok: false, error: 'no running ' + a.name + ' instances' };
     if (jobs[appId] && jobs[appId].state === 'running') return { ok: true, jobId: appId, already: true };
-    // #5：步骤集只快照「标签」（providerId+keyId+maskedKey）；执行时按 keyId 重取活实例，
+    // 步骤集只快照「标签」（providerId+keyId+maskedKey）；执行时按 keyId 重取活实例，
     //  否则常驻实例在 stop/start 之间被重建后仍用旧引用（静默空转/假成功）。
     const insts = targets.flatMap((provider) => (provider.instances || []).map((i) => ({ providerId: provider.id, keyId: i.keyId, maskedKey: i.maskedKey })));
     const job = {
@@ -97,7 +97,7 @@ function createAppsRegistryOps(deps) {
         if (reason) job.steps[i].reason = reason;
         if (task) { try { tasks.stepState(task.id, i, state); } catch {} }
       };
-      // #5：按 keyId 重取活实例；取不到即如实失败（不静默空转）。
+      // 按 keyId 重取活实例；取不到即如实失败（不静默空转）。
       const resolveStep = (i) => {
         const { providerId, keyId } = insts[i];
         const p = (getProviders() || []).find((x) => x.id === providerId);
@@ -158,7 +158,7 @@ function createAppsRegistryOps(deps) {
   function proxyUpdateStatus(appId) {
     const t = tasks ? tasks.list('proxy-app').find((x) => x.target.id === appId) : null;
     if (t) {
-      // #30：此 taskState→job.state 映射与 instance/model.js 的 taskStateToView、plugin/model.js 的
+      // 此 taskState->job.state 映射与 instance/model.js 的 taskStateToView、plugin/model.js 的
       // taskStateToJobState **三份有意平行**（各有各的状态词表：本处是代理应用更新进度，另两处分别是
       // 实例视图态 / 插件 job 态）。跨域抽公共纯函数需三处同批改动并回归各自门禁，故此处不抽；
       // 任一状态词表变更时，三处一并核对。

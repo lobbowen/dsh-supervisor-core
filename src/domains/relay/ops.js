@@ -80,7 +80,7 @@ class LanManager {
         id: inst.id, name: inst.name, dshPort: inst.port,
         wanPort: proxy ? proxy.wanPort : null,
         token: inst.remoteToken || '',
-        dshToken: this.tokenOf(inst.id) || '', // TK-4：令牌一律按需从令牌池读取
+        dshToken: this.tokenOf(inst.id) || '', // 令牌一律按需从令牌池读取
         enabled: !!proxy,
         localPort: proxy ? proxy.localPort : null,
         running: !!this._lanServers && !!this._lanServers[inst.id],
@@ -252,7 +252,7 @@ class LanManager {
       portsvc.ensureMarked(wanPort, owner);
       // inst.wanPort 仅镜像（守护快照 save 为 noop 不回写；守卫本地模式有 save 则同步）。
       if (inst.wanPort !== wanPort) { inst.wanPort = wanPort; this._saveAll(); }
-      // TK-4：不把 dshToken 放进代理条目；消费方需要时经 tokenOf 按需取。
+      // 不把 dshToken 放进代理条目；消费方需要时经 tokenOf 按需取。
       const proxyInst = { id: inst.id, name: inst.name, dshPort: inst.port, wanPort, token: inst.remoteToken || '', enabled: true, frpEnabled: !!inst.frpEnabled, frpRemotePort: inst.frpRemotePort || null };
       if (existing) { Object.assign(existing, proxyInst); }
       else this.lanInstances.push(proxyInst);

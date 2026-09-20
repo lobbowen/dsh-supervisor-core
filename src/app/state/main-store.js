@@ -11,9 +11,9 @@ function createMainStore(deps) {
   const config = () => (typeof g.getConfig === 'function' ? (g.getConfig() || {}) : {});
   const logger = () => (typeof g.getLogger === 'function' ? g.getLogger() : null);
   let live = null; // dsh-main.json live 缓存（LanManager mainOf 持同一对象，须原地修改）
-  // A1-b（2026-09-19 审计修复）：文件存在但读/解析失败 → 置 corrupt，writeDshMain 拒写。
+  // 文件存在但读/解析失败 -> 置 corrupt，writeDshMain 拒写。
   //   旧行为：解析失败静默回落默认值（remoteToken:''）并缓存进 live，任一后续写把空令牌落盘
-  //   → 门卫令牌不可逆丢失且 relay 被无声降级为零认证（9-13 事故「失效即降级」运行时同型）。
+  //   -> 门卫令牌不可逆丢失且 relay 被无声降级为零认证。
   let corrupt = false;
 
   function dshMainFile() {
@@ -44,7 +44,7 @@ function createMainStore(deps) {
         };
       }
     } catch (e) {
-      // A1-b：文件存在但读/解析失败（半截 JSON/权限抖动）→ 记 corrupt，拒后续覆盖写。
+      // 文件存在但读/解析失败（半截 JSON/权限抖动）-> 记 corrupt，拒后续覆盖写。
       corrupt = true;
       const l = logger();
       if (l && l.warn) l.warn('dsh-main.json 读/解析失败，写回将被拒绝直至显式重设 remoteToken: ' + ((e && e.message) || e));

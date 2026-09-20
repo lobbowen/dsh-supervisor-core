@@ -34,7 +34,7 @@ class UsageLedger {
     this._canPersist = typeof o.canPersist === 'function' ? o.canPersist : (() => true);
     this.events = o.events || null;
     this.totals = null;
-    // B19（AUDIT-2026-09-19）：byModel 键来自客户端请求体，可被撑到无界 → 截断 + 限流桶；
+    // byModel 键来自客户端请求体，可被撑到无界 -> 截断 + 限流桶；
     //   同步全量写盘改脏标记 + 尾部定时器（测试可注入 writeDelayMs=0 保持即时落盘语义）。
     this._writeDelayMs = typeof o.writeDelayMs === 'number' ? o.writeDelayMs : 1000;
     this._maxModelKeys = typeof o.maxModelKeys === 'number' ? o.maxModelKeys : 64;

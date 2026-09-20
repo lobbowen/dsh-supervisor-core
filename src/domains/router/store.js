@@ -48,7 +48,7 @@ class RouterStore {
     }
   }
 
-  /** 唯一写权闸：服务级开关 ∪ 文件级健康（解析失败后禁止，防把损坏放大成清零）。 */
+  /** 唯一写权闸：服务级开关 并 文件级健康（解析失败后禁止，防把损坏放大成清零）。 */
   canPersist() { return this._writable !== false && this.loadedOk === true; }
 
   /** L3：设置状态文件写开关（true=本实例写；false=只读，由外部 router-daemon 独占写）。 */
@@ -141,7 +141,7 @@ function deserializeProvider(p, deps) {
       registeredAt: a.registeredAt || Date.now(),
       detectError: a.detectError || null,
       nextResetAt: a.nextResetAt || null,
-      limit: a.limit || null, // M2：limitKind 恢复（window/credits/banned + recovery）
+      limit: a.limit || null, // limitKind 恢复（window/credits/banned + recovery）
       lastProbeAt: a.lastProbeAt || null,
       lastProbeError: a.lastProbeError || null,
       instance: prov.kind === 'proxy' ? (prov.instances.find((i) => i.keyId === a.keyId) || null) : null,

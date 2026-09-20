@@ -34,7 +34,7 @@ function registerAll(mgr, deps) {
   // （否则会双占 ctl 43107 / 状态与 daemon 脱节）。
   if (router) {
     const sup = deps && deps.supervisor;
-    // 契约 GUARD-DOMAIN-MODEL §2 域 B：router-daemon 是基础设施，不设 guardian——
+    // 契约 GUARD-DOMAIN-MODEL 域 B：router-daemon 是基础设施，不设 guardian——
     // 它没有用户意图轴，失联即由保活路径无条件拉起（见 _daemonSuperviseOnce）。
     const rlc = new ManagedLifecycle({
       id: 'router',
@@ -57,7 +57,7 @@ function registerAll(mgr, deps) {
 
   // 2. 远程控制（LanManager：relay + frpc）
   if (lan) {
-    // 注意 同上（契约 §2 域 B）：lan-daemon 是基础设施，**不设 guardian**。
+    // 注意 同上（契约 域 B）：lan-daemon 是基础设施，**不设 guardian**。
     //   B 平面 id='lan'（历史命名，保持稳定以免破坏 API/测试消费面）；A 平面目录 id='lan-daemon'——
     //   两平面经 _daemonSuperviseOnce('lan') <-> registerAdapter('lan-daemon') 显式映射（G-5）。
     const llc = new ManagedLifecycle({
@@ -91,7 +91,7 @@ function registerAll(mgr, deps) {
       logger,
       start: async () => ({ ok: true }), // 实例无全局进程；单个实例由各自启停
       stop: async () => ({ ok: true }),
-      // C3-5b：detail 用实例集真实统计（曾引用不存在的 instances.summary——死回调恒 null）；
+      // detail 用实例集真实统计（曾引用不存在的 instances.summary——死回调恒 null）；
       // phase/healthy 视图由守卫 _syncInstancesLifecycleView 每心跳真实刷新。
       status: () => {
         try {
@@ -105,7 +105,7 @@ function registerAll(mgr, deps) {
     mgr.register(ilc);
   }
 
-  //  4. DeepSeek Harness（主 DSH）——守卫监管的核心对象 
+  //  4. DeepSeek Harness（主 DSH）——守卫监管的核心对象
   if (supervisor) {
     // guardian 不在此写死：原生 DSH 守护开关(默认关, 持久化 dsh-main.json)由用户在面板控制，
     // 注册时从 supervisor 读当前值，此后经 _syncDshLifecycleView 从 A 平面(dsh-main.json)持续同步——

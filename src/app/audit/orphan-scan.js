@@ -45,7 +45,7 @@ function orphanAudit(deps) {
         if (!ids.has(id)) issues.push({ kind: 'port-registration', owner: rec.owner, port: rec.port, why: '端口登记 owner 指向已不存在的实例（残留登记）' });
       }
     } catch (e) {
-      // D-13：整段静默会让「端口登记残留」这一维永久不可见（扫描器看起来在跑、其实从未扫到）。
+      // 整段静默会让「端口登记残留」这一维永久不可见（扫描器看起来在跑、其实从未扫到）。
       const l = call(g.getLogger, null);
       if (l && l.warn) l.warn('orphan-scan 端口登记段失败: ' + ((e && e.message) || e));
     }

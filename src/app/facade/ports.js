@@ -71,7 +71,7 @@ module.exports = { methods: {
     return { records: out, snapshot: snap, capacity };
   },
 
-  /** 端口集合激活探测（整批 3s TTL 缓存）。active=true 表示该端口当前有进程在监听。
+  /** 端口集合激活探测。active=true 表示该端口当前有进程在监听。
    *  用纯 TCP connect（probe.portListening）判定：findListeningPid 需读 /proc/<pid>/fd 反查
    *  socket->pid，对守卫管理树外的孙进程（router-daemon 的反代子进程）常因读取权限返回 null，
    *  导致端口在监听却恒报 inactive。TCP connect 与端口是否被监听直接等价（同 isTaken 判占用

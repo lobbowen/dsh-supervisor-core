@@ -35,14 +35,14 @@ function loadConfig() {
     ? process.argv[process.argv.indexOf('-c') + 1]
     : (process.env.DSH_SUPERVISOR_CONFIG || path.join(stateRoot.supervisorDir(), 'config.json'));
   const raw = JSON.parse(fs.readFileSync(cfgPath, 'utf8'));
-  // DS-G4（§4.2 反转法）：platform 的 DEFAULTS 不含业务域键（lanCtlPort 等），本进程以域常量
+  // DS-G4（反转法）：platform 的 DEFAULTS 不含业务域键（lanCtlPort 等），本进程以域常量
   // DEFAULT_CTL_PORT 兜底；domains 到 app 属非法依赖边（L-2），域侧不得反向依赖编排层。
   return { cfgPath, ...normalize(raw) };
 }
 
 function main() {
   // 通用 dispatcher（POST /ctl {method,args}），白名单按域注入：lan 只暴露自己的方法面，
-  // 不得因共用 dispatcher 调到 router 域的方法（PROVIDER-GATEWAY-ARCHITECTURE §5.3 PG-5）。
+  // 不得因共用 dispatcher 调到 router 域的方法（PROVIDER-GATEWAY-ARCHITECTURE PG-5）。
 
   const config = loadConfig();
   const swDir = config.stateFile ? path.dirname(path.resolve(config.stateFile)) : stateRoot.supervisorDir();

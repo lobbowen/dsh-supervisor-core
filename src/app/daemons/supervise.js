@@ -39,13 +39,13 @@ module.exports = {
     /** 唯一心跳驱动的 daemon 保活单拍：
      *  router/lan-daemon 的「业务需要它 + 失联即拉起」，由 ManagedRegistry.heartbeat 经 adapter 调用
      *  （节流约 30s）。守卫重启不影响 daemon（进程独立）。
-     *  契约 §2 域 B：这两个 daemon 是基础设施（能力自愈），本方法是保活，不是「用户意图被守护触发」，
+     *  契约 域 B：这两个 daemon 是基础设施（能力自愈），本方法是保活，不是「用户意图被守护触发」，
      *  故两分支均不写 guardian_action / restartCount（G-1/G-2）。
      *  @returns {ok:boolean} daemon 当前在线（heartbeat 统一写入目录实然）。 */
     async _daemonSuperviseOnce(kind) {
       const d = depsOf(this);
       if (d.stopping()) return { ok: false };
-      // INV-S1 全域（契约 §3.3）/E-3：有退出意图则不再监督拉起 router/lan daemon（单源谓词）。
+      // INV-S1 全域/E-3：有退出意图则不再监督拉起 router/lan daemon（单源谓词）。
       if (d.exitIntended()) return { ok: false, error: 'exit intended' };
       try {
         if (kind === 'router') {
@@ -59,7 +59,7 @@ module.exports = {
           if (rlcx && typeof rlcx.classify === 'function') {
             const c = rlcx.classify();
             if (c && c.mode === 'external') {
-              // 异主隔离：只告警不接管。此处不发 guardian_action（契约 §2 域 B / G-2：基础设施保活不写用户意图事件）。
+              // 异主隔离：只告警不接管。此处不发 guardian_action（契约 域 B / G-2：基础设施保活不写用户意图事件）。
               d.logger() && d.logger().warn && d.logger().warn('[router] 监督：ctl ' + d.ctl().routerPort() + ' 被外部进程占用（pid=' + c.owner + '），不接管不拉起');
               return { ok: false };
             }
@@ -83,7 +83,7 @@ module.exports = {
             } catch (e2) { d.logger() && d.logger().debug && d.logger().debug('router 域摘要拉取失败: ' + ((e2 && e2.message) || e2)); }
             return { ok: true };
           }
-          // 契约 §2 域 B / G-1+G-2：router-daemon 是基础设施，此处是保活（失联即拉起），
+          // 契约 域 B / G-1+G-2：router-daemon 是基础设施，此处是保活（失联即拉起），
           //   不是用户意图被守护触发，故不判 guardian、不写 restartCount、不发 guardian_action。
           //   restartCount 属用户意图语义，基础设施不适用；运维仍从下方 warn 日志看到被重新拉起。
           const rt = d.daemons().ensureRouterRuntime(true);
@@ -101,7 +101,7 @@ module.exports = {
           return { ok: false };
         }
         // kind === 'lan'
-        // 业务条件（契约 §2 域 B / G-1）：lan 该不该活着由结构性部署选择决定，不是用户开关——
+        // 业务条件（契约 域 B / G-1）：lan 该不该活着由结构性部署选择决定，不是用户开关——
         //   config.lanDaemon 在壳部署时选定 daemon 模式或内嵌模式，无面板入口、用户无需知情。
         if (!d.daemons().enabled()) return { ok: d.daemons().lanActive() };
         d.daemons().syncLanState();

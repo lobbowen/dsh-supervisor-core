@@ -1,6 +1,6 @@
 'use strict';
 
-// 
+//
 // ctl dispatcher —— daemon 的 127.0.0.1 回环控制通道（通用基础设施，L0 平台事实）。
 //
 // ## 为什么在 platform/ 而不是某个域
@@ -29,7 +29,7 @@
 //   const { createCtlServer } = require('../../platform/ctl/server');
 //   const ctl = createCtlServer({ target: svc, allowMethods: MY_METHODS, logger, events });
 //   ctl.listen(port, '127.0.0.1');
-// 
+//
 
 const http = require('node:http');
 
@@ -42,10 +42,10 @@ const isMethodAllowed = (allowMethods, method) =>
 const LOOPBACK_ORIGIN_RE = /^https?:\/\/(?:127\.0\.0\.1|\[::1\]|localhost)(?::\d{1,5})?$/i;
 
 /** 来源闸（AUDIT B-2）：ctl 是仅回环的进程外带通道，但浏览器可代表用户盲打回环端口，
- *  白名单方法里含写操作 → 任意网页 CSRF 即可停实例/改配置。两道纯请求判据：
- *  ① POST /ctl 必须携带 application/json——合法客户端（platform/service/log/tail.js#ctlCall）
+ *  白名单方法里含写操作 -> 任意网页 CSRF 即可停实例/改配置。两道纯请求判据：
+ *  1) POST /ctl 必须携带 application/json——合法客户端（platform/service/log/tail.js#ctlCall）
  *    固定发送；form-urlencoded / text/plain / multipart 这些**不触发 CORS 预检**的盲打形态被切断。
- *  ② 携带 Origin 的请求必须指向回环自身——浏览器发起的任何跨站请求都带受害者站点 Origin；
+ *  2) 携带 Origin 的请求必须指向回环自身——浏览器发起的任何跨站请求都带受害者站点 Origin；
  *    非浏览器客户端不发 Origin，不受影响。
  *  @returns {string|null} 拒绝原因；null 表示通过。 */
 function ctlSourceProblem(req) {
@@ -140,7 +140,7 @@ function createCtlServer({ target, allowMethods, logger, events } = {}) {
     req.on('error', () => { try { res.end(); } catch {} });
   });
   server.on('error', (e) => { if (logger) logger.error('[ctl] server error: ' + e.message); });
-  // 2026-09 复检根治：守卫(Node≥19 globalAgent keepAlive=true 连接池化)复用长连调用 ctl；
+  // 2026-09 复检根治：守卫(Node>=19 globalAgent keepAlive=true 连接池化)复用长连调用 ctl；
   // Node http server 默认 keepAliveTimeout=5s 会回收空闲池化连接 -> 守卫下次复用已关 socket ->
   // 间歇 'socket hang up' -> routerProviders 回退守卫陈旧本地视图 -> 前端账号状态与 daemon 分裂闪烁
   //（实测 3100 /router/providers 在 daemon 真值 与 陈旧副本 间交替，Kbobt7/MxULq9 旧态复现）。

@@ -13,10 +13,10 @@ function owns(pathname) {
  *  —— 守卫被当成内网可达性/延迟探针（盲 SSRF）。
  *
  *  现策略（两层，保守但保留既有能力）：
- *    ① 已配置镜像源（distribution 的唯一事实源 effectiveOrigins，经 _registryOrigins() 取用）
+ *    1) 已配置镜像源（distribution 的唯一事实源 effectiveOrigins，经 _registryOrigins() 取用）
  *       按 hostname 直接放行 —— 操作者有意配置的内网镜像必须仍可测试；
- *    ② 其余只允许**公网**主机：拒绝回环 / RFC1918 / 链路本地 169.254/16 / CGNAT 100.64/10 /
- *       保留段 0/8 与 224+/4 / localhost 与 .local .internal .home.arpa / IPv6 ::1 :: ULA fc00::/7 与
+ *    2) 其余只允许**公网**主机：拒绝回环 / RFC1918 / 链路本地 169.254/16 / CGNAT 100.64/10 /
+ *       保留段 0/8 与 224+/4 / localhost 与 .local .internal .home.arpa / IPv6::1:: ULA fc00::/7 与
  *       链路本地 fe80::/10。UI 的「添加自定义镜像前先测活」流程仍然可用（公网地址不受限）。
  *
  *  保留 ^https?: 字面校验作为协议层第一道闸（且 test/round13-csp-probe-test.js:72 以源码形态钉住它）。
@@ -32,7 +32,7 @@ function probeTargetError(origin, sup) {
   const host = String(u.hostname || '').toLowerCase().replace(/^\[|\]$/g, '');
   if (!host) return 'origin 缺少主机名';
 
-  // ① 已配置镜像源：按 hostname 放行
+  // 1) 已配置镜像源：按 hostname 放行
   let configured = [];
   try {
     configured = (sup && sup.dist && typeof sup.dist._registryOrigins === 'function')
@@ -42,10 +42,10 @@ function probeTargetError(origin, sup) {
     try { if (new URL(String(c)).hostname.toLowerCase().replace(/^\[|\]$/g, '') === host) return null; } catch {}
   }
 
-  // ② 其余仅允许公网主机
+  // 2) 其余仅允许公网主机
   const deny = '安全策略：探测目标仅允许公网地址（已配置的镜像源不在此限）';
-  // IPv6 字面量一律拒绝：无需枚举分段（URL 会把 ::ffff:127.0.0.1 归一成 ::ffff:7f00:1 这类十六进制形态，
-  //   逐段判前缀有绕过面）；镜像源应写域名或 IPv4，且已配置源已在①放行。
+  // IPv6 字面量一律拒绝：无需枚举分段（URL 会把::ffff:127.0.0.1 归一成::ffff:7f00:1 这类十六进制形态，
+  //   逐段判前缀有绕过面）；镜像源应写域名或 IPv4，且已配置源已在1)放行。
   if (host.includes(':')) return deny;
   // 单标签主机名（无点）拒绝：内网 DNS 短名（intranet/metadata/…）会经搜索域解析到内网。
   if (!host.includes('.')) return deny;
@@ -72,10 +72,10 @@ function handle(ctx) {
     }
     if (req.method === 'POST' && pathname === '/dist/registry/set') {
       if (!originAllowed(req, sup.config.apiPort)) { req.resume(); return send(403, {}); }
-      // UI 条 5（AUDIT-2026-09-19 第 4 批）：被校验闸拒绝的配置**不能**回 200。
+      // 被校验闸拒绝的配置**不能**回 200。
       //   setRegistryConfig 的拒因写在返回对象的 error 字段（无 ok 键），原先
       //   `send(200, { ok: true, ...r })` 把它展开成「200 + ok:true + error」，
-      //   而 UI 的 http() 只在 !res.ok 时抛错 → 镜像源被 SSRF 闸拦下仍弹「已保存」，
+      //   而 UI 的 http() 只在 !res.ok 时抛错 -> 镜像源被 SSRF 闸拦下仍弹「已保存」，
       //   用户以为配置已生效（实为内存与磁盘都没改）。故按拒因归真为 400 + ok:false。
       collectBody(req, res, 8192, (body) => {
         let j = {};

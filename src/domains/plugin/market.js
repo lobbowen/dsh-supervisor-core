@@ -85,7 +85,7 @@ class PluginMarket {
    *    (b) 被消费者取走时仍须如实失败 —— raw 的 reject 语义不变（api/domains/plugins.js 的
    *        GET /plugins/market 分支据此回答 500）。
    *  若改成「消化后存回 _inFlight」，则并发的 force 请求会取到这个已消化的 promise，
-   *  失败时 resolve 成 undefined → 200 + 空体，正是本仓最忌讳的「假成功」。 */
+   *  失败时 resolve 成 undefined -> 200 + 空体，正是本仓最忌讳的「假成功」。 */
   _startBuild() {
     const raw = this.buildIndex();
     raw.catch(() => {}); // 标记已处理：无人 await 时否则就是 unhandledRejection

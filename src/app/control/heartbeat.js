@@ -34,7 +34,7 @@ function withTimeout(registry, p, ms, id) {
  * 唯一心跳（R3 C3-1 基础设施）：遍历目录项，对已挂 adapter 的对象执行 observe() 并写入实然。
  * 本层做观测收集（实然写 lastObserved）与 derivePhase 的相位收敛写入（setPhase）；
  * 启停/退避仍由各类型 adapter 的驱动开关决定。节流经 ownership.meta.tickEvery
- * （1=每拍；6≈30s daemon 语义）。单对象异常隔离。
+ * （1=每拍；6~30s daemon 语义）。单对象异常隔离。
  * @param {object} registry ManagedRegistry 实例（提供 _objects/_adapters/_log/applyObservation/setPhase）
  * @param {number} [intervalMs] 心跳拍宽（默认 5000）
  * @returns {{ observed: string[], errors: string[] }}
@@ -68,7 +68,7 @@ async function runBeat(registry, intervalMs) {
     if (!fn) continue;
     const tickEvery = ad.tickEvery || (e.ownership && e.ownership.meta && e.ownership.meta.tickEvery) || 1;
     if (tickEvery > 1) {
-      if (e._nextTickAt && now < e._nextTickAt) continue; // 节流(daemon 类≈6拍30s)
+      if (e._nextTickAt && now < e._nextTickAt) continue; // 节流(daemon 类~6拍30s)
       // 用本次实际执行时刻前推（而非 heartbeat 入口的 now）：
       //   本循环是串行的，前面的对象耗时会让 now 变陈旧，节流窗被系统性拉长。
       e._nextTickAt = Date.now() + tickEvery * iv;
@@ -77,7 +77,7 @@ async function runBeat(registry, intervalMs) {
       // 单个 adapter 不得拖死整条心跳：此处 await 若无超时，任一 adapter 的 promise
       // 永不 settle 就会让循环永久停在这一拍；而心跳是 main 收敛/沙箱监督/daemon 监督的
       // 唯一周期驱动，supervisor 侧又以 _heartbeatBusy 防重叠，于是心跳永停。
-      // 故每对象加超时（上限 = 拍宽 × ADAPTER_TIMEOUT_TICKS），超时按异常处理
+      // 故每对象加超时（上限 = 拍宽 x ADAPTER_TIMEOUT_TICKS），超时按异常处理
       // （记 errors + warn，并落一条 {ok:false} 观测），使循环继续推进到下一个对象。
       const res = await withTimeout(registry, fn(e), iv * ADAPTER_TIMEOUT_TICKS, e.id);
       // 超时必须进 errors 汇总（否则调用方只看 errors/observed 会以为一切正常）

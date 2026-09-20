@@ -18,7 +18,7 @@ function depsOf(host) {
       main() { return host.main; },
       state() { return host.state; },
       session() { return host.session; },
-      // E-3（AUDIT-2026-09-19）：意图轴单源谓词（装配期由 collaborators 安装到 host）。
+      // 意图轴单源谓词（装配期由 collaborators 安装到 host）。
       exitIntended() { return host._exitIntended(); },
       events() { return host.events; },
       logger() { return host.logger; },
@@ -69,7 +69,7 @@ module.exports = {
   async _dshConverge() {
     const d = depsOf(this);
     if (d.readTicking() || d.stopping()) return;
-    // INV-S1（契约 §3.3）/E-3：守卫关停中或会话 halting（单源谓词 _exitIntended = stopping ∨ halting）
+    // INV-S1/E-3：守卫关停中或会话 halting（单源谓词 _exitIntended = stopping 或 halting）
     // 则抑制一切自动拉起，不再驱动 main 收敛。（_shellHalted 属桌面壳域，不在此——见 collaborators。）
     if (d.exitIntended()) return;
     d.writeTicking(true);
@@ -188,10 +188,10 @@ module.exports = {
             // 端口被不健康进程占用：不硬抢，只告警
             d.daemons().warnOccupied();
           } else if (d.session().shouldRun() && !d.exitIntended()) {
-            // 拉起条件（意图单源，契约 §6）：是否应运行 = (desired == running) && 会话非 halting && 非崩溃停靠；
-            // 且守卫/会话未处于退出中（E-3 单源谓词 _exitIntended = stopping ∨ session halting）。
-            // ⚠ _shellHalted 不参与主 DSH 恢复（它是桌面壳域判据，见 collaborators）——
-            //   守卫重启后 desired=running 即恢复（契约 §5/§6），否则 headless 无壳清除路径会死锁。
+            // 拉起条件（意图单源，契约）：是否应运行 = (desired == running) && 会话非 halting && 非崩溃停靠；
+            // 且守卫/会话未处于退出中（E-3 单源谓词 _exitIntended = stopping 或 session halting）。
+            //  _shellHalted 不参与主 DSH 恢复（它是桌面壳域判据，见 collaborators）——
+            //   守卫重启后 desired=running 即恢复，否则 headless 无壳清除路径会死锁。
             // desired 是持久用户意图（重启后据此恢复），只要 desired=running 就无条件拉起，
             // 不要求 guardian 或内存意图解锁。guardian 只约束崩溃后是否自动重启（见 RUNNING/exit 分支）。
             d.intents().consume('start'); d.intents().consume('restart'); d.intents().consume('upgrade-resume'); // 意图一次性消费（加速器，非门槛）
@@ -209,7 +209,7 @@ module.exports = {
         }
         case 'RUNNING': {
           // RUNNING 分支绝不读令牌：令牌恒存在（"拿不到"只是捕捉链路 bug），且令牌状态与
-          // 进程健康正交（SSOT §2 TK-1/TK-2）。
+          // 进程健康正交（SSOT TK-1/TK-2）。
           // spawn：只按进程存活判断，进程死了才重启，不因端口探测失败而误判
           // 守护语义：崩溃是否自动接管拉起看守护开关 guardian——开=自动拉起（退避自愈）；
           // 关=回到停止态（等用户手动启动）。
@@ -229,7 +229,7 @@ module.exports = {
             // 契约（D11 声明化）：**假死自愈不受 guardian 约束** —— 上面两个死亡分支
             //   （adopted_exit / child_exit）才看 guarded，本分支故意不看。理由：假死意味着进程
             //   **仍活着且占着端口**；若在此前置 guarded 判断，不重启就落回 STOPPED，而 STOPPED
-            //   分支的 portUp 会走 adopt() 重新接管 → 下一拍又被判假死 → adopt 与假死判定
+            //   分支的 portUp 会走 adopt() 重新接管 -> 下一拍又被判假死 -> adopt 与假死判定
             //   **无限空转**（每轮还伴随用户可见的相位抖动）。要改此语义必须先引入稳定态，
             //   不能只加 guarded 判断。故此处保持「假死必自愈」，为有意设计而非遗漏。
             const healthDecision = d.main().applyHealthCheck(healthOk);
@@ -275,7 +275,7 @@ module.exports = {
     } finally {
       d.writeTicking(false);
       d.writeActWindow(false);
-      // 会话态：首拍收敛完成，starting 迁移到 running（契约 §3.2）。
+      // 会话态：首拍收敛完成，starting 迁移到 running。
       if (d.sessionState() === 'starting') d.session().setState('running');
       // 拍末记账（actual vs shadow；不受 tick 内提前 return 影响，必定执行）
       try { d.main().shadowTickNote(t0); } catch (e) { d.logger().warn && d.logger().warn('shadow note: ' + (e && e.message)); }

@@ -1,7 +1,7 @@
 'use strict';
 
 // 多实例管理器：门面 + 组装根。只做组合与委托（构造纯模块/IO 模块、注入协作方），
-// 导出 class InstanceManager；对外契约逐字保持（16 成员 + instances 活数组 + 6 回调访问器，见 §3.3）。
+// 导出 class InstanceManager；对外契约逐字保持（16 成员 + instances 活数组 + 6 回调访问器，见）。
 // 域内依赖：index -> ops -> lifecycle -> store -> model/sandbox/state-machine（单向 DAG）。
 
 const path = require('node:path');

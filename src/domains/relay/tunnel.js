@@ -49,7 +49,7 @@ function rejectSocket(socket, statusLine) {
  *   - authority: 回环权威 "host:port"
  *   - targetHost/targetPort: 回环 DSH 目标
  *   - getToken: () => string —— 门卫令牌按需读取（proxy 侧可热换）
- *   - getGateSalt: () => string —— 门卫会话盐（批 4 令牌条 5；cookie 只认派生值）
+ *   - getGateSalt: () => string —— 门卫会话盐
  *   - gateWaitMs: (ip) => number|null —— C-3 凭据失败退避（与 HTTP 路径共享账本；null=放行）
  *   - onGateFailure: (ip) => void —— 升级被拒时记一次失败
  */
@@ -61,7 +61,7 @@ function createTunnelHandler({ session, authority, targetHost, targetPort, getTo
       return;
     }
     const ip = (socket && socket.remoteAddress) || (req.socket && req.socket.remoteAddress) || '?';
-    // C-3（批 4）：升级路径同受退避闸约束（否则 HTTP 侧被锁仍可经 WS 继续爆破）。
+    // 升级路径同受退避闸约束（否则 HTTP 侧被锁仍可经 WS 继续爆破）。
     if (typeof gateWaitMs === 'function' && gateWaitMs(ip) !== null) {
       rejectSocket(socket, 'HTTP/1.1 429 Too Many Requests\r\nConnection: close\r\nContent-Length: 0\r\n\r\n');
       return;

@@ -1,6 +1,6 @@
 'use strict';
 
-// 安装标识（installId）：灰度发布需要稳定、唯一、我方生成的机器标识（RELEASE-CHANNEL-CONTRACT §5.2/§5.3）。
+// 安装标识（installId）：灰度发布需要稳定、唯一、我方生成的机器标识（RELEASE-CHANNEL-CONTRACT）。
 // 不用 IP（会变、NAT 共享）、主机名（可改/重名）、MAC（多网卡/可伪造），而自己生成 UUID 并持久化。
 // 关键设计：首次生成此后只读（UUID 漂移会让已在灰度名单的机器突然失配）；失败绝不静默新建，
 // 读/写失败返回 null 并记录原因；落盘 0600（标识即身份，写后 chmod 收口）；DSH_CANARY_ID 可显式覆盖。
@@ -30,7 +30,7 @@ function installIdPath() {
 
 /** 读取本机安装标识。
  *  source 为 'env'/'file'/'created'（诊断用）；null 表示无法确定（读/写失败），
- *  调用方必须按无标识处理并如实告知，绝不随便造一个（契约：失败绝不静默新建）。 */
+ *  调用方必须按无标识处理并如实告知，绝不随便造一个（失败绝不静默新建）。 */
 function readInstallId() {
   if (_cached) return _cached;
 

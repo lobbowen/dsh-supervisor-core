@@ -9,7 +9,7 @@
 // 3. 预期缺席（restarting / shell-update-* / 未确认更新账本）用更长宽限；
 // 4. 无图形会话则跳过（Linux 注销后经 linger 仍在运行，拉起 GUI 必失败成风暴）；
 // 5. 窗口内有界重试，防无限风暴；6. decide() 是纯函数，可脱离进程/时钟/fs 单测；
-// 7. **会话退出中/已退出（INV-S1）恒不动作**——退出的语义就是「不再拉起」（2026-09-18 修：
+// 7. **会话退出中/已退出（INV-S1）恒不动作**——退出的语义就是「不再拉起」（
 //    原实现只判壳缺失、不看会话态，导致「退出管家」后守卫多活一拍即把壳拉回）。
 // 纯决策（DEFAULTS/decide/isShellProcess/isUpdatePhase）在 core.js；本文件只保留有状态看护。
 const { DEFAULTS, decide, isShellProcess, isUpdatePhase } = require('./core');
@@ -77,8 +77,8 @@ function createShellWatchdog(deps) {
    *  `lastAttemptAt` 只在默认形状里声明、全仓无写入点，不可依赖。
    *  壳 pending 后一直不回来确认时 j.to 会永久留着，只看 j.to 会让宽限永远走 updateGraceMs
    *  （自愈被拖慢），故超过 phaseMaxAgeMs 即判陈旧、不再据此延长宽限（并 warn 一次）。
-   *  ⚠ 无法解析 `startedAt` 时按「未陈旧」处理：既有测试（watchdog-phase-freshness N-d）
-   *    用无 startedAt 的账本桩锁定「未确认账本 → 预期缺席」语义，不得改变该行为。 */
+   *   无法解析 `startedAt` 时按「未陈旧」处理：既有测试（watchdog-phase-freshness N-d）
+   *    用无 startedAt 的账本桩锁定「未确认账本 -> 预期缺席」语义，不得改变该行为。 */
   function updateJournalTracking(t) {
     let j = null;
     try { j = shell.readJournal && shell.readJournal(); } catch {}
@@ -121,10 +121,10 @@ function createShellWatchdog(deps) {
       const t = now();
       const procs = shellProcs();
       const alive = procs.length;
-      // ⚠ 2026-09-18 修（严重缺陷：退出管家后自动重启）——门**下沉到看护域**：
+      //  （严重缺陷：退出管家后自动重启）——门**下沉到看护域**：
       //   任何 tick 调用者（bootstrap 定时器/诊断/未来接线）都受同一门约束。
-      //   ① 壳已在线 -> 先清除持久退出标记（用户重新打开了壳，自愈恢复）；
-      //   ② 退出中/已退出（INV-S1）-> 恒不动作。
+      //   1) 壳已在线 -> 先清除持久退出标记（用户重新打开了壳，自愈恢复）；
+      //   2) 退出中/已退出（INV-S1）-> 恒不动作。
       if (alive > 0 && typeof o.onShellAlive === 'function') { try { o.onShellAlive(); } catch {} }
       if (typeof o.halted === 'function' && o.halted()) {
         lastSkipReason = '会话退出中/用户已退出（不拉起）';

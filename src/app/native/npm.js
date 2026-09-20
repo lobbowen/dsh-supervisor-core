@@ -32,7 +32,7 @@ function checkEnvironment(host) {
 }
 
 /** 最新版本（统一分发通道；packageName 是第三方包语义——latest 优先，缺失/非法才回落
- *  versions 最高。契约 §3 第三方段落，AUDIT-2026-09-19 第 4 批条 7 改判，勿再写「全量最高」。 */
+ *  versions 最高。契约 第三方段落，条 7 改判，勿再写「全量最高」。 */
 async function latestVersion(host) {
   if (!host.dist || !host.config.packageName) throw new Error('分发服务未初始化，无法查询最新版本');
   const channel = host.config.releaseChannel || 'npm';

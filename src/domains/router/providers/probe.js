@@ -13,7 +13,7 @@ const { getQuotaStrategy } = require('./quota-strategies');
 const { quotaOverallStatus } = require('./policies/quota');
 const { cachedPkgBin, ensurePkgCached } = require('./pkg-cache');
 const stateRoot = require('../../../platform/service/state-root');
-// D-4：实例日志落盘统一走平台层轮转写入器（0600 + 超阈值改名 .1，保留一代）。
+// 实例日志落盘统一走平台层轮转写入器（0600 + 超阈值改名 .1，保留一代）。
 const { Rotator } = require('../../../platform/service/log/log');
 const INSTANCE_LOG_MAX_BYTES = 2 * 1024 * 1024;
 
@@ -83,7 +83,7 @@ async function spawnInstance(provider, inst) {
   try { child = spawnOS.piped(launch.cmd[0], launch.cmd.slice(1), { env: envVars, detached: true }); }
   catch (e) { return { ok: false, error: 'spawn 失败: ' + e.message }; }
   // 实例 stdout/stderr 全量落盘 + 关键词行落事件（stateDir 由 Provider 注入，D7）
-  // D-4（AUDIT-2026-09-19 第4批）：落盘统一走平台层 Rotator —— 原先裸
+  // 落盘统一走平台层 Rotator —— 原先裸
   //   fs.createWriteStream({flags:'a'}) 是全仓唯一的无轮转日志（反代 stdout 可无界增长），
   //   且默认 0644（Rotator 首建即 0600：实例日志含启动令牌 URL/环境变量派生行）。
   const logFilter = /error|streaming|idle|timeout|ECONN|abort|socket|finish|truncat/i;
@@ -105,7 +105,7 @@ async function spawnInstance(provider, inst) {
   };
   child.stdout.on('data', (c) => pushLog(c, 'out'));
   child.stderr.on('data', (c) => pushLog(c, 'err'));
-  // Rotator 每次 write 即时 appendFileSync，无缓冲 ⇒ 关闭时不需（也无法）end()。
+  // Rotator 每次 write 即时 appendFileSync，无缓冲 => 关闭时不需（也无法）end()。
   inst.pid = child.pid;
   inst.port = port;
   inst.status = INSTANCE_STATES.WARM;
@@ -152,7 +152,7 @@ async function healthInstance(provider, inst) {
   }
 }
 
-/** 实例生命周期监控：进程存活 + 端口监听 + HTTP 卡死检测（连续 ≥3 次 kill 重拉）。 */
+/** 实例生命周期监控：进程存活 + 端口监听 + HTTP 卡死检测（连续 >=3 次 kill 重拉）。 */
 async function monitorLifecycle(provider) {
   if (provider._stopping || provider.activated !== true) return;
   for (const inst of (provider.instances || [])) {
@@ -168,7 +168,7 @@ async function monitorLifecycle(provider) {
     }
     if (typeof pidlook.findListeningPid === 'function') {
       const listening = pidlook.findListeningPid(inst.port);
-      // D-6（AUDIT-2026-09-19 第4批）：exact-pid 等值判据在 npx --yes 兜底形态下恒不成立 ——
+      // exact-pid 等值判据在 npx --yes 兜底形态下恒不成立 ——
       //   命令为 [npxBin, --yes, pkg, ...]，spawn 的是 npx，真正监听端口的是其子孙 node。
       //   误判后果不是「重启」而是**留下孤儿**：此处把 pid 抹掉后，stopInstance 的 kill 段
       //   以 inst.pid 为判据（instance-lifecycle.js:38），真实进程恒不可达地继续占端口。

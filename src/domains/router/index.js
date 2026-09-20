@@ -1,6 +1,6 @@
 'use strict';
 
-// 智能路由底座（RouterService）——**薄门面**：只做组合与委托，零业务逻辑（DF-1 ≤150）。
+// 智能路由底座（RouterService）——**薄门面**：只做组合与委托，零业务逻辑（DF-1 <=150）。
 // 业务下沉 store/ops/endpoint/views/scheduler + forward-core/router-ops 显式工厂；无 prototype 方法集合并。
 
 const { DirectProvider } = require('./providers/direct');

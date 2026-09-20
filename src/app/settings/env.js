@@ -34,7 +34,7 @@ module.exports = {
         npmRoot: en ? en.npmRoot : null,
         // EnvCatalog 声明式视图（面板环境卡用）
         catalog: (envCatalogSummary(this)),
-        // 平台能力矩阵：三平台静态档位 × 实际工具探测；前端据此做能力感知呈现与降级提示。
+        // 平台能力矩阵：三平台静态档位 x 实际工具探测；前端据此做能力感知呈现与降级提示。
         capabilities: (() => { try { return platform.capabilities(); } catch { return null; } })(),
         // 桌面壳看护的观测快照：expose enabled/intervalMs/graceMs/absentForMs/restartsInWindow/
         //   everSawAlive/lastSkipReason/expectedAbsence，使「壳反复拉起失败」在面板可见。

@@ -1,6 +1,6 @@
 'use strict';
 
-// 异步子进程统一封装（NO-CONSOLE-WINDOW-STANDARD §3，契约冻结）。
+// 异步子进程统一封装（NO-CONSOLE-WINDOW-STANDARD ，契约冻结）。
 // 为什么需要：同步执行器 platform/util/exec.js 早已 windowsHide:true 且有门禁，而异步
 // child_process.spawn 此前无约束；Windows 上 detached:true 会给子进程新建控制台窗口，
 // windowsHide:true 正是用来隐藏它，故所有 detached 子进程必须同时带 windowsHide。

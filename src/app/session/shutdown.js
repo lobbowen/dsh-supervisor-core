@@ -5,7 +5,7 @@ const distribution = require('../../platform/distribution');
 
 // app/session/shutdown.js —— 关停编排：停被管对象、会话置 stopped、回执（绝不自行停止守卫）。
 
-/** D-10（AUDIT-2026-09-19 第 4 批）：关停**不等**在途 npm（装/卸载可达分钟级，守卫只有 8s
+/** D-10：关停**不等**在途 npm（装/卸载可达分钟级，守卫只有 8s
  *  优雅期，见 bin/dsh-supervisor 强杀兜底），但**必须中止**它 —— 子进程 detached 自成进程组，
  *  不中止就会在守卫死后继续写 node_modules/全局前缀，与新守卫的写入并发（半成品/9-13 同族）。
  *  中止后对应 install()/uninstall() 以 ok:false,aborted:true 收口；面板据 warn+事件知悉。
@@ -30,7 +30,7 @@ function abortInflightNpm(host, reason) {
 function shutdown(host) {
     if (host._stopping) return host._shutdownPromise || Promise.resolve();
     host._stopping = true;
-    // B17（AUDIT-2026-09-19 §B-17，裁决=补持久化）：SIGTERM 到达时若**没有**进行中的会话退出
+    // SIGTERM 到达时若**没有**进行中的会话退出
     //   （shutdownAll 已置 _shellHalted 并落盘），说明外部所有者（systemctl stop/注销）直接
     //   关停守卫。守卫是 Restart=always 的常驻自愈者，语义上等于「用户离开了」——不落盘
     //   退出意图，则守卫被重新拉起后壳看护按 desired=running 又把壳拉回（9-18 同类）。
@@ -47,7 +47,7 @@ function shutdown(host) {
     if (host._heartbeatTimer) clearInterval(host._heartbeatTimer);
     if (host._killTimer) clearTimeout(host._killTimer);
     if (host._adoptKillTimer) clearTimeout(host._adoptKillTimer);
-    // D-10：先切断「守卫死后仍在写盘的 npm 子进程」，再进入停对象流程。
+    // 先切断「守卫死后仍在写盘的 npm 子进程」，再进入停对象流程。
     abortInflightNpm(host, 'guard-shutdown');
     if (host._initialCheckTimer) clearTimeout(host._initialCheckTimer);
     if (host._upgradeTimer) clearInterval(host._upgradeTimer);
@@ -88,12 +88,12 @@ async function shutdownAll(host) {
     // 幂等：已进入退出流程则直接回执当前态（壳可安全重试/轮询）
     if (host._sessionHalting()) return { ok: true, already: true, sessionState: host._sessionState };
     host._setSessionState('stopping'); // 抑制一切自动拉起（INV-S1）
-    // 持久化「用户已退出」（2026-09-18 修，K1）：会话态只活内存，守卫一旦被外部/登录
+    // 持久化「用户已退出」：会话态只活内存，守卫一旦被外部/登录
     //   重新拉起就遗忘退出意图 —— 看护 90s 后把刚退出的桌面壳拉回。落盘后新守卫 boot
     //   经 loadState 继承；看护观测到壳在线（用户重开）时自动清除。立即写盘，防中途被杀。
     host._shellHalted = true;
     try { host.writeState(true); } catch (e) { host.logger.warn && host.logger.warn('shutdownAll persist shellHalted: ' + e.message); }
-    // 同步停桌面壳看护（2026-09-18 修）：会话退出中不得再自愈拉起壳。
+    // 同步停桌面壳看护：会话退出中不得再自愈拉起壳。
     //   bootstrap 的 tick 门是运行期防线；此处清定时器是与完整 shutdown() 对齐的第二道。
     if (host._shellWatchdogTimer) { clearInterval(host._shellWatchdogTimer); host._shellWatchdogTimer = null; }
     // 与完整 shutdown() 对齐（K5）：退出后不得再有任何周期收敛（心跳会重新监督/拉起被管对象）。
@@ -106,10 +106,10 @@ async function shutdownAll(host) {
     if (host._adoptKillTimer) { clearTimeout(host._adoptKillTimer); host._adoptKillTimer = null; }
     host.logger.info('[session] 退出流程开始：停止全部被管对象…');
     host.events && host.events.append('shutdown_all', {});
-    // D-10：在途 npm 不等（优雅期只有 8s），但必须中止其 detached 子进程，
+    // 在途 npm 不等（优雅期只有 8s），但必须中止其 detached 子进程，
     //   否则守卫死后它继续写 node_modules/全局前缀，与重启后的新守卫并发。
     abortInflightNpm(host, 'session-exit');
-    // 1) 停 DSH 主实例（本守卫是被管对象的所有者，契约 §2）
+    // 1) 停 DSH 主实例（本守卫是被管对象的所有者，契约）
     host._stopMainDsh();
     // 2) 停全部沙箱（按实际单元名——glob 不经 shell 不展开）
     await host._stopAllSandboxes();
@@ -130,7 +130,7 @@ async function shutdownAll(host) {
     await stopDaemon('router');
     await stopDaemon('lan');
     // 4) 会话置 stopped 并回执——**守卫不停止自己**：守卫所属单元的所有者是外部（systemd + 壳，
-    //    契约 §2/§4.1）。壳收到本回执后执行 systemctl --user stop，守卫进程随之收到 SIGTERM 自然退出。
+    //    契约）。壳收到本回执后执行 systemctl --user stop，守卫进程随之收到 SIGTERM 自然退出。
     host._setSessionState('stopped');
     host.writeState(true);
     host.events && host.events.append('session_stopped', {});
@@ -140,9 +140,9 @@ async function shutdownAll(host) {
 
 function _stopMainDsh(host) {
     try {
-      // 退出会话不等于改变用户运行意图（契约 §6：desired 仅在用户显式启停时改变）。
+      // 退出会话不等于改变用户运行意图（desired 仅在用户显式启停时改变）。
       // 「停后不再拉起」由 sessionState=stopping 抑制（INV-S1）；保留 desired=running
-      // 使下次打开壳可恢复运行（契约 §5 启动时序）。
+      // 使下次打开壳可恢复运行（契约 启动时序）。
       if (host._mChild() || host._mAdoptPid()) { host.stopProcess('session_stop'); }
     } catch (e) { host.logger.warn && host.logger.warn('shutdownAll stop main: ' + e.message); }
 }
@@ -155,7 +155,7 @@ async function _stopAllSandboxes(host) {
     for (const inst of sandboxes) {
       let stopped = false;
       try {
-        // 服务管理器抽象（跨平台审计 §7.1）：编排层不直接调用 systemctl。
+        // 服务管理器抽象（跨平台审计）：编排层不直接调用 systemctl。
         // 仅当 stopUnit 明确返回成功才认为单元已停：Linux 停止失败返回 false，
         // 非 Linux（无用户单元）抛 CapabilityError；两条路径都不得把实例谎报为 STOPPED。
         stopped = platform.service.current().stopUnit('dsh-web@' + inst.id, { timeoutMs: 20000 }) === true;

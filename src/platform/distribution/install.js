@@ -38,7 +38,7 @@ async function fetchNpmLatest(state, pkg, opts) {
     origin = await registry.selectRegistry(state, false);
   }
   if (!origin) return null; // 全部镜像不可达：明确失败（checkUpdate 据此报错而非误报最新）
-  // B11：拉元数据前先过协议/形态闸（http(s) 纯 origin，无凭证/路径夹带）与包名字符集白名单。
+  // 拉元数据前先过协议/形态闸（http(s) 纯 origin，无凭证/路径夹带）与包名字符集白名单。
   // 覆盖 manualOrigin/契约 selected 等**不经 setRegistryConfig 校验**的来路（拼接 URL 的攻击面）。
   const base = policies.normalizeOrigin(origin);
   if (!policies.isValidOrigin(base)) return null;
@@ -130,7 +130,7 @@ function runNpmInstall(opts) {
     // 模板首项通常就是逻辑名 'npm'，同样需要跨平台解析；仅在首项恰为逻辑名时解析。
     bin = (argv[0] === 'npm') ? runtimeContract.npmBin(npmBin) : argv[0];
     argv = argv.slice(1);
-    // B11：argv[0] 的非 'npm' 分支**不再进 spawn 解析器**（历史缺陷：argv[0]='evil' 原样
+    // argv[0] 的非 'npm' 分支**不再进 spawn 解析器**（历史缺陷：argv[0]='evil' 原样
     // 交给 PATH 解析执行）。逻辑名 'npm' 走统一 npmBin()（两平台语义一致）；其余项过禁用字符集。
     if (bin === 'npm' && npmBin() === 'npm' && !execPath.resolveExecutable('npm')) {
       return Promise.resolve({ ok: false, error: 'runNpmInstall: 未找到可执行的 npm（commandTemplate[0]="npm" 解析失败）', output: [] });
@@ -143,8 +143,8 @@ function runNpmInstall(opts) {
     }
   } else {
     argv = ['install', '-g', '--no-audit', '--no-fund'];
-    // B11：安装期不执行包内 pre/post 脚本 ——  registry 内容（含镜像被投毒场景）不再能在
-    // 本机以守卫权限跑任意生命周期脚本。（audit §B-11：无 --ignore-scripts。）
+    // 安装期不执行包内 pre/post 脚本 ——  registry 内容（含镜像被投毒场景）不再能在
+    // 本机以守卫权限跑任意生命周期脚本。
     argv.push('--ignore-scripts');
     if (o.prefix) argv.push('--prefix', o.prefix);
     argv.push(pkg + '@' + o.version);
@@ -152,7 +152,7 @@ function runNpmInstall(opts) {
   // 契约 PATH 注入（nodeBinDir 首位）：内核自身执行的 npm 也必须能找到 node。
   const envVars = runtimeContract.withPath(process.env);
   if (o.registry) {
-    // B11：镜像源只接受 http(s) origin（收紧自「仅查 scheme」→ 无凭证/无路径夹带的完整 URL）；
+    // 镜像源只接受 http(s) origin（收紧自「仅查 scheme」-> 无凭证/无路径夹带的完整 URL）；
     // 非法值不写入 env（npm_config_registry 指向 file:// 等协议同样是攻击面）。
     if (!policies.isValidOrigin(o.registry)) {
       return Promise.resolve({ ok: false, error: 'runNpmInstall: 非法 registry origin（须为纯 http(s) origin）: ' + String(o.registry).slice(0, 80), output: [] });
@@ -167,7 +167,7 @@ function runNpmInstall(opts) {
       return resolve({ ok: false, error: e.message, output: [] });
     }
     const out = [];
-    // D-10（AUDIT-2026-09-19 第 4 批）：在途 npm 子进程必须**可被守卫主动中止**。
+    // 在途 npm 子进程必须**可被守卫主动中止**。
     //   子进程以 detached 起（自成进程组），故守卫退出/被 8s 强杀后它会继续跑：
     //   新守卫 boot 时旧 npm 仍在写 node_modules 与全局前缀 —— 无人等待、无人记账的
     //   并发写入者，正是 9-13/半成品形态的复发面。关停路径经 killInflightNpm() 收口。
@@ -273,7 +273,7 @@ module.exports = {
   fetchLatestVersion,
   runNpmInstall,
   waitPortHealthy,
-  // D-10：在途 npm 的记账/中止出口（关停路径经 platform/distribution 门面 re-export）
+  // 在途 npm 的记账/中止出口（关停路径经 platform/distribution 门面 re-export）
   killInflightNpm,
   inflightNpmCount,
 };

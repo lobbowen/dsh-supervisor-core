@@ -8,19 +8,19 @@
 //   - 所有权（端口 owner 引用 / root 路径 / unit 或 daemon 声明 / 进程模式）——持久
 //   - 类型适配器引用（observe/apply 实现留在类型模块，经 registerAdapter 挂接，不持久化）
 //
-// 铁律（v3 设计公理落地）—— **SSOT 在 GUARD-DOMAIN-MODEL.md §6.1**（M-1..M-4，含唯一合法出口与
-//   D-8 的 keepDesired 例外）；本处是摘要，两份冲突时以该契约为准（AUDIT-2026-09-19 第 4 批 D-7/D-8：
-//   正文此前只活在代码注释里 → 无契约索引、无门禁、评审无人引用，故提升为 .md 定本）。
+// 铁律（v3 设计公理落地）—— **SSOT 在 GUARD-DOMAIN-MODEL.md**（M-1..M-4，含唯一合法出口与
+//   D-8 的 keepDesired 例外）；本处是摘要，两份冲突时以该契约为准。
+//   公理清单：
 //   1) 实然（pid/占用/健康）只来自观测，绝不写回目录；
 //   2) 注册即存在、注销即不存在（限管家直接负责的对象）；域自治对象不入簿（经 ctl 摘要）；
 //   3) 目录不是第二状态源：phase 由调谐循环驱动（R3 挂接），业务不得直接改目录 phase；
 //   4) 路径由 root 派生，不登记路径清单；端口只登记所有权引用（联动统一端口注册表）。
-// 
+//
 
 const fs = require('node:fs');
 const path = require('node:path');
 const { writeAtomic } = require('../../platform/util/fs');
-// 纯模型（词表/entry/所有权）已拆到 managed-object.js（DF-2：registry ≤400；DF-3：纯/IO 分离）。
+// 纯模型（词表/entry/所有权）已拆到 managed-object.js（DF-2：registry <=400；DF-3：纯/IO 分离）。
 // 公开导出面不变（本文件 re-export createEntry/kindMeta/...）。
 const { DESIRED, MANAGED_KINDS, kindMeta, registerKind: registerManagedKind, isDomainA, createEntry, normalizeOwnership } = require('./managed-object');
 
@@ -54,7 +54,7 @@ class ManagedRegistry {
     //   false = 目录文件原不存在（首启/老库迁移）-> 允许 state.json 的 desired 作一次性种子。
     // 注意：必须记录「构造前是否存在」，而非 _save 之后——构造函数随后会创建文件（否则判定失真）。
     this._loadedFromDisk = false;
-    this._saveBlocked = false; // A1-c：损坏且连改名保全都失败时置真，本进程禁绝对目录文件的覆盖写
+    this._saveBlocked = false; // 损坏且连改名保全都失败时置真，本进程禁绝对目录文件的覆盖写
     if (this.file) {
       try { this._loadedFromDisk = fs.existsSync(this.file); } catch { this._loadedFromDisk = false; }
       this._load();
@@ -67,8 +67,8 @@ class ManagedRegistry {
     try {
       raw = JSON.parse(fs.readFileSync(this.file, 'utf8'));
     } catch (e) {
-      // A1-c（2026-09-19 审计修复）：既有目录文件不可读/损坏 ≠ 首启空目录。
-      //   旧行为静默当空目录继续 → 任一 upsert 触发 _save 用派生内容覆盖原文件，
+      // 既有目录文件不可读/损坏 != 首启空目录。
+      //   旧行为静默当空目录继续 -> 任一 upsert 触发 _save 用派生内容覆盖原文件，
       //   desired/guardian/崩溃计数永久丢失（且 _loadedFromDisk=true 使 state.json 不回灌种子）。
       //   现在：改名 .bad-<ts> 保全原始字节，以「未加载」态启动（回灌 state.json 种子）。
       if (this._loadedFromDisk) {
@@ -79,7 +79,7 @@ class ManagedRegistry {
           bak = this.file + '.bad-' + Date.now();
           fs.renameSync(this.file, bak);
         } catch (e2) {
-          this._saveBlocked = true; // 连保全改名都失败 → 本进程禁绝对该路径的覆盖写
+          this._saveBlocked = true; // 连保全改名都失败 -> 本进程禁绝对该路径的覆盖写
           this._log('warn', 'managed-objects 损坏备份失败，持久化已禁用: ' + ((e2 && e2.message) || e2));
         }
         this._event('managed_registry_corrupt', { backup: bak, error: (e && e.message) || String(e) });
@@ -113,7 +113,7 @@ class ManagedRegistry {
 
   _save() {
     if (!this.file) return;
-    if (this._saveBlocked) return; // A1-c：原字节未被保全前绝不覆盖（fail-closed）
+    if (this._saveBlocked) return; // 原字节未被保全前绝不覆盖（fail-closed）
     try {
       const dir = path.dirname(this.file);
       fs.mkdirSync(dir, { recursive: true });
@@ -244,7 +244,7 @@ class ManagedRegistry {
 
   /** 释放本对象持有的端口（按 owner）。
    *
-   *  注意 2026-09-12（P2-2 配套）：`PortRegistry.release()` 现已**真正支持** `ownerId` 校验
+   *  注意 （P2-2 配套）：`PortRegistry.release()` 现已**真正支持** `ownerId` 校验
    *    （此前第二参被静默忽略，故这里曾有 `catch { release(port) }` 的回退）。
    *    回退现已删除 —— 保留它会绕过 owner 判定，正是 P2-2 要堵的「误删他人端口登记」。
    *    记录返回值仅用于日志（不匹配即 no-op 是期望行为，不是错误）。

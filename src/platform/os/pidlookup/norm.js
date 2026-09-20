@@ -1,7 +1,7 @@
 'use strict';
 
 // pidlookup/norm.js —— 平台输出**纯解析器** + cmdline 归一化（零 IO）。
-// DF-3：本文件不 require 任何 IO 模块；DF-6：可独立 require 测试。
+// 本文件不 require 任何 IO 模块；DF-6：可独立 require 测试。
 // 生产代码直接调用这些解析器（非平行实现）。
 
 // 平台输出纯解析器（原内联在各平台的带 IO 函数里，只能在对应平台验证；而平台解析恰是跨平台
@@ -35,7 +35,7 @@ function parseLsofPid(out) {
 }
 
 /** 解析 Windows netstat -ano 输出，取监听该 port 的 pid 或 null。
- *  端口必须整段相等（:41000 不得被 :4100 命中）；容忍 CRLF。 */
+ *  端口必须整段相等（41000 不得被:4100 命中）；容忍 CRLF。 */
 function parseNetstatPid(out, port) {
   const want = String(port);
   for (const line of String(out || '').split('\n')) {
