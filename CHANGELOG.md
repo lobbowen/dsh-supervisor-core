@@ -17,7 +17,7 @@
 | 文件 | 行 | 注释行 | 逻辑判断 |
 |---|---|---|---|
 | `src/domains/router/handlers/forward.js` | 324 -> 317 | 31 -> 24 | 单一职责（上游 IO + 重试循环 + 透传收口），重试循环长但线性，不拆 |
-| `src/app/control/registry.js` | 308 -> 288 | 83 -> 63 | 目录 CRUD + 持久化，调度已归 `heartbeat.js`，视图/查询/变更各一组，不拆 |
+| `src/app/control/registry.js` | 308 -> 287 | 83 -> 62 | 目录 CRUD + 持久化，调度已归 `heartbeat.js`，视图/查询/变更各一组，不拆 |
 | `src/app/main/process.js` | 302 -> 297 | 44 -> 39 | 一个方法 = 一次生命周期迁移（spawn/adopt/observe/restart/stop），不拆 |
 
 删掉的是三类，留下的都是「为什么」：
@@ -28,8 +28,9 @@
   「回退现已删除」、`process.js` 的「原实现会让异常逃出本方法」，改写为只陈述当前约束与后果。
 - 拆文件路线图：`registry.js` 两段「已拆到 managed-object.js / heartbeat.js（registry <=400）」——
   行数上限不是拆分理由，且导出面与 require 行本身就说明了归属。
-- 重复表述：`process.js` 头注与 deps 内注释两次写「等价于原经 this 的调用」、令牌脱敏两次写
-  「journald 不留明文」；各留一处。
+- 重复表述：`process.js` 头注与 deps 内两次写「等价于原经 this 的调用」、令牌脱敏两次写「journald 不留
+  明文」；`registry.js` 的崩溃字段单一副本与 guardian 归一各在两处（_load/_save、_load/update）重复。
+  每处只保留一份。
 
 同批的一处代码清理：`forward-core.js` 组装 `createForwarder` 时传了 `canPersist`，而 `handlers/forward.js`
 从不读它（它属于 `UsageLedger` 的写权闸）。头注的 deps 清单一直把它列在本层依赖里，属错误引导 ——
