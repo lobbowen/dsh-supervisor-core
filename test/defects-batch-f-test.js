@@ -166,13 +166,19 @@ console.log('== 批4 C-3 remoteTokenStrength / backoffGate（relay/core 纯函�
     'ok');
   const bgCases = [
     ['低于阈值', { failCount: 9, firstAt: 1000, now: 5000 }, null],
-    ['达阈值窗口内', { failCount: 10, firstAt: 1000, now: 5000 }, 59000],
+    // ⚠ 勘误（第 4 批 run 35485774896：五个 job 同点红，与平台无关）：原期望 59000 是**把 5000 当成了
+    //   已耗时长**，而语义是 `now`——真实耗时 = now - firstAt = 5000 - 1000 = 4000，
+    //   剩余 = lockMs(60000) - 4000 = **56000**。产品算得对（回显即 56000），是夹具的算术错。
+    //   补一条 elapsed=0 的配对例：它把「剩余窗口」与「已耗时长」彻底分开，两者再混用必红其一。
+    ['达阈值窗口内（已耗 4000ms）', { failCount: 10, firstAt: 1000, now: 5000 }, 56000],
+    ['达阈值窗口起点（已耗 0ms → 整锁时长）', { failCount: 10, firstAt: 1000, now: 1000 }, 60000],
     ['超窗重置', { failCount: 10, firstAt: 1000, now: 61001 }, null],
     ['零失败', { failCount: 0, firstAt: 0, now: 5000 }, null],
   ];
   for (const [label, f, want] of bgCases) {
     const r = core.backoffGate(f);
-    check('C-3 backoffGate ' + label + ' → waitMs=' + want, r.waitMs === want, JSON.stringify(r));
+    check('C-3 backoffGate ' + label + ' → waitMs=' + want,
+      r.waitMs === want, JSON.stringify(r) + ' 输入=' + JSON.stringify(f));
   }
   // 写入口接线（源码形态：两处写盘前都过同一纯函数）
   const opsSrc = fs.readFileSync(path.join(ROOT, 'src', 'domains', 'instance', 'ops.js'), 'utf8');
