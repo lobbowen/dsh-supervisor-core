@@ -57,7 +57,7 @@ class ProxyInstance {
     this.version = null;
     this.startingPromise = null; // 启动并发去重：启动中复用同一 Promise，杜绝双 spawn
     this.lastUsedAt = null;      // 最近被请求使用的时刻（闲置回收窗口判断）
-    this._unhealthyCount = 0;  // 连续不健康次数（运行时，不落盘——健康监护用：≥N 次自动重启）
+    this._unhealthyCount = 0;  // 连续不健康次数（运行时，不落盘——健康监护用：>=N 次自动重启）
     this._restartAt = 0;       // 自动重启退避时刻（防风暴）
     this._monitorFails = 0;    // 健康监测连续失败次数（与 _unhealthyCount **独立**，见 proxy.js 说明）
     this._lastProblem = null;  // 最近一次实例级问题原因（诊断）

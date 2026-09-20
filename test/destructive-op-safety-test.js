@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 'use strict';
 
-// ═══════════════════════════════════════════════════════════════════════════
-// 破坏性操作防误伤门禁（2026-09-13）—— 源于一次**真实事故**
+// ---------------------------------------------------------------------------
+// 破坏性操作防误伤门禁—— 源于一次**真实事故**
 //
 // ## 事故
 //   做凭据门禁的**注入验证**时，先注入了「移除 DSH_CRED_DIR」以破坏夹具模式；
@@ -11,10 +11,10 @@
 //   又因迁移时旧路径是符号链接，覆盖立即生效、无第二份副本。
 //
 // ## 教训（可推广的规律）
-//   ① 任何**破坏性**子命令都必须对「真机」默认拒绝，而不是默默执行；
-//   ② 测试夹具必须与真机**结构隔离**，且隔离失效时要**失败**而不是降级；
-//   ③ 覆盖前必须留旧值备份，使操作**可逆**；
-//   ④ 注入验证本身要选**非破坏性**的注入点。
+//   1) 任何**破坏性**子命令都必须对「真机」默认拒绝，而不是默默执行；
+//   2) 测试夹具必须与真机**结构隔离**，且隔离失效时要**失败**而不是降级；
+//   3) 覆盖前必须留旧值备份，使操作**可逆**；
+//   4) 注入验证本身要选**非破坏性**的注入点。
 //
 // ## 锁定不变量
 //   W-1  cred.sh 的 put 在真机库上默认拒绝（需显式确认）
@@ -23,7 +23,7 @@
 //   W-4  夹具模式（DSH_CRED_DIR）仍可正常写入
 //   W-5  仓库内不存在任何指向真机库的**破坏性**测试调用（put/unlink 等）
 //   W-6  反向：判据能识别「真机库 + put」这一危险组合
-// ═══════════════════════════════════════════════════════════════════════════
+// ---------------------------------------------------------------------------
 
 const fs = require('node:fs');
 const os = require('node:os');
@@ -41,7 +41,7 @@ function realHome() {
   try {
     const u = os.userInfo().username;
     if (process.platform === 'darwin') {
-      const h = execFileSync('dscl', ['.', '-read', '/Users/' + u, 'NFSHomeDirectory'], { encoding: 'utf8' }).trim().split(/s+/).pop();
+      const h = execFileSync('dscl', ['.', '-read', '/Users/' + u, 'NFSHomeDirectory'], { encoding: 'utf8' }).trim().split(/\s+/).pop();
       if (h && fs.existsSync(h)) return h;
     } else {
       const h = execFileSync('getent', ['passwd', u], { encoding: 'utf8' }).trim().split(':')[5];
@@ -50,7 +50,7 @@ function realHome() {
   } catch { /* 回退到 os.homedir() */ }
   return os.homedir();
 }
-// 规范库根（2026-09-19 定稿）：真实 home 下 develop/.credentials（与 cred.sh CANON_STORE 同口径）。
+// 规范库根：真实 home 下 develop/.credentials（与 cred.sh CANON_STORE 同口径）。
 const REAL_STORE = process.env.DSH_CRED_DIR || path.join(realHome(), 'develop', '.credentials');
 
 const results = [];
@@ -72,7 +72,7 @@ function cred(args, env) {
   }
 }
 
-// ── W-5：仓库内不得存在指向真机库的破坏性调用 ──
+// -- W-5：仓库内不得存在指向真机库的破坏性调用 --
 {
   const offenders = [];
   const walk = (d) => {
@@ -103,9 +103,9 @@ function cred(args, env) {
     offenders.length === 0, offenders.length ? offenders.slice(0, 3).join(' | ') : '未发现');
 }
 
-// ── W-1/W-2/W-3：真机库保护（用 DSH_REAL_HOME 把「真机库」指向临时目录）──
-// ⚠ 关键设计：**不依赖真机库的状态，也不复制/改写脚本**。
-//   cred.sh 的「真机库」= dsh_real_home()/develop/.credentials（2026-09-19 定稿）；
+// -- W-1/W-2/W-3：真机库保护（用 DSH_REAL_HOME 把「真机库」指向临时目录）--
+//  关键设计：**不依赖真机库的状态，也不复制/改写脚本**。
+//   cred.sh 的「真机库」= dsh_real_home()/develop/.credentials；
 //   _npm-auth.sh 支持 DSH_REAL_HOME 覆盖。
 //   故设 DSH_REAL_HOME=<tmp> 即可在任意宿主确定性验证真机保护，且**完全不动真实凭据**。
 {
@@ -186,7 +186,7 @@ if (!fs.existsSync(REAL_STORE)) {
     + ' —— 保护逻辑已由上面的 fakeReal 模拟确定性验证。');
 }
 
-// ── W-6：反向（判据能识别危险组合；且保护代码确实在源码里）──
+// -- W-6：反向（判据能识别危险组合；且保护代码确实在源码里）--
 {
   const src = fs.readFileSync(CRED_SH, 'utf8');
   check('W-6 cred.sh 含真机覆盖保护（DSH_CRED_ALLOW_OVERWRITE 闸）',

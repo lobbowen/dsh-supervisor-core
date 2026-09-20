@@ -1,16 +1,16 @@
 #!/usr/bin/env node
 'use strict';
 
-// 测试端口纪律门禁（2026-09-11）。
+// 测试端口纪律门禁。
 //
 // == 背景（真实 flake 根因） ==
 //
 // 测试原先各自硬编码固定端口，其中 39 个落在 **OS ephemeral 范围**（Linux 默认 32768-60999）。
 // 生产代码 ports.js 明确要求「选址必须避开 OS 动态端口范围」，测试却违反了它。
 // 后果：claimSlot 用 bind 探测判占用，ephemeral 内的端口会被任何进程的临时出站连接
-// 短暂占用 → bind 失败 → 跳过端口 → 断言数值不符。表现为**偶发假失败**：
-//   · ports-claim-test 的 instB → base+2 曾偶发失败
-//   · router-e2e-test 与 token-boundary-test 撞用 39080 → EADDRINUSE
+// 短暂占用 -> bind 失败 -> 跳过端口 -> 断言数值不符。表现为**偶发假失败**：
+//   - ports-claim-test 的 instB -> base+2 曾偶发失败
+//   - router-e2e-test 与 token-boundary-test 撞用 39080 -> EADDRINUSE
 //
 // 本门禁确保该问题不再回归：
 //   T1 所有测试固定端口必须落在安全段（test/_ports.js 的 28000-28999）
@@ -26,17 +26,17 @@ const check = (n, c, x) => { results.push(!!c); console.log((c ? 'PASS' : 'FAIL'
 
 const files = fs.readdirSync(path.join(ROOT, 'test')).filter((f) => f.endsWith('.js') && !f.startsWith('_'));
 
-// ── T1：固定端口必须在安全段 ──
+// -- T1：固定端口必须在安全段 --
 console.log('== T1 固定端口落在安全段 ==');
 {
-  // ⚠ 关键设计：「4-5 位数字」== 「端口」是**错误**的假设，会造成大量误报 ——
+  //  关键设计：「4-5 位数字」== 「端口」是**错误**的假设，会造成大量误报 ——
   //   实测 `20000` 既是超时毫秒数（多个测试用它当超时），又恰好是生产池的下界；
   //   单凭数值无法区分。
   //
   // 因此本门禁只匹配**明确的端口语境**（白名单式），而不是「扫描所有数字再过滤」：
-  //   · `port: 39080` / `port = 39080` / `apiPort: 39080`
-  //   · `listen(39080, ...)`
-  //   · `127.0.0.1:39080` / `localhost:39080`（含 URL 串里的形态）
+  //   - `port: 39080` / `port = 39080` / `apiPort: 39080`
+  //   - `listen(39080, ...)`
+  //   - `127.0.0.1:39080` / `localhost:39080`（含 URL 串里的形态）
   // 这样超时毫秒数、区间边界常量、注释里的说明值都不会被误判。
   const PORT_PATTERNS = [
     /\bport\s*[:=]\s*(\d{4,5})\b/gi,
@@ -71,7 +71,7 @@ console.log('== T1 固定端口落在安全段 ==');
   check('T1 无固定端口落在 ephemeral/生产池内', offenders.length === 0, offenders.slice(0, 5).join(' | '));
 }
 
-// ── T2：迁移过的文件必须经 safePort 取端口 ──
+// -- T2：迁移过的文件必须经 safePort 取端口 --
 console.log('== T2 迁移文件使用 safePort ==');
 {
   const migrated = Object.keys(SEG.SEGMENTS);
@@ -85,7 +85,7 @@ console.log('== T2 迁移文件使用 safePort ==');
   check('T2 已登记的文件都引用了 safePort', missing.length === 0, missing.join(', '));
 }
 
-// ── T3：跨文件段不重叠 ──
+// -- T3：跨文件段不重叠 --
 console.log('== T3 跨文件端口段不重叠 ==');
 {
   const seen = new Map();
@@ -100,7 +100,7 @@ console.log('== T3 跨文件端口段不重叠 ==');
   check('T3 端口段无跨文件重叠', dup === 0, dup + ' 处重叠');
 }
 
-// ── T4：安全段本身必须真的安全 ──
+// -- T4：安全段本身必须真的安全 --
 console.log('== T4 安全段自洽 ==');
 {
   const ok = SEG.isSafe(SEG.BASE) && SEG.isSafe(SEG.BASE + 999);

@@ -42,7 +42,7 @@ function _bootstrap(host) {
     host._lastHeartbeatAt = Date.now();
     host._heartbeatStalls = 0;
     // 心跳代际（自增 beat id）：stall 兜底可放行下一拍，而上一拍的 promise 仍在 await；
-    // 若旧拍迟到结算时无条件清 busy，就会清掉新拍的标记 → 第三拍与新拍并发（两拍重叠根因）。
+    // 若旧拍迟到结算时无条件清 busy，就会清掉新拍的标记 -> 第三拍与新拍并发（两拍重叠根因）。
     // 故 guard 与 .finally 都只在本拍仍是当前代际时才复位 busy。
     host._heartbeatBeat = host._heartbeatBeat || 0;
     // 拍宽必须在 setInterval 之前求值：它同时用作间隔与超时阈值。
@@ -53,10 +53,10 @@ function _bootstrap(host) {
       const iv = heartbeatIv;
       const beat = ++host._heartbeatBeat; // 本拍代际
       host._lastHeartbeatAt = Date.now();
-      // 兜底释放阈值必须大于「最坏单拍上界」：单对象超时 = iv × ADAPTER_TIMEOUT_TICKS(6)，
-      //   循环串行，故 N 个对象全部卡死的最坏整拍 = N × 6 × iv。阈值低于它会在正常最长拍
+      // 兜底释放阈值必须大于「最坏单拍上界」：单对象超时 = iv x ADAPTER_TIMEOUT_TICKS(6)，
+      //   循环串行，故 N 个对象全部卡死的最坏整拍 = N x 6 x iv。阈值低于它会在正常最长拍
       //   中途误释放 busy，放行第二拍而第一拍仍在 await —— 两拍并发监督/收敛。
-      //   取最坏上界 + 一拍余量，并保底 max(30000, iv × 12)。unref：不拖住进程退出。
+      //   取最坏上界 + 一拍余量，并保底 max(30000, iv x 12)。unref：不拖住进程退出。
       const objCount = (host.managedObjects && typeof host.managedObjects.count === 'function')
         ? host.managedObjects.count() : 1;
       const stallMs = Math.max(30000, iv * 12, objCount * 6 * iv + iv);
@@ -163,13 +163,13 @@ function _startShellWatchdog(host) {
         logger: host.logger,
         events: host.events,
         config: host.config,
-        // 门**下沉到看护域**（2026-09-18 修，K3）：tick() 的一切调用者都受同一门约束。
-        //   E-3（AUDIT-2026-09-19）：合取式收敛为单源谓词 host._shellExitIntended()
-        //   （通用退出 ∨ 持久 _shellHalted）。壳看护是**桌面壳域**自愈，须含 shellHalted
+        // 门**下沉到看护域**：tick() 的一切调用者都受同一门约束。
+        //   合取式收敛为单源谓词 host._shellExitIntended()
+        //   （通用退出 或 持久 _shellHalted）。壳看护是**桌面壳域**自愈，须含 shellHalted
         //   （9-18：退出管家后守卫重启不得把壳拉回）；主 DSH 收敛用不含 shellHalted 的 _exitIntended。
         halted: () => host._shellExitIntended(),
         // 壳已在线 = 用户重新打开了壳 -> 清除持久退出标记（否则自愈被永久抑制）。
-        //   ⚠ 只在**非退出中**才清：退出握手期间壳还会存活数百 ms，若此时误清，
+        //    只在**非退出中**才清：退出握手期间壳还会存活数百 ms，若此时误清，
         //   持久标记被写成 false，守卫重启后看护又把壳拉回（本修的核心场景）。
         onShellAlive: () => {
           if (!host._shellHalted) return;

@@ -1,17 +1,17 @@
 #!/usr/bin/env node
 'use strict';
 
-// ═══════════════════════════════════════════════════════════════════════════
-// 跨平台能力**完整性**审计（2026-09-11）
+// ---------------------------------------------------------------------------
+// 跨平台能力**完整性**审计
 //
 // 目的：把「跨平台能力」从**文字声明**变成**可执行断言**。
 //
-// 动机（真实事故）：审计发现 macOS 的壳自启/自愈**从项目奠基提交（8867942, 2026-09-01）
+// 动机（真实事故）：审计发现 macOS 的壳自启/自愈**从项目奠基提交
 //   起就不存在**，而：
-//     · 注释声称「mac 由 LaunchAgent 一并代管」（macPlist 从奠基至今逐字节未变、只含守卫）
-//     · status() 硬编码 `gui: on`（把守卫自启当成壳自启）
-//     · setGuiAutostart 对非 Linux **静默 `return { ok: true }`**
-//     · 早期审计曾给这项打了「三端齐全」（现行矩阵见 PLATFORM-CAPABILITY-MATRIX.md）
+//     - 注释声称「mac 由 LaunchAgent 一并代管」（macPlist 从奠基至今逐字节未变、只含守卫）
+//     - status() 硬编码 `gui: on`（把守卫自启当成壳自启）
+//     - setGuiAutostart 对非 Linux **静默 `return { ok: true }`**
+//     - 早期审计曾给这项打了「三端齐全」（现行矩阵见 PLATFORM-CAPABILITY-MATRIX.md）
 //   四层互相背书，**没有一层验证行为**。
 //
 // 本测试即是「验证行为」这一层。
@@ -23,7 +23,7 @@
 //   A4 行为一致  模块的跨平台行为必须与 capabilityProfile 的声明一致
 //   A5 自愈真伪  自愈类能力的声明必须匹配实际机制（不得声称存在而实现被条件屏蔽）
 //   A6 无回归    历史错误声明不得重新出现
-// ═══════════════════════════════════════════════════════════════════════════
+// ---------------------------------------------------------------------------
 
 const fs = require('node:fs');
 const path = require('node:path');
@@ -33,12 +33,12 @@ const results = [];
 const check = (n, c, x) => { results.push(!!c); console.log((c ? 'PASS' : 'FAIL') + ' ' + n + (x !== undefined && x !== '' ? '  ← ' + x : '')); };
 const read = (p) => fs.readFileSync(path.join(ROOT, p), 'utf8');
 const readOs = (f) => fs.readFileSync(path.join(POS, f), 'utf8');
-/** 按平台层子目录聚合读取（2026-09-17 域结构改造：文件拆分后判据仍覆盖整个模块）。 */
+/** 按平台层子目录聚合读取。 */
 const readOsDir = (d) => fs.readdirSync(path.join(POS, d)).filter((f) => f.endsWith('.js')).sort()
   .map((f) => fs.readFileSync(path.join(POS, d, f), 'utf8')).join(String.fromCharCode(10));
 
 /** 剥离注释：A6「历史错误声明不得重现」必须只看**代码**。
- *  ⚠ 修复过程会在注释里**引用旧声明的原文**（用于解释病因），
+ *   修复过程会在注释里**引用旧声明的原文**（用于解释病因），
  *    不剥离就会把解释文字误判为实际代码（首版即因此 3 项误报）。 */
 // 阶段六 P6-A：剥离统一走 test/_strip.js 的**字符级单一实现**（去掉引号奇偶启发式 ——
 //   该启发式对多层/转义引号不可靠）。语义等价或更强：字符串/正则字面量感知，只多删注释。
@@ -56,7 +56,7 @@ const CAP_FIELDS = [
   'guardAutostart', 'guardSelfHeal', 'shellAutostart', 'shellSelfHeal',
 ];
 
-// ── A1 完整性 ──
+// -- A1 完整性 --
 console.log('== A1 能力字段完整性（无遗漏 / 无 undefined）==');
 {
   for (const pl of PLATFORMS.concat([UNKNOWN])) {
@@ -67,11 +67,11 @@ console.log('== A1 能力字段完整性（无遗漏 / 无 undefined）==');
   }
 }
 
-// ── A4 autostart 跨平台行为（真实调用，非文本扫描）──
+// -- A4 autostart 跨平台行为（真实调用，非文本扫描）--
 console.log('== A4 autostart 跨平台行为一致性 ==');
 {
   // 壳自启：声明必须与行为一致
-  // 三平台**均已实现**（darwin 于 2026-09-11 补齐独立 LaunchAgent）。
+  // 三平台**均已实现**。
   const expectShellAutostart = { linux: true, darwin: true, win32: true };
   for (const pl of PLATFORMS) {
     const claimed = capabilityProfile(pl, 'x64').shellAutostart;
@@ -90,10 +90,10 @@ console.log('== A4 autostart 跨平台行为一致性 ==');
   check('A4 未知平台显式不支持', ru && ru.ok === false && ru.unsupported === true, JSON.stringify(ru));
 }
 
-// ── A3 声明=false 必须显式不支持 ──
+// -- A3 声明=false 必须显式不支持 --
 console.log('== A3 不支持的能力必须显式报告 ==');
 {
-  // 沙箱多实例：darwin/win32 声明 false → service Provider 必须抛 CapabilityError
+  // 沙箱多实例：darwin/win32 声明 false -> service Provider 必须抛 CapabilityError
   const svcSrc = readOs('service.js');
   check('A3 service.js darwin Provider 为显式不支持', /darwin:\s*makeUnsupported/.test(svcSrc), 'ok');
   check('A3 service.js win32 Provider 为显式不支持', /win32:\s*makeUnsupported/.test(svcSrc), 'ok');
@@ -105,7 +105,7 @@ console.log('== A3 不支持的能力必须显式报告 ==');
   // 未知平台的壳自启必须显式不支持（已在 A4 覆盖行为侧）
 }
 
-// ── A2 声明=true 必须有实现产物 ──
+// -- A2 声明=true 必须有实现产物 --
 console.log('== A2 声明能力必须有实现产物 ==');
 {
   const pidSrc = readOsDir('pidlookup');
@@ -128,20 +128,20 @@ console.log('== A2 声明能力必须有实现产物 ==');
   // 壳自启
   check('A2 壳自启 Linux（XDG .desktop）', /autostart/.test(asSrc) && /\.desktop/.test(asSrc), 'ok');
   check('A2 壳自启 Windows（DSH-Supervisor-GUI 任务）', /DSH-Supervisor-GUI/.test(asSrc), 'ok');
-  // 壳自愈（2026-09-11 实现）：声明为 true 的平台必须有**真实的看护机制**
+  // 壳自愈：声明为 true 的平台必须有**真实的看护机制**
   {
     const wdPath = path.join(ROOT, 'src', 'domains', 'shell', 'watchdog.js');
     const exists = fs.existsSync(wdPath);
     check('A2 壳自愈有实现产物（domains/shell/watchdog.js）', exists, exists ? 'ok' : '缺失');
     if (exists) {
-      // ⚠ 2026-09-17 域结构改造：纯决策 decide() 已下沉 core.js —— 读取面必须纳入 core.js，
+      //  域结构改造：纯决策 decide() 已下沉 core.js —— 读取面必须纳入 core.js，
       //   否则「决策为纯函数」断言会静默失去覆盖面（假绿）。沿用按域聚合读取范式。
       const wd = fs.readFileSync(wdPath, 'utf8') + String.fromCharCode(10) +
         read('src/domains/shell/core.js');
       check('A2 看护决策为纯函数（可穷举单测）', /function decide\(/.test(wd), 'ok');
       check('A2 看护要求图形会话（防无显示重启风暴）', /sessionAvailable/.test(wd), 'ok');
       check('A2 看护有界重试（防风暴）', /maxRestarts/.test(wd), 'ok');
-      // ⚠ 步骤 7（2026-09-16）：看护的装配/接线随启动序列下沉到 app/assembly/bootstrap.js
+      //  步骤 7：看护的装配/接线随启动序列下沉到 app/assembly/bootstrap.js
       //   （src/supervisor.js 收敛为薄壳）——判据改读新模块，否则文件一搬就静默失去覆盖面。
       const bootSrc = read('src/app/assembly/bootstrap.js');
       check('A2 看护已接线进守卫生命周期', /_startShellWatchdog/.test(bootSrc), 'ok');
@@ -149,14 +149,14 @@ console.log('== A2 声明能力必须有实现产物 ==');
   }
 }
 
-// ── A5 自愈机制真伪 ──
+// -- A5 自愈机制真伪 --
 console.log('== A5 自愈机制真实性 ==');
 {
   const asSrc = readOsDir('autostart');
   // 守卫 plist 的**内容模板**归桌面壳（所有权矩阵）—— 由壳仓测试负责，
   //   内核**不读壳仓源码**。内核侧只保留所有权不变量：不得再持有该模板。
   check('A5 内核不再持有守卫 plist 模板（macPlist 已删）', !/function macPlist/.test(asSrc), 'ok');
-  // 2026-09-15（G3/C2）：Windows 看护（watchdog）所有者 = 桌面壳（KERNEL-DAEMON-CONTRACT D6）。
+  // （G3/C2）：Windows 看护（watchdog）所有者 = 桌面壳（KERNEL-DAEMON-CONTRACT D6）。
   //   内核侧只保留**负向不变量**：不得再创建 watchdog 任务 / 写 watchdog.ps1。
   //   壳侧「建立看护任务、且壳检查独立于守卫块」由壳仓 K-7 门禁负责（内核不读壳仓源码）。
   check('A5 内核不再创建 Windows watchdog 任务',
@@ -168,16 +168,16 @@ console.log('== A5 自愈机制真实性 ==');
     capabilityProfile('win32', 'x64').shellSelfHeal === true, 'ok');
 }
 
-// ── A6 无回归：历史错误声明不得重现 ──
+// -- A6 无回归：历史错误声明不得重现 --
 console.log('== A6 历史错误声明不得重现 ==');
 {
-  const asCode = stripComments(readOsDir('autostart'));  // ⚠ 只看代码，不看注释
+  const asCode = stripComments(readOsDir('autostart'));  //  只看代码，不看注释
   check('A6 无「mac 由 LaunchAgent 一并代管」的假声明', !/mac 由 LaunchAgent 一并代管/.test(asCode), 'ok');
   check('A6 无「同 plist 附带」的假声明（GUI 从未在 plist 中）', !/同 plist 附带/.test(asCode), 'ok');
   check('A6 无 setGuiAutostart 的静默成功分支',
     !/if \(!isLinux\) return \{ ok: true/.test(asCode), 'ok');
   // macOS status().gui 不得再谎报
-  // ⚠ 2026-09-17 域结构改造：macOS status() 已落 autostart/darwin.js —— 直接读该实现文件。
+  //  域结构改造：macOS status() 已落 autostart/darwin.js —— 直接读该实现文件。
   const macStatus = stripComments(readOs('autostart/darwin.js')).match(/function status\(\) \{[\s\S]*?return \{[^}]*\};/);
   check('A6 macOS status() 不再把守卫自启当作壳自启（gui: on）',
     !!macStatus && !/gui:\s*on/.test(macStatus[0]), macStatus ? macStatus[0].replace(/\s+/g, ' ').slice(0, 80) : '未找到');
@@ -186,7 +186,7 @@ console.log('== A6 历史错误声明不得重现 ==');
     /guiCommand\(\)/.test(asCode) && /oldExec/.test(asCode), 'ok');
 }
 
-// ── A7 壳自愈：声明 ↔ 实现（2026-09-11 新增实现）──
+// -- A7 壳自愈：声明 <-> 实现--
 console.log('== A7 壳自愈：声明 ↔ 实现 ==');
 {
   const wdRel = 'src/domains/shell/watchdog.js';
@@ -200,7 +200,7 @@ console.log('== A7 壳自愈：声明 ↔ 实现 ==');
   }
   // 未知平台不得声称具备
   check('A7 未知平台 shellSelfHeal 为 false', capabilityProfile(UNKNOWN, 'x64').shellSelfHeal === false);
-  // darwin 原生自启已于 2026-09-11 补齐 —— 但必须是**独立 LaunchAgent**，
+  // darwin 原生自启已于 补齐 —— 但必须是**独立 LaunchAgent**，
   // 不得复用守卫的 plist（那是壳的产权）。下面的 A8 组验证该分离。
   check('A7 darwin shellAutostart 为 true（2026-09-11 补齐）',
     capabilityProfile('darwin', 'arm64').shellAutostart === true);
@@ -214,7 +214,7 @@ console.log('== A7 壳自愈：声明 ↔ 实现 ==');
   //   （shell-watchdog-test 的 W1-i / W3-c / W3-f）。
 }
 
-// ── A8 自启所有权：内核不越权 + GUI 产物与守卫分离 ──
+// -- A8 自启所有权：内核不越权 + GUI 产物与守卫分离 --
 console.log('== A8 自启所有权不变量 ==');
 {
   const asSrc = readOsDir('autostart');
@@ -227,7 +227,7 @@ console.log('== A8 自启所有权不变量 ==');
   check('A8 GUI 标签是守卫标签的子域（com.dsh.supervisor.gui）',
     guiLabel === guardLabel + '.gui', String(guiLabel));
   // 内核 macOS 分支不得出现写守卫 plist 或删除它的调用
-  // ⚠ 2026-09-17 域结构改造：macOS setAutostart 落 autostart/darwin.js —— 切出该实现函数体，
+  //  域结构改造：macOS setAutostart 落 autostart/darwin.js —— 切出该实现函数体，
   //   断言「内核只做 launchctl，不写/不删守卫 plist」仍然成立。
   const macBranch = (readOs('autostart/darwin.js').match(/function setAutostart\([\s\S]*?\n\}/) || [''])[0];
   check('A8 定位到 darwin setAutostart', macBranch.includes('守卫服务定义缺失'), macBranch ? 'ok' : '未找到');

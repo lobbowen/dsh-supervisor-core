@@ -10,14 +10,14 @@ function toDate(v: string | number | Date | null | undefined): Date | null {
   return Number.isNaN(d.getTime()) ? null : d;
 }
 
-/** ISO/时间戳 → "HH:MM"（事件时间、检查时间等） */
+/** ISO/时间戳 -> "HH:MM"（事件时间、检查时间等） */
 export function formatClockTime(v?: string | number | Date | null, empty = "—"): string {
   const d = toDate(v);
   if (!d) return empty;
   return pad(d.getHours()) + ":" + pad(d.getMinutes());
 }
 
-/** ISO/时间戳 → "MM-DD HH:MM[:SS]"（任务历史等，秒可省） */
+/** ISO/时间戳 -> "MM-DD HH:MM[:SS]"（任务历史等，秒可省） */
 export function formatDateTime(v?: string | number | Date | null, withSeconds = false, empty = "—"): string {
   const d = toDate(v);
   if (!d) return empty;

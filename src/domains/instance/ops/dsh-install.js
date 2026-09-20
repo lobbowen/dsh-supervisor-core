@@ -131,8 +131,8 @@ function createDshInstall(deps) {
   async function latestDshVersion() {
     if (_latestDshVer && Date.now() - _latestDshVerAt < 30000) return _latestDshVer;
     let v = null;
-    // '@deepseek-ai/dsh' 是**第三方包**：语义由契约 §3 第三方段落 + release.js 单源决定
-    // （条 7 改判为 latest 优先；旧「全量最高」会把他人杂 tag 当候选，已废）。
+    // '@deepseek-ai/dsh' 是**第三方包**：语义由契约第三方段落 + release.js 单源决定
+    // （取 registry 全量最高会把他人杂 tag 当候选，不可用）。
     try { if (dist) v = await dist.fetchNpmLatest('@deepseek-ai/dsh'); } catch {}
     _latestDshVer = v;
     _latestDshVerAt = Date.now();

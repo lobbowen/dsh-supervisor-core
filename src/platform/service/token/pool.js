@@ -2,8 +2,8 @@
 
 // 令牌池（DSH-TOKEN-CONTRACT 契约3/4，TK-1/TK-4/TK-8）。
 // 本池是唯一事实源（TK-4）：id 到 { value, gen, source, at, kind }；消费方一律按需 get()，不得自行缓存；gen 为代号，每次值变化加一。
-// TK-8：值变化广播 (id, value, record)，清空或注销广播 (id, null, null)，clear/detach 必广播，没有静默删除路径。
-// TK-7：用户配置类权威在配置存储，list() 排除，attach 只登记。
+// 值变化广播 (id, value, record)，清空或注销广播 (id, null, null)，clear/detach 必广播，没有静默删除路径。
+// 用户配置类权威在配置存储，list() 排除，attach 只登记。
 // 落盘（TK-5/TK-6）：恢复文件经 persist.appendByRotation（原子备份、截断、0600、脱敏）；池快照需显式 opts.poolFile，缺省不落盘以免测试互相污染。
 // 源形态到 kind 推断在 infer.js，池快照 IO 在 snapshot.js，本文件不直连 fs。
 
@@ -66,7 +66,7 @@ class TokenPool {
   }
 
   /** 注销目标的来源与全部令牌状态（实例删除/模式切换永久放弃时调用）。
-   *  TK-8：清令牌必须广播 null，否则消费方会继续用已注销目标的旧代令牌。 */
+   *  清令牌必须广播 null，否则消费方会继续用已注销目标的旧代令牌。 */
   detach(id) {
     this._cancelSchedule(id);
     this._sources.delete(id);
@@ -76,7 +76,7 @@ class TokenPool {
 
   /* 统一捕获（源无关） */
   /** 主动捕捉一次：按源顺序取“最新一条”URL 行的令牌，有变化则入库并广播。
-   *  批 4（令牌条 4）：stdout/文件档同步返回；journal 档**非阻塞**发射（resolve 后照常 _commit+广播），
+   *：stdout/文件档同步返回；journal 档**非阻塞**发射（resolve 后照常 _commit+广播），
    *  因为同步 journalctl 在守卫生命周期 tick 里会冻结事件循环最长 5s（心跳停摆）。 */
   capture(id) {
     const src = this._sources.get(id);
@@ -106,7 +106,7 @@ class TokenPool {
     if (!id || !line) return null;
     let src = this._sources.get(id);
     if (!src) {
-      // TK-3 旁路封堵（批 4）：旧实现未 attach 即按形态建隐式源，inferKind 推断失败（返回 null）
+      // TK-3 旁路封堵：旧实现未 attach 即按形态建隐式源，inferKind 推断失败（返回 null）
       //   时仍会把源与令牌塞进池——绕开了 attach 那道「kind 未登记即拒」的门（幽灵令牌入池）。
       //   隐式源只允许走与 attach 完全相同的分类闸：推断不出、或未登记，一律拒绝入池。
       const k = inferKind(id, {});
@@ -162,7 +162,7 @@ class TokenPool {
 
   /* 生命周期 */
   /** 清空某目标的令牌与调度；TK-8：必须广播 null（消费方据此立刻丢弃旧代令牌）。
-   *  TK-1：stdout 行缓冲同属旧代状态——不清则 ensureCaptured 下一拍从残留行再“捕获”已死令牌，
+   *  stdout 行缓冲同属旧代状态——不清则 ensureCaptured 下一拍从残留行再“捕获”已死令牌，
    *  以新 gen 追加进恢复文件（回灌死令牌，relay 恒 401）。 */
   clear(id) {
     this._cancelSchedule(id);
@@ -267,7 +267,7 @@ class TokenPool {
     const entries = [];
     for (const [id, r] of this._records) {
       if (!r.value) continue;                    // 空值不落盘，没有令牌不是一种持久状态
-      if (!kinds.isPersistent(r.kind)) continue; // TK-7：用户配置/派生/自签类绝不写入池文件
+      if (!kinds.isPersistent(r.kind)) continue; // 用户配置/派生/自签类绝不写入池文件
       entries.push({ id, value: r.value, gen: r.gen, source: r.source, at: r.at, kind: r.kind });
     }
     const w = snapshot.saveTokens(this._poolFile, entries);

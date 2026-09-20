@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# 守卫源码打包出口（D1 定案 2026-09）：仅产出「全源码 tar.gz」供人工分发/自用。
+# 守卫源码打包出口：仅产出「全源码 tar.gz」供人工分发/自用。
 #   release/scripts/release.sh [version]
 #  - version 默认取 package.json。
 # 产物：dist/release/dsh-supervisor-<ver>.tar.gz（bin/src/ui，零依赖源码包）。
 #
-# ⚠ 发布通道收敛（2026-09 审计 F6/D1 定案）：本脚本不再是自更新通道——
+#  发布通道收敛：本脚本不再是自更新通道——
 #   不再生成 dist/release/manifest.json（曾产出 url=127.0.0.1:39240 污染 manifest）。
 #   内核发布唯一通道 = build:launcher Node launcher + scripts/publish-core.sh npm 平台子包；
 #   守卫自身更新走同一 npm 执行器（DistributionManager.runNpmInstall + 平台子包）。
@@ -21,10 +21,10 @@ DIR="$DIST/$PAK"
 rm -rf "$DIR"; mkdir -p "$DIR"
 # 内核资产（双仓拆分后本仓无 src-tauri；壳图标不再随内核源码包分发——内核包用 ui-react 面板）。
 for d in bin src; do [ -e "$ROOT/$d" ] && cp -r "$ROOT/$d" "$DIR/"; done
-# 2026-09-05 清理：不再拷 ROOT/config.json（含构建机绝对路径的死双源）——守卫运行读内嵌 DEFAULT_CONFIG 或用户 ~/.dsh/supervisor/config.json
+# 清理：不再拷 ROOT/config.json（含构建机绝对路径的死双源）——守卫运行读内嵌 DEFAULT_CONFIG 或用户 ~/.dsh/supervisor/config.json
 cp "$ROOT/package.json" "$DIR/"
 
-# 新 React UI（supervisor 控制面板）：统一构建入口 release/scripts/build-ui.sh（构建 → ui/dist → ui-react 镜像）。
+# 新 React UI（supervisor 控制面板）：统一构建入口 release/scripts/build-ui.sh（构建 -> ui/dist -> ui-react 镜像）。
 # 源码缺失且无镜像时才告警（release.sh 仍允许产出无 UI 的源码包，发布校验见下方）。
 if [ -d "$ROOT/ui" ] && [ -f "$ROOT/ui/package.json" ]; then
   bash "$ROOT/release/scripts/build-ui.sh"
@@ -38,7 +38,7 @@ if [ -d "$ROOT/ui-react" ]; then
 fi
 
 # 产物自检：全部 JS 语法冒烟（含 bin 入口脚本，排除 vendor）
-# 2026-09-05 修复：find 默认换行输出配 read -d ""（NUL 分隔）会让循环体永不执行（门禁静默失效）；
+# 复：find 默认换行输出配 read -d ""（NUL 分隔）会让循环体永不执行（门禁静默失效）；
 # 改用 find -print0（NUL 分隔）配 read -d ""，并用括号限定 -o 优先级只收集 .js 与 bin 入口。
 fails=0
 while IFS= read -r -d "" f; do

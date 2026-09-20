@@ -15,7 +15,7 @@ function _rebindApiHost(host, createServer) {
       try { if (typeof old.closeAllConnections === 'function') old.closeAllConnections(); } catch {}
     }
     const bind = () => {
-      // E-3（AUDIT-2026-09-19）：慢重试是跨 30s 的自愈链，有退出意图即就地终止
+      // 慢重试是跨 30s 的自愈链，有退出意图即就地终止
       //   （否则守卫关停后仍会重开监听器）。首绑不经此闸（hostFirst 装配期 _exitIntended 未必就绪）。
       if (bind._slowRetry && typeof host._exitIntended === 'function' && host._exitIntended()) {
         bind._slowRetry = false;
@@ -24,10 +24,10 @@ function _rebindApiHost(host, createServer) {
       }
       const server = createServer(host);
       server.on('error', (err) => {
-        // C-9 / B-22c（批 4）：监听错误按「是否可由重试消解」分类，绝不停在静默分支——
+        // C-9 / B-22c：监听错误按「是否可由重试消解」分类，绝不停在静默分支——
         // API 静默永久下线比端口冲突更糟（面板失联且无事件可查）。
-        //   · EADDRINUSE / EADDRNOTAVAIL：瞬时（旧连接未散 / 网卡地址未就绪）→ 同一快慢重试环；
-        //   · EACCES：绑定特权端口(<1024)等配置性错误，重试不可消解 → 一次性 api_offline 事件，
+        //   - EADDRINUSE / EADDRNOTAVAIL：瞬时（旧连接未散 / 网卡地址未就绪）-> 同一快慢重试环；
+        //   - EACCES：绑定特权端口(<1024)等配置性错误，重试不可消解 -> 一次性 api_offline 事件，
         //     不空转重试（host.api 保持 null，/status 与事件流如实呈现下线）。
         const transient = err && (err.code === 'EADDRINUSE' || err.code === 'EADDRNOTAVAIL');
         if (transient) {

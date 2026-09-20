@@ -12,11 +12,11 @@ const TMP = fs2.mkdtempSync(path.join(os.tmpdir(), 'mreg-'));
 const { ManagedRegistry, PHASES, DESIRED, MANAGED_KINDS } = require(path.join(ROOT, 'src', 'app', 'control', 'registry'));
 
 let failures = 0;
-// ⚠ 2026-09-13（P3 测试基建缺陷）：本文件原以**硬编码常量**报告总数 ——
+//  （P3 测试基建缺陷）：本文件原以**硬编码常量**报告总数 ——
 //     const passCount = 26;  ...  (passCount - failures)
 //   而文件里实际有 **40** 个 check()。后果：
-//     · 汇总的「断言数」与真实执行数脱钩（内核聚合断言计数因此**少算 14**）；
-//     · 更危险的是它伪装成一道门禁：**删掉 14 个既有 check**，汇总仍打印「26 passed」，
+//     - 汇总的「断言数」与真实执行数脱钩（内核聚合断言计数因此**少算 14**）；
+//     - 更危险的是它伪装成一道门禁：**删掉 14 个既有 check**，汇总仍打印「26 passed」，
 //       看不出覆盖缩水 —— 正是历史审计记录的「假门禁」形状。
 //   修法：由 check() 自己累加真实总数，汇总恒等于实执行数（不可能是常量）。
 let checks = 0;
@@ -127,7 +127,7 @@ const fakePorts = {
   check('实然不持久化', JSON.stringify(fs2.readFileSync(hbFile, 'utf8')).indexOf('lastObserved') < 0);
 
 
-  // 9. heartbeat derivePhase（daemon 类）：desired×观测收敛 phase
+  // 9. heartbeat derivePhase（daemon 类）：desiredx观测收敛 phase
   const dpFile = path.join(TMP, 'dp-objects.json');
   const dp = new ManagedRegistry({ file: dpFile, logger: null });
   dp.register({ kind: 'router-daemon', id: 'rd', desired: 'running', guardian: true });
@@ -137,10 +137,10 @@ const fakePorts = {
   dp.registerAdapter('router-daemon', { supervise: () => ({ ok: false }), derivePhase: true });
   await dp.heartbeat(1000);
   check('derivePhase: 失联 → phase stopped', dp.get('rd').phase === 'stopped');
-  // 10. heartbeat 逐对象超时（2026-09-13 P1）：单个 adapter 卡死不得停摆整条心跳
-  //   缺陷：`await fn(e)` 无超时 → 任一 adapter 的 promise 永不 settle 即让心跳永停，
+  // 10. heartbeat 逐对象超时：单个 adapter 卡死不得停摆整条心跳
+  //   缺陷：`await fn(e)` 无超时 -> 任一 adapter 的 promise 永不 settle 即让心跳永停，
   //     而心跳是 main 收敛/沙箱监督/daemon 监督的**唯一周期驱动**（managedObjects 存在时
-  //     不创建 tick 定时器）→「面板开着、服务全死、无任何事件」。
+  //     不创建 tick 定时器）->「面板开着、服务全死、无任何事件」。
   {
     const toFile = path.join(TMP, 'hb-timeout.json');
     const to = new ManagedRegistry({ file: toFile, logger: null });
@@ -149,10 +149,10 @@ const fakePorts = {
     to.registerAdapter('sandbox-instance', {
       supervise: (e) => (e.id === 'hung' ? new Promise(() => {}) : { ok: true }),
     });
-    // 保活：超时定时器 unref 了，无其它句柄时进程会提前退出 → 断言跑不到
+    // 保活：超时定时器 unref 了，无其它句柄时进程会提前退出 -> 断言跑不到
     const keepAlive = setInterval(() => {}, 100);
     const t0 = Date.now();
-    const r = await to.heartbeat(50); // 上限 = 50 × 6 = 300ms
+    const r = await to.heartbeat(50); // 上限 = 50 x 6 = 300ms
     clearInterval(keepAlive);
     const elapsed = Date.now() - t0;
     check('heartbeat 卡死对象有超时（不会永不返回）', elapsed < 5000, elapsed + 'ms');
@@ -165,7 +165,7 @@ const fakePorts = {
       JSON.stringify(r.observed));
   }
 
-  // 11. A1-c（2026-09-19 审计修复）：既有目录文件损坏 ≠ 首启空目录 ——
+  // 11. A1-c：既有目录文件损坏 != 首启空目录 ——
   //     改名 .bad-<ts> 保全原始字节 + 以「未加载」态启动（允许 state.json 种子回灌）+ 事件不静默。
   {
     const cf = path.join(TMP, 'corrupt-objects.json');

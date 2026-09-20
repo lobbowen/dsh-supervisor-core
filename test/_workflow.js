@@ -2,12 +2,12 @@
 
 // 工作流文件读取（**行尾归一化**，跨平台一致）。
 //
-// ⚠ 为什么需要它（真实 Windows CI 事故，2026-09-11）：
+//  为什么需要它：
 //   Windows runner 的 git 检出会把 build.yml 转成 CRLF（core.autocrlf）。
 //   测试里用 `\n` 锚定的正则（如 `/\n  ([a-z]+):\n/` 提取 job 段）在 CRLF 下**完全失配**
 //   —— 因为 job 名后紧跟的是 `\r` 而非 `\n`。
-//   结果：断言取到空串 → 5 个断言失败；而同一份代码在 Linux/macOS（LF）全绿。
-//   表现为「只在 Windows 红」，极难排查（本次排查耗时较长即因此）。
+//   结果：断言取到空串 -> 5 个断言失败，且只有 Windows 宿主复现（Linux/macOS 检出为 LF）。
+//   表现为「只在某一个平台红」，极难排查。
 //
 // 因此：凡要按行解析 workflow 的测试**必须**经本模块读取，禁止直接 fs.readFileSync。
 // 由 test/workflow-parse-test.js 门禁强制（含 CRLF 夹具实测）。
@@ -15,7 +15,7 @@
 const fs = require('node:fs');
 const path = require('node:path');
 
-/** 行尾归一化：CRLF / CR → LF。所有下游正则因此只需处理 `\n`。 */
+/** 行尾归一化：CRLF / CR -> LF。所有下游正则因此只需处理 `\n`。 */
 function normalize(text) {
   return String(text).replace(/\r\n?/g, '\n');
 }
@@ -45,7 +45,7 @@ function stripComments(text) {
 function jobSection(text, name) {
   const code = stripComments(text);
   const parts = code.split(/\n  ([a-z][a-z0-9_-]*):\n/);
-  // split 带捕获组 → [前置, 名1, 体1, 名2, 体2, ...]
+  // split 带捕获组 -> [前置, 名1, 体1, 名2, 体2, ...]
   for (let i = 1; i < parts.length; i += 2) {
     if (parts[i] === name) return parts[i + 1] || '';
   }

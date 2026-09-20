@@ -6,7 +6,7 @@
 // deps 全部为惰性取值函数（装配期 host 尚未就绪），故传 getXxx 而非值。
 // 返回对象键 = 本切面公开面，与 assembly/collaborators.js 的 THIN_SPEC.audit 逐字一致：
 //   THIN_SPEC.audit = { orphan: '_orphanAudit' }  ->  { orphan }
-// facets.js 仍以 { methods } 把 _orphanAudit 装到 host（§1.2 不动），故两路径共用同一实现。
+// facets.js 仍以 { methods } 把 _orphanAudit 装到 host（不动），故两路径共用同一实现。
 // 可只 require 本模块 + 假 deps 直接断言。
 
 const { orphanAudit } = require('./orphan-scan');

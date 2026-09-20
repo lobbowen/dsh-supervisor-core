@@ -62,5 +62,5 @@ function withPath(env) {
 }
 
 // file() 必须导出：测试需要把契约写到 read() 实际读取的那个路径（SSOT 在此，测试不得重推导）。
-// 曾按「仅 read() 内部使用」删除，CI run 35196507963 以 rc.file is not a function 检出（test 消费漏检）。
+// 曾按「仅 read() 内部使用」删除，CI  以 rc.file is not a function 检出（test 消费漏检）。
 module.exports = { SUPPORTED_SCHEMA, file, read, npmBin, withPath };

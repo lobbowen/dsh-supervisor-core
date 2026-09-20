@@ -10,7 +10,7 @@
 //
 // 锁定不变量
 //   DR-1 根级 *.md 中出现的每个 src/... 路径字面量必须真实存在（文件或目录；
-//        允许省略 .js 后缀，允许带 :行号）。故意举例"不存在路径"的写法必须先改述，
+//        允许省略 .js 后缀，允许带:行号）。故意举例"不存在路径"的写法必须先改述，
 //        不得把悬空路径留在正文里。
 //   DR-2 反向：判据能识别不存在的路径，且不误报存在的文件/目录/带行号形态/glob 形态。
 //   DR-3 （report-only）src/ 目录树的「裸名」（无 src/ 前缀）在 src/ 下必须可寻；只报告、
@@ -36,14 +36,14 @@ const check = (n, c, x) => {
   console.log((c ? 'PASS' : 'FAIL') + ' ' + n + (x !== undefined && x !== '' ? '  <- ' + x : ''));
 };
 
-// src/... 字面量。段字符不含 * ? # : ，故 glob（src/**/*.js）与行号后缀不会被吞进来。
-// ⚠ 边界（P3-B 修，主控发现）：src/ 只有在**是路径根**时才计入 —— 前面不得是 / 或标识符字符。
+// src/... 字面量。段字符不含 * ? #: ，故 glob（src/**/*.js）与行号后缀不会被吞进来。
+//  边界（P3-B 修，主控发现）：src/ 只有在**是路径根**时才计入 —— 前面不得是 / 或标识符字符。
 //   否则 `ui/src/features/supervisor/InstancesPage.tsx`（前端路径的正常写法）会被**截出**
 //   `src/features/supervisor/InstancesPage.tsx`，再按 <仓根>/src/... 判不存在 => 误报违规。
 //   负向后顾 (?<![\w/]) 即为此；Node >=16 支持。`./src/` 是合法写法，由 refsOf 归一后再匹配。
 const SRC_REF = /(?<![\w/])src\/[A-Za-z0-9_.-]+(?:\/[A-Za-z0-9_.-]+)*/g;
 
-/** 归一化原文命中：剥掉 :行号 与行尾标点；无意义片段返回 null。 */
+/** 归一化原文命中：剥掉:行号 与行尾标点；无意义片段返回 null。 */
 function normalizeRef(hit) {
   let t = String(hit || '');
   t = t.replace(/(?::\d+)+$/, '');
@@ -74,7 +74,7 @@ function refsOf(text) {
   return [...out];
 }
 
-// ── DR-1：根级文档引用的 src/... 全部可解析 ──
+// -- DR-1：根级文档引用的 src/... 全部可解析 --
 {
   const docs = fs.readdirSync(ROOT).filter((f) => f.endsWith('.md') && !HISTORICAL.has(f));
   const offenders = [];
@@ -89,7 +89,7 @@ function refsOf(text) {
       : (docs.length + ' 份文档 / ' + withRefs + ' 份含 src 引用，零悬空'));
 }
 
-// ── DR-2：反向（判据非空转，且不误报）──
+// -- DR-2：反向（判据非空转，且不误报）--
 {
   check('DR-2 反向：能识别不存在的路径',
     refsOf('见 src/guard/supervisor/main-process.js:46 的说明').some((r) => !resolves(r)), 'hit');
@@ -111,7 +111,7 @@ function refsOf(text) {
     refsOf('src/platform/util/exec.js').length === 1, 'hit');
 }
 
-// ── DR-3 地基：切代码块 / 取树 token / 裸名解析 ──
+// -- DR-3 地基：切代码块 / 取树 token / 裸名解析 --
 const FENCE = String.fromCharCode(96).repeat(3);
 /** 切出 fenced 代码块（三反引号围栏）的逐行内容。 */
 function fencedBlocks(md) {
@@ -142,7 +142,7 @@ function srcRootedBlocks(md) {
   const all = fencedBlocks(md).concat(indentedBlocks(md));
   return all.filter((b) => b.some((l) => l.trim() === 'src/'));
 }
-/** 从树块行取路径 token：连接符（├──/└──）后的首个名字，且须形如目录（/ 结尾）或带扩展名文件。 */
+/** 从树块行取路径 token：树连接符之后的首个名字，且须形如目录（/ 结尾）或带扩展名文件。 */
 function treeTokensOf(blockLines) {
   const out = [];
   for (const line of blockLines) {
@@ -178,10 +178,10 @@ function treeTokenResolves(token) {
   return SRC_BASENAMES.has(t);
 }
 
-// ── DR-3（report-only）：src/ 目录树的「裸名」漂移 ──
-// §3 目录树用裸名（无 src/ 前缀），DR-1 的 src/... 字面量覆盖不到 → 已两轮人工漂移。
+// -- DR-3（report-only）：src/ 目录树的「裸名」漂移 --
+// 目录树用裸名（无 src/ 前缀），DR-1 的 src/... 字面量覆盖不到 -> 已两轮人工漂移。
 // 口径：只扫描**含独立 src/ 根行**的代码块（即具体 src 目录树）；模板树（如 domains/<domain>/）
-//   与非 src 树（release 产物、API 端点列表）不参与，否则必然误报。连接符（├──/└──）后的首个
+//   与非 src 树（release 产物、API 端点列表）不参与，否则必然误报。树连接符之后的首个
 //   路径 token：裸名按 basename 在 src/ 下检索（宽松，同名多目录不误报）；dir/name 要求该相对路径存在。
 // 诚实边界：裸名是**上下文相对**的（同名可能属于多个目录，基准目录不可静态确定，P3-B 已登记）。
 //   故本判据只报告、不计入退出码；转硬需先实测 0 误报（当前 tree 实测 0，但依托「只扫 src 根块」的收窄口径）。

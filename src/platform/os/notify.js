@@ -5,7 +5,7 @@
 // - macOS：osascript display notification；
 // - Windows：PowerShell System.Windows.Forms.NotifyIcon 气泡（无需第三方模块）。
 
-// SSOT §3：异步 spawn 统一封装（固定 windowsHide:true）。
+// SSOT：异步 spawn 统一封装（固定 windowsHide:true）。
 const spawnOS = require('./spawn');
 
 /** AppleScript 字符串字面量转义（与 JSON 同用反斜杠，JSON.stringify 恰好等价）。 */
@@ -14,7 +14,7 @@ function appleScriptString(s) {
 }
 
 /** PowerShell **单引号**字符串字面量：' 双写即唯一转义规则；$ 与反引号在单引号串内是字面字符。
- *  B9（AUDIT-2026-09-19）：旧实现用双引号串且只双写 "，漏 $ —— body 有 err.message 通路，
+ *  旧实现用双引号串且只双写 "，漏 $ —— body 有 err.message 通路，
  *  `$(...)` 会被 PowerShell 子表达式插值**执行**，是命令注入面。双引号串同时转义 ` 与 $ 太易漏，
  *  故整体改单引号语义（与 AppleScript/JSON 的反斜杠规则不同，必须分开实现）。 */
 function powerShellString(s) {
@@ -29,7 +29,7 @@ function notifyCommand(platform, title, body) {
   const t = String(title == null ? '' : title);
   const b = String(body == null ? '' : body);
   if (pl === 'linux') {
-    // argv 直传，无 shell → 无转义问题
+    // argv 直传，无 shell -> 无转义问题
     return { cmd: 'notify-send', args: ['-a', 'dsh-supervisor', t, b] };
   }
   if (pl === 'darwin') {

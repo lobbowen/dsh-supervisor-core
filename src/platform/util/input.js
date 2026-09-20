@@ -1,22 +1,22 @@
 'use strict';
 
-// 外部输入的统一字符集闸（E-4，AUDIT-2026-09-19 第 4 批）。
+// 外部输入的统一字符集 / 形态闸。
 //
-// 为什么单源：version / unit 名 / 包名 / argv 项 / 账本键此前分散在三处各写一份白名单
+// 为什么单源：version / unit 名 / 包名 / argv 项 / 安装前缀 / 账本键此前分散在三处各写一份白名单
 //   （shared/version 的严格 semver、os/service 的 UNIT_NAME_RE、distribution/install 的
-//   PKG_NAME_RE + BAD_ARGV_CHAR_RE）。审计 §E-4 的病灶不是「哪一份写错」，而是
+//   PKG_NAME_RE + BAD_ARGV_CHAR_RE）。本仓的病灶从来不是「哪一份写错」，而是
 //   **新增入口时无处可抄** —— 每多一个「把外部字符串拼进 argv / 文件路径 / 对象键」的
 //   调用点，就多一次「作者以为不用校验」的机会。本文件是那把尺子的唯一存放处。
 //
 // 边界：这里只做**字符集 / 形态**判定。语义级校验留在各自的域，且不得反向依赖本文件：
-//   - URL 可达性 / SSRF / 私网字面量 → distribution/policies.js（isValidOrigin）与 api C-8 闸；
-//   - 版本大小与通道语义 → app/native/policies.js + shared/version.js。
+//   - URL 可达性 / SSRF / 私网字面量 -> distribution/policies.js（isValidOrigin）与 api C-8 闸；
+//   - 版本大小与通道语义 -> app/native/policies.js + shared/version.js。
 
 /** npm 包名（含 scope）：`dsh` / `@deepseek-ai/dsh`。字符集从严，宁误杀不漏放。 */
 const PKG_NAME_RE = /^(@[a-zA-Z0-9._-]+\/)?[a-zA-Z0-9._-]+$/;
 
 /** argv 项的禁用字符集：空白 + 全部 shell 元字符/引号/控制符。命中即拒。
- *  ⚠ 反斜杠的例外见 WIN_ABS_PATH_RE（win32 盘符绝对路径是合法 argv，CI run17 实测教训）。 */
+ *   反斜杠的例外见 WIN_ABS_PATH_RE（win32 盘符绝对路径是合法 argv，CI run17 实测教训）。 */
 const ARGV_UNSAFE_RE = /[\s;|&<>`'"$(){}\\*?~#]/;
 
 /** 盘符绝对路径整体形态：仅当该项**完整匹配**时豁免禁用字符集里的 `\\`。
@@ -37,6 +37,32 @@ function argvViolation(arg) {
   const s = String(arg == null ? '' : arg);
   if (!s) return '空的 argv 项';
   if (ARGV_UNSAFE_RE.test(s) && !WIN_ABS_PATH_RE.test(s)) return 'argv 项含禁用字符（空白/shell 元字符）: ' + s.slice(0, 80);
+  return null;
+}
+
+/** 控制符（含 NUL 与换行）：出现在 argv 值里没有合法用途，且会让 spawn 直接抛错。 */
+const CONTROL_RE = /[\u0000-\u001f\u007f]/;
+
+/** 绝对路径的形态判定（跨平台）。不用 path.isAbsolute —— 那会随宿主平台改变结论，
+ *  Windows 专属分支在 Linux CI 上就永不被校验。 */
+function isAbsoluteForm(p) {
+  const s = String(p == null ? '' : p);
+  return s.charCodeAt(0) === 47 /* / */
+    || /^[A-Za-z]:[\\/]/.test(s)
+    || (s.charCodeAt(0) === 92 /* \ */ && s.charCodeAt(1) === 92);
+}
+
+/** `--prefix` 的值判定。它是路径而不是带语义的 argv token，故不复用 ARGV_UNSAFE_RE
+ *  （Windows 真实前缀普遍含反斜杠，含空白也合法）。只拦三类真风险：控制符、以 `-` 开头
+ *  （被 npm 当成下一个选项 = 选项注入）、非绝对形态（落到进程 CWD）。
+ *  @returns {string|null} 违规说明；null = 通过。 */
+function prefixViolation(prefix) {
+  const s = String(prefix == null ? '' : prefix);
+  if (!s.trim()) return '空的安装前缀';
+  if (CONTROL_RE.test(s)) return '安装前缀含控制符: ' + s.slice(0, 80);
+  if (s.length > 4096) return '安装前缀超长: ' + s.slice(0, 60) + '...';
+  if (s[0] === '-') return '安装前缀以 - 开头（会被当作 npm 选项）: ' + s.slice(0, 80);
+  if (!isAbsoluteForm(s)) return '安装前缀须为绝对路径（/ 开头、win 盘符或 UNC）: ' + s.slice(0, 80);
   return null;
 }
 
@@ -75,4 +101,5 @@ module.exports = {
   PKG_NAME_RE, ARGV_UNSAFE_RE, WIN_ABS_PATH_RE, UNIT_NAME_RE,
   UNSAFE_LEDGER_KEYS, LEDGER_UNSAFE_KEYS_RE: LEDGER_UNSAFE_RE,
   argvViolation, pkgNameViolation, unitNameViolation, ledgerKey,
+  CONTROL_RE, isAbsoluteForm, prefixViolation,
 };

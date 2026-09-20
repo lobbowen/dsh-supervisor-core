@@ -17,7 +17,7 @@ function expandHome(p) {
 // 进程内固定：避免运行中环境变化导致状态目录半途切换。
 const SUP = require('./state-root').supervisorDir();
 
-// 业务域配置键是注入点（DIRECTORY-STRUCTURE-DESIGN §4.2 反转法）：平台只承担通用配置，任何业务
+// 业务域配置键是注入点（DIRECTORY-STRUCTURE-DESIGN 反转法）：平台只承担通用配置，任何业务
 // 配置键（控制通道端口、启用意图等）不得在平台源码出现字面量，否则结构门禁 DS-G4 判违规。业务键的
 // 默认值与换名别名由上层在入口/装配期注入，声明位于 app/settings/domain-config.js。
 // 注入形态：{ defaults: [ { at: 语义位置标签, values: {...} } ], aliases: [ [旧键, 新键] ] }。
@@ -82,7 +82,7 @@ const BASE_DEFAULTS = {
   // 灰度名单（RELEASE-CHANNEL-CONTRACT）：本机配置 canary:true 即视为灰度机，仅对我们的内核包生效，
   // 对第三方包（packageName）无效；名单否定优先：未置真即非灰度。
   canary: false,
-  // 最小兜底镜像源（2026-09-11 契约化）。完整目录与探测规格是壳的产物：用户在装壳那刻机器上
+  // 最小兜底镜像源。完整目录与探测规格是壳的产物：用户在装壳那刻机器上
   // 没有内核，壳必须先完成镜像选择才能装内核，故镜像源管理所有权在壳，经
   // <产品状态根>/supervisor/registry.json 投放，内核由 platform/distribution 读取
   // （见 platform/contract/registry.js）。此处仅保留官方源（能上网）+ npmmirror（中国网络）两条，

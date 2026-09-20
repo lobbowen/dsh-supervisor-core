@@ -1,7 +1,7 @@
 'use strict';
 
 // app/settings/domain-config.js —— 业务域配置键声明（默认值 + 换名别名）。
-// 反转法（DIRECTORY-STRUCTURE-DESIGN §4.2）：platform/ 源码不得出现业务域名词，
+// 反转法（DIRECTORY-STRUCTURE-DESIGN）：platform/ 源码不得出现业务域名词，
 //   业务键的默认值与别名在此声明，由各进程入口/装配期注入 config.normalize / buildDefaults。
 // 纪律：只做数据声明（纯对象/数组），零副作用；绝不 require platform/service/config（成环）。
 
@@ -10,7 +10,7 @@
 const defaults = [
   {
     at: 'portPools',
-    // daemon 控制通道端口（router/lan 独立进程 ctl）：集中定义，杜绝散落硬编码（2026-09 端口收敛）。
+    // daemon 控制通道端口（router/lan 独立进程 ctl）：集中定义，杜绝散落硬编码。
     // 这两个值同时是 app/ctl/client.js 与两个 daemon 的兜底端口，不得单独改动
     //   （改动即需同步 8 处 43107/43108 兜底常量）。
     values: {

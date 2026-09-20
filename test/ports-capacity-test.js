@@ -1,11 +1,11 @@
 #!/usr/bin/env node
 'use strict';
 
-// 动态端口池容量与弹性回归（2026-09 工业标准重构）：
+// 动态端口池容量与弹性回归：
 //   1) 大量对象（供应商/实例）可持续分配，远超旧的固定小段上限（如 providerApi 旧 32）；
 //   2) 选址避开 OS 动态端口范围（Linux ip_local_port_range 默认 32768-60999）；
 //   3) 共享池模型：relay/proxyInstance/oauthCallback 同池不同锚点，互不挤占；
-//   4) 池满 → 显式 ErrFull（不再静默 null）；capacity()/available()/isFull() 可观测；
+//   4) 池满 -> 显式 ErrFull（不再静默 null）；capacity()/available()/isFull() 可观测；
 //   5) portPools 可配置覆盖（工业标准：范围是配置项）；
 //   6) 保留池拒绝用户实例端口。
 // 自包含：独立临时注册表文件 + 大跨度测试池，不触碰生产 ports.json。
@@ -22,7 +22,7 @@ const check = (n, c, x) => { results.push(!!c); console.log((c ? 'PASS' : 'FAIL'
 
 (async () => {
   const { PortRegistry, DEFAULT_POOLS, SEGMENT_POOL } = require(path.join(ROOT, 'src', 'platform', 'service', 'ports'));
-  // DS-G4 §4.2（反转法）：段名/独立池是**域知识**，platform 不再硬编码 → 测试显式申报
+  // DS-G4 （反转法）：段名/独立池是**域知识**，platform 不再硬编码 -> 测试显式申报
   // （等价于生产由 router/relay 域装配期注入；未申报时未注册段回退通用池 managed）。
   require(path.join(ROOT, 'src', 'domains', 'router', 'port-segments'));
   require(path.join(ROOT, 'src', 'domains', 'relay', 'port-segments'));
@@ -63,7 +63,7 @@ const check = (n, c, x) => { results.push(!!c); console.log((c ? 'PASS' : 'FAIL'
   check('三段锚点不同（确定性起点）', rp !== pp && pp !== op && rp !== op, JSON.stringify({ rp, pp, op }));
   check('同池分配不互相覆盖（同池共享余量）', [rp, pp, op].every((p) => p >= DEFAULT_POOLS.managed.base && p < DEFAULT_POOLS.managed.base + DEFAULT_POOLS.managed.count));
 
-  // 4) 池满 → 显式错误（绝不静默 null）
+  // 4) 池满 -> 显式错误（绝不静默 null）
   console.log('== 4) 池满显式错误 ==');
   const small = new PortRegistry({ file: path.join(TMP, 'small.json'), pools: Object.assign({}, DEFAULT_POOLS, { providerApi: { base: 27000, count: 4 } }) });
   for (let i = 0; i < 4; i++) await small.allocate('providerApi', 's' + i);
@@ -92,8 +92,8 @@ const check = (n, c, x) => { results.push(!!c); console.log((c ? 'PASS' : 'FAIL'
   check('池外端口允许为实例端口', allowed, errMsg || ('registered at ' + outsidePort));
 
   // 7) 回归守卫：relay 的 main 偏好不得硬编码池外端口
-  //    背景（2026-09-11，CI 净环境暴露）：relay/manager.js 曾为 main 硬编码 preferred 28120，
-  //    而池重构后 relay 段为 20000-23999 → 28120 落在池外，破坏「所有 relay 端口都在池内」的不变量。
+  //    背景：relay/manager.js 曾为 main 硬编码 preferred 28120，
+  //    而池重构后 relay 段为 20000-23999 -> 28120 落在池外，破坏「所有 relay 端口都在池内」的不变量。
   //    本机因 28120 恰被占用而回退到池内、测试侥幸通过；CI 净环境直接失败。
   //    此处做源码级守卫，防止该硬编码回归。
   console.log('== 7) 回归守卫：relay main 偏好不得池外硬编码 ==');

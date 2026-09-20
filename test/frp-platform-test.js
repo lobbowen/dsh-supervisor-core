@@ -1,12 +1,12 @@
 #!/usr/bin/env node
 'use strict';
 
-// frp 平台映射测试：验证 frpPlatformTag 纯函数对三平台 × 双架构的官方产物命名正确性。
+// frp 平台映射测试：验证 frpPlatformTag 纯函数对三平台 x 双架构的官方产物命名正确性。
 // 独立脚本：node test/frp-platform-test.js（不加入 npm test 链，保持卸载类测试政策外的纯映射断言）。
 
 const path = require('node:path');
 const ROOT = path.join(__dirname, '..');
-// ⚠ 结构改造：平台标签/镜像 URL 迁至 frp-install.js（frpmgr.js 已按副作用二分）。
+//  结构改造：平台标签/镜像 URL 迁至 frp-install.js（frpmgr.js 已按副作用二分）。
 const { frpPlatformTag, downloadUrls } = require(path.join(ROOT, 'src', 'domains', 'relay', 'frp-install'));
 
 const results = [];

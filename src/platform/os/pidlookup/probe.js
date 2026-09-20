@@ -72,7 +72,7 @@ function linuxFindSs(port) {
   // systemd user 环境 PATH 可能不含 /usr/sbin（ss 默认位置）——候选路径逐个试
   const candidates = ['ss', '/usr/sbin/ss', '/usr/bin/ss', '/bin/ss'];
   for (const ssBin of candidates) {
-    // 条 3（AUDIT-2026-09-19 第4批 C）：绝对路径候选先判可执行位——无权限的文件
+    // 绝对路径候选先判可执行位——无权限的文件
     //   spawn 只会同步抛 EACCES 白耗一轮；裸名留给 execFile 的 PATH 解析（自行兜底）。
     if (ssBin.includes('/') && !isExecutableFile(ssBin)) continue;
     try {
@@ -92,13 +92,13 @@ function isAlive(pid) {
 
 /** 同进程组判定（CP-1：平台事实留在平台层，业务域经本门面取用）。
  *  POSIX：detached spawn 的子孙进程 pgrp == 子进程 pid；win32 无 pgid 语义恒 false。
- *  macOS 无 /proc → 走 catch 返回 false（与迁移前逐字同形，不顺手改判）。 */
+ *  macOS 无 /proc -> 走 catch 返回 false。 */
 function sameProcessGroup(pid, pgidLeader) {
   if (!pid || !pgidLeader || isWindows) return false;
   try {
     const st = fs.readFileSync('/proc/' + pid + '/stat', 'utf8');
     // comm 字段可含空格且自带括号：以最后一个 ") " 为锚点，其后依次为 state/ppid/pgrp
-    //   ⇒ fields[0]=state、fields[1]=ppid、fields[2]=pgrp（写成 fields[1] 会误比父 pid）
+    //   => fields[0]=state、fields[1]=ppid、fields[2]=pgrp（写成 fields[1] 会误比父 pid）
     const idx = st.lastIndexOf(') ');
     if (idx < 0) return false;
     const fields = st.slice(idx + 2).trim().split(/\s+/);
@@ -124,7 +124,7 @@ function readCmdline(pid) {
   }
   if (isWindows) {
     const out = ex.runOut('wmic', ['process', 'where', 'ProcessId=' + pid, 'get', 'CommandLine', '/value'], { timeoutMs: 5000 });
-    // P1-2：wmic 取不到命令行时必须继续走下方回退。原实现在正则不命中时直接 return null，
+    // wmic 取不到命令行时必须继续走下方回退。原实现在正则不命中时直接 return null，
     // 使回退永远不可达，isDshCmdline 恒 false，Windows 上既不能接管手动启动的 DSH 也不报错。
     // 修法：仅在确实解析出非空命令行时返回，否则继续 PowerShell CIM 回退（缺失/无输出/解析不中同此）。
     const viaWmic = parseWmicCommandLine(out);

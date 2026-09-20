@@ -68,14 +68,14 @@ describe("supervisorStore 事件合并", () => {
     supervisorStore.refresh();
     await settle();
     const events = supervisorStore.snapshot.events;
-    // 批次反转保证最新在前；两批同 seq → 去重后应为 3 条且 seq 不重复
+    // 批次反转保证最新在前；两批同 seq -> 去重后应为 3 条且 seq 不重复
     expect(events).toHaveLength(3);
     const seqs = events.map((e) => e.seq);
     expect(new Set(seqs).size).toBe(3);
   });
 
   it("非重叠增量正确拼接并按 seq 推进游标", async () => {
-    // 按游标返回确定批次：after=0 → [1,2,3](seq3)；after=3 → [4,5](seq5)
+    // 按游标返回确定批次：after=0 -> [1,2,3](seq3)；after=3 -> [4,5](seq5)
     installFetch((after) => {
       if (after >= 3) return eventsResponse(5, [4, 5]);
       return eventsResponse(3, [1, 2, 3]);
@@ -86,7 +86,7 @@ describe("supervisorStore 事件合并", () => {
     expect(supervisorStore.snapshot.events.map((e) => e.seq)).toEqual([3, 2, 1]);
     supervisorStore.refresh();
     await settle();
-    // 第二次按 after=3 增量拉 [4,5]，合并去重后头插 → [5,4,3,2,1]
+    // 第二次按 after=3 增量拉 [4,5]，合并去重后头插 -> [5,4,3,2,1]
     const events = supervisorStore.snapshot.events;
     expect(events.map((e) => e.seq)).toEqual([5, 4, 3, 2, 1]);
     expect(supervisorStore.snapshot.eventsSeq).toBe(5);
@@ -110,7 +110,7 @@ describe("supervisorStore 事件合并", () => {
 });
 
 /**
- * UI 条 6（AUDIT-2026-09-19 第 4 批）：游标防污染 + 心跳失败退避。
+ * 游标防污染 + 心跳失败退避。
  * 退避曲线本身用 refresh() 驱动（确定性、不依赖计时器）；心跳是否真的自排/停得下来
  * 用 fake timers 计数验证。两条 fake-timer 用例互为对照：健康用例证明链条确实推进，
  * 失败用例才不至于「因为压根没跑」而假通过。
@@ -198,7 +198,7 @@ describe("UI 条 6 事件游标与心跳退避", () => {
       supervisorStore.start();
       await vi.advanceTimersByTimeAsync(30_000);
       expect(calls).toBeGreaterThan(0);      // 反向：仍在重试，不是放弃
-      expect(calls).toBeLessThan(60);        // 无退避基线 = 15 轮 × 8 请求 = 120
+      expect(calls).toBeLessThan(60);        // 无退避基线 = 15 轮 x 8 请求 = 120
     } finally {
       vi.useRealTimers();
     }

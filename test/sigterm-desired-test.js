@@ -3,7 +3,7 @@
 // SIGTERM desired 契约（P1-4 验收门）：
 //  守卫被 SIGTERM/SIGINT 停止（systemd stop/重启、升级守卫）后，
 //  DSH 期望状态（desired）必须保持不变——「守卫退出不动 DSH」是硬约束。
-//  旧实现 shutdown → stopAll → dsh.stop → setDesired('stopped') 依赖 exit 竞态，
+//  旧实现 shutdown -> stopAll -> dsh.stop -> setDesired('stopped') 依赖 exit 竞态，
 //  行为不确定；RC2 修复后 stopAll 默认 exclude dsh，语义由契约保证。
 // 用法：node test/sigterm-desired-test.js
 

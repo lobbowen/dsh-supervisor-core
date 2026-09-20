@@ -2,7 +2,7 @@
 
 // 重启编排（B13）+ 实例对账编排 —— IO 编排，经 provider 显式入参（零 this 跨文件）。
 // 重启后的「kill -> 延迟 -> 拉起 -> 探活」重拉段、以及 reconcile 单飞回路。
-// 注意 在途延后/退避/停进程（restartInstance 主体）仍留在 proxy.js —— 那部分被源码门禁钉住。
+// 在途延后/退避/停进程（restartInstance 主体）仍留在 proxy.js —— 那部分被源码门禁钉住。
 
 const { INSTANCE_STATES } = require('../model');
 

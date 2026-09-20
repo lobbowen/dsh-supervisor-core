@@ -18,20 +18,20 @@ import { Card, Metric, Pill, QuotaBox, MonoEllipsis, ToneDot } from "./widgets";
 import { useSupervisorAction } from "./useSupervisorAction";
 import { cn } from "../../framework/utils";
 
-/** 冻结/限额判定：任一窗口 rate-limited 或 ≥100% */
+/** 冻结/限额判定：任一窗口 rate-limited 或 >=100% */
 function quotaFull(q?: ProviderAccount["quota"]): boolean {
   if (!q) return false;
   const w = (x?: { status?: string; percent?: number }) => !!(x && (x.status === "rate-limited" || Number(x.percent) >= 100));
   return w(q.rolling) || w(q.weekly) || w(q.monthly);
 }
 
-/** epoch ms → 「YYYY/MM/DD HH:mm」本地时间（月度重置/恢复倒计时展示）。 */
+/** epoch ms -> 「YYYY/MM/DD HH:mm」本地时间（月度重置/恢复倒计时展示）。 */
 function fmtClock(ms?: number | null): string {
   if (!ms || !Number.isFinite(ms)) return "";
   return new Date(ms).toLocaleString("zh-CN", { year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" });
 }
 
-/** 账号排序：当前使用(selected)最前 → 可用(usable 且非限额)其次 → 限额(rate-limited/冻结)排后。 */
+/** 账号排序：当前使用(selected)最前 -> 可用(usable 且非限额)其次 -> 限额(rate-limited/冻结)排后。 */
 function sortAccounts(accs: ProviderAccount[]): ProviderAccount[] {
   return [...accs].sort((a, b) => {
     const rank = (x: ProviderAccount) => x.selected ? 0 : (x.usable && !quotaFull(x.quota)) ? 1 : 2;
@@ -68,11 +68,11 @@ export function RouterPage({ onRegisterActions }: { onRegisterActions?: (a: { on
       <Card>
         <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border/70 px-5 py-3.5">
           <div className="flex items-center gap-2">
-            {/* conflict 分支移除（2026-09 审计）：后端 routerStatus/router.status 从不产出 conflict，
+            {/* conflict 分支移除：后端 routerStatus/router.status 从不产出 conflict，
                 原「端口被占」永不可达（死分支）。路由不可用由 running=false 呈现。 */}
             <ToneDot tone={r?.running ? "ok" : "off"} ping={Boolean(r?.running)} />
             <strong className="text-xl font-semibold tracking-[-0.01em] text-foreground">{r?.running ? "路由运行中" : "路由已停止"}</strong>
-            {/* 路由服务默认自动启动(2026-09 用户定稿)——不额外外显「自动启动」标签 */}
+            {/* 路由服务默认自动启动(用户定稿)——不额外外显「自动启动」标签 */}
           </div>
           <Button
             aria-label={r?.running ? "停止路由" : "启动路由"}
@@ -87,7 +87,7 @@ export function RouterPage({ onRegisterActions }: { onRegisterActions?: (a: { on
         </div>
         {/* 运行指标：四格分隔（每格带边框与独立底） */}
         <div className="grid grid-cols-1 divide-y divide-border/60 sm:grid-cols-2 sm:divide-y-0 lg:grid-cols-4 lg:divide-x lg:divide-border/60">
-          {/* 后端降级响应（{running:false,error}）无 usage 字段：必须 usage?.，否则整页 TypeError（2026-09 修复） */}
+          {/* 后端降级响应（{running:false,error}）无 usage 字段：必须 usage?.，否则整页 TypeError（20复） */}
           <div className="px-5 py-3.5"><Metric icon={<Activity className="size-4" />} label="总请求 / 失败" value={formatCount(r?.usage?.requests) + " / " + formatCount(r?.usage?.errors)} mono /></div>
           <div className="px-5 py-3.5"><Metric icon={<CheckCircle2 className="size-4" />} label="总 Tokens" value={formatCount(r?.usage?.totalTokens)} mono /></div>
           <div className="px-5 py-3.5"><Metric icon={<Terminal className="size-4" />} label="Prompt / Completion" value={formatCount(r?.usage?.promptTokens) + " / " + formatCount(r?.usage?.completionTokens)} mono /></div>
@@ -222,7 +222,7 @@ function ProviderCard({ p, proxyApps, busy, onAction }: {
                 className="gap-1 rounded-full px-2.5 text-xs font-mono text-muted-foreground"
                 disabled={busy}
                 onClick={() => {
-                  // 检测后明确反馈：有更新 → 提示可点更新；无更新 → 已是最新（版本源为 npm/GitHub 镜像，与全局一致）
+                  // 检测后明确反馈：有更新 -> 提示可点更新；无更新 -> 已是最新（版本源为 npm/GitHub 镜像，与全局一致）
                   void onAction("proxy-chk-" + p.id, async () => {
                     const r = await supervisorApi.proxyUpdateCheck();
                     await supervisorStore.refresh();
@@ -261,7 +261,7 @@ function ProviderCard({ p, proxyApps, busy, onAction }: {
         </div>
       </div>
 
-      {/* API 地址行：启用 → 显示真实地址 + 复制；未启用 → 占位提示（端口随启停可能变化，维持原联动逻辑） */}
+      {/* API 地址行：启用 -> 显示真实地址 + 复制；未启用 -> 占位提示（端口随启停可能变化，维持原联动逻辑） */}
       <div className="flex items-center gap-2 border-b border-border/60 px-5 py-2.5">
         <span className="text-xs text-muted-foreground">API 地址</span>
         <div className="flex h-8 min-w-0 flex-1 items-center gap-2 rounded-md border border-border bg-card px-2.5">
@@ -339,14 +339,14 @@ function EditKeysDialog({ open, onOpenChange, p }: {
     finally { setLoggingIn(false); }
   }
   async function addKeys() {
-    const keys = input.split(/[,;\s]+/).map((s) => s.trim()).filter(Boolean); // \s=空白（原 /[,;s]+/ 把字母 s 当分隔符，切碎含 s 的 Key）
+    const keys = input.split(/[,;\s]+/).map((s) => s.trim()).filter(Boolean); // \s=空白（原 /[;s]+/ 把字母 s 当分隔符，切碎含 s 的 Key）
     if (!keys.length) { toast.error("请输入至少一个 Key"); return; }
     setSaving(true);
     try {
       if (isProxy) {
         for (const k of keys) {
           const addRes = await supervisorApi.proxyAddKey(p.id, k) as { limited?: string; account?: { limit?: { recovery?: { type?: string; at?: number | null } | null } | null } | null } | null;
-          // 检测后如实列示（2026-09）：月额度用尽的账号直接入库显示「月额度用尽」，无需 review/等待
+          // 检测后如实列示：月额度用尽的账号直接入库显示「月额度用尽」，无需 review/等待
           if (addRes && addRes.limited === "credits") {
             const rec = addRes.account?.limit?.recovery;
             toast.warning("已添加：该账号额度用尽" + (rec?.type === "at" && rec.at ? `（预计 ${fmtClock(rec.at)} 自动恢复）` : "（等待月度重置后自动恢复）"));
@@ -355,7 +355,7 @@ function EditKeysDialog({ open, onOpenChange, p }: {
       } else {
         const r = await supervisorApi.providerKeysSet(p.id, { add: keys });
         if (r.ok === false) { toast.error(r.error || "添加失败"); return; }
-        // ⚠ P2-5 修复（2026-09-12）：如实呈现**真实结果**，不再一律报 keys.length。
+        //  P复：如实呈现**真实结果**，不再一律报 keys.length。
         //   此前无论后端丢弃多少个，这里都提示「已添加 N 个」——
         //   而 keys/set 过去根本不等检测结果（现已修），UI 也无从知道谁失败。
         const okN = typeof r.added === "number" ? r.added : keys.length;
@@ -383,7 +383,7 @@ function EditKeysDialog({ open, onOpenChange, p }: {
     setSaving(true);
     try {
       if (isProxy) {
-        // 反代: masked → 找 keyId
+        // 反代: masked -> 找 keyId
         const acc = accs.find((a) => a.maskedKey === masked || masked.startsWith(a.maskedKey));
         if (acc) await supervisorApi.proxyRemoveKey(p.id, acc.keyId);
       } else {
@@ -460,9 +460,9 @@ function QuotaSummary({ acc, busy, p, onAction }: { acc: ProviderAccount; busy: 
   const isActive = Boolean(acc.selected);
   const isLocked = Boolean(acc.locked);
   const qm = q && q.monthlyRemaining;
-  // 每月用量展示（2026-09 修正，解析层已推导真实月用量）：Command 订阅含 $10/月配额池
+  // 每月用量展示（20正，解析层已推导真实月用量）：Command 订阅含 $10/月配额池
   // （app.quota.monthlyCapUsd），解析层据 credits.monthlyRemaining 推导 monthly.percent（实测
-  // $4.15 剩余 → 58%）。monthly.percent 存在 → 显示百分比；缺失才 fallback 金额/—。
+  // $4.15 剩余 -> 58%）。monthly.percent 存在 -> 显示百分比；缺失才 fallback 金额/—。
   const mpct = q?.monthly?.percent;
   const monthlyValue = Number.isFinite(Number(mpct))
     ? mpct + "%"
@@ -506,7 +506,7 @@ function AccountRow({ a, p, busy, onAction }: { a: ProviderAccount; p: RouterPro
   const stats = formatCount(a.requests || 0) + " 次 · " + formatCount(a.totalTokens || 0) + " tok";
   const [quotaOpen, setQuotaOpen] = useState(false);
   let actionBtn: React.ReactNode;
-  // ⚠ review 分支已删除（Phase 5 / 决策 A6）：该状态无写入方，账号入库即终态。
+  //  review 分支已删除（Phase 5 / 决策 A6）：该状态无写入方，账号入库即终态。
   if (limited && !isActive) {
     actionBtn = (
       <Button size="chip" variant="outline" className="w-[70px] gap-1 px-1.5" onClick={() => setQuotaOpen(true)} title={limitHint ?? "查看该账号限额情况"}>
@@ -558,7 +558,7 @@ function QuotaLimitDialog({ open, onOpenChange, a, p }: {
   open: boolean; onOpenChange: (o: boolean) => void; a: ProviderAccount; p: RouterProvider;
 }) {
   const q = a.quota;
-  // 每月用量磁贴（2026-09 修正）：顶部始终显示三格（5小时/每周/每月）——每月格子不因 monthly.percent
+  // 每月用量磁贴（20正）：顶部始终显示三格（5小时/每周/每月）——每月格子不因 monthly.percent
   // 是否为 null 而隐藏。Command 的 monthly.percent 由解析层从 credits.monthRemaining 推导（如 58%已用）；
   // 无推导值时用 credits 剩余兜底算 used% 或显示 0（保持三格布局稳定）。底部「每月额度（Command）」
   // 区块为补充金额详情（剩余 $X / $10），非替代格子。

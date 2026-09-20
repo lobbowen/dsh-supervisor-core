@@ -1,14 +1,14 @@
 #!/usr/bin/env node
 'use strict';
 
-// ═══════════════════════════════════════════════════════════════════════════
-// DSH 令牌契约门禁（TK-G1..TK-G8）—— SSOT: DSH-TOKEN-CONTRACT.md §1/§2/§4/§5/§6
+// ---------------------------------------------------------------------------
+// DSH 令牌契约门禁（TK-G1..TK-G8）—— SSOT: DSH-TOKEN-CONTRACT.md //
 //
 // 为什么需要这道门禁：令牌正在从「散落各模块」收敛为 src/platform/service/token/ 基础组件，
 //   且由多个分片并行施工。契约若只活在文档里，分片各自「改完即绿」会让铁律 TK-1..TK-8
 //   静默退化——历史上 adopt 令牌接管（_maybeReclaimAdoptToken）正是把「令牌拿不到」
 //   当成故障去重启进程（TK-2 的反例），并且 token.js 用 rmSync 清空了唯一持久链路（TK-6 反例）。
-//   故把 §6 的八条断言落成**可执行判据**：读源码 / 真实构造，逐条 PASS/FAIL。
+//   故把契约文档第 6 节的八条断言落成**可执行判据**：读源码 / 真实构造，逐条 PASS/FAIL。
 //
 // 为什么大多用源码级判据：「缓存字段 / 清空式删除 / 令牌进 argv」这三种退化在运行期
 //   极难观测（要么不触发、要么已被日志脱敏），静态判据最可靠；唯独 TK-G4（lan-state.json
@@ -16,14 +16,14 @@
 //
 // 判据与反向共用同一批函数（TK-G8）：判据若空转，反向断言会先失败——门禁不允许自证清白。
 //
-// ⚠ 分片并行改造期间，依赖尚未落地的门禁（如 G5 的 relay 按需读改造）可能 FAIL：
+// 注意：分片并行改造期间，依赖尚未落地的门禁（如 G5 的 relay 按需读改造）可能 FAIL：
 //   这是**如实报告**，绝不放宽断言去「变绿」。
 //
-// ## 覆盖缺口（E-2 制度化登记，AUDIT-2026-09-19 第 4 批）
-//   本门禁绿 ≠ 令牌链路正确。它**不**验证以下各项，读者勿把 PASS 当成这些方面的证据：
+// ## 覆盖缺口（E-2 制度化登记）
+//   本门禁绿 != 令牌链路正确。它**不**验证以下各项，读者勿把 PASS 当成这些方面的证据：
 //   1. 扫描面只有 `src/**.js`（SRC_FILES=walkJs(src)）：`bin/` 入口、`release/scripts/`、
 //      `ui/`（前端把令牌写进 localStorage / URL query 等）都不在本闸射程内。
-//   2. TK-G4 的行字段白名单**含 remoteToken**——这是 2026-09-19 的**裁决放行**（lan-daemon
+//   2. TK-G4 的行字段白名单**含 remoteToken**——这是契约层面的**裁决放行**（lan-daemon
 //      门卫校验与 frp 暴露闸必需），不是「判据识别不出来」。审计 B-5 原述「门禁反向把违规
 //      定为合法」指的正是这一放行；它现在的合法性来自契约 TK-7 裁决，改判须先改契约。
 //   3. 除 TK-G4 用真实构造外全部是**源码级**判据：令牌在运行期的实际传播（跨进程读写、
@@ -31,16 +31,16 @@
 //   4. TK-G5 的「缓存字段」判据是标识符级的（`this.<x>` / 顶层裸变量赋值）：把令牌藏进
 //      Map / Set / 数组元素 / 闭包捕获的缓存**看不见**，不会 FAIL。
 //   5. 模板字符串插值按模板内容整体抹平（朴素扫描器的已知限制），嵌套模板内的令牌字面量漏报。
-// ═══════════════════════════════════════════════════════════════════════════
+// ---------------------------------------------------------------------------
 
 const fs = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
 const ROOT = path.join(__dirname, '..');
-// DS-G4（§4.2 反转法）：§1 全部 kind 的**声明**已上移到 app/settings/token-kinds.js ——
+// DS-G4（反转法）：全部 kind 的**声明**已上移到 app/settings/token-kinds.js ——
 //   platform/service/token/kinds.js 现为「空注册表 + 注册接口」。本门禁判的是**最终登记结果**
 //   （与生产装配一致），故须先 require 注入声明（require 即注入），再读 kinds.js。
-//   ⚠ 这不是放宽断言：7 类 kind 仍须全部登记，缺一即 FAIL（同测另有反向自检）。
+//    这不是放宽断言：7 类 kind 仍须全部登记，缺一即 FAIL（同测另有反向自检）。
 require(path.join(ROOT, 'src', 'app', 'settings', 'token-kinds'));
 
 const results = [];
@@ -49,7 +49,7 @@ function check(name, cond, detail) {
   console.log((cond ? 'PASS' : 'FAIL') + ' ' + name + (detail !== undefined && detail !== '' ? '  <- ' + detail : ''));
 }
 
-/* ═════════════════════ 扫描工具 ═════════════════════ */
+/* --------------------- 扫描工具 --------------------- */
 
 // 去注释（行/块/字符串/模板/正则字面量）。
 // 为什么必须识别正则字面量：本仓有大量「引号 + 斜杠」混合的正则；朴素扫描器会把正则里的引号
@@ -59,7 +59,7 @@ function check(name, cond, detail) {
 // blankStrings=false（codeOf）：保留字符串内容——G6 需要看字符串里的 ?token=（令牌 URL 是字面量）。
 // blankStrings=true （structOf）：把字符串/模板内容抹成空格但**长度与换行不变**，供
 //   大括号配平（methodBody/switchBlocks/enclosingFnRange）与标识符级判定（G5/G7）使用。
-//   ⚠ 需要看字符串内容时（如 G6）必须用 codeOf，否则判据会假绿。
+//    需要看字符串内容时（如 G6）必须用 codeOf，否则判据会假绿。
 // 已知限制：模板内的插值表达式按「模板内容」整体抹平（本门禁定位的两个方法不含嵌套模板）。
 function stripSource(src, blankStrings) {
   var BT = String.fromCharCode(96);
@@ -136,8 +136,8 @@ function walkJs(dir, out) {
 }
 var SRC_FILES = (function () { var o = []; walkJs(path.join(ROOT, 'src'), o); return o; })();
 
-// 「令牌组件」= §3 目标目录 src/platform/service/token/**。TK-4/TK-5 只允许该范围内持有令牌存储。
-//   ⚠ 2026-09-16 复检清理：原先还兼容"过渡期的单文件 src/platform/service/token.js" ——
+// 「令牌组件」= 目标目录 src/platform/service/token/**。TK-4/TK-5 只允许该范围内持有令牌存储。
+//    复检清理：原先还兼容"过渡期的单文件 src/platform/service/token.js" ——
 //     该文件已随组件目录化**删除**，兼容分支随之成为死代码（留着会让后来者以为它仍可能存在）。
 function isTokenComponent(rel) { return rel.indexOf('src/platform/service/token/') === 0; }
 
@@ -187,9 +187,9 @@ function switchBlocks(code) {
   return out;
 }
 
-/* ═════════════════════ 判据集（G8 反向复用同一批函数） ═════════════════════ */
+/* --------------------- 判据集（G8 反向复用同一批函数） --------------------- */
 
-// ── TK-G2：令牌不得驱动生命周期（TK-2）──
+// -- TK-G2：令牌不得驱动生命周期（TK-2）--
 // 旧形态的四个特征：接管回收函数名 + 两个观察窗状态字段 + 触发重启的事件原因串。
 // 只查函数名不够（改名即可绕过），故把「重启原因串」也纳入——它是耦合的最终落点。
 var G2_MARKERS = ['_maybeReclaimAdoptToken', '_tokenReclaimAt', '_tokenReclaimTried', 'adopt_token_reclaim'];
@@ -225,12 +225,12 @@ function phaseSwitchTokenHitsIn(structCode, visibleCode) {
   return hits;
 }
 
-// ── TK-G3：持久化无清空式删除（TK-6）──
+// -- TK-G3：持久化无清空式删除（TK-6）--
 // 判据只认「**整文件级**清空式删除」：rmSync / rmdirSync。
-//   · 为什么排除 unlinkSync：原子写必须能清理自己的 .tmp 临时文件、轮转必须能删**过旧备份**
+//   - 为什么排除 unlinkSync：原子写必须能清理自己的 .tmp 临时文件、轮转必须能删**过旧备份**
 //     ——这些都是「清理附属物」，不是「清空唯一持久链路」。旧 token.js 的反例是 fs.rmSync(fp)
 //     删掉 primary 本体；用「是否删除 primary」辨别才不会误伤轮转实现（判据必须精确，不能为空转放宽）。
-//   · 命中会连所在语句一并回报，供人核对落点（rmSync(tmp) 与 rmSync(fp) 是不同语义）。
+//   - 命中会连所在语句一并回报，供人核对落点（rmSync(tmp) 与 rmSync(fp) 是不同语义）。
 function clearingDeleteHitsIn(code) {
   var hits = [];
   var re = /\b(?:rmSync|rmdirSync)\b/g;
@@ -244,15 +244,15 @@ function hasRotationFacilityIn(code) {
   return /\brotate\w*\s*\(/.test(code) || /\bfunction\s+\w*[Rr]otate/.test(code);
 }
 
-// ── TK-G5：除令牌组件外无令牌缓存成员（TK-4）──
+// -- TK-G5：除令牌组件外无令牌缓存成员（TK-4）--
 // 违规形态 = 「**持久**存值」的令牌标识符赋值：
-//   · 成员字段：this.dshToken = / proxy.dshToken = （跨调用存活 = 缓存）
-//   · 箭头/函数**形参默认值**：onChange((id, token = '') …)（遮蔽并缓存服务值）
-//   · 非函数作用域内的**裸变量**：relay 单文件实现里的 let dshToken = o.dshToken || ''（闭包内跨请求存活）
+//   - 成员字段：this.dshToken = / proxy.dshToken = （跨调用存活 = 缓存）
+//   - 箭头/函数**形参默认值**：onChange((id, token = '') …)（遮蔽并缓存服务值）
+//   - 非函数作用域内的**裸变量**：relay 单文件实现里的 let dshToken = o.dshToken || ''（闭包内跨请求存活）
 // 排除三类**合法**赋值（判据要精确，否则会误伤业务逻辑，而不是放宽门禁）：
-//   · 用户配置类字段 remoteToken/frpRemoteToken（§1 #4/#6：本来就持久化在配置里，不是 DSH 令牌缓存）；
-//   · set/has/on/get 开头的**访问器/入口函数定义**（赋值的是函数，不是令牌值）；
-//   · 函数体内的**局部变量**：requestToken / queryToken 等按请求现取现用，是「按需读取」的正面实现。
+//   - 用户配置类字段 remoteToken/frpRemoteToken（#4/#6：本来就持久化在配置里，不是 DSH 令牌缓存）；
+//   - set/has/on/get 开头的**访问器/入口函数定义**（赋值的是函数，不是令牌值）；
+//   - 函数体内的**局部变量**：requestToken / queryToken 等按请求现取现用，是「按需读取」的正面实现。
 // 负向样例（G8）与判定共用本函数，防止判据退化成空转。
 var G5_ALLOW_NAMES = { remoteToken: 1, frpRemoteToken: 1 };
 function lineIndent(line) {
@@ -320,9 +320,9 @@ function tokenCacheHitsIn(code) {
   return hits;
 }
 
-// ── TK-G6：令牌不进 argv/URL（browser.js 调用点）──
+// -- TK-G6：令牌不进 argv/URL（browser.js 调用点）--
 // browser.js 的 open/launchIsolated 会把 url 原样塞进 spawn argv——?token= 一进 argv，
-// 同机任意进程都能经 ps 看到会话令牌（浏览器打开 URL 属「令牌进 URL」，见 SSOT §6 TK-G6）。
+// 同机任意进程都能经 ps 看到会话令牌（浏览器打开 URL 属「令牌进 URL」，见 SSOT TK-G6）。
 // 取函数头文本（方法/函数声明所在行，含左花括号）。
 function fnHeaderOf(code, range) {
   var lineStart = code.lastIndexOf('\n', range.start) + 1;
@@ -397,12 +397,12 @@ function tokenForwardersIn(code) {
 
 // 返回 { sites, hits }：sites = 扫描到的「令牌可进入 browser argv」的路径数（供非空转断言），
 // hits = 违规明细。
-// ⚠ 必须传**字符串可见**的源码（codeOf）：令牌 URL 是字符串字面量，用抹平字符串的版本扫描
+//  必须传**字符串可见**的源码（codeOf）：令牌 URL 是字符串字面量，用抹平字符串的版本扫描
 //   会一律看不到 ?token= —— 门禁会假绿（本门禁初版即踩此坑，由 G8 反向断言抓出）。
 //
 // 覆盖两层路径：
-//   ① 直接调用 platform.browser.open/launchIsolated 且实参含令牌；
-//   ② 经中间封装转交（本仓真实形态 api/domains/instances.js）：
+//   1) 直接调用 platform.browser.open/launchIsolated 且实参含令牌；
+//   2) 经中间封装转交（本仓真实形态 api/domains/instances.js）：
 //        const url = '...?token=' + tok;  openInSystemBrowser(url);
 //        function openInSystemBrowser(url) { return platform.browser.open(url); }
 //      此时违规发生在**封装的调用点**，故须反查每个调用方传进来的实参。
@@ -421,7 +421,7 @@ function browserTokenScanIn(rel, code) {
     var owner = enclosingFnRange(code, m.index);
     var ownerName = owner ? fnNameOf(fnHeaderOf(code, owner)) : null;
     var isForwarder = forwarders.some(function (f) { return f.name === ownerName && f.range.start === (owner && owner.start); });
-    if (isForwarder) continue; // ② 由下方 tokenForwardersIn 反查调用方；此处不重复计
+    if (isForwarder) continue; // 2) 由下方 tokenForwardersIn 反查调用方；此处不重复计
     sites++;
     if (/\?token=/.test(args)) { hits.push(rel + ':' + ln + ' 实参直接含 ?token='); continue; }
     var ids = args.match(/\b[A-Za-z_$][\w$]*\b/g) || [];
@@ -432,7 +432,7 @@ function browserTokenScanIn(rel, code) {
     }
     if (bad.length) hits.push(rel + ':' + ln + ' 经令牌值 ' + bad.join(',') + ' 进入 browser argv');
   }
-  // ② 中间封装的调用点：把含令牌的实参传进去，最终仍进 browser argv
+  // 2) 中间封装的调用点：把含令牌的实参传进去，最终仍进 browser argv
   forwarders.forEach(function (f) {
     var callLines = forwarderCallSitesWithToken(code, f);
     callLines.forEach(function (cl) {
@@ -471,7 +471,7 @@ function findDeclWithToken(code, id) {
   return 0;
 }
 
-// ── TK-G7：幽灵键零引用 ──
+// -- TK-G7：幽灵键零引用 --
 // 判在**去注释后**的代码上：历史注释会解释「lanToken 已废弃」，那不算引用（否则门禁永远红）。
 // 键名以 kinds.js 的 GHOST_KEYS 为权威（幽灵键在唯一分类表里显式登记）——
 // 这样分类表新增幽灵键时门禁自动覆盖，不会留下没人守的幽灵键。
@@ -485,7 +485,7 @@ function ghostKeyHitsIn(rel, code, keys) {
   return hits;
 }
 
-// ── TK-G4：lan-state.json 双段判定（TK-7，2026-09-19 裁决后形态）──
+// -- TK-G4：lan-state.json 双段判定--
 // tokens 段是 daemon 用来换 dsh-auth cookie 的 DSH 会话令牌通道，只含 DSH 侧令牌；
 // instances[] 行是配置存储的只读派生投影（0600，daemon 不回写），字段走**白名单**：
 // 唯一允许携带的用户配置凭证字段是 remoteToken（lan-daemon 门卫校验与 frp 暴露闸必需值）。
@@ -539,20 +539,20 @@ function readRegisteredKinds(abs, rel) {
   return { keys: Object.keys(set2), how: '源码正则回退' };
 }
 
-// 幽灵键清单（§1 末行）从 kinds.js 读取：分类表是唯一权威，门禁不自行硬编码第二份。
+// 幽灵键清单（末行）从 kinds.js 读取：分类表是唯一权威，门禁不自行硬编码第二份。
 function readGhostKeys() {
   try {
     var mod = require(path.join(ROOT, 'src/platform/service/token/kinds.js'));
     var g = (mod && mod.GHOST_KEYS) || null;
     if (Array.isArray(g) && g.length) return g.slice();
-  } catch (e) { /* 依赖未落地：回退到 SSOT §1 的已知键，门禁仍须判定 */ }
+  } catch (e) { /* 依赖未落地：回退到 SSOT 的已知键，门禁仍须判定 */ }
   return ['lanToken'];
 }
 
-/* ═════════════════════ TK-G1 ═════════════════════ */
+/* --------------------- TK-G1 --------------------- */
 console.log('== TK-G1 kinds.js 存在且登记 §1 全部 kind ==');
 var KINDS_REQUIRED = ['dsh-main', 'dsh-instance', 'dsh-auth', 'remote-token', 'api-access-key', 'frp-auth', 'lan-gate'];
-var KINDS_FORBIDDEN = ['lanToken']; // §1 末行：幽灵键，必须清除全部引用，更不得登记为 kind
+var KINDS_FORBIDDEN = ['lanToken']; // 末行：幽灵键，必须清除全部引用，更不得登记为 kind
 {
   var KINDS_REL = 'src/platform/service/token/kinds.js';
   var kindsAbs = path.join(ROOT, KINDS_REL);
@@ -566,7 +566,7 @@ var KINDS_FORBIDDEN = ['lanToken']; // §1 末行：幽灵键，必须清除全�
   check('TK-G1 幽灵键未被登记为 kind', ghostKinds.length === 0, ghostKinds.join(', ') || 'ok');
 }
 
-/* ═════════════════════ TK-G2 ═════════════════════ */
+/* --------------------- TK-G2 --------------------- */
 console.log('== TK-G2 令牌不得驱动进程生命周期（TK-2）==');
 {
   var G2_FILES = ['src/app/daemons/probe.js', 'src/app/main/controller.js'];
@@ -592,7 +592,7 @@ console.log('== TK-G2 令牌不得驱动进程生命周期（TK-2）==');
       : (g2b.slice(0, 4).join(' | ') || 'clean'));
 }
 
-/* ═════════════════════ TK-G3 ═════════════════════ */
+/* --------------------- TK-G3 --------------------- */
 console.log('== TK-G3 无静默销毁：持久化必须轮转（TK-6）==');
 {
   var PERSIST_REL = 'src/platform/service/token/persist.js';
@@ -605,15 +605,15 @@ console.log('== TK-G3 无静默销毁：持久化必须轮转（TK-6）==');
   check('TK-G3 persist.js 具备轮转设施（超限不得丢内容）',
     persistExist && hasRotationFacilityIn(codeOf(PERSIST_REL)),
     persistExist ? 'found rotate*' : '文件不存在（依赖未落地）');
-  // （2026-09-16 复检清理）原先此处探测"旧单文件 token.js 的清空式删除残留"——
+  // 原先此处探测"旧单文件 token.js 的清空式删除残留"——
   //   该文件已删除，探测恒为"无"，属死代码。持久化的清空式删除检查已由上方
   //   persist.js 的判定覆盖（那里才是现存的唯一持久化实现）。
 }
 
-/* ═════════════════════ TK-G4 ═════════════════════ */
+/* --------------------- TK-G4 --------------------- */
 console.log('== TK-G4 lan-state.json 的 tokens 段只含 DSH 侧令牌（TK-7）==');
 {
-  // ⚠ 步骤 7（2026-09-16）：_syncLanState 已随 daemon 运行时辅助从 control-view.js 下沉到
+  //  步骤 7：_syncLanState 已随 daemon 运行时辅助从 control-view.js 下沉到
   //   src/app/daemons/runtime.js（facade/router.js 只剩门面方法）——判据改读新模块。
   var CV4 = 'src/app/daemons/runtime.js';
   var syncBody = exists(CV4) ? methodBody(structOf(CV4), '_syncLanState') : null;
@@ -635,7 +635,7 @@ console.log('== TK-G4 lan-state.json 的 tokens 段只含 DSH 侧令牌（TK-7�
   check('TK-G4c 行为判定确实覆盖到 DSH 令牌（防空转）',
     probe.ok && probe.tokens && probe.tokens['main'] === 'DSH_MAIN_TOK' && probe.tokens['inst-a'] === 'DSH_INST_TOK',
     probe.ok ? JSON.stringify(probe.tokens) : ('构造失败: ' + probe.error));
-  // TK-8 传导：池内无令牌 ≠ 缺席，必须显式 ''（daemon 据此 applyToken 丢弃旧 cookie）
+  // TK-8 传导：池内无令牌 != 缺席，必须显式 ''（daemon 据此 applyToken 丢弃旧 cookie）
   check('TK-G4e 空令牌显式写 \'\'（失效信号进 lan-state，AUDIT B-4；旧 if(t) 形态=缺席即断链）',
     probe.ok && Object.prototype.hasOwnProperty.call(probe.tokens, 'inst-b') && probe.tokens['inst-b'] === '',
     probe.ok ? JSON.stringify(probe.tokens) : ('构造失败: ' + probe.error));
@@ -696,7 +696,7 @@ function runLanStateProbe() {
   }
 }
 
-/* ═════════════════════ TK-G5 ═════════════════════ */
+/* --------------------- TK-G5 --------------------- */
 console.log('== TK-G5 除 token 组件外无令牌缓存成员（TK-4）==');
 {
   var g5 = [];
@@ -709,7 +709,7 @@ console.log('== TK-G5 除 token 组件外无令牌缓存成员（TK-4）==');
     g5.slice(0, 6).join(' | ') || ('扫描 ' + SRC_FILES.length + ' 个 src 文件，零命中'));
 }
 
-/* ═════════════════════ TK-G6 ═════════════════════ */
+/* --------------------- TK-G6 --------------------- */
 console.log('== TK-G6 令牌不进 argv/URL：browser.js 调用点 ==');
 {
   var g6 = [];
@@ -728,13 +728,13 @@ console.log('== TK-G6 令牌不进 argv/URL：browser.js 调用点 ==');
   check('TK-G6 browser 调用点不得拼接 ?token=', g6.length === 0, g6.slice(0, 6).join(' | ') || 'clean');
 }
 
-/* ═════════════════════ TK-G7 ═════════════════════ */
+/* --------------------- TK-G7 --------------------- */
 console.log('== TK-G7 幽灵键在 src/ 中零引用（键名以 kinds.js GHOST_KEYS 为权威）==');
 {
   var ghostKeys = readGhostKeys();
   var g7 = [];
   SRC_FILES.forEach(function (rel) {
-    // 对**全部** src 文件判定（含令牌组件）——SSOT §1 要求「src/ 中零引用」。
+    // 对**全部** src 文件判定（含令牌组件）——SSOT 要求「src/ 中零引用」。
     // structOf 已抹平字符串字面量：kinds.js 的 GHOST_KEYS=['lanToken'] 是**数据登记**，
     // 不是把幽灵键当活键使用，故不计为引用；真正危险的是 obj.lanToken / let lanToken 这类代码引用。
     ghostKeyHitsIn(rel, structOf(rel), ghostKeys).forEach(function (h) { g7.push(h); });
@@ -743,7 +743,7 @@ console.log('== TK-G7 幽灵键在 src/ 中零引用（键名以 kinds.js GHOST_
     g7.slice(0, 6).join(' | ') || ('扫描 ' + SRC_FILES.length + ' 个 src 文件，键=[' + ghostKeys.join(',') + ']，零命中'));
 }
 
-/* ═════════════════════ TK-G8 反向（门禁非空转） ═════════════════════ */
+/* --------------------- TK-G8 反向（门禁非空转） --------------------- */
 console.log('== TK-G8 反向：判据能识别旧形态 ==');
 {
   check('TK-G8 G2 判据识别 _maybeReclaimAdoptToken 旧片段',

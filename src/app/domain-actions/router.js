@@ -25,7 +25,7 @@ function createRouterActions(deps) {
       // 统一生命周期视图同步：router 启停状态镜像到 lifecycleManager（归一化：启停路径收敛）
       const rlc = lifecycleManager ? lifecycleManager.get('router') : null;
       if (on) {
-        // L3：优先独立 router-daemon（detached，守卫重启不影响）；daemon 不可用退回内嵌
+        // 优先独立 router-daemon（detached，守卫重启不影响）；daemon 不可用退回内嵌
         const rt = daemons.ensureRouterRuntime(true);
         if (rt.mode === 'daemon') {
           // daemon 模式下守卫不得写 providers.json（纪律本体在 _ensureRouterRuntime），但那条

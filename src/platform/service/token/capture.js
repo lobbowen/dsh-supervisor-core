@@ -5,7 +5,7 @@
 // 顺序不可颠倒：journal 优先会把陈旧或别的 unit 的旧 token 覆盖掉刚由 stdout 捕获的新 token。
 // journal 必须按“最近一条含回环 URL 的行”查询而非固定最近 N 行，否则长驻实例的 token 行滚出窗口后永远捕获不到。
 // 本层只做一次拉取，退避重试与周期兜底由 pool 的 scheduleCapture 与 ensureCaptured 负责。
-// 批 4（令牌条 4）：journalctl 必须**异步**（ex.runOutAsync）——captureOnce 由守卫生命周期 tick 的
+//：journalctl 必须**异步**（ex.runOutAsync）——captureOnce 由守卫生命周期 tick 的
 //   ensureCaptured 调用，同步 execFileSync 在 5s 超时下会把整个事件循环冻住，心跳/定时器全部停摆。
 //   因此 captureOnce 只做零外部进程的 stdout/文件两档（同步），journal 档拆成 captureJournal（Promise），
 //   由 pool.capture 在非阻塞回填路径上发射，命中后照常 _commit+广播（TK-8）。
@@ -23,7 +23,7 @@ function parseDshTokenLine(line) {
   return m ? m[1] : null;
 }
 
-/** journald 查询（异步，批 4）：按单元取“最近一条含回环 URL 的行”。
+/** journald 查询：按单元取“最近一条含回环 URL 的行”。
  *  resolve { token, source:'journal', line } 或 null；任何失败（含非 systemd 平台无 journalctl）都 resolve(null)，绝不 reject。 */
 async function captureJournal(unit, opts) {
   const logger = (opts && opts.logger) || console;

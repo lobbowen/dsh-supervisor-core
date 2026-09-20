@@ -1,17 +1,17 @@
 #!/usr/bin/env node
 'use strict';
 
-// ═══════════════════════════════════════════════════════════════════════════
-// 平台矩阵「单一事实源」门禁（2026-09-13，跨平台架构规范化）
+// ---------------------------------------------------------------------------
+// 平台矩阵「单一事实源」门禁
 //
 // ## 修复的缺陷（失效模式 b：同一事实多处实现且已分叉）
 //
-// os/arch → 标签 这一事实曾散落 **5 处**：
-//   ① src/platform/os/*                  （正确位置）
-//   ② domains/relay/frpmgr.js            { linux, darwin, win32 } → { linux, darwin, windows }
-//   ③ domains/dist/index.js（步骤3 上移 platform/distribution） { darwin, win32, linux } → { darwin, win, linux }
-//   ④ guard/supervisor/settings-view.js  { win32, linux, darwin } → { win, linux, darwin }
-//   ⑤ domains/plugin/ops.js（原 plugins.js）  process.platform !== 'win32'
+// os/arch -> 标签 这一事实曾散落 **5 处**：
+//   1) src/platform/os/*                  （正确位置）
+//   2) domains/relay/frpmgr.js            { linux, darwin, win32 } -> { linux, darwin, windows }
+//   3) domains/dist/index.js（步骤3 上移 platform/distribution） { darwin, win32, linux } -> { darwin, win, linux }
+//   4) guard/supervisor/settings-view.js  { win32, linux, darwin } -> { win, linux, darwin }
+//   5) domains/plugin/ops.js（原 plugins.js）  process.platform !== 'win32'
 // 5 份副本必然漂移；且业务域持有的平台知识**在非本平台上不会被校验** ——
 // 这正是「内部业务开发悄悄破坏跨平台构建」的机制。
 //
@@ -22,7 +22,7 @@
 //   M-b  行为正确：npmTag / osTag / frpTag / supportsProcessGroup 的关键取值
 //   M-c  唯一性：src/ 中**除 matrix.js 外**不得再出现 os/arch 映射对象字面量
 //   M-d  反向：判据能识别「重复映射表」的旧形态（门禁非空转）
-// ═══════════════════════════════════════════════════════════════════════════
+// ---------------------------------------------------------------------------
 
 const fs = require('node:fs');
 const path = require('node:path');
@@ -35,7 +35,7 @@ const check = (n, c, x) => {
   console.log((c ? 'PASS' : 'FAIL') + ' ' + n + (x !== undefined && x !== '' ? '  ← ' + x : ''));
 };
 
-// ── M-a：与发布矩阵逐项一致 ──
+// -- M-a：与发布矩阵逐项一致 --
 {
   const pub = (require(path.join(ROOT, 'package.json')).npmPublish || {}).packages || [];
   const mine = matrix.SUPPORTED.map((x) => 'dsh-core-' + x.npmTag);
@@ -50,7 +50,7 @@ const check = (n, c, x) => {
     pub.every((p) => p.startsWith('dsh-core-')), JSON.stringify(pub));
 }
 
-// ── M-b：行为正确（关键取值，跨平台语义）──
+// -- M-b：行为正确（关键取值，跨平台语义）--
 {
   check('M-b npmTag(win32,x64) = win-x64', matrix.npmTag('win32', 'x64') === 'win-x64', matrix.npmTag('win32', 'x64'));
   check('M-b npmTag(darwin,arm64) = darwin-arm64', matrix.npmTag('darwin', 'arm64') === 'darwin-arm64', matrix.npmTag('darwin', 'arm64'));
@@ -80,7 +80,7 @@ const check = (n, c, x) => {
     matrix.isSupported('linux', 'arm64') === false && matrix.isSupported('win32', 'arm64') === false, 'ok');
 }
 
-// ── M-c：唯一性（src/ 中不得再有第二份 os/arch 映射表）──
+// -- M-c：唯一性（src/ 中不得再有第二份 os/arch 映射表）--
 {
   const files = [];
   const walk = (d) => {
@@ -107,7 +107,7 @@ const check = (n, c, x) => {
     offenders.length === 0, offenders.length ? offenders.join(', ') : '未发现');
 }
 
-// ── M-d：反向（门禁非空转）──
+// -- M-d：反向（门禁非空转）--
 {
   const mapRe = /\{\s*(?:win32|darwin|linux)\s*:\s*['"](?:win|darwin|linux)['"]/;
   check('M-d 反向：判据能识别旧形态（frpmgr 的 osMap）',

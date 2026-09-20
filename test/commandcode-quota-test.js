@@ -1,12 +1,12 @@
 #!/usr/bin/env node
 'use strict';
 
-// Command Code 反代额度获取（detectInstanceQuota commandcode-billing 分支）回归测试。
-// 覆盖 2026-09 审计修复的判定语义：
-//   ① 窗口耗尽只由 used/cap 推导（>=100% → rate-limited），不依赖上游可选的 exceeded 标志——
+// Command Code 反代额度获取回归测试。
+// 覆盖 detectInstanceQuota 的 commandcode-billing 判定语义：
+//   1) 窗口耗尽只由 used/cap 推导（>=100% -> rate-limited），不依赖上游可选的 exceeded 标志——
 //      实况 bug：上游 100% 窗口不返 exceeded 时旧实现存出 weekly.status=ok + percent=100 矛盾记录；
-//   ② 信封兼容：上游可能返 { data: { windowLimits, credits } } 或平铺；
-//   ③ used/cap 字符串/数字均解析；monthlyRemaining 累加（字段缺席置 null）。
+//   2) 信封兼容：上游可能返 { data: { windowLimits, credits } } 或平铺；
+//   3) used/cap 字符串/数字均解析；monthlyRemaining 累加（字段缺席置 null）。
 // 全部经本地 fetch mock，不触碰真实 Command Code / 外部服务。
 
 const path = require('node:path');
@@ -26,11 +26,11 @@ const CC_APP = {
   pkg: 'commandcode-api-proxy',
   healthPath: '/health', modelPath: '/v1/models', upstream: 'https://api.commandcode.ai',
   repo: null, registry: 'commandcode-api-proxy',
-  // ⚠ 2026-09-12 校正：fixture 必须与生产配置（proxy-apps.js）**逐键一致** ——
+  //  校正：fixture 必须与生产配置（proxy-apps.js）**逐键一致** ——
   //   此前缺 `subscriptionsPath` 与 `monthlyCapUsd`，而两者在 `quota-strategies.js`
-  //   里**都被消费**（:106 拉订阅期、:124 推导月用量百分比）。
-  //   于是本测试一直在跑「回退分支」（无 subscriptionsPath → 用常量路径；
-  //   无 monthlyCapUsd → monthly 为 null），**从未覆盖生产的真实路径**。
+  //   里**都被消费**（106 拉订阅期、:124 推导月用量百分比）。
+  //   于是本测试一直在跑「回退分支」（无 subscriptionsPath -> 用常量路径；
+  //   无 monthlyCapUsd -> monthly 为 null），**从未覆盖生产的真实路径**。
   //   这类「fixture 与生产配置漂移」会给出虚假的覆盖信心。
   quota: {
     type: 'commandcode-billing',
@@ -54,7 +54,7 @@ function mkInst(pp, key) {
 }
 
 (async () => {
-  // ── mock 1：100% 周窗口、无 exceeded 标志（旧实现会存 status:ok + percent:100 矛盾）──
+  // -- mock 1：100% 周窗口、无 exceeded 标志（旧实现会存 status:ok + percent:100 矛盾）--
   global.fetch = async (url, opts) => ({
     ok: true,
     json: async () => ({
@@ -71,14 +71,14 @@ function mkInst(pp, key) {
   check('CC3 overall=周限额', q1.overallStatus === '周限额', q1.overallStatus);
   check('CC4 monthlyRemaining=4（含字符串兜底累加）', q1.monthlyRemaining === 4, String(q1.monthlyRemaining));
 
-  // ── mock 2：信封形态 { data: {...} }（上游包 data）──
+  // -- mock 2：信封形态 { data: {...} }（上游包 data）--
   global.fetch = async () => ({ ok: true, json: async () => ({ data: { windowLimits: { fiveHour: { cap: 10, used: 10, resetAt: null } }, credits: {} } }) });
   const pp2 = mkProvider();
   const inst2 = await mkInst(pp2, 'cc-key-2');
   const r2 = await pp2.detectInstanceQuota(inst2);
   check('CC5 data 信封解包 → 5h 100% rate-limited', r2.ok && inst2.quota.rolling.status === 'rate-limited' && inst2.quota.rolling.percent === 100, JSON.stringify(inst2.quota.rolling));
 
-  // ── mock 3：used/cap 为字符串 + 低于 100 → ok；credits 缺席 → monthlyRemaining=null ──
+  // -- mock 3：used/cap 为字符串 + 低于 100 -> ok；credits 缺席 -> monthlyRemaining=null --
   global.fetch = async () => ({ ok: true, json: async () => ({ windowLimits: { fiveHour: { cap: '2000', used: '300', resetAt: Date.now() + 3600000 }, weekly: { cap: '100', used: '50', resetAt: null } } }) });
   const pp3 = mkProvider();
   const inst3 = await mkInst(pp3, 'cc-key-3');
@@ -86,14 +86,14 @@ function mkInst(pp, key) {
   check('CC6 字符串 used/cap 解析 → 5h 15% ok', r3.ok && inst3.quota.rolling.percent === 15 && inst3.quota.rolling.status === 'ok', JSON.stringify(inst3.quota.rolling));
   check('CC7 credits 缺席 → monthlyRemaining=null', inst3.quota.monthlyRemaining === null, String(inst3.quota.monthlyRemaining));
 
-  // ── mock 4：HTTP 失败 → ok:false 明确错误 ──
+  // -- mock 4：HTTP 失败 -> ok:false 明确错误 --
   global.fetch = async () => ({ ok: false, status: 500 });
   const pp4 = mkProvider();
   const inst4 = await mkInst(pp4, 'cc-key-4');
   const r4 = await pp4.detectInstanceQuota(inst4);
   check('CC8 上游 5xx → ok:false + 无法获取配额', r4.ok === false && /无法获取配额/.test(r4.error || ''), JSON.stringify(r4));
 
-  // ── mock 5：月额度用尽账号 + 订阅 periodEnd（2026-09 真实采样核验）──
+  // -- mock 5：月额度用尽账号 + 订阅 periodEnd--
   // 真实原体：/alpha/billing/credits 无 period 字段；/alpha/billing/subscriptions data.currentPeriodEnd
   // 提供「月额度随订阅续期重置」的精确时刻（planId=individual-go）。
   const now5 = Date.now();
@@ -114,7 +114,7 @@ function mkInst(pp, key) {
   const r5b = await pp5.detectInstanceQuota(inst5); // 缓存期内：沿用上次 periodEnd，不重复取
   check('CC11 缓存期内沿用 monthlyResetAt 且不重复请求', r5b.ok && inst5.quota.monthlyResetAt === periodEnd && subCalls === 1, JSON.stringify({ subCalls, mr: inst5.quota.monthlyResetAt }));
 
-  // ── mock 6：订阅不可靠（cancelAtPeriodEnd）→ 不调度 at，回退轮询 ──
+  // -- mock 6：订阅不可靠（cancelAtPeriodEnd）-> 不调度 at，回退轮询 --
   subCalls = 0;
   global.fetch = async (url, opts) => {
     if (String(url).includes('/alpha/billing/subscriptions')) { subCalls += 1; return { ok: true, json: async () => ({ success: true, data: { status: 'active', cancelAtPeriodEnd: true, currentPeriodEnd: new Date(now5 + 25 * 24 * 3600 * 1000).toISOString() } }) }; }
@@ -125,7 +125,7 @@ function mkInst(pp, key) {
   const r6 = await pp6.detectInstanceQuota(inst6);
   check('CC12 cancelAtPeriodEnd → monthlyResetAt=null（回退轮询，不赌续订）', r6.ok && inst6.quota && inst6.quota.monthlyResetAt === null, JSON.stringify(inst6.quota && inst6.quota.monthlyResetAt));
 
-  // ── mock 7：订阅查询失败 → 主额度不受影响，monthlyResetAt=null（轮询兜底）──
+  // -- mock 7：订阅查询失败 -> 主额度不受影响，monthlyResetAt=null（轮询兜底）--
   subCalls = 0;
   global.fetch = async (url, opts) => {
     if (String(url).includes('/alpha/billing/subscriptions')) { subCalls += 1; return { ok: false, status: 500 }; }
@@ -136,7 +136,7 @@ function mkInst(pp, key) {
   const r7 = await pp7.detectInstanceQuota(inst7);
   check('CC13 订阅 5xx → 主额度仍 ok（credits.monthlyCredits=0）+ monthlyResetAt=null', r7.ok && inst7.quota && inst7.quota.credits && inst7.quota.credits.monthlyCredits === 0 && inst7.quota.monthlyResetAt === null, JSON.stringify(r7));
 
-  // ── mock 8：额度充足账号不取订阅（零额外 API，防风控）──
+  // -- mock 8：额度充足账号不取订阅（零额外 API，防风控）--
   subCalls = 0;
   global.fetch = async (url, opts) => {
     if (String(url).includes('/alpha/billing/subscriptions')) { subCalls += 1; return { ok: true, json: async () => ({ success: true, data: { currentPeriodEnd: new Date(now5 + 20 * 24 * 3600 * 1000).toISOString() } }) }; }

@@ -1,10 +1,10 @@
 #!/usr/bin/env node
 'use strict';
 
-// lan-daemon（L3b 进程解耦）机制集成测试（2026-09）：
+// lan-daemon（L3b 进程解耦）机制集成测试：
 //  - lan-daemon 从 lan-state.json 快照拉起 relay（mock 目标），wanPort 绑定并真实代理
 //  - ctl（28104 复用 router-ctl dispatcher）list/frpStatus/health 可用
-//  - 状态 diff：remoteEnabled=false → reconcile 移除 relay；实例新增 → 补建
+//  - 状态 diff：remoteEnabled=false -> reconcile 移除 relay；实例新增 -> 补建
 //  - SIGTERM 优雅退出（端口释放）
 // 自包含：mock HTTP 目标 + 独立 tmp config/lan-state，不触碰生产守卫/账号/relay。
 
@@ -61,8 +61,8 @@ function ctlCall(method, payload, timeout = 8000) {
 }
 
 async function main() {
-  // ── 环境准备：config（自生成最小配置 + 平台默认值兜底——测试隔离，绝不依赖本机真实配置）──
-  // ⚠ DS-G4（§4.2 反转法）：业务域键（routerCtlPort/lanCtlPort/routerAutostart）不再位于
+  // -- 环境准备：config（自生成最小配置 + 平台默认值兜底——测试隔离，绝不依赖本机真实配置）--
+  //  DS-G4（反转法）：业务域键（routerCtlPort/lanCtlPort/routerAutostart）不再位于
   //   platform 的模块级 DEFAULTS；launcher 模板用的是「平台 BASE_DEFAULTS + 域注入声明」合成。
   //   本测试的 config.json 是给 **lan-daemon 进程**读的，且下面显式给了 lanCtlPort ——
   //   但为与生产模板同形，仍按 buildDefaults(注入) 取完整默认值。
@@ -93,7 +93,7 @@ async function main() {
 
   writeState({ updatedAt: Date.now(), instances: [makeInst('it-a', TARGET_A, WAN_A), makeInst('it-b', TARGET_B, WAN_B)], tokens: {} });
 
-  // ── 启动 lan-daemon ──
+  // -- 启动 lan-daemon --
   // 诊断：stdio 由 ignore 改为捕获 stderr——wanPort 未监听失败时打印 daemon 错误（Windows 平台调试）。
   const daemonErr = [];
   const child = spawn(process.execPath, [path.join(ROOT, 'src', 'domains', 'relay', 'daemon.js'), '-c', cfgPath], { stdio: ['ignore', 'ignore', 'pipe'], detached: true });
@@ -110,8 +110,8 @@ async function main() {
   check('lan-daemon 启动且 ctl 可达', ctlUp);
   if (!ctlUp) { child.kill('SIGTERM'); ta.close(); tb.close(); console.log('\n结果: ' + passed + ' passed, ' + failed + ' failed'); process.exit(failed ? 1 : 0); }
 
-  // ── relay 拉起（wanPort 绑定 + 真实代理）──
-  // Windows 实测 relay 绑定需 10-14s（pidlookup/端口探测慢于 Linux）；窗口放宽到 120×250ms=30s。
+  // -- relay 拉起（wanPort 绑定 + 真实代理）--
+  // Windows 实测 relay 绑定需 10-14s（pidlookup/端口探测慢于 Linux）；窗口放宽到 120x250ms=30s。
   let aUp = false;
   let bUp = false;
   for (let i = 0; i < 120; i++) {
@@ -139,14 +139,14 @@ async function main() {
   const p = await proxy();
   check('relay 真实代理到目标（mock-A /hi）', p.code === 200 && p.body === 'mock-A /hi', p);
 
-  // ── ctl list / frpStatus ──
+  // -- ctl list / frpStatus --
   const list = await ctlCall('POST', { method: 'list', args: [] });
   const items = (list.value && list.value.items) || [];
   check('ctl list 含 it-a/it-b', items.some((x) => x.id === 'it-a' && x.wanPort === WAN_A) && items.some((x) => x.id === 'it-b' && x.wanPort === WAN_B), JSON.stringify(list.value && list.value.items));
   const frp = await ctlCall('POST', { method: 'frpStatus', args: [] });
   check('ctl frpStatus 可调（无异常）', frp && frp.ok === true);
 
-  // ── 状态 diff：禁用 it-b → reconcile 移除；令牌注入不崩 ──
+  // -- 状态 diff：禁用 it-b -> reconcile 移除；令牌注入不崩 --
   writeState({ updatedAt: Date.now(), instances: [makeInst('it-a', TARGET_A, WAN_A)], tokens: { 'it-a': 'tok-XYZ' } });
   let gone = false;
   for (let i = 0; i < 20; i++) {
@@ -158,7 +158,7 @@ async function main() {
   const ids2 = ((list2.value && list2.value.items) || []).map((x) => x.id);
   check('ctl list 只剩 it-a', ids2.length === 1 && ids2[0] === 'it-a', ids2);
   // 令牌注入后 A relay 仍代理：daemon 每 2s tick reconcile，it-b 移除可能触发 it-a relay 短暂重建——
-  // 轮询等待代理恢复（≤6s），容忍重建窗口（Windows CI 实测需此容忍，2026-09-10）
+  // 轮询等待代理恢复（<=6s），容忍重建窗口
   let tokProxyOk = false;
   for (let i = 0; i < 20; i++) {
     if ((await proxy()).code === 200) { tokProxyOk = true; break; }
@@ -166,7 +166,7 @@ async function main() {
   }
   check('令牌注入后 A relay 仍代理', tokProxyOk);
 
-  // ── 优雅退出 ──
+  // -- 优雅退出 --
   child.kill('SIGTERM');
   await sleep(800);
   check('SIGTERM 后进程退出', child.exitCode !== null || true); // detached/unref：用端口判断

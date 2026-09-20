@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 'use strict';
 
-// ═══════════════════════════════════════════════════════════════════════════
-// 第十三轮续：前端类型声明必须与后端**实际产出**一致（2026-09-13）
+// ---------------------------------------------------------------------------
+// 第十三轮续：前端类型声明必须与后端**实际产出**一致
 //
 // ## 缺陷（失效模式 a + b + c，跨层）
 //
@@ -23,7 +23,7 @@
 //   B UI 源码不得再引用 latestLts / ltsName（node-lts 语境）
 //   C 后端真实产出的键必须都在类型声明里（防反向漂移：前端拿不到新字段）
 //   D 反向：判据能识别幽灵字段（门禁非空转）
-// ═══════════════════════════════════════════════════════════════════════════
+// ---------------------------------------------------------------------------
 
 const fs = require('node:fs');
 const os = require('node:os');
@@ -51,7 +51,7 @@ function ifaceFields(src, name) {
   check('A 解析到 NodeLtsStatus 字段', fields.length > 0, fields.join(','));
 
   // 真实调用后端
-  // ⚠ 2026-09-16 步骤7：nodeLtsStatus 已从 settings-view.js 拆到 app/settings/node-lts.js；
+  //  步骤7：nodeLtsStatus 已从 settings-view.js 拆到 app/settings/node-lts.js；
   //   导出形态从属性描述符改为 { methods }。
   const mod = require(path.join(ROOT, 'src', 'app', 'settings', 'node-lts.js'));
   const svc = Object.assign({}, mod.methods);
@@ -97,7 +97,7 @@ function ifaceFields(src, name) {
     for (const f of uiFiles) {
       if (f.indexOf('types.ts') >= 0) continue;
       const src = fs.readFileSync(f, 'utf8');
-      // ⚠ 剥离整行注释后再查：本次修正的**说明注释里必然引用旧字段名**
+      //  剥离整行注释后再查：本次修正的**说明注释里必然引用旧字段名**
       //   （「原实现读 latestLts / ltsName」），不剥离就会自匹配。
       const codeOnly = src.split('\n').filter((l) => {
         const t = l.trim();

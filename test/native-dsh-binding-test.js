@@ -1,11 +1,11 @@
 #!/usr/bin/env node
 'use strict';
 
-// 原生 DSH「检测 → 绑定 → 接管」契约回归（2026-09-16 架构修正）。
+// 原生 DSH「检测 -> 绑定 -> 接管」契约回归。
 //
-// 缺陷（真机）：原生 DSH 只被静态 config.command[1]（出厂默认裸名 'dsh'）定义 →
-//   fs.existsSync('dsh') 恒 false → 「已安装」判不出来，与「安装」分支形成**两套相反逻辑**
-//   （系统已装 DSH 却报未安装 → 面板去装第二个 DSH 顶替原生的那个）。
+// 缺陷（真机）：原生 DSH 只被静态 config.command[1]（出厂默认裸名 'dsh'）定义 ->
+//   fs.existsSync('dsh') 恒 false -> 「已安装」判不出来，与「安装」分支形成**两套相反逻辑**
+//   （系统已装 DSH 却报未安装 -> 面板去装第二个 DSH 顶替原生的那个）。
 // 本测试用**假 npm 前缀**驱动真实解析：检测得到真实入口、版本可读、未装如实为 false。
 // 自包含，不触碰生产文件。
 
@@ -72,12 +72,12 @@ delete process.env.DSH_BIN;
 const d2 = ep.resolveDsh({ npmRoot: PREFIX });
 check('resolveDsh(npmRoot) 命中包内 lib/bin.js', d2 && canon(d2.bin) === canon(JS), d2 && d2.bin);
 
-// 3) NativeManager：已绑定绝对入口 → 已安装 + 版本可读
+// 3) NativeManager：已绑定绝对入口 -> 已安装 + 版本可读
 const bound = mkNM(['node', JS, 'web'], PREFIX);
 check('已绑定入口 → installed=true', bound.status().installed === true, bound.binPath());
 check('已绑定入口 → 读到真实版本', bound.installedVersion() === '9.9.9', String(bound.installedVersion()));
 
-// 4) NativeManager：裸名 + 无任何可解析安装 → 如实未安装（不再伪造）
+// 4) NativeManager：裸名 + 无任何可解析安装 -> 如实未安装（不再伪造）
 const bare = mkNM(['node', 'dsh', 'web'], EMPTY_PREFIX);
 check('裸名且无可解析安装 → installed=false（如实）', bare.status().installed === false, String(bare.binPath()));
 
@@ -88,18 +88,18 @@ check('检测到真实安装 → installed=true（检测驱动）', adopted.stat
 
 // 6) 结构不变量：绑定先于消费者；exec-path 导出解析器
 //
-// ⚠ 步骤 7 回归收敛（2026-09-16）：机械下沉把本段断言的三处路径全部改址，旧路径已不存在 ——
-//   ① _bindNativeDshCommand 从 src/supervisor.js 下沉到 src/app/assembly/bootstrap.js；
-//   ② 「绑定 → 消费者」的调用序从 supervisor.js 迁到 src/app/assembly/compose.js
+//  步骤 7 回归收敛：机械下沉把本段断言的三处路径全部改址，旧路径已不存在 ——
+//   1) _bindNativeDshCommand 从 src/supervisor.js 下沉到 src/app/assembly/bootstrap.js；
+//   2) 「绑定 -> 消费者」的调用序从 supervisor.js 迁到 src/app/assembly/compose.js
 //      （构造期唯一 DI 点：先 host._bindNativeDshCommand() 再 new InstanceManager(...)）；
-//   ③ 插件 CLI 的 runtime 承载从 src/domains/plugin/plugins.js 迁到 plugins 拆分后的 ops.js。
-//   为什么不能继续断言 supervisor.js：它是薄壳（DS-G7 ≤200 行），只保留组装与启动，
+//   3) 插件 CLI 的 runtime 承载从 src/domains/plugin/plugins.js 迁到 plugins 拆分后的 ops.js。
+//   为什么不能继续断言 supervisor.js：它是薄壳（DS-G7 <=200 行），只保留组装与启动，
 //   若仍按旧路径取文件将 ENOENT 崩溃（或恒 false）——断言的是「实现所在文件」而非契约本身。
 //   故改为断言**契约的不变量**：绑定方法存在、且调用序先于消费者（跨文件，仍可机器校验）。
 //   本测试不 spawn 任何子进程、不创建锁文件（纯 require + 读文件），隔离无风险。
 const sup = fs.readFileSync(path.join(ROOT, 'src', 'supervisor.js'), 'utf8');
 const boot = fs.readFileSync(path.join(ROOT, 'src', 'app', 'assembly', 'bootstrap.js'), 'utf8');
-// R3 严值 DF-2：compose.js 拆为 compose/{core,domains,observers}.js；绑定→消费者的调用序在 domains 步。
+// R3 严值 DF-2：compose.js 拆为 compose/{core,domains,observers}.js；绑定->消费者的调用序在 domains 步。
 const compose = fs.readFileSync(path.join(ROOT, 'src', 'app', 'assembly', 'compose', 'domains.js'), 'utf8');
 check('bootstrap 定义 _bindNativeDshCommand', /_bindNativeDshCommand\(/.test(boot), 'ok');
 // 装配序不变量锁定在 compose.js：绑定调用必须早于 InstanceManager 构造（消费者）。
@@ -108,7 +108,7 @@ const bindIdx = compose.indexOf('host._bindNativeDshCommand();');
 const instIdx = compose.indexOf('new InstanceManager(');
 check('检测→绑定先于 InstanceManager（消费者）', bindIdx > 0 && instIdx > 0 && bindIdx < instIdx, bindIdx + ' < ' + instIdx);
 // 插件 CLI 的 JS 入口承载：plugins.js 已拆为 index/ops/jobs/store（步骤8a），
-// 域改造后 runtime 目标解析落在 targets.js（SSOT §5.4）——按整域聚合读取，
+// 域改造后 runtime 目标解析落在 targets.js（SSOT）——按整域聚合读取，
 // 避免文件一搬该断言静默失去覆盖面。
 const plugDir = path.join(ROOT, 'src', 'domains', 'plugin');
 const plug = fs.readdirSync(plugDir).filter((f) => f.endsWith('.js'))
@@ -129,7 +129,7 @@ check('runtime-contract 透出 npmArgs（包内 JS 场景）',
   JSON.stringify(rcGot && rcGot.npmArgs));
 try { fs.rmSync(path.dirname(rcFile), { recursive: true, force: true }); } catch {}
 
-// 8) N2/B21（AUDIT-2026-09-19）：安装成功路径必须当场复跑「检测 → 绑定」。
+// 8) N2/B21：安装成功路径必须当场复跑「检测 -> 绑定」。
 //    裸 config.command 首装后若不绑定，DSH 永不起、60s 冷静期无限循环（boot 期是唯一旧调用点）。
 const natOps = fs.readFileSync(path.join(ROOT, 'src', 'app', 'native', 'ops.js'), 'utf8');
 const iStart = natOps.indexOf('async function install(host, version)');
@@ -145,9 +145,9 @@ const OLD8 = "async function install(host, version) { host._recordManifest(targe
 const oldS = OLD8.slice(0, OLD8.indexOf('function startInstall'));
 check('B21 反向：旧无绑定形态被判失败', oldS.indexOf('host._bindNativeDshCommand') === -1, 'ok');
 
-// 9) D-9（AUDIT-2026-09-19 第4批）：升级/重装不得用空数组抹掉 dataPaths 认领。
+// 9) D-9：升级/重装不得用空数组抹掉 dataPaths 认领。
 //    manifest.record 的继承分支判据是「未显式传 dataPaths」（claim===null）；
-//    而 Array.isArray([]) 为真 ⇒ 传 [] 会把上一代认领写成 []，卸载清理恒 no-op（目录永久残留）。
+//    而 Array.isArray([]) 为真 => 传 [] 会把上一代认领写成 []，卸载清理恒 no-op（目录永久残留）。
 {
   const mf = require(path.join(ROOT, 'src', 'app', 'native', 'manifest.js'));
   const opsSrc = fs.readFileSync(path.join(ROOT, 'src', 'app', 'native', 'ops.js'), 'utf8');

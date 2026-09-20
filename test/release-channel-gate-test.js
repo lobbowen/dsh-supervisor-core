@@ -1,27 +1,27 @@
 #!/usr/bin/env node
 'use strict';
 
-// ═══════════════════════════════════════════════════════════════════════════
-// 发布通道门禁（内核侧）—— SSOT: RELEASE-CHANNEL-CONTRACT.md §6
+// ---------------------------------------------------------------------------
+// 发布通道门禁（内核侧）—— SSOT: RELEASE-CHANNEL-CONTRACT.md
 //
 // ## 断言
 //   RC-G3 内核选版「优先读 latest」（结构断言 + 行为断言）
-//         · 结构：src/platform/distribution/index.js 的 fetchNpmLatest 读 dist-tags.latest，
-//                 且不再「dist-tags 全部值 ∪ versions 全部键」取最高
-//         · 行为：假 registry 上 latest=0.1.6-RC.1 而 versions 另有数字更高的
-//                 0.2.0-BETA.1 —— 契约 §3③ 要求返回 latest（通道控制）
+//         - 结构：src/platform/distribution/index.js 的 fetchNpmLatest 读 dist-tags.latest，
+//                 且不再「dist-tags 全部值 并 versions 全部键」取最高
+//         - 行为：假 registry 上 latest=0.1.6-RC.1 而 versions 另有数字更高的
+//                 0.2.0-BETA.1 —— 契约 ) 要求返回 latest（通道控制）
 //   RC-G4 发布脚本 release/scripts/publish-core.sh：'-RC.*' 分支必须带 '--tag latest'（RC-6）
-//         · BETA → '--tag beta'（绝不碰 latest）；rc 只作发布后补打的别名
-//         · rollback / canary 不由发布脚本设置（人工运维，契约 §4）
+//         - BETA -> '--tag beta'（绝不碰 latest）；rc 只作发布后补打的别名
+//         - rollback / canary 不由发布脚本设置（人工运维，契约）
 //   RC-G5 反向：判据能识别「仅取全量最高」的旧形态（门禁非空转）
 //   附    RC-G1/G2 交叉断言：只读**壳仓** core.rs 源码（壳实现归分片1，本仓不改）
 //
 // ## 现状（如实记录；本文件不改实现）
-//   RC-G3 在本门禁建立时**未落地**：fetchNpmLatest 仍是「tags ∪ versions 取最高」，
+//   RC-G3 在本门禁建立时**未落地**：fetchNpmLatest 仍是「tags 并 versions 取最高」，
 //   违反不变量 RC-1（BETA 数字可压过 RC）。壳仓 core.rs::latest_version 同形态，
 //   且无 rollback 分支。故 RC-G3 / RC-G1-x / RC-G2-x 预期 FAIL，直到分片2 / 分片1 落地。
 //   这是如实报告，不是门禁空转 —— RC-G5 证明判据能区分两种形态。
-// ═══════════════════════════════════════════════════════════════════════════
+// ---------------------------------------------------------------------------
 
 const fs = require('node:fs');
 const path = require('node:path');
@@ -71,7 +71,7 @@ function withoutCommentLines(src) {
   return splitLines(src).map((l) => (/^\s*(\/\/|#)/.test(l) ? '' : l)).join(String.fromCharCode(10));
 }
 
-// ── 判据（正/反共用；RC-G5 对它们做反向断言，证明门禁非空转）──
+// -- 判据（正/反共用；RC-G5 对它们做反向断言，证明门禁非空转）--
 
 /** 「优先读 dist-tags.latest」形态判据（JS / Rust 通用）。 */
 function readsLatestTag(src) {
@@ -80,7 +80,7 @@ function readsLatestTag(src) {
     || /get\(\s*['"]dist-tags['"]\s*\)[\s\S]{0,120}get\(\s*['"]latest['"]\s*\)/.test(src);
 }
 
-/** 「仅取全量最高」旧形态判据：dist-tags 的全部值 ∪ versions 的全部键后取最高。 */
+/** 「仅取全量最高」旧形态判据：dist-tags 的全部值 并 versions 的全部键后取最高。 */
 function isUnionMax(src) {
   const jsUnion = /new Set\(\s*\[[\s\S]{0,160}\bversions\b/.test(src);
   const rustUnion = /get\(\s*['"]dist-tags['"]\s*\)/.test(src) && /get\(\s*['"]versions['"]\s*\)/.test(src);
@@ -99,12 +99,12 @@ function legacyUnionMax(meta) {
 
 const DIST_DIR = 'src/platform/distribution';
 const SCRIPT_REL = 'release/scripts/publish-core.sh';
-/** ⚠ 2026-09-17（域结构第三轮）：distribution 已拆分（release/policies/registry/install + index 门面），
+/**  （域结构第三轮）：distribution 已拆分（release/policies/registry/install + index 门面），
  *  结构断言的对象是「分发能力」而非单文件，故按目录聚合读取（读取面随文件搬移同步，判据语义不变）。 */
 const readDist = () => fs.readdirSync(path.join(ROOT, DIST_DIR)).filter((f) => f.endsWith('.js')).sort()
   .map((f) => fs.readFileSync(path.join(ROOT, DIST_DIR, f), 'utf8')).join(String.fromCharCode(10));
 
-// fixture：契约 §3③ 与「全量最高」在**同一份元数据**上给出不同答案
+// fixture：契约 ) 与「全量最高」在**同一份元数据**上给出不同答案
 const META_A = {
   name: '@dsh-sup/dsh-core-test-x64',
   'dist-tags': { latest: '0.1.6-RC.1', beta: '0.2.0-BETA.1' },
@@ -148,7 +148,7 @@ function startFakeRegistry() {
 }
 
 async function main() {
-  // ═══ RC-G3 结构 ═══
+  // --- RC-G3 结构 ---
   console.log('== RC-G3 内核选版优先读 latest（结构）==');
   {
     const src = stripJsComments(readDist());
@@ -163,7 +163,7 @@ async function main() {
       !/dist-?tags/.test(rc), 'ok');
   }
 
-  // ═══ RC-G4 发布脚本 ═══
+  // --- RC-G4 发布脚本 ---
   console.log('== RC-G4 publish-core.sh：-RC.* 必须带 --tag latest ==');
   {
     const sh = read(SCRIPT_REL);
@@ -199,7 +199,7 @@ async function main() {
       'ok');
   }
 
-  // ═══ RC-G5 反向 ═══
+  // --- RC-G5 反向 ---
   console.log('== RC-G5 反向：判据能识别「取全量最高」旧形态（门禁非空转）==');
   {
     const LEGACY = "const candidates = new Set([...Object.values(tags), ...versions].filter((v) => VERSION_RE.test(v)));";
@@ -218,7 +218,7 @@ async function main() {
       '旧算法=' + String(legacyUnionMax(META_A)) + '；契约期望=' + META_A['dist-tags'].latest);
   }
 
-  // ═══ RC-G1 / RC-G2 交叉（只读壳仓源码；实现归分片1）═══
+  // --- RC-G1 / RC-G2 交叉（只读壳仓源码；实现归分片1）---
   console.log('== RC-G1/G2 交叉：壳仓 core.rs（只读；实现归分片1）==');
   {
     const shellCore = path.join(ROOT, '..', 'dsh-supervisor-launcher', 'src-tauri', 'src', 'core.rs');
@@ -237,7 +237,7 @@ async function main() {
     }
   }
 
-  // ═══ RC-G3 行为（假 registry）═══
+  // --- RC-G3 行为（假 registry）---
   console.log('== RC-G3 内核选版优先读 latest（行为，假 registry）==');
   {
     const fake = await startFakeRegistry();

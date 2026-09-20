@@ -3,9 +3,9 @@
 
 // 统一受管进程生命周期核心（src/infra/proc/daemon-lifecycle.js）回归：
 //  - ensureRunning：身份接管 / 首启 spawn / latch barrier
-//  - replace 换代：停旧→等死→等端口释放→才启新（同一 ctl 端口，绝不双代并存）
+//  - replace 换代：停旧->等死->等端口释放->才启新（同一 ctl 端口，绝不双代并存）
 //  - superviseOnce：死透才重拉；残留先 TERM
-//  - stop：TERM→等死→等端口释放→清身份
+//  - stop：TERM->等死->等端口释放->清身份
 // 自包含：真实 spawn 本机 fixture（fake-ctl-daemon.js），不触碰真实 daemon/守卫。
 
 const path = require('node:path');
@@ -121,7 +121,7 @@ const waitCtl = async (ms = 8000) => { const t0 = Date.now(); while (Date.now() 
   dl3._writeIdentity(999999); // 期望 pid 已死
   const sv = await dl3.superviseOnce();
   check('期望死 + ctl 被残留占 → reclaiming（先 TERM 残留）', sv.mode === 'reclaiming', JSON.stringify(sv));
-  // 等残留死透 + 端口释放 → 下轮 spawn
+  // 等残留死透 + 端口释放 -> 下轮 spawn
   let started = null;
   for (let i = 0; i < 40; i++) {
     await sleep(400);
@@ -137,7 +137,7 @@ const waitCtl = async (ms = 8000) => { const t0 = Date.now(); while (Date.now() 
   process.exit(failed.length ? 1 : 0);
 })().catch((e) => { console.error('ERR', e); process.exit(1); });
 
-// ── D-12（AUDIT-2026-09-19 第4批）：管理锁 = 原子取锁 + 持有者存活检测 + 只删自己的锁 ──
+// -- D-12：管理锁 = 原子取锁 + 持有者存活检测 + 只删自己的锁 --
 // 旧实现三处不成立：writeFileSync 直接覆盖（后写者静默抢锁）、pid 从不回读（崩溃残留恒授权）、
 // unlinkSync 无条件删（可删掉别的守卫刚重建的锁）。范式出处：bin/dsh-supervisor 的守卫单实例锁。
 {
@@ -168,7 +168,7 @@ const waitCtl = async (ms = 8000) => { const t0 = Date.now(); while (Date.now() 
     'content=' + fs.readFileSync(lock, 'utf8').trim());
   fs.rmSync(lock, { force: true });
 
-  // 真·死 pid：起一个即刻退出的子进程，用它的 pid 模拟崩溃残留
+  // 真-死 pid：起一个即刻退出的子进程，用它的 pid 模拟崩溃残留
   const { spawnSync } = require('node:child_process');
   const r = spawnSync(process.execPath, ['-e', '']);
   const dead = r && r.pid;
@@ -185,9 +185,9 @@ const waitCtl = async (ms = 8000) => { const t0 = Date.now(); while (Date.now() 
   releaseLock(lock);
 
   // 反向（判据有牙）：旧缺陷形态必被识破
-  //   ⚠ 勘误（第 4 批 CI 裁决）：原写法「锁不存在 -> 取锁失败」把期望倒置了。
-  //   父目录存在而锁不存在时 `'wx'` 首次创建**必成功**（本块首条正例已断言），
-  //   真正的失败路径是「父目录都不存在」——那里 ENOENT ≠ EEXIST，取锁必须判 false 且不留任何半成品。
+  //   期望方向：父目录存在而锁不存在时 `'wx'` 首次创建**必成功**（本块首条正例已断言），
+  //   把「锁不存在」当成取锁失败就把期望倒置了。
+  //   真正的失败路径是「父目录都不存在」——那里 ENOENT != EEXIST，取锁必须判 false 且不留任何半成品。
   check('D-12 反向：路径为 null -> 安全返回 false（不触碰 fs）',
     acquireLock(null) === false, 'null 路径安全');
   const ghostDir = path.join(TMP, 'd12-no-such-dir');

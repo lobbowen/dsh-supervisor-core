@@ -42,7 +42,7 @@ class DaemonLifecycle {
     this.stopGraceMs = o.stopGraceMs || 4000;
     this.portReleaseTimeoutMs = o.portReleaseTimeoutMs || 5000;
     this.spawnWindowMs = o.spawnWindowMs || 25000;
-    // E-3（AUDIT-2026-09-19）：退出意图谓词钩子（守卫注入 host._exitIntended，单源）。
+    // 退出意图谓词钩子（守卫注入 host._exitIntended，单源）。
     //   ensureRunning 是全部 daemon spawn 的必经入口；仅有内存 _stopping 不够——
     //   「退出管家」后守卫被外部拉起的那拍，会话/持久标记同样必须否决 spawn。
     this._exitIntended = typeof o.exitIntended === 'function' ? o.exitIntended : () => false;
@@ -60,7 +60,7 @@ class DaemonLifecycle {
       try { fs.mkdirSync(dir, { recursive: true }); } catch {}
       writeAtomic(this.identityFile, JSON.stringify({ guardPid: process.pid, daemonPid, startedAt: Date.now() }), { mode: 0o600 });
     } catch (e) {
-      // D-13：身份文件写失败**必须留痕**。它决定下次守卫重启能否按 owner 连续接管该 daemon；
+      // 身份文件写失败**必须留痕**。它决定下次守卫重启能否按 owner 连续接管该 daemon；
       //   静默失败会让接管判定退回 cmdline 形态（异主/双监督风险变成不可见的），正是 9-13 同族。
       if (this.logger && this.logger.warn) this.logger.warn(this.name + ' identity write failed: ' + ((e && e.message) || e));
       try { if (this.events && this.events.append) this.events.append('daemon_identity_write_error', { name: this.name, pid: daemonPid, error: (e && e.message) || String(e) }); } catch {}
@@ -188,12 +188,12 @@ class DaemonLifecycle {
 
   /** 无副作用分类（供监督/审计共用）：当前受管代际与 ctl 属主的真实状态。**绝不 spawn/stop**。
    *  @returns {{mode:'running'|'external'|'reclaiming'|'barrier'|'absent'|'stopping', pid?, owner?, stale?}}
-   *   - running    : 期望代际存活（ctl 属主=期望 pid，或 ctl 尚未起）
-   *   - external   : ctl 被「异 cmdMark/异代际」进程占用（外部抢占，绝不接管）
-   *   - reclaiming : 期望代际已死但同 cmdMark 残留仍占 ctl（需换代）
-   *   - barrier    : spawn latch 窗口内（等旧代退出）
-   *   - absent     : 无进程、无残留（可 spawn）
-   *   - stopping   : 已进入停止流程
+   *   - running: 期望代际存活（ctl 属主=期望 pid，或 ctl 尚未起）
+   *   - external: ctl 被「异 cmdMark/异代际」进程占用（外部抢占，绝不接管）
+   *   - reclaiming: 期望代际已死但同 cmdMark 残留仍占 ctl（需换代）
+   *   - barrier: spawn latch 窗口内（等旧代退出）
+   *   - absent: 无进程、无残留（可 spawn）
+   *   - stopping: 已进入停止流程
    *  这是生产监督路径（_orphanAudit / _daemonSuperviseOnce）识别「异主 daemon」的唯一判据——
    *  ensureRunning 只按 cmdline 判 active，无法区分「本守卫的 daemon」与「外部同名 daemon」。 */
   classify() {

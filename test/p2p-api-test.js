@@ -60,6 +60,21 @@ registerDryRunApp();
     if (body) req.write(JSON.stringify(body)); req.end();
   });
 
+  // 轮询反代账号到终态，返回 {elapsedMs, polls}。capMs 只作失控守卫，不代表产品承诺时限。
+  async function waitProxyAccountsTerminal(capMs) {
+    const t0 = Date.now();
+    let polls = 0;
+    for (;;) {
+      polls++;
+      const rr = await api('GET', '/router/providers');
+      const pp = (rr.body.providers || []).find((x) => x.kind === 'proxy');
+      const aa = (pp && pp.accounts) || [];
+      if (aa.length >= 1 && aa.every((x) => x.status !== 'registering')) return { elapsedMs: Date.now() - t0, polls };
+      if (Date.now() - t0 >= capMs) return { elapsedMs: Date.now() - t0, polls };
+      await new Promise((res) => setTimeout(res, 250));
+    }
+  }
+
   // 1. status（未启动）
   let r = await api('GET', '/router/status');
   check('P1 /router/status', r.code === 200 && r.body.running === false, r.code + ' ' + JSON.stringify(r.body && r.body.running));
@@ -91,17 +106,21 @@ registerDryRunApp();
   r = await api('GET', '/router/status');
   check('P8 status running + usage', r.body.running === true && r.body.usage && typeof r.body.usage.requests === 'number', JSON.stringify({ running: r.body.running, req: r.body.usage && r.body.usage.requests }));
 
-  // 8. 反代账号异步注册（轮询到终态，替代固定 8s sleep——负载下会骑到
-  //    waitHealthy 6×1.5s≈9s 边界造成 P9 偶发假失败）
-  await (async () => { const t0 = Date.now(); while (Date.now() - t0 < 20000) { const rr = await api('GET', '/router/providers'); const pp = (rr.body.providers || []).find((p) => p.kind === 'proxy'); const aa = (pp && pp.accounts) || []; if (aa.length >= 1 && aa.every((a) => a.status !== 'registering')) break; await new Promise((res) => setTimeout(res, 200)); } })();
+  // 8. 反代账号异步注册：轮询到终态。`registering -> ready` 由实例被拉起的那一刻驱动，
+  //    不是「启动后 N 秒内一定到终态」的产品保证，故这里只把上限当失控守卫；
+  //    到终态即退出，正常路径不额外等待。回显 elapsed/polls，让「慢」与「卡死」可分辨。
+  const w8 = await waitProxyAccountsTerminal(60000);
   r = await api('GET', '/router/providers');
   const proxyP = (r.body.providers||[]).find((p) => p.kind === 'proxy');
   const accs = (proxyP && proxyP.accounts) || [];
-  // 统一入库语义（2026-09）：检测完成即入终态——ready（正常）或 frozen（受限自动冻结，到点自动解冻）；review 闸门已移除
-  check('P9 反代账号注册完成（ready / 受限自动 frozen）', accs.length >= 1 && accs.every((a) => a.status === 'ready' || a.status === 'frozen'), JSON.stringify(accs.map((a) => a.status)));
+  const w8e = '耗时=' + w8.elapsedMs + 'ms 轮询=' + w8.polls + ' 状态=' + JSON.stringify(accs.map((a) => a.status));
+  check('P9 反代账号已进入视图', accs.length >= 1, w8e);
+  // 统一入库语义：检测完成即入终态——ready（正常）或 frozen（受限自动冻结，到点自动解冻）；review 闸门已移除
+  check('P9 反代账号注册完成（ready / 受限自动 frozen）', accs.length >= 1
+    && accs.every((a) => a.status === 'ready' || a.status === 'frozen'), w8e);
   check('P10 反代实例信息在视图', accs.some((a) => a.instanceStatus), JSON.stringify(accs[0] && { st: accs[0].instanceStatus, h: accs[0].healthy }));
 
-  // 8b. 供应商独立端点：默认停用 → 激活分配端口 → 列表地址下沉 → 停用回收
+  // 8b. 供应商独立端点：默认停用 -> 激活分配端口 -> 列表地址下沉 -> 停用回收
   r = await api('GET', '/router/providers');
   const deactView = (r.body.providers || []).find((p) => p.id === proxyPid);
   check('P9a 新供应商默认停用（未激活不提供服务）', deactView && deactView.activated === false, JSON.stringify(deactView && { activated: deactView.activated, apiBase: deactView.apiBase }));
@@ -142,9 +161,9 @@ registerDryRunApp();
   r = await api('POST', '/router/proxy/update/check', {});
   check('P14 更新检查端点', r.code === 200 && r.body.ok === true, r.code + ' ' + JSON.stringify(r.body));
 
-  // 13. account discard（不存在 id → 合理错误）
-  //   ⚠ P15 原测 /router/providers/account/confirm —— 该端点已随 review 状态删除
-  //     （2026-09-16 Phase 5 / 决策 A6）。现断言"已不存在（404）"以锁住设计意图。
+  // 13. account discard（不存在 id -> 合理错误）
+  //    /router/providers/account/confirm 曾断言其存在；该端点随 review 状态删除后，
+  //    本用例改断言「已不存在（404）」，把删除这件事锁住而不是悄悄改掉。
   r = await api('POST', '/router/providers/account/confirm', { id: 'nope', keyId: 'x' });
   check('P15 confirm 端点已删除（404，review 状态已移除）', r.code === 404, r.code + ' ' + JSON.stringify(r.body));
   r = await api('POST', '/router/providers/account/discard', { id: 'nope', keyId: 'x' });
@@ -152,8 +171,8 @@ registerDryRunApp();
 
   // 14. keys/set（给直连加 key）
   r = await api('POST', '/router/providers/keys/set', { id: directP.id, add: ['sk-api-2'] });
-  // ⚠ P2-5 修复（2026-09-12）：本条原先断言 `added === 1` —— 但那是**假成功**。
-  //   本测试用的 key 是 'sk-api-2'（伪造值），detectAccount 必然失败 → 账号被置 discarded。
+  //  P复：本条原先断言 `added === 1` —— 但那是**假成功**。
+  //   本测试用的 key 是 'sk-api-2'（伪造值），detectAccount 必然失败 -> 账号被置 discarded。
   //   旧实现的 `added++` 不 await 检测，故恒报 1；现在 added 反映真实结果（应为 0）。
   //   故断言改为：端点正常（200/ok）且**如实回报**被丢弃的 Key（这恰是修复的意图）。
   check('P17 keys/set 添加（如实回报：伪造 key 应被丢弃）',
@@ -202,14 +221,14 @@ registerDryRunApp();
   r = await api('POST', '/router/providers/remove', { id: proxyP.id });
   check('P21 删除反代供应商', r.code === 200 && r.body.ok === true, r.code + ' ' + JSON.stringify(r.body));
 
-  // 19. 环境状态 + 守卫自更新（未配置源 → 明确错误）
+  // 19. 环境状态 + 守卫自更新（未配置源 -> 明确错误）
   r = await api('GET', '/env/status');
   check('P22 /env/status', r.code === 200 && r.body && typeof r.body.node === 'object' && 'detected' in (r.body.node || {}), r.code + ' ' + JSON.stringify(r.body && r.body.node));
   r = await api('GET', '/self-update/status');
   check('P23 /self-update/status 未配置源 → 明确错误', r.code === 400 && r.body.ok === false && /未配置/.test(r.body.error || ''), r.code + ' ' + JSON.stringify(r.body));
 
   // 21. local() 兜底 stale 标注（阶段三）：daemon 未激活/ctl 失败时返回 _stale 应急视图（不再伪装成实时）
-  // 测试环境 daemon 未启动（内嵌/直接），routerProviders 走 local() → 应带 _stale:true 标注
+  // 测试环境 daemon 未启动（内嵌/直接），routerProviders 走 local() -> 应带 _stale:true 标注
   {
     const rp = sup.routerProviders();
     const v = rp && rp.then ? await rp : rp;
@@ -217,7 +236,7 @@ registerDryRunApp();
   }
 
   // 22. 资源端口视图 /router/ports（阶段迁移 S1）：厂商「删除即释放端口」契约（C3 修复）验证。
-  //     旧实现 removeProvider 不释放 providerApi/proxy 记录 → 端口登记永久泄漏（该断言曾把泄漏当预期）；
+  //     旧实现 removeProvider 不释放 providerApi/proxy 记录 -> 端口登记永久泄漏（该断言曾把泄漏当预期）；
   //     现语义：删除供应商后其自治段记录必须被回收。router 段可见性在上方 P30 前置点验证。
   r = await api('GET', '/router/ports');
   const pv = (r.body && r.body.records) || [];

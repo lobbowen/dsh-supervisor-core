@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 'use strict';
 
-// 卸载类测试（项目政策，2026-08-31）：本脚本含 POST /native/uninstall（控制面板对 DSH 原生卸载）契约断言，
+// 卸载类测试：本脚本含 POST /native/uninstall（控制面板对 DSH 原生卸载）契约断言，
 // 已纳入 npm test（CI）自动测试链执行；测试结论只能由 CI 裁决，本地不单独复跑
 // （如需排查，可显式执行 node test/api-contract-test.js 或 npm run test:api-contract）。
 
@@ -29,10 +29,10 @@ const nativeManager = {
 };
 // 门面名是 sup.routerApi（api.js 全 router 路由走它）；Proxy get 命中 routerApi 返回此 stub。
 // 注：旧 Proxy 曾用 'router' 名——api.js 从未暴露 sup.router，导致 key/use 等路由
-// 命中 Proxy 兜底函数 → 400。2026-09 修复：对齐真实门面名。
+// 命中 Proxy 兜底函数 -> 400。20复：对齐真实门面名。
 // 真实门面 routerApi() 是方法（supervisor.js:561 this.routerApi() 返回门面对象）——
 // Proxy 必须暴露「调用后返回对象」的函数，否则 api.js 里 sup.routerApi().switchToKey() 抛
-// 'routerApi is not a function' → catch → 400。
+// 'routerApi is not a function' -> catch -> 400。
 const routerApi = () => ({ switchToKey: async () => ({ ok: true, selected: 'k1' }) });
 const instances = {
   stopInstance: (id) => ({ ok: true, id: typeof id === 'object' ? id.id : null }),
@@ -124,13 +124,13 @@ function req(method, p, body, hostHeader, extraHeaders, via) {
   });
   check('跨站 Origin 写请求拒绝 403', evil === 403, String(evil));
 
-  // F1 授权收口契约（2026-09 审计修复）：/instances 的 authUrl 仅回环 Host 请求带 DSH token，
+  // F1 授权收口契约：/instances 的 authUrl 仅回环 Host 请求带 DSH token，
   // LAN 分支的语义已在 P3-C（fail-closed，FIX-1 B2 执行侧）变更：
   //   原契约「LAN/私网访问 200 放行但不下发 token」是**漏洞形态** —— 未配置 apiAccessKey 时
   //   整层鉴权被跳过，LAN 上任意设备可零认证驱动写 API；现为「LAN 未配置密钥一律 401」。
   //   故 F1 的 LAN 分支断言 401；「token 永不出本机」这条安全属性**转移**到 F2 的已认证 LAN 路径
-  //   （带正确 key 请求 /instances → 200 且不下发 token）——覆盖面不因修漏洞而丢失。
-  // 概念清分（2026-09-06）：响应拆两级——instances[]=沙箱、native=原生主干 main；F1 对 main（native 字段）断言。
+  //   （带正确 key 请求 /instances -> 200 且不下发 token）——覆盖面不因修漏洞而丢失。
+  // 概念清分：响应拆两级——instances[]=沙箱、native=原生主干 main；F1 对 main（native 字段）断言。
   let instR = await req('GET', '/instances');
   const instLoopback = instR.body.native;
   check('F1 回环 Host /instances 下发含 token authUrl', !!instLoopback && instLoopback.authUrl.indexOf('token=dsh-session-token-abc123') >= 0 && instLoopback.tokenPresent === true, JSON.stringify(instLoopback && instLoopback.authUrl));
@@ -138,7 +138,7 @@ function req(method, p, body, hostHeader, extraHeaders, via) {
   check('F1 LAN（真实非回环 socket）未配置密钥 → 401（fail-closed）',
     !LAN_IP || instR.code === 401, LAN_IP ? (instR.code + '') : '（无 LAN 地址，跳过）');
 
-  // F2 出回环访问密钥契约（2026-09 定案）：配置 apiAccessKey 后，LAN/私网 Host 请求必须带
+  // F2 出回环访问密钥契约：配置 apiAccessKey 后，LAN/私网 Host 请求必须带
   // Authorization: Bearer <key> 或 ?access_key=<key>（401 否则）；回环 Host 豁免（CLI/面板语义）。
   const KEY = 'test-access-key-123456';
   const KEY_PORT = API_PORT + 1;

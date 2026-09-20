@@ -11,11 +11,11 @@
 const fs = require('node:fs');
 const path = require('node:path');
 
-// D-12（AUDIT-2026-09-19 第4批）：管理锁必须与守卫单实例锁（bin/dsh-supervisor 的
+// 管理锁必须与守卫单实例锁（bin/dsh-supervisor 的
 // acquireLock/releaseLock）同一范式，原先三处都不成立：
-//   · writeFileSync 直接覆盖 —— 两个守卫并存时后写者静默抢锁，前者的 managed 判据被骗过；
-//   · pid 从不回读 —— 崩溃/机器重启后锁恒在，managed 恒真（对已死持有者持续授权）；
-//   · unlinkSync 无条件删 —— 可删掉**别的守卫**刚重建的锁。
+//   - writeFileSync 直接覆盖 —— 两个守卫并存时后写者静默抢锁，前者的 managed 判据被骗过；
+//   - pid 从不回读 —— 崩溃/机器重启后锁恒在，managed 恒真（对已死持有者持续授权）；
+//   - unlinkSync 无条件删 —— 可删掉**别的守卫**刚重建的锁。
 // 现：'wx' 原子创建 + 持有者存活检测（ESRCH 清残留 / EPERM 视为存活）+ 释放只删自己的锁。
 
 /** 锁内容 = 持有者 pid；不可解析（旧格式/半写）返回 null。 */
@@ -34,7 +34,7 @@ function pidAlive(pid) {
   catch (e) { return !!(e && e.code === 'EPERM'); }
 }
 
-/** 原子取锁：已存在且持有者存活则不抢（返回 false）；持有者已死/内容不可解析 → 清残留重试一次。 */
+/** 原子取锁：已存在且持有者存活则不抢（返回 false）；持有者已死/内容不可解析 -> 清残留重试一次。 */
 function acquireLock(p, onErr) {
   if (!p) return false;
   const attempt = () => {

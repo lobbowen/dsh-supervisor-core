@@ -1,6 +1,6 @@
 /**
  * supervisor 页面的标准展示基件（全部使用框架令牌；页面零硬编码）
- * 规范依据：UI_STANDARDS_AND_REPLACEMENT.md §1.4（状态点/胶囊/面板/指标）
+ * 规范依据：UI_STANDARDS_AND_REPLACEMENT.md （状态点/胶囊/面板/指标）
  */
 import type { ReactNode } from "react";
 import { cn } from "../../framework/utils";
@@ -84,7 +84,7 @@ export function Metric({ icon, label, value, mono = false, warn = false, classNa
 }
 
 /** 用量框（对齐清理记录三框：label+icon 上 / 主值下，白底描边小框并排）。
- *  危险态(≥100/rate-limited)主值用 destructive；否则正常色。 */
+ *  危险态(>=100/rate-limited)主值用 destructive；否则正常色。 */
 export function QuotaBox({ icon, label, value, note, danger = false }: {
   icon?: ReactNode; label: string; value: ReactNode; note?: ReactNode; danger?: boolean;
 }) {

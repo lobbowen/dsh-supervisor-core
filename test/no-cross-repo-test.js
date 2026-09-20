@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 'use strict';
 
-// ═══════════════════════════════════════════════════════════════════════════
-// 无跨仓源码依赖门禁（2026-09-14）
+// ---------------------------------------------------------------------------
+// 无跨仓源码依赖门禁
 //
 // ## 解决的问题（真实故障）
 //
@@ -13,7 +13,7 @@
 //
 //   但内核测试曾用 test/_shell-repo.js 去读**壳仓源码**（版本向量逐字节比对、
 //   R10-b 扫描壳源码、W5/A5/P2 读壳 update.rs/macos.rs），CI 又 actions/checkout 壳仓。
-//   后果：内核 CI 读的是壳仓默认分支 main 的**浮动版本**，本地读同级工作树 →
+//   后果：内核 CI 读的是壳仓默认分支 main 的**浮动版本**，本地读同级工作树 ->
 //   **同一内核提交，本地绿、CI 红**；且一个与内核无关的壳仓提交即可翻转内核 CI 结论。
 //
 // ## 锁定的不变量
@@ -23,7 +23,7 @@
 //   X-3 test/_shell-repo.js 不得复活
 //   X-4 package.json#scripts.test 自包含（不含壳仓耦合门禁，且含本门禁）
 //   X-5 反向：判据能识别伪造违规（门禁非空转），且不误报文档中的仓库名
-// ═══════════════════════════════════════════════════════════════════════════
+// ---------------------------------------------------------------------------
 
 const fs = require('node:fs');
 const path = require('node:path');
@@ -57,7 +57,7 @@ function walk(dir, out) {
   }
 }
 
-// ── X-1 代码/脚本/workflow 无壳仓耦合标识 ──
+// -- X-1 代码/脚本/workflow 无壳仓耦合标识 --
 console.log('== X-1 无跨仓源码耦合标识 ==');
 {
   const files = [];
@@ -74,7 +74,7 @@ console.log('== X-1 无跨仓源码耦合标识 ==');
     offenders.length === 0, offenders.slice(0, 8).join(' | ') || ('扫描 ' + files.length + ' 个文件，零命中'));
 }
 
-// ── X-2 workflow 不得检出壳仓 ──
+// -- X-2 workflow 不得检出壳仓 --
 console.log('== X-2 workflow 不检出壳仓 ==');
 {
   const wfDir = path.join(ROOT, '.github', 'workflows');
@@ -92,14 +92,14 @@ console.log('== X-2 workflow 不检出壳仓 ==');
     bad.length === 0 && files.length > 0, bad.join(' | ') || ('检查 ' + files.length + ' 个 workflow'));
 }
 
-// ── X-3 助手文件不得复活 ──
+// -- X-3 助手文件不得复活 --
 console.log('== X-3 壳仓定位助手不得复活 ==');
 {
   check('X-3 test/_shell-repo.js 不存在',
     !fs.existsSync(path.join(ROOT, 'test', '_shell-repo.js')), '已删除');
 }
 
-// ── X-4 scripts.test 自包含 ──
+// -- X-4 scripts.test 自包含 --
 console.log('== X-4 scripts.test 自包含 ==');
 {
   const chain = String((require(path.join(ROOT, 'package.json')).scripts || {}).test || '');
@@ -109,7 +109,7 @@ console.log('== X-4 scripts.test 自包含 ==');
     chain.includes('no-cross-repo-test.js'), '已接线');
 }
 
-// ── X-5 反向：判据非空转 ──
+// -- X-5 反向：判据非空转 --
 console.log('== X-5 反向（判据有效性）==');
 {
   // 伪造含耦合标识的样本 -> 必须被识别

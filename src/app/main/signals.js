@@ -43,7 +43,7 @@ function depsOf(host) {
 
 module.exports = {
   methods: {
-  /** 主 DSH 的**归属凭据**文件（D-11，AUDIT-2026-09-19 第 4 批）：与 lan/router daemon 的
+  /** 主 DSH 的**归属凭据**文件：与 lan/router daemon 的
    *  `*-daemon.identity.json` 同范式、同址（stateFile 所在目录）。此前接管只凭 cmdline 子串
    *  相似（`_isManagedProcess`），于是**两个守卫会认领同一个 DSH**——彼此 stop/kill 对方刚
    *  接管的进程（审计原述「疑似双管家互杀」）。 */
@@ -83,7 +83,7 @@ module.exports = {
   /** 校验 pid 进程是否属于本守卫管理：cmdline 含配置的启动 bin，或符合 DSH 特征（兼容外部手动起的标准 DSH）。
    *  精确匹配避免"路径碰巧含 dsh 就误接管"与"安装路径不含 dsh 就漏接管"。
    *
-   *  D-11：先看**归属凭据**——但凭据只做**否决**（别的守卫活着且明确拥有这个 pid 时不接管），
+   *  先看**归属凭据**——但凭据只做**否决**（别的守卫活着且明确拥有这个 pid 时不接管），
    *  不单独放行：放行权威仍是 cmdline 特征。理由——陈旧凭据（pid 已被内核复用）若可单独放行，
    *  会把无关进程接管进来，那是比原缺陷更糟的失败方向。 */
   _isManagedProcess(pid) {
@@ -117,7 +117,7 @@ module.exports = {
    *   继续占端口、持文件锁；守卫重启后 adopt 复用即被楔死。
    *
    *   POSIX 上 `killTree` 退化为组信号，与 `_signalChild` 等价（幂等，无害）。
-   *   B13：child 一律是本守卫 detached 拉起（组长），显式 ownGroup:true 保留组信号。
+   *   child 一律是本守卫 detached 拉起（组长），显式 ownGroup:true 保留组信号。
    */
   _killTree(child, sig) {
     const d = depsOf(this);
@@ -168,7 +168,7 @@ module.exports = {
       releaseSlot();
       if (pidlook.isAlive(pid)) {
         // 接管实例同样可能有子进程：Windows 上升级为整树（taskkill /T /F），否则会留下孤儿子进程占端口。
-        // B13：POSIX 外来 pid **不发组信号**（可能恰为无关进程组组长，kill(-pid) 误杀整组）——
+        // POSIX 外来 pid **不发组信号**（可能恰为无关进程组组长，kill(-pid) 误杀整组）——
         // 不传 ownGroup，平台层退化为单进程 SIGKILL（树枚举仅 Windows 有安全实现）。
         const pc = platform.processControl;
         if (pc && typeof pc.killTree === 'function') {

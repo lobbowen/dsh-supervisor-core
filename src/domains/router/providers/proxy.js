@@ -171,7 +171,7 @@ class ProxyProvider extends ProviderBase {
     this._restart.respawn(inst, { acc, hadPid });
   }
 
-  /** 请求级熔断：连续 ≥2 次报错 -> 重启实例（与健康监测 _monitorFails 独立）。 */
+  /** 请求级熔断：连续 >=2 次报错 -> 重启实例（与健康监测 _monitorFails 独立）。 */
   markInstanceProblem(instOrAcc, reason) {
     try {
       const inst = instOrAcc && instOrAcc.pid ? instOrAcc : null;

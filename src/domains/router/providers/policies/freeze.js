@@ -192,7 +192,7 @@ function applyDetection(acc, det, provider) {
           ? '额度用尽（原因：月额度，预计 ' + quota.fmtClock(at) + ' 自动恢复）'
           : '额度用尽（原因：月额度，待月度重置后自动恢复）';
         const recovery = at ? { type: 'at', at } : { type: 'poll', periodMs: CREDITS_RECHECK_MS };
-        // #15：维持分支必须补 nextResetAt，否则下拍探测时刻缺失（frozen+无时刻 -> 每 5min 探测风暴）。
+        // 维持分支必须补 nextResetAt，否则下拍探测时刻缺失（frozen+无时刻 -> 每 5min 探测风暴）。
         // at 已有精确值时保持原值（不覆写已精确语义）；at=0 时以重探周期兜底。
         acc.nextResetAt = at || Date.now() + CREDITS_RECHECK_MS;
         setLimit(acc, 'credits', reason, recovery, provider);

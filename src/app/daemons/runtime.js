@@ -82,7 +82,7 @@ module.exports = {
         spawnEnv: () => ({ DSH_SUPERVISOR_CONFIG: cfgPath }),
         logger: d.logger(),
         events: d.events(),
-        // E-3：退出意图单源谓词（_spawn 门禁）。
+        // 退出意图单源谓词（_spawn 门禁）。
         exitIntended: () => host._exitIntended(),
       });
       return lc[kind];
@@ -99,7 +99,7 @@ module.exports = {
       }
       if (rr.mode === 'barrier') return { active: false, mode: 'barrier', reason: '生命周期窗口内' };
       if (rr.mode === 'reclaiming') return { active: false, mode: 'reclaiming', stale: rr.stale };
-      // E-3：_spawn 被退出意图/停止闸否决时如实返回（不得混入 error 语义 spam 告警）。
+      // _spawn 被退出意图/停止闸否决时如实返回（不得混入 error 语义 spam 告警）。
       if (rr.mode === 'stopping') return { active: false, mode: 'stopping' };
       // spawn 未能启动（脚本不可执行等）时如实上报，不当作「已 started」。
       if (rr.mode === 'failed') return { active: false, mode: 'error', error: rr.error || ('daemon 未启动: ' + d.name()) };
@@ -121,8 +121,8 @@ module.exports = {
         const tokens = {};
         for (const i of instances) {
           try {
-            // TK-8：空值也要显式写入（'' = 失效信号）。旧实现 if (t) 只写非空，令牌清空后
-            // daemon 侧 snapshot 里该 id 消失 → 不触发 applyToken → relay 持旧 cookie 且 cookieReady 假真。
+            // 空值也要显式写入（'' = 失效信号）。旧实现 if (t) 只写非空，令牌清空后
+            // daemon 侧 snapshot 里该 id 消失 -> 不触发 applyToken -> relay 持旧 cookie 且 cookieReady 假真。
             const t = d.tokenService() && d.tokenService().get(i.id);
             tokens[i.id] = String(t || '');
           } catch {}
@@ -155,7 +155,7 @@ module.exports = {
         if (desiredRunning !== false && active && !managed) return { active: false, mode: 'external' }; // 异主不接管
         if (desiredRunning === false) {
           if (active && managed) {
-            // B22（AUDIT-2026-09-19）：与 router 分支同闸——managed 是静态授权（写过管理锁），
+            // 与 router 分支同闸——managed 是静态授权（写过管理锁），
             //   不等于「ctl 口占用者就是我」。kill 前先 classify() 做动态归属判定，
             //   external（外来同名 daemon）=> 拒绝停用，不碰进程/锁/身份（防误杀）。
             const lcC = d.daemonLifecycle('lan');

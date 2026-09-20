@@ -2,7 +2,7 @@
 
 // app/assembly/log-sources.js —— 日志汇聚「业务源」声明（DS-G4 反转法注入点）。
 //
-// DIRECTORY-STRUCTURE-DESIGN §4.2：platform 不得出现业务域名词（DS-G4）。EventHub 只保留
+// DIRECTORY-STRUCTURE-DESIGN：platform 不得出现业务域名词（DS-G4）。EventHub 只保留
 // registerSource(name) 注册接口；源名单（域名词）在本文件声明——本文件属 app/（编排层），
 // 是唯一允许知道「有哪些业务源、哪个键对应哪个源」的地方。
 //

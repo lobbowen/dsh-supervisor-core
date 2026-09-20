@@ -7,7 +7,7 @@
 const os = require('node:os');
 const path = require('node:path');
 const fs = require('node:fs');
-// 条 6（批 4 C 平台）：异步子进程必须走统一有界封装（裸 execFile 无 windowsHide，
+// 异步子进程必须走统一有界封装（裸 execFile 无 windowsHide，
 // Windows 上 npx.cmd 会弹控制台窗口，且绕过 timeout/SIGKILL/maxBuffer 纪律）。
 const ex = require('../../../platform/util/exec');
 const { npxBin } = require('../../../platform/os/exec-path');

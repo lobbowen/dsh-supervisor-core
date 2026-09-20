@@ -1,11 +1,11 @@
 #!/usr/bin/env node
 'use strict';
 
-// ═══════════════════════════════════════════════════════════════════════════
-// 规范唯一性门禁（2026-09-13）
+// ---------------------------------------------------------------------------
+// 规范唯一性门禁
 
 // ## 解决的问题
-//   同一事实散落多份文档 → 必然漂移（本次清理就修掉 4 处过时声明）。
+//   同一事实散落多份文档 -> 必然漂移（本次清理就修掉 4 处过时声明）。
 //   硬要求：**任何领域的规范只能有一份**，且必须被机器校验。
 
 // ## 锁定不变量
@@ -17,7 +17,7 @@
 //   U-3  其它文档**不得**自称规范（不得出现「唯一事实源 / 唯一规范 / 唯一权威 / 定版 SSOT」标记）
 //   U-4  根级文档清单与 README 索引**一一对应**（无未登记文档、无悬空条目）
 //   U-5  反向：判据能识别缺失规范 / 未登记文档（门禁非空转）
-// ═══════════════════════════════════════════════════════════════════════════
+// ---------------------------------------------------------------------------
 
 const fs = require('node:fs');
 const path = require('node:path');
@@ -29,17 +29,17 @@ const check = (n, c, x) => {
   console.log((c ? 'PASS' : 'FAIL') + ' ' + n + (x !== undefined && x !== '' ? '  <- ' + x : ''));
 };
 
-// 唯一规范登记表：领域 → { 文件, 校验它的门禁 }
+// 唯一规范登记表：领域 -> { 文件, 校验它的门禁 }
 // 不变量：**每个领域只能有一份规范**，且每份规范都必须有机器校验（U-1）。
-// 2026-09-16：新增两个域级规范（令牌 / 无控制台窗口）—— 它们各自是本领域的唯一事实源，
+//新增两个域级规范（令牌 / 无控制台窗口）—— 它们各自是本领域的唯一事实源，
 //   分别由 token-contract-gate / no-console-window-gate 机器校验；登记在此即受本门禁保护
 //   （其它文档仍不得自称规范）。
-// 2026-09-16：再新增「发布通道/选版」（RELEASE-CHANNEL-CONTRACT.md）—— canary/beta/rc/
+//再新增「发布通道/选版」（RELEASE-CHANNEL-CONTRACT.md）—— canary/beta/rc/
 //   latest/rollback 五通道与选版算法的唯一事实源，由 release-channel-gate 机器校验。
 //   与「发布/构建流程」（RELEASE-STANDARD.md）是**两个域**：前者管「版本如何被选择」，
 //   后者管「怎么构建与发布」，故不违反一域一规范。
 // reads: 该门禁是否**真读**规范正文（U-1b 的声明字段，必须与源码事实一致）。
-//   2026-09：实测 11 个登记门禁中只有 3 个在**剥注释后**的源码里出现自己的规范名并真读它
+//实测 11 个登记门禁中只有 3 个在**剥注释后**的源码里出现自己的规范名并真读它
 //   （release-spec-consistency / layering-and-dependency / acceptance-standard）；其余 8 个
 //   只在头注里提到规范名 —— 全域硬执行会立刻红 8 个，故按「声明诚实 + 缺口可见」分区登记。
 //   reads:false 不是「已修」，而是**显式登记的债**：必须写 pending 原因，并由 U-1b 打印成清单。
@@ -47,8 +47,8 @@ const STANDARDS = {
   '发布/构建流程': { file: 'RELEASE-STANDARD.md', gate: 'test/release-spec-consistency-test.js', reads: true },
   '凭据管理': { file: 'CREDENTIALS-STANDARD.md', gate: 'test/credential-hygiene-test.js', reads: false,
     pending: '门禁校验凭据库/令牌正则/隔离等**实现不变量**，尚未读规范正文' },
-  // 2026-09：本域原为「名义映射」（门禁从不提 DEVELOPMENT-TRACK）；已让 layering 门禁真读
-  //   规范 §1 并断言「规范分层名 ↔ layerOf 归类」一致（L-5），故 reads:true 属实。
+  //本域原为「名义映射」（门禁从不提 DEVELOPMENT-TRACK）；已让 layering 门禁真读
+  //   规范 并断言「规范分层名 <-> layerOf 归类」一致（L-5），故 reads:true 属实。
   '改代码规则': { file: 'DEVELOPMENT-TRACK.md', gate: 'test/layering-and-dependency-gate-test.js', reads: true },
   '令牌管理': { file: 'DSH-TOKEN-CONTRACT.md', gate: 'test/token-contract-gate-test.js', reads: false,
     pending: '门禁校验 src/ 令牌实现不变量（TK-G1..G8），尚未读契约正文' },
@@ -62,7 +62,7 @@ const STANDARDS = {
     pending: '门禁校验网关实现不变量（PG-1..PG-8），尚未读规范正文' },
   '目录结构与分层': { file: 'DIRECTORY-STRUCTURE-DESIGN.md', gate: 'test/directory-structure-gate-test.js', reads: false,
     pending: '门禁校验目录/行数/原型混入等实现不变量，尚未读规范正文' },
-  // 2026-09-17：DOMAIN-STRUCTURE-DESIGN.md 原先以「定版 SSOT / 唯一权威」自称，规避 U-3 的字面量检查；
+  //DOMAIN-STRUCTURE-DESIGN.md 原先以「定版 SSOT / 唯一权威」自称，规避 U-3 的字面量检查；
   //   登记入表后由本门禁（U-1/U-2）保护，U-3 同时堵住该措辞。
   '域内结构': { file: 'DOMAIN-STRUCTURE-DESIGN.md', gate: 'test/domain-structure-gate-test.js', reads: false,
     pending: '门禁校验域内分层实现不变量（DG-1..DG-16），尚未读规范正文' },
@@ -106,14 +106,14 @@ function readArgs(code) {
   }
   return out;
 }
-/** U-1b 判据：门禁源码剥注释后 ①出现规范文件名 ②且存在**指向该文件**的读取。 */
+/** U-1b 判据：门禁源码剥注释后 1)出现规范文件名 2)且存在**指向该文件**的读取。 */
 function gateReadsStandard(gateSrc, stdFile) {
   const code = stripComments(gateSrc);
   if (code.indexOf(stdFile) < 0) return false;              // 注释里的名字已被剥掉
   const reads = readArgs(code);
-  if (reads.some((a) => a.indexOf(stdFile) >= 0)) return true;   // ① 内联字面量读取
+  if (reads.some((a) => a.indexOf(stdFile) >= 0)) return true;   // 1) 内联字面量读取
   const holders = [];
-  for (const decl of ['const ', 'let ', 'var ']) {               // ② 经变量指向该文件
+  for (const decl of ['const ', 'let ', 'var ']) {               // 2) 经变量指向该文件
     let i = 0;
     while ((i = code.indexOf(decl, i)) >= 0) {
       const lineEnd = code.indexOf(String.fromCharCode(10), i);
@@ -130,7 +130,7 @@ function gateReadsStandard(gateSrc, stdFile) {
   return holders.some((h) => reads.some((a) => hasIdent(a, h)));
 }
 
-// ── U-1a/U-1b：规范与门禁存在；「门禁真读规范」的声明必须诚实、缺口必须可见 ──
+// -- U-1a/U-1b：规范与门禁存在；「门禁真读规范」的声明必须诚实、缺口必须可见 --
 {
   const missing = [];
   const ungated = [];
@@ -183,7 +183,7 @@ function gateReadsStandard(gateSrc, stdFile) {
     gateReadsStandard("const P = path.join(ROOT, 'DEVELOPMENT-TRACK.md');" + String.fromCharCode(10) + "const t = fs.readFileSync(P, 'utf8');", 'DEVELOPMENT-TRACK.md'), 'hit');
 }
 
-// ── U-2：README 把三者标为唯一事实源 ──
+// -- U-2：README 把三者标为唯一事实源 --
 {
   const bad = [];
   for (const [domain, s] of Object.entries(STANDARDS)) {
@@ -194,21 +194,21 @@ function gateReadsStandard(gateSrc, stdFile) {
   check('U-2 README 把全部规范标为「唯一事实源」', bad.length === 0, bad.length ? bad.join(', ') : 'ok');
 }
 
-// ── U-3：其它文档不得自称规范 ──
+// -- U-3：其它文档不得自称规范 --
 {
   const offenders = [];
   for (const f of fs.readdirSync(ROOT).filter((x) => x.endsWith('.md'))) {
     if (Object.values(STANDARDS).some((s) => s.file === f)) continue;
     if (f === 'README.md' || f === 'CHANGELOG.md') continue;
     const head = fs.readFileSync(path.join(ROOT, f), 'utf8').split(String.fromCharCode(10)).slice(0, 80).join(String.fromCharCode(10));
-    // 「定版 SSOT」「唯一权威」是 2026-09-17 审计发现的对 U-3 的规避措辞（DOMAIN-STRUCTURE-DESIGN
+    // 「定版 SSOT」「唯一权威」是 审计发现的对 U-3 的规避措辞（DOMAIN-STRUCTURE-DESIGN
     //   曾用其自称唯一权威却不含「唯一事实源」字面量）。一并检出，堵住同类规避。
     if (/唯一事实源|唯一规范|唯一权威|定版\s*SSOT/.test(head)) offenders.push(f);
   }
   check('U-3 只有已登记的规范可自称「唯一事实源」', offenders.length === 0, offenders.join(', ') || 'ok');
 }
 
-// ── U-4：根级文档与 README 索引一一对应 ──
+// -- U-4：根级文档与 README 索引一一对应 --
 {
   const rootMd = fs.readdirSync(ROOT)
     .filter((f) => f.endsWith('.md'))
@@ -222,7 +222,7 @@ function gateReadsStandard(gateSrc, stdFile) {
     unindexed.length === 0, unindexed.length ? unindexed.join(', ') : rootMd.length + ' 份全部已登记');
 }
 
-// ── U-5：反向 ──
+// -- U-5：反向 --
 {
   check('U-5 反向：判据能识别缺失规范文件',
     !fs.existsSync(path.join(ROOT, 'NO-SUCH-STANDARD.md')), 'hit');

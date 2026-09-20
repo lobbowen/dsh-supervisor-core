@@ -108,7 +108,9 @@ jobs:
           set -o pipefail
           # 先产出 dist/launcher（四平台），让 T6-d/T6-e 真的执行（不再 SKIP）。
           npm run build:launcher:all 2>&1 | tail -20
-          xvfb-run -a npm test 2>&1 | tail -60
+          # 这里原先是 `| tail -60`，与上一行注释自相矛盾：链有 129 个文件，红点的断言文案
+          #   几乎必被截掉。四平台产线腿（ci-core.sh）本就是全量输出，本腿对齐。
+          xvfb-run -a npm test
 
   # ── precheck：该 tag 版本是否已在 npm 全部发布？ ──
   # ⚠ 2026-09-13 定位变更：内核仓已公开（Actions 免额度），故**不再是为省额度**。

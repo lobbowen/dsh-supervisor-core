@@ -143,7 +143,7 @@ class ProviderBase {
   markCreditsExhausted(acc) { return freeze.markCreditsExhausted(acc, this); }
   markQuotaExhausted(acc, cooldownMs) { return freeze.markQuotaExhausted(acc, cooldownMs, this); }
   markBanned(acc, error) { return freeze.markBanned(acc, error, this); }
-  // #20：状态投影完成处补齐 limit（写版 ensureLimit 从只读视图移到此）。唯一投影入口，覆盖全部 applyDetection 调用方。
+  // 状态投影完成处补齐 limit（写版 ensureLimit 从只读视图移到此）。唯一投影入口，覆盖全部 applyDetection 调用方。
   applyDetection(acc, det) { const r = freeze.applyDetection(acc, det, this); freeze.ensureLimit(acc); return r; }
   _normalizeConsistency(acc) { return freeze.normalizeConsistency(acc, this); }
   _reconcileLock() { return freeze.reconcileLock(this); }

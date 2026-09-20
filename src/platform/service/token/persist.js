@@ -73,8 +73,8 @@ function writeAtomic(file, data) {
   }
 }
 
-/** 轮转：把现有内容**整体改名**进固定备份槽（批 4，令牌条 2）。
- *  旧实现 readFileSync→写槽→truncateSync 存在跨进程丢失窗口：并发 appendByRotation（升级重叠期的
+/** 轮转：把现有内容**整体改名**进固定备份槽。
+ *  旧实现 readFileSync->写槽->truncateSync 存在跨进程丢失窗口：并发 appendByRotation（升级重叠期的
  *  新旧守卫）若恰在 read 与 truncate 之间追加，该行既不在备份里也会被 truncate 抹掉。
  *  rename 是目录项级原子操作：改名后仍持旧 fd 的并发写者把数据落进备份本体（不丢），
  *  之后的新追加按 O_APPEND 创建目标新文件。任一步失败返回 false 且不截断，宁可文件继续增长。

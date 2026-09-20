@@ -1,7 +1,7 @@
 'use strict';
 
 // ctl 门面工厂：把 ctl 端口包成方法转发 Proxy（router/lan 共用）。
-// DF-5：具名工厂 + deps 注入；不再用宿主隐式 this 做跨文件调用。
+// 具名工厂 + deps 注入；不再用宿主隐式 this 做跨文件调用。
 // routerApi() 门面在 app/facade/router.js —— 打断 facade/router 与 ctl/facades 的 this 调用环。
 // 本文件只保留「ctl 端口 -> 方法转发 Proxy」的通用构造，供 routerApi 单向取用。
 

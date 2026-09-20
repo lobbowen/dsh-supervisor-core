@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# 内核平台矩阵（**单一事实源**，2026-09-11）。
+# 内核平台矩阵。
 #
 # 为什么单独成文件：平台清单此前散落在三处（build-launcher / publish-core / release-core），
 # 且 GitHub workflow 里还有一份硬编码矩阵。四处不同步就会产出「少一个平台」的发布。
@@ -13,7 +13,7 @@
 #
 # 用法： `. release/scripts/_platforms.sh` 后调用 `dsh_platform_matrix`。
 
-# 打印全部平台（顺序固定：linux-x64 → darwin-arm64 → darwin-x64 → win-x64）。
+# 打印全部平台（顺序固定：linux-x64 -> darwin-arm64 -> darwin-x64 -> win-x64）。
 dsh_platform_matrix() {
   node -e '
   const p = require("./package.json");

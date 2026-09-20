@@ -72,8 +72,8 @@ async function detectCommandCodeBilling(ctx) {
   const monthlyRemaining = [cr.monthlyCredits, cr.purchasedCredits, cr.freeCredits]
     .reduce((s, v) => { const n = num(v); return n !== null && n >= 0 ? s + n : s; }, 0);
   const hasCredits = cr.monthlyCredits !== undefined || cr.purchasedCredits !== undefined || cr.freeCredits !== undefined || cr.belowThreshold !== undefined;
-  //  月度重置（真实采样核验）：仅 credits-limited 取订阅；非 limited -> 清空 monthlyResetAt 
-  // 月额度受限 = 数据面信号（原判定）∪ 冻结面信号（ctx.creditFrozen：上游 400 拒绝驱动的冻结——
+  //  月度重置（真实采样核验）：仅 credits-limited 取订阅；非 limited -> 清空 monthlyResetAt
+  // 月额度受限 = 数据面信号（原判定）并 冻结面信号（ctx.creditFrozen：上游 400 拒绝驱动的冻结——
   // 冻结期间必须持续掌握 periodEnd 以呈现/调度精确恢复时刻；余额灰区（>0 但不足服务）靠数据面永远测不到）
   const creditLow = (hasCredits && ((typeof cr.monthlyCredits === 'number' && cr.monthlyCredits <= 0)
     || cr.belowThreshold === true

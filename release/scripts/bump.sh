@@ -4,7 +4,7 @@
 # 用法:
 #   release/scripts/bump.sh --core <ver>   内核版本（唯一事实源=package.json）
 #
-# 2026-09-11 双仓隔离：壳版本提升已迁至壳仓 scripts/bump-shell.sh ——
+# 双仓隔离：壳版本提升已迁至壳仓 scripts/bump-shell.sh ——
 #   壳的版本号与 Cargo.toml / tauri.conf.json / Cargo.lock 三处互锁全部属于壳自身，
 #   不应由内核仓脚本管理（原 --shell 分支正是「壳资产放在内核仓」的违规之一）。
 # 只允许递增（>= 当前）；派生处由各自构建脚本读取单源，禁止手改。

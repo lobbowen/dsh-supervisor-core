@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 'use strict';
 
-// ═══════════════════════════════════════════════════════════════════════════
-// 四平台行为穷举门禁（2026-09-13）
+// ---------------------------------------------------------------------------
+// 四平台行为穷举门禁
 //
 // ## 目的
 //
@@ -29,7 +29,7 @@
 //   P-6  运行时与矩阵一致：`dist._platformTag()` 在四个伪造平台下 == matrix.npmTag()
 //   P-7  消费方契约：`guardCorePkg()` 的 {os}/{arch} 替换在三平台下正确
 //   P-8  反向：判据能识别"键集合不一致"与"标签错误"（门禁非空转）
-// ═══════════════════════════════════════════════════════════════════════════
+// ---------------------------------------------------------------------------
 
 const fs = require('node:fs');
 const path = require('node:path');
@@ -58,7 +58,7 @@ function underFake(platform, arch, body) {
   }
 }
 
-// ── P-1 / P-2 / P-3：matrix 四组合穷举 ──
+// -- P-1 / P-2 / P-3：matrix 四组合穷举 --
 {
   const expect = [
     { p: 'linux', a: 'x64', os: 'linux', npm: 'linux-x64', frp: 'linux_amd64', exe: false, grp: true },
@@ -88,7 +88,7 @@ function underFake(platform, arch, body) {
     matrix.isSupported('linux', 'arm64') === false && matrix.isSupported('win32', 'arm64') === false, 'false');
 }
 
-// ── P-4：capabilityProfile 键集合四平台一致（防"某平台少声明一项能力"）──
+// -- P-4：capabilityProfile 键集合四平台一致（防"某平台少声明一项能力"）--
 {
   const plats = ['linux', 'darwin', 'win32', 'freebsd'];
   const sets = plats.map((p) => Object.keys(osLayer.capabilityProfile(p, 'x64')).sort());
@@ -108,7 +108,7 @@ function underFake(platform, arch, body) {
     sets[0].length === expectedKeys.length ? 'ok' : ('实际 ' + sets[0].join(',') + ' 期望 ' + expectedKeys.join(',')));
 }
 
-// ── P-5：关键档位取值（差异点必须显式声明）──
+// -- P-5：关键档位取值（差异点必须显式声明）--
 {
   const L = osLayer.capabilityProfile('linux', 'x64');
   const D = osLayer.capabilityProfile('darwin', 'x64');
@@ -127,7 +127,7 @@ function underFake(platform, arch, body) {
   check('P-5 未知平台全 false（显式 Unsupported，绝不静默成功）',
     Object.entries(U).every(([k, v]) => (k === 'platform' || k === 'arch' || k === 'hostService') || v === false),
     JSON.stringify(U));
-  // ⚠ 重要区分：capabilityProfile.processTreeKill（含 Windows taskkill /T）与
+  //  重要区分：capabilityProfile.processTreeKill（含 Windows taskkill /T）与
   //   matrix.supportsProcessGroup（仅 POSIX kill(-pid)）**语义不同**，不得混用。
   check('P-5 processTreeKill 三平台皆真（Windows 经 taskkill /T）而 supportsProcessGroup 仅 POSIX',
     L.processTreeKill === true && W.processTreeKill === true
@@ -135,7 +135,7 @@ function underFake(platform, arch, body) {
     '两者语义不同，已在文档中区分');
 }
 
-// ── P-6：运行时与矩阵一致（真实模块在伪造平台下的产出）──
+// -- P-6：运行时与矩阵一致（真实模块在伪造平台下的产出）--
 {
   const distPath = path.join(ROOT, 'src', 'platform', 'distribution', 'index.js');
   for (const [p, a, want] of [
@@ -162,9 +162,9 @@ function underFake(platform, arch, body) {
     bad.startsWith('ERR:') && /不支持的平台组合/.test(bad), bad.slice(0, 60));
 }
 
-// ── P-7：消费方契约 —— guardCorePkg 的 {os}/{arch} 替换 ──
+// -- P-7：消费方契约 —— guardCorePkg 的 {os}/{arch} 替换 --
 {
-  // ⚠ 步骤 7（2026-09-16）：app/settings/settings-view.js 已拆为多模块，guardCorePkg 落在
+  //  步骤 7：app/settings/settings-view.js 已拆为多模块，guardCorePkg 落在
   //   app/settings/versions.js（**不在** env.js）；且模块导出形态统一为 { methods } ——
   //   desc.guardCorePkg 为 undefined，旧判据会以 "Property description must be an object"
   //   在子进程中直接崩掉（3 个平台全 FAIL）。故读新模块 + 取 desc.methods.guardCorePkg。
@@ -184,7 +184,7 @@ function underFake(platform, arch, body) {
   }
 }
 
-// ── P-8：反向（判据必须能识别违规）──
+// -- P-8：反向（判据必须能识别违规）--
 {
   const keySetEqual = (a, b) => JSON.stringify(Object.keys(a).sort()) === JSON.stringify(Object.keys(b).sort());
   const full = { platform: 'linux', arch: 'x64', multiInstance: true, pidAdoption: true };

@@ -1,7 +1,7 @@
 /**
  * 实例管理（supervisor）— 老 UI 实例管理域，按新 UI 标准重建
  * 数据：supervisorStore.instances（统一 2s 快照）
- * 动作：supervisorApi.instance* → refresh()
+ * 动作：supervisorApi.instance* -> refresh()
  */
 import { useEffect, useState } from "react";
 import {
@@ -157,7 +157,7 @@ export function InstancesPage({ onRegisterActions }: { onRegisterActions?: (a: {
           </div>
         </div>
 
-        {/* 底栏操作行：左信息（环境检测位 → 内存/CPU）/ 右操作 */}
+        {/* 底栏操作行：左信息（环境检测位 -> 内存/CPU）/ 右操作 */}
         <div className="flex flex-wrap items-center justify-between gap-3 border-t border-border/60 px-6 py-3">
           {/* 左信息(沙箱/远程/内存CPU)——窄屏(内容区<860px)隐藏, 位置让给右侧操作按钮 */}
           <span className="hidden min-w-0 items-center lg:inline-flex gap-2 text-xs text-muted-foreground">
@@ -172,13 +172,13 @@ export function InstancesPage({ onRegisterActions }: { onRegisterActions?: (a: {
             <Button disabled={updating} onClick={() => void act(it.id, () => (running ? supervisorApi.instanceStop(it.id) : supervisorApi.instanceStart(it.id)))} size="sm" variant="outline">
               {running ? <><Power className="size-4 text-status-error" />停止实例</> : <><Rocket className="size-4 text-primary" />启动实例</>}
             </Button>
-            {/* 分割线(启停后) → 进程守护按钮(与主 DSH 卡同布局) */}
+            {/* 分割线(启停后) -> 进程守护按钮(与主 DSH 卡同布局) */}
             <span aria-hidden="true" className="mx-1 h-5 w-px bg-border" />
             <Button disabled={busy} onClick={() => void act(it.id, () => supervisorApi.instanceUpdate(it.id, { guardian: !it.guardian }))} size="sm" variant="outline">
               <ShieldCheck className={cn("size-4", it.guardian ? "text-status-ok" : "text-muted-foreground")} />
               {it.guardian ? "停止守护" : "启动守护"}
             </Button>
-            {/* 守护后无分割线(2026-09 用户定稿, 与主 DSH 卡一致); 窄屏隐藏(只留启停+守护) */}
+            {/* 守护后无分割线(用户定稿, 与主 DSH 卡一致); 窄屏隐藏(只留启停+守护) */}
             <Button className="hidden h-[30px] md:inline-flex" disabled={busy} onClick={() => setConfirmId(it.id)} size="sm" variant="destructive">
               <Trash2 className="size-4" />删除
             </Button>
@@ -267,7 +267,7 @@ export function InstancesPage({ onRegisterActions }: { onRegisterActions?: (a: {
                 const id = confirmId;
                 setConfirmId(null);
                 if (!id) return;
-                // ⚠ 2026-09-13：删除的**安全结果必须对用户可见**（失效模式 g）。
+                //删除的**安全结果必须对用户可见**（失效模式 g）。
                 //   后端在「单元仍在运行」时会**保留数据目录**（防不可逆丢失）并返回
                 //   dataPreserved=true；而确认框承诺的是「彻底删除、不可恢复」。
                 //   不对用户说明就等于谎报「数据已清」，用户/支持都无从得知、

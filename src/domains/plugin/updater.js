@@ -19,7 +19,7 @@ async function checkUpdates(ctx, force) {
       if (c && !force && (Date.now() - c.at) < ctx._updTTL) latest = c.latest;
       else {
         // 插件均为第三方 npm 包：latest 优先，latest 缺失/非法才回落 versions 最高
-        // （契约 §3 第三方段落；条 7 改判，旧「取全量最高」会把他人杂 tag 当候选）。
+        // （取 registry 全量最高会把他人杂 tag 当候选，不可用）。
         if (st === 'npm' && ctx.dist) { try { latest = await ctx.dist.fetchNpmLatest(p.name); } catch {} }
         // 只在**取到**时写缓存：失败（latest=null）若写进去，等于把「registry 不可达」负缓存
         // _updTTL 之久，此后 checkUpdates 一律显示「无更新」且不再重试（backlog #13）。

@@ -2,7 +2,7 @@
 'use strict';
 
 // 升级模块离线测试：mock registry + fake installer，不碰真实 npm 与真实 DSH。
-// 覆盖：版本检查 / 一键升级全链路（安装→计划内重启→健康验证）/ 已是最新跳过 / 安装失败报错。
+// 覆盖：版本检查 / 一键升级全链路（安装->计划内重启->健康验证）/ 已是最新跳过 / 安装失败报错。
 
 const fs = require('node:fs');
 const os = require('node:os');
@@ -241,14 +241,14 @@ async function main() {
 
   await killDaemon(dA);
 
-  // 清理残留 mock：SIGTERM 杀不掉 detached/挂起进程 → SIGCONT 先行 + SIGKILL（与 smoke 同款修复，防残留占端口断链）
+  // 清理残留 mock：SIGTERM 杀不掉 detached/挂起进程 -> SIGCONT 先行 + SIGKILL（与 smoke 同款修复，防残留占端口断链）
   try {
     const { execSync } = require('node:child_process');
     execSync("pkill -CONT -f 'mock-target.js' || true", { stdio: 'ignore' });
     execSync("pkill -9 -f 'mock-target.js'", { stdio: 'ignore' });
   } catch {}
 
-  // B22（AUDIT-2026-09-19）：升级 hold 释放单点化 + 失败尾部清理（源码形态门禁，不依赖 spawn）。
+  // 升级 hold 释放单点化 + 失败尾部清理（源码形态门禁，不依赖 spawn）。
   {
     const upg = fs.readFileSync(path.join(ROOT, 'src', 'app', 'native', 'upgrade.js'), 'utf8');
     const between = (a, b) => { const i = upg.indexOf(a); const j = upg.indexOf(b, i + a.length); return i < 0 || j < 0 ? '' : upg.slice(i, j); };

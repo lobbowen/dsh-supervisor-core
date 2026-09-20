@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 'use strict';
 
-// ═════════════════════════════════════════════════════════════════════════
-// 开发运行时安全门禁（2026-09-16）
+// -------------------------------------------------------------------------
+// 开发运行时安全门禁
 //
 // ## 事故（本门禁的由来）
 //
@@ -21,7 +21,7 @@
 //
 // 为什么必须有这条：规则写在文档里会被忽略；**写成会失败的断言**才会被执行。
 // 这条规则的代价是**用户正在运行的服务中断** —— 必须是硬门禁。
-// ═════════════════════════════════════════════════════════════════════════
+// -------------------------------------------------------------------------
 
 const fs = require('node:fs');
 const path = require('node:path');
@@ -31,23 +31,23 @@ const SELF = path.basename(__filename);
 const results = [];
 const check = (n, c, x) => { results.push(!!c); console.log((c ? 'PASS' : 'FAIL') + ' ' + n + (x !== undefined && x !== '' ? '  <- ' + x : '')); };
 
-// ── 扫描面：仓内**可执行**的脚本与测试 ──
+// -- 扫描面：仓内**可执行**的脚本与测试 --
 const SCAN_DIRS = ['src', 'test', 'release', 'bin', 'ci', '.github'];
 const SCAN_EXT = new Set(['.js', '.cjs', '.mjs', '.sh', '.bash', '.yml', '.yaml']);
 const SKIP_DIR = new Set(['node_modules', 'target', 'dist', '.git', 'ui-react']);
 const SKIP_FILE = new Set([SELF]);
 
 /** 剥离注释：注释里**举例说明**禁令（如本文件的样本）不构成违规。
- *  ⚠ 顺序：**先行注释 → 再块注释 → 最后清 JSDoc 续行**。
+ *   顺序：**先行注释 -> 再块注释 -> 最后清 JSDoc 续行**。
  *  原为「先块后行」：行注释里出现的 glob 形态（斜杠+两个星号）构成**假块注释开符**，会把其后
  *  直到下一个结束符的**代码**一并吞掉（本仓实测：`src/domains/router/providers/base.js` 被吞 29 行、
- *  `test/domain-structure-gate-test.js` 被吞 174 行）→ 本门禁对那段区间**失明**（假阴性）。
+ *  `test/domain-structure-gate-test.js` 被吞 174 行）-> 本门禁对那段区间**失明**（假阴性）。
  *  第 3 步必须在块正则**之后**：多行块注释的结束行以星号开头，提前清空会让块正则漏剥。 */
 // 阶段六 P6-A：统一走 test/_strip.js 的 stripLineAndBlocks（多语言安全口径，逐字等价）。
 const { stripLineAndBlocks: stripCommentsLex } = require('./_strip');
 function stripComments(src) { return stripCommentsLex(src); }
 
-// ── R-G4：剥离顺序自检（门禁自身完整性，合成样本，不依赖真实数据）──
+// -- R-G4：剥离顺序自检（门禁自身完整性，合成样本，不依赖真实数据）--
 {
   const LF = String.fromCharCode(10);
   // 以拼接构造 glob 形态：避免源码里出现「斜杠+星号」相邻，给别的门禁制造假开符（本类缺陷的成因）
@@ -74,7 +74,7 @@ function walk(dir, out) {
 const files = [];
 for (const d of SCAN_DIRS) walk(d, files);
 
-// ── R-G1：/tmp 通配/前缀删除 ──
+// -- R-G1：/tmp 通配/前缀删除 --
 // 逐条列出形态，避免"宽正则误伤"（本仓反复踩过宽正则的坑）。
 // 注意：这些正则是**判据**，不是命令；本文件被 SKIP_FILE 豁免自身扫描。
 const TMP_VIOLATIONS = [
@@ -89,7 +89,7 @@ function tmpHits(code) {
   return out;
 }
 
-// ── R-G2：系统运行时路径的破坏性操作 ──
+// -- R-G2：系统运行时路径的破坏性操作 --
 // 只认「破坏性动词 + 系统路径」的**同一行**组合，避免把只读诊断误判为违规。
 const SYS_PATHS = [
   { re: /(?:~|\$HOME)\/\.local\/state\/dsh-supervisor/, desc: '系统状态根 ~/.local/state/dsh-supervisor' },
@@ -111,7 +111,7 @@ function sysLineHits(code) {
   return out;
 }
 
-// ── 执行扫描 ──
+// -- 执行扫描 --
 const rG1 = [];
 const rG2 = [];
 const scanned = [];
@@ -129,7 +129,7 @@ check('R-G1 仓内脚本/测试不对 /tmp 使用通配或前缀删除',
 check('R-G2 仓内脚本/测试不对系统运行时路径做破坏性操作',
   rG2.length === 0, rG2.slice(0, 6).join(' | ') || ('扫描 ' + scanned.length + ' 个可执行文件，零命中'));
 
-// ── R-G3：反向非空转 —— 判据必须能识别真实违规样本 ──
+// -- R-G3：反向非空转 —— 判据必须能识别真实违规样本 --
 {
   const badTmp = ['rm -rf /tmp/dsh-*', "fs.rmSync('/tmp/dsh-spill-abc', { recursive: true })", 'rm -rf /tmp/*.log'];
   const goodTmp = ["fs.rmSync('/tmp/xplat-test-1234', { recursive: true })", 'rm -rf ./ui/dist', "fs.rmSync(path.join(TMP, 'token.log'))"];

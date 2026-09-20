@@ -6,14 +6,14 @@
 #   release/scripts/publish-core.sh --all-platforms  # 一律拒绝（已废弃；四平台由 CI 各 runner 各自发布）
 #   release/scripts/publish-core.sh --scope @acme    # 指定 scope（不传则读 npmPublish.scope / DSH_CORE_SCOPE）
 #
-# ── 防误发保护（默认 dry-run；须两道显式条件才真发）──
-#   ① 默认 PUBLISH=0：不传 --publish 即 npm publish --dry-run —— 本地跑一遍只做组装/校验，
+# -- 防误发保护（默认 dry-run；须两道显式条件才真发）--
+#   1) 默认 PUBLISH=0：不传 --publish 即 npm publish --dry-run —— 本地跑一遍只做组装/校验，
 #      绝不触网写 registry。这是**默认值**，不是靠调用方记得加 --dry-run。
-#   ② 传 --publish 后还有第二道门：GITHUB_ACTIONS 必须为 true（下面的硬标准，本地 exit 2）。
+#   2) 传 --publish 后还有第二道门：GITHUB_ACTIONS 必须为 true（下面的硬标准，本地 exit 2）。
 #   两道都满足才会执行真发布（且发布后按版本补打通道标签，见文件末尾）。
-#   tag 策略见下方「dist-tag 规范」；rollback/canary **不由本脚本设置**（人工运维，契约 §4）。
+#   tag 策略见下方「dist-tag 规范」；rollback/canary **不由本脚本设置**（人工运维，契约）。
 #
-# 硬标准（2026-09-13）：所有平台构建与发布必须经 GitHub CI 完成；本地不得产生发布产物。
+# 硬标准：所有平台构建与发布必须经 GitHub CI 完成；本地不得产生发布产物。
 # 版本规范：version 从仓库根 package.json 注入（禁手写）；发布前强制校验 launcher self-check 自报版本
 #  === 单源版本（防产物错配发布）；产物命名 dsh-supervisor-<ver>-<plat>-<arch>。
 set -euo pipefail
@@ -34,7 +34,7 @@ MAIN_REPO="$(node -p "try{const p=require('./package.json');(p.repository&&p.rep
 while [ $# -gt 0 ]; do case "$1" in
   --publish) PUBLISH=1 ;;
   --all-platforms)
-    # 硬标准（2026-09-13）：**发布也经 GitHub CI**。曾可本机一次发四平台 —— 那正是本地残留的发布侧。
+    # 硬标准：**发布也经 GitHub CI**。曾可本机一次发四平台 —— 那正是本地残留的发布侧。
     echo '拒绝：--all-platforms 已废弃（2026-09-13 硬标准）。' >&2
     echo '  四平台子包由 CI 各平台 runner 各自发布（tag 触发）；本地不得全平台发布。' >&2
     exit 2 ;;
@@ -44,7 +44,7 @@ while [ $# -gt 0 ]; do case "$1" in
   *) echo "未知参数: $1（支持 --publish / --dry-run / --all-platforms / --scope <val>）"; exit 2 ;;
 esac; shift; done
 
-# ── 硬标准（2026-09-13）：真发布只允许在 GitHub CI 内 —— **单平台也不例外** ──
+# -- 硬标准：真发布只允许在 GitHub CI 内 —— **单平台也不例外** --
 #   原漏洞：--all-platforms 被拒绝，但单平台 --publish 仍可本机直发 npm。
 if [ "$PUBLISH" = 1 ] && [ "${GITHUB_ACTIONS:-}" != 'true' ]; then
   echo '拒绝：真发布（--publish）只允许在 GitHub CI 内运行（GITHUB_ACTIONS=true）。' >&2
@@ -54,7 +54,7 @@ if [ "$PUBLISH" = 1 ] && [ "${GITHUB_ACTIONS:-}" != 'true' ]; then
 fi
 
 
-# ── 全平台模式：自递归（每个平台各跑一遍「单平台」路径）──
+# -- 全平台模式：自递归（每个平台各跑一遍「单平台」路径）--
 # 为什么自递归而非循环内联：单平台路径已包含「冒烟 + 版本核对 + 组装 + 幂等发布 + 认证」全套逻辑，
 # 内联会把这些复制一份（双份维护，正是本项目反复出现的缺陷模式）。递归只多一层进程，换来单一路径。
 if [ "$ALL" = 1 ]; then
@@ -91,7 +91,7 @@ fi
 # ---- 平台识别与产物定位 ----
 PLAT="$(node -p "process.platform")"   # linux | darwin | win32
 ARCH="$(node -p "process.arch")"       # x64 | arm64
-# 平台/架构覆盖（2026-09）：launcher 架构无关，GitHub macos-14 现为 arm64——用
+# 平台/架构覆盖：launcher 架构无关，GitHub macos-14 现为 arm64——用
 # DSH_PLATFORM_OVERRIDE/DSH_ARCH_OVERRIDE 在任意 runner 产指定平台包（元数据 os/cpu 区分）。
 PLAT="${DSH_PLATFORM_OVERRIDE:-$PLAT}"
 ARCH="${DSH_ARCH_OVERRIDE:-$ARCH}"
@@ -129,7 +129,7 @@ if [ -d "$SRC_DIR/ui-react" ]; then
 else
   echo "警告：launcher 产物缺 ui-react"
 fi
-# B23（AUDIT-2026-09-19）：包元数据生成**不得**把 shell 变量拼进 JS 源码 ——
+# B23：包元数据生成**不得**把 shell 变量拼进 JS 源码 ——
 #   MAIN_REPO/MAIN_LICENSE 等来自 package.json 字段，含 ' 即可越出字符串字面量改写整段
 #   node -e 脚本（CI 内执行 = 供应链注入面）。统一经 env 导出、JS 只读 process.env。
 export GEN_PKG_NAME="$PKG_NAME" GEN_VER="$VER" GEN_LICENSE="$MAIN_LICENSE" GEN_REPO="$MAIN_REPO" GEN_STAGE="$STAGE" GEN_PLAT="$PLAT" GEN_ARCH="$ARCH" GEN_OSTAG="$OS_TAG"
@@ -163,21 +163,21 @@ ls -lh "$STAGE/bin/" | tail -1
 
 # ---- 发布（默认 dry-run 保护） ----
 cd "$STAGE"
-# dist-tag 规范（2026-09-16 修正）——产品只有两档：BETA（测试版）/ RC（正式版）。
+# dist-tag 规范——产品只有两档：BETA（测试版）/ RC（正式版）。
 #
-#   -BETA.n  → tag beta              测试版：用户须显式 @beta 才装到
-#   -RC.n    → tag latest（主）+ rc  正式版：latest 必须跟随；rc 作为附加标签在发布后补
+#   -BETA.n  -> tag beta              测试版：用户须显式 @beta 才装到
+#   -RC.n    -> tag latest（主）+ rc  正式版：latest 必须跟随；rc 作为附加标签在发布后补
 #
-#   ⚠ npm publish **只接受一个 --tag**（默认 latest）——多标签必须发布后用
+#    npm publish **只接受一个 --tag**（默认 latest）——多标签必须发布后用
 #     `npm dist-tag add` 补（见本脚本末尾的 RC 附加标签步骤）。
 #
-#   ⚠ 以下两个 tag **刻意不由本脚本设置**（它们是人工运维操作，见契约 §4）：
-#     · rollback —— 紧急回退开关，全量最高优先级；仅回退时人工
+#    以下两个 tag **刻意不由本脚本设置**（它们是人工运维操作，见契约）：
+#     - rollback —— 紧急回退开关，全量最高优先级；仅回退时人工
 #                   `npm dist-tag add <pkg>@<ver> rollback`，解除用 `npm dist-tag rm <pkg> rollback`。
 #                   发布脚本若自动写它，等于把「发布」和「回退」两种意图混在一起。
-#     · canary   —— 灰度通道，仅灰度名单内机器可见；由灰度发布时人工设置（脚本无从得知名单）。
+#     - canary   —— 灰度通道，仅灰度名单内机器可见；由灰度发布时人工设置（脚本无从得知名单）。
 #
-# ⚠ 2026-09-16 修正的背景（公开发行审计发现）：
+#  正的背景（公开发行审计发现）：
 #   原策略把 RC 只标 rc、**从不更新 latest**，于是 latest 永久停留在历史 SEA 形态
 #   （实证：四平台 latest 分别停在 0.1.1/0.1.2/0.1.2/0.1.2，且描述仍是已废弃的 SEA）
 #   ——「我们发布什么，latest 就该是什么」被打破，且四平台版本不一致。
@@ -189,9 +189,9 @@ case "$VER" in
 esac
 # 发布到官方 npm registry（发布必须官方源；本机默认 npmmirror 只读消费不适配发布认证）
 #
-# 认证（2026-09-10 **标准化**）：解析逻辑**单源**收敛到 release/scripts/_npm-auth.sh——
+# 认证：解析逻辑**单源**收敛到 release/scripts/_npm-auth.sh——
 # 本脚本与 configure-credentials.sh 共用同一份实现（此前各写一套，行为不一致）。
-# 解析顺序：DSH_NPMRC → NPM_CONFIG_USERCONFIG → NPM_TOKEN(临时 userconfig) → 真实 home ~/.npmrc → 沙箱 $HOME/.npmrc。
+# 解析顺序：DSH_NPMRC -> NPM_CONFIG_USERCONFIG -> NPM_TOKEN(临时 userconfig) -> 真实 home ~/.npmrc -> 沙箱 $HOME/.npmrc。
 # 关键点：「真实 home」经 getent/dscl/~user 解析，**不受沙箱 $HOME 覆盖影响**——
 # 否则同一台机器上会「A 沙箱能发版、B 沙箱报 ENEEDAUTH」。
 REGISTRY="${DSH_PUBLISH_REGISTRY:-https://registry.npmjs.org/}"
@@ -211,19 +211,19 @@ else
   echo "== 认证：无（dry-run 不校验认证；真发布需先配置） =="
 fi
 if [ "$PUBLISH" = 1 ]; then
-  # ── 幂等发布（2026-09-11）──
+  # -- 幂等发布--
   # 为什么需要：npm **不允许覆盖同版本**，而发布流水线可能「部分平台成功、部分失败」
   # （实测 v0.1.3-BETA.1：linux-x64 已发，mac/win 因 CI 失败未发）。此时重跑，
   # 已成功的平台会 403 报错，而 npm 又没有「只补发缺失平台」的入口 ——
-  # 结果就是重跑永远无法自愈。故：同版本已存在 → 视为成功（幂等），并做内容一致性核对。
-  # ⚠ 必须 `|| true`：版本不存在时 `npm view` 返回非零，而本脚本是 `set -euo pipefail`，
+  # 结果就是重跑永远无法自愈。故：同版本已存在 -> 视为成功（幂等），并做内容一致性核对。
+  #  必须 `|| true`：版本不存在时 `npm view` 返回非零，而本脚本是 `set -euo pipefail`，
   #   管道失败会让**赋值语句本身**失败并中止脚本 —— 即「首次发布必然失败」。
   #   （实测：v0.1.3-BETA.2 发布时脚本在认证后静默终止，正是此处。）
-  # B24（AUDIT-2026-09-19）：幂等判定不得「只看体积、不一致只警告」。改为：
-  #   ① 存在性：远端 JSON 非空（npm view 对不存在版本返回非零 + 空输出）；
-  #   ② 体积：与远端 dist.unpackedSize 同口径的本地 dry-run unpackedSize；
-  #   ③ 内容：本地真 pack 的 tarball sha1 对远端 dist.shasum（同体积异内容是真实碰撞面）。
-  #   任一要素缺失或不一致 → 拒绝幂等跳过、非零退出（「核对不了」不得换「视为成功」的假安心）。
+  # B24：幂等判定不得「只看体积、不一致只警告」。改为：
+  #   1) 存在性：远端 JSON 非空（npm view 对不存在版本返回非零 + 空输出）；
+  #   2) 体积：与远端 dist.unpackedSize 同口径的本地 dry-run unpackedSize；
+  #   3) 内容：本地真 pack 的 tarball sha1 对远端 dist.shasum（同体积异内容是真实碰撞面）。
+  #   任一要素缺失或不一致 -> 拒绝幂等跳过、非零退出（「核对不了」不得换「视为成功」的假安心）。
   REMOTE_SPEC="$(npm view "$PKG_NAME@$VER" --json --registry="$REGISTRY" 2>/dev/null | tr -d '\r' || true)"
   if printf '%s' "$REMOTE_SPEC" | grep -q .; then
     LOCAL_SIZE="$(npm pack --dry-run --json --registry="$REGISTRY" 2>/dev/null | node -e 'let b="";process.stdin.on("data",d=>b+=d);process.stdin.on("end",()=>{try{const j=JSON.parse(b);console.log((j[0]&&j[0].unpackedSize)||"")}catch(e){console.log("")}})' || true)"
@@ -245,7 +245,7 @@ if [ "$PUBLISH" = 1 ]; then
     exit 0
   fi
   echo "== 发布 $PKG_NAME@$VER ${DIST_TAG:-（tag=latest）} → $REGISTRY =="
-  # A3-a（2026-09-19 审计）：--provenance 供应链溯源证明 —— 用 GitHub OIDC 短时令牌
+  # A3-a：--provenance 供应链溯源证明 —— 用 GitHub OIDC 短时令牌
   #   向 npm 签发「此产物由本仓库此 commit 的这次 CI run 构建」的 attestation，
   #   npm 侧长期凭证不参与签发；审计/安装方可核。需 build job 已授 id-token: write。
   #   逃生阀：DSH_NPM_PROVENANCE=0 显式关闭（如无 OIDC 的环境）。

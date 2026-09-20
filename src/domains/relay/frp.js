@@ -9,7 +9,7 @@ const pidlook = require('../../platform/os/pidlookup');
 
 const fs = require('node:fs');
 const path = require('node:path');
-// SSOT §3：异步 spawn 统一封装（固定 windowsHide:true）；需读 frpc 输出，故用 piped。
+// SSOT：异步 spawn 统一封装（固定 windowsHide:true）；需读 frpc 输出，故用 piped。
 const spawnOS = require('../../platform/os/spawn');
 const { writeAtomic } = require('../../platform/util/fs');
 const { buildFrpcToml, validateFrpServerSettings } = require('./core');
@@ -75,7 +75,7 @@ class FrpManager {
       installed: fs.existsSync(this.binPath),
       running: !!(this.child && this.child.pid),
       pid: this.child ? this.child.pid : null,
-      // B7：API 面绝不回显 authToken 明文（与 access.js「只报 configured」同规）。
+      // API 面绝不回显 authToken 明文（与 access.js「只报 configured」同规）。
       // UI 需要改动令牌时显式提交新值；normalizeFrpSettings 是 patch 归并——
       // **字段缺省（undefined）= 保留现值**，显式提交 '' = 清除（UI 留空时必须省略字段，见 LanPage frpPayload）。
       settings: { enabled: !!s.enabled, serverAddr: s.serverAddr, serverPort: s.serverPort, user: s.user, authTokenSet: !!s.authToken },

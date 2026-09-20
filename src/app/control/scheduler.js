@@ -37,9 +37,9 @@ module.exports = {
     const d = depsOf(this);
     try {
       if (d.stopping()) return { ok: false, error: 'guard stopping' };
-      if (d.exitIntended()) return { ok: false, error: 'exit intended' }; // INV-S1/E-3：意图轴单源（stopping ∨ session halting；_shellHalted 属壳域不在此）
+      if (d.exitIntended()) return { ok: false, error: 'exit intended' }; // INV-S1/E-3：意图轴单源（stopping 或 session halting；_shellHalted 属壳域不在此）
       await d.main().converge(); // 唯一心跳驱动 main 收敛
-      try { d.control().syncInstancesView(); } catch (e) { d.logger() && d.logger().warn && d.logger().warn('instances view sync: ' + ((e && e.message) || e)); } // C3-5b：聚合视图随心跳刷新
+      try { d.control().syncInstancesView(); } catch (e) { d.logger() && d.logger().warn && d.logger().warn('instances view sync: ' + ((e && e.message) || e)); } // 聚合视图随心跳刷新
     } catch (e) {
       d.logger() && d.logger().warn && d.logger().warn('[dsh] supervise 异常: ' + ((e && e.message) || e));
     }

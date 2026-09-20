@@ -31,11 +31,11 @@ function registerKind(kind, meta) {
 
 /** 域 A（用户意图域）的 kind 清单——只有它们才持有 `guardian` 字段。
  *
- *  契约 GUARD-DOMAIN-MODEL §2/§3 G-1：
- *   - 域 A = dsh / sandbox-instance：有用户意图轴（desired × guardian），
+ *  契约 GUARD-DOMAIN-MODEL G-1：
+ *   - 域 A = dsh / sandbox-instance：有用户意图轴（desired x guardian），
  *     guardian 表示崩溃时是否按用户意图自愈；
  *   - 域 B = router-daemon / lan-daemon（基础设施）：无用户意图轴，由保活路径无条件拉起，
- *     故根本不物化该字段（不是「置 false」，而是「不存在」——契约 §5 GD-1 的字面要求）。
+ *     故根本不物化该字段（不是「置 false」，而是「不存在」——契约 GD-1 的字面要求）。
  *
  *  判据必须落在入口（createEntry/load/save/update）而非申报处：申报处只是「不写」，
  *  但 createEntry 会对所有 kind 无条件物化该字段并随目录持久化，旧版本残留的
@@ -59,9 +59,9 @@ function createEntry(o) {
     name: String(o.name || o.id),
     // 应然（业务申报 / 用户操作；唯一持久意图）
     //   desired：两域共用同一字段名，但语义不同——
-    //     域 A = 用户意图；域 B = 「当前业务是否需要它」的条件（契约 §2）。
+    //     域 A = 用户意图；域 B = 「当前业务是否需要它」的条件。
     desired: (o.desired === 'stopped') ? 'stopped' : 'running',
-    // guardian：域 A 专有字段（契约 §2/§3 G-1）。域 B 基础设施不物化它——
+    // guardian：域 A 专有字段（契约 G-1）。域 B 基础设施不物化它——
     //   不是「置 false」，是「不存在」，这样旧残留才清得掉。
     ...(isDomainA(o.kind) ? { guardian: o.guardian === true } : {}),
     // 所有权（注册时申报；持久）

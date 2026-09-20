@@ -66,7 +66,7 @@ function composeDomains(host) {
         ports: ports,
       });
       host._syncManagedRegistry();
-      // daemon 监督 adapter：heartbeat 驱动；节流 6 拍≈30s。
+      // daemon 监督 adapter：heartbeat 驱动；节流 6 拍~30s。
       if (host.managedObjects && typeof host.managedObjects.registerAdapter === 'function') {
         host.managedObjects.registerAdapter('router-daemon', { supervise: () => host._daemonSuperviseOnce('router'), tickEvery: 6, derivePhase: true });
         host.managedObjects.registerAdapter('lan-daemon', { supervise: () => host._daemonSuperviseOnce('lan'), tickEvery: 6, derivePhase: true });
@@ -93,7 +93,7 @@ function composeDomains(host) {
       overlayFile: path.join(path.dirname(host.config.stateFile), 'plugin-states.patch.yml'),
       dshPort: host.config.targetPort,
       instances: host.instances,
-      // B16（AUDIT-2026-09-19）：INV-S1 退出门谓词注入（E-3 单源）——插件变更生效重启路径
+      // INV-S1 退出门谓词注入（E-3 单源）——插件变更生效重启路径
       //   持有裸 InstanceManager，必须同受退出意图约束。
       exitIntended: () => host._exitIntended(),
       tasks: host.tasks,

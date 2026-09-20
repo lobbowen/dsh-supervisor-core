@@ -12,16 +12,16 @@
 //   块注释以换行占位，**保持行结构**（多处判据依赖行号/行数）。
 //
 // ## 本文件是助手，不是测试
-//   · test-chain-completeness-test.js：N-a 只要求 `*-test.js` 入链（本文件不匹配）；
-//     N-c 的 helper 计数显式排除 `_` 前缀 ⇒ 本文件既不占链条目也不触发 N-c。
-//   · test-port-discipline-test.js / workflow-parse-test.js 的枚举也显式跳过 `_` 前缀。
-//   ⇒ 新增本文件**不消耗链条余量**（依然 7899/8000），也不需要 `scripts.test` 改动。
+//   - test-chain-completeness-test.js：N-a 只要求 `*-test.js` 入链（本文件不匹配）；
+//     N-c 的 helper 计数显式排除 `_` 前缀 => 本文件既不占链条目也不触发 N-c。
+//   - test-port-discipline-test.js / workflow-parse-test.js 的枚举也显式跳过 `_` 前缀。
+//   => 新增本文件**不消耗链条余量**（依然 7899/8000），也不需要 `scripts.test` 改动。
 //
 // ## 三个产物（按各门禁**原有语义**选用，不得一律改成「全剥」）
-//   · stripComments(src)     删除式：注释整段删除（块注释换行保留）。原「剥块+行注释」的门禁用。
-//   · blankComments(src)     空格式：被剥字符逐个替换为空格，**长度与列号保持**。
+//   - stripComments(src)     删除式：注释整段删除（块注释换行保留）。原「剥块+行注释」的门禁用。
+//   - blankComments(src)     空格式：被剥字符逐个替换为空格，**长度与列号保持**。
 //                             原「用空格占位以保偏移」的门禁用。
-//   · dropCommentLines(src)  只丢「整行都是注释」的行（行结构保留）。
+//   - dropCommentLines(src)  只丢「整行都是注释」的行（行结构保留）。
 //                             原「只滤 // 行 / 块注释续行」的门禁用 —— 语义等价但**字符串/正则感知**。
 
 const LF = String.fromCharCode(10);
@@ -104,7 +104,7 @@ function stripComments(src) { return scan(src).code; }
 /** 空格式剥离：被剥字符用空格占位，长度/列号保持（供需要偏移稳定的门禁）。 */
 function blankComments(src) { return scan(src, { blank: true }).code; }
 
-/** 只丢「整行都是注释」的行：用 blank 产物判定（一行被空格替换后无实义字符 ⇒ 整行是注释）。
+/** 只丢「整行都是注释」的行：用 blank 产物判定（一行被空格替换后无实义字符 => 整行是注释）。
  *  行结构保持；字符串/正则感知（字符串里的同形字符不会让该行被误丢）。 */
 function dropCommentLines(src) {
   const s = String(src == null ? '' : src);
@@ -119,7 +119,7 @@ function dropCommentLines(src) {
 
 /** 多语言安全的「丢整行 `//` 与 `#` 注释 + 去块注释 + 清星号续行」（**不套用 JS 字符级词法**）。
  *  用于扫描面含 .sh/.yml/.bash 的门禁：那里 `//` 可能是 URL、`#` 才是注释，JS 词法会误伤。
- *  行注释先丢整行 ⇒ 行注释里的 glob 不会开假块注释（本类缺陷的根因），与原手写实现逐字等价。 */
+ *  行注释先丢整行 => 行注释里的 glob 不会开假块注释（本类缺陷的根因），与原手写实现逐字等价。 */
 function stripLineAndBlocks(src) {
   const noLine = String(src).split(LF)
     .map((l) => { const t = l.trim(); return (t.startsWith('//') || t.startsWith('#')) ? '' : l; })

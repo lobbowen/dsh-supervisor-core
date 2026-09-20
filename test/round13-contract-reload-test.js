@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 'use strict';
 
-// ═══════════════════════════════════════════════════════════════════════════
-// 第十三轮续：壳投放的镜像契约必须能**重载**（2026-09-13 P1）
+// ---------------------------------------------------------------------------
+// 第十三轮续：壳投放的镜像契约必须能**重载**
 //
 // ## 缺陷（失效模式 b + f + i）
 //
@@ -12,10 +12,10 @@
 // 每次壳启动、commands/mod.rs:514 的 mirror_set、node.rs:146 选中镜像后落盘）。
 //
 // 后果：内核进程生命周期内永远看不到壳的新 catalog / **探测规格** / selected / mode：
-//   · 用**旧探测方法**自己重测 → 正是 registry-contract.js:23-28 声称已修复的
+//   - 用**旧探测方法**自己重测 -> 正是 registry-contract.js:23-28 声称已修复的
 //     「两侧选源不一致」（用户看到面板显示一个源、实际用另一个）；
-//   · 手动设 manual 后内核仍按 auto 走；
-//   · 主进程与 router-daemon 若启动时刻不同 → 两侧契约长期不一致（一台机器两个决策）。
+//   - 手动设 manual 后内核仍按 auto 走；
+//   - 主进程与 router-daemon 若启动时刻不同 -> 两侧契约长期不一致（一台机器两个决策）。
 //
 // ## 修法
 // 在读入口（selectRegistry / registryInfo）加 TTL 重载（60s）。
@@ -24,7 +24,7 @@
 //   A 结构：存在 TTL 重载入口，且读入口确实调用它
 //   B 行为：TTL 内不重载、TTL 过后重载（并拿到新的 catalog 与 **probe 规格**）
 //   C 反向：不因每次调用都重读而回归（TTL 内多次调用只读一次盘）
-// ═══════════════════════════════════════════════════════════════════════════
+// ---------------------------------------------------------------------------
 
 const fs = require('node:fs');
 const os = require('node:os');
@@ -41,7 +41,7 @@ const check = (n, c, x) => {
 };
 
 (async () => {
-  // ⚠ 2026-09-17（域结构第三轮）：distribution 已拆为 release/policies/registry/install + index 门面；
+  //  （域结构第三轮）：distribution 已拆为 release/policies/registry/install + index 门面；
   //   断言对象是「分发能力」而非单文件，故按目录聚合读取（读取面随文件搬移同步，判据语义不变）。
   const distDir = path.join(ROOT, 'src', 'platform', 'distribution');
   const src = fs.readdirSync(distDir).filter((f) => f.endsWith('.js')).sort().map((f) => fs.readFileSync(path.join(distDir, f), 'utf8')).join(String.fromCharCode(10));

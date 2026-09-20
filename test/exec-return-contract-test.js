@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 'use strict';
 
-// ═══════════════════════════════════════════════════════════════════════════
-// P0 回归：exec.run 的「成功/失败」判据必须与调用方语义一致（2026-09-13）
+// ---------------------------------------------------------------------------
+// P0 回归：exec.run 的「成功/失败」判据必须与调用方语义一致
 //
 // ## 缺陷（一个根因，三处症状）
 //
@@ -14,16 +14,16 @@
 // 而 `exec.run` 的契约是「失败/超时返回 null」，于是**每一个以 `!== null` 判成功的
 // 调用方都把成功读成失败**：
 //
-//   ① `platform/os/index.js::hasTool` —— `ex.run(name,...,{stdio:'ignore'}) !== null`
-//      → hasTool('node')/('systemctl')/('systemd-run') **恒 false**（实测）
-//      → capabilities() 把 multiInstance/desktopNotify/autostart 一律降 false
-//      → **Linux 上沙箱（多实例）功能对所有用户不可用**（UI 报「当前平台不支持」）。
-//   ② `platform/os/file-protect.js::hasIcacls` —— 同形 → Windows 上敏感文件/目录的
+//   1) `platform/os/index.js::hasTool` —— `ex.run(name,...,{stdio:'ignore'}) !== null`
+//      -> hasTool('node')/('systemctl')/('systemd-run') **恒 false**（实测）
+//      -> capabilities() 把 multiInstance/desktopNotify/autostart 一律降 false
+//      -> **Linux 上沙箱（多实例）功能对所有用户不可用**（UI 报「当前平台不支持」）。
+//   2) `platform/os/file-protect.js::hasIcacls` —— 同形 -> Windows 上敏感文件/目录的
 //      icacls 收紧**静默失效**（一律返回 mode:'none'）。
-//   ③ `platform/os/service.js` 的 run 包装**无条件** `Object.assign({stdio:'ignore'}, opts)`
-//      → 即便调用方要读输出（isUnitActive 传 encoding）也被压掉 → isUnitActive **恒 false**：
-//        · 实例就绪判定要求 unitActive() → 永不满足 → 升级在稳定期误判「未能启动」→ 误回滚；
-//        · 删数据目录前的 isUnitActive 复核恒 false → 「仍活跃则不删」保护**永不生效**。
+//   3) `platform/os/service.js` 的 run 包装**无条件** `Object.assign({stdio:'ignore'}, opts)`
+//      -> 即便调用方要读输出（isUnitActive 传 encoding）也被压掉 -> isUnitActive **恒 false**：
+//        - 实例就绪判定要求 unitActive() -> 永不满足 -> 升级在稳定期误判「未能启动」-> 误回滚；
+//        - 删数据目录前的 isUnitActive 复核恒 false -> 「仍活跃则不删」保护**永不生效**。
 //
 // ## 锁定不变量
 //   A1  exec.run 成功必返回**非 null**（即使 stdio 不捕获输出）—— 核心判据
@@ -32,7 +32,7 @@
 //   A4  service Provider 的 run 包装**不得**再强制 stdio:'ignore'（否则读输出恒空）
 //   A5  Linux：capabilities().multiInstance 必须与「systemd-run 是否真的存在」一致
 //   A6  Linux：isUnitActive 对**确实 active** 的单元返回 true
-// ═══════════════════════════════════════════════════════════════════════════
+// ---------------------------------------------------------------------------
 
 const fs = require('node:fs');
 const path = require('node:path');
@@ -46,7 +46,7 @@ const check = (n, c, x) => {
   console.log((c ? 'PASS' : 'FAIL') + ' ' + n + (x !== undefined && x !== '' ? '  <- ' + x : ''));
 };
 
-// ── A1：成功必非 null（核心）──
+// -- A1：成功必非 null（核心）--
 {
   const r = ex.run('node', ['--version'], { stdio: 'ignore', timeoutMs: 5000 });
   check('A1 exec.run 成功且 stdio:ignore 时仍返回非 null（旧实现返回 null）',
@@ -61,7 +61,7 @@ const check = (n, c, x) => {
     raw === null, String(raw));
 }
 
-// ── A2：失败仍是 null ──
+// -- A2：失败仍是 null --
 {
   const r = ex.run('dsh-no-such-binary-xyz', [], { timeoutMs: 3000 });
   check('A2 不存在的可执行文件仍返回 null（失败语义未被破坏）', r === null, JSON.stringify(r));
@@ -72,7 +72,7 @@ const check = (n, c, x) => {
   check('A2 非零退出码视为失败（null）', r3 === null, JSON.stringify(r3));
 }
 
-// ── A3：hasTool 对必然存在的命令为 true ──
+// -- A3：hasTool 对必然存在的命令为 true --
 {
   // node 必然存在（我们正跑在 node 上）。旧实现此处恒 false。
   check('A3 hasTool(node) === true（旧实现恒 false → 沙箱功能全禁）',
@@ -82,7 +82,7 @@ const check = (n, c, x) => {
     osIdx.hasTool('dsh-no-such-tool-xyz') === false, 'false');
 }
 
-// ── A3′：源码级防回潮 —— hasTool / hasIcacls 不得再写回致命形态 ──
+// -- A3'：源码级防回潮 —— hasTool / hasIcacls 不得再写回致命形态 --
 //   为什么需要它（本测试的真实教训）：A3 的行为断言在**根因已修**的前提下，即使
 //   把 hasTool 写回 `ex.run(...,{stdio:'ignore'}) !== null` 也仍然通过（因为 exec.run
 //   现在成功返回非空）—— 即 A3 无法单独证伪 hasTool 那一处的回潮。
@@ -104,7 +104,7 @@ const check = (n, c, x) => {
     bad.test("const ok = ex.run(name, args, { stdio: 'ignore' }) !== null;"), 'hit');
 }
 
-// ── A4：service Provider 不得再强制 stdio:'ignore' ──
+// -- A4：service Provider 不得再强制 stdio:'ignore' --
 {
   const raw = fs.readFileSync(path.join(ROOT, 'src', 'platform', 'os', 'service.js'), 'utf8');
   // 剥离注释后再断言（本仓多次被自己的说明文字骗过）
@@ -115,7 +115,7 @@ const check = (n, c, x) => {
     /exec\.run\(cmd, args, opts \|\| \{\}\)/.test(code), '有');
 }
 
-// ── A4b：B12 单元名白名单（AUDIT §B-12，裁决=合法：id 经 instances.json 原样载回，属信任边界外）──
+// -- A4b：B12 单元名白名单--
 {
   const svcMod = require(path.join(ROOT, 'src', 'platform', 'os', 'service.js'));
   const raw = fs.readFileSync(path.join(ROOT, 'src', 'platform', 'os', 'service.js'), 'utf8');
@@ -150,7 +150,7 @@ const check = (n, c, x) => {
     svcMod.UNIT_NAME_RE.test('dsh-web@inst-1757-842') && /^dsh-web@/.test('dsh-web@main'), 'ok');
 }
 
-// ── A5/A6：Linux 行为（systemd 真实存在时）──
+// -- A5/A6：Linux 行为（systemd 真实存在时）--
 if (process.platform === 'linux') {
   const svc = require(path.join(ROOT, 'src', 'platform', 'os', 'service.js')).current();
   // systemd-run 是否存在（用**可靠的** runOut 探测，而非本测试要验证的 hasTool）
@@ -164,8 +164,8 @@ if (process.platform === 'linux') {
       caps.multiInstance === true, String(caps.multiInstance));
   }
 
-  // A6：找一个确实 active 的 --user 单元，isUnitActive 必须为 true
-  // ⚠ B12 后单元名只接受 *.service / 裸名（AUDIT §B-12 白名单）——枚举必须限定 --type=service，
+  // 找一个确实 active 的 --user 单元，isUnitActive 必须为 true
+  //  B12 后单元名只接受 *.service / 裸名——枚举必须限定 --type=service，
   //   否则宿主上恰好 active 的 .device/.mount 单元会被正确拒判为 false，误报本用例失败。
   let activeUnit = null;
   try {

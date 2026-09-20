@@ -10,11 +10,11 @@ const { writeAtomic } = require('../../util/fs');
 // seq / rotatedSeq 持久化到 <file>.meta.json（原子写），重启后从 meta 恢复：
 // 保证 seq 全局单调不重号，且已轮转的 .1 仍参与增量读取（旧实现 rotatedSeq 仅内存态，
 // 重启后 .1 事件永久不可见）。meta 缺失/损坏时回退扫描当前文件续号（不丢新事件）。
-// 条 1（AUDIT-2026-09-19 批 4 C）：写放大收敛。旧实现每事件 = statSync + appendFileSync
+// 写放大收敛。旧实现每事件 = statSync + appendFileSync
 //   + writeFileSync(tmp) + renameSync —— meta 每事件全量重写是主要成本。
-//   现：① 尺寸按已写字节估算，仅在估算越阈时真 stat 复核后才改名（多写者漂移不误轮转）；
-//   ② meta 每 META_SAVE_EVERY 个 seq 落一次盘，**轮转时立即落**（rotatedSeq 必须即时持久化）；
-//   ③ 续号取 max(meta.seq, 文件尾部实际最大 seq) —— 节流窗口内的 seq 只活在内存里，
+//   现：1) 尺寸按已写字节估算，仅在估算越阈时真 stat 复核后才改名（多写者漂移不误轮转）；
+//   2) meta 每 META_SAVE_EVERY 个 seq 落一次盘，**轮转时立即落**（rotatedSeq 必须即时持久化）；
+//   3) 续号取 max(meta.seq, 文件尾部实际最大 seq) —— 节流窗口内的 seq 只活在内存里，
 //     不看文件就重启会重号（readSince 双代合并即重复/乱序）。事件流 append-only 且 seq
 //     单调，故末行即最大，无需全文扫描；末行不可解析时回退全扫描。
 const META_SAVE_EVERY = 32;
@@ -35,7 +35,7 @@ class Events {
         fs.mkdirSync(path.dirname(file), { recursive: true });
       } catch {}
       this._loadMeta();
-      // 条 1③：无论 meta 是否可用，都必须与文件实际内容对齐（meta 可能被节流落在后面）。
+      // 条 13)：无论 meta 是否可用，都必须与文件实际内容对齐（meta 可能被节流落在后面）。
       const fileMax = this._fileMaxSeq();
       if (fileMax > this.seq) this.seq = fileMax;
       this._metaSavedSeq = this.seq;
@@ -83,7 +83,7 @@ class Events {
     return max;
   }
 
-  // 条 1③：文件实际最大 seq —— 只读尾部（append-only + seq 单调 ⇒ 末行即最大）。
+  // 条 13)：文件实际最大 seq —— 只读尾部（append-only + seq 单调 => 末行即最大）。
   // 末行不可解析（截断起点落在行中 / 崩溃残留半行）时从后往前找首条完整记录；
   // 整段都解析不出（文件为空/刚轮转走）才回退 _maxSeq() 全扫描，含 .1 防与旧代重号。
   _fileMaxSeq() {
@@ -161,7 +161,7 @@ class Events {
       this._est = null; // 写盘结果未知：账本作废，下一事件重新 stat
       console.error('[events] append failed:', e.message);
     }
-    // 条 1②：meta 节流落盘；写盘失败时立即落一次（保住已成功的 seq 事实）。
+    // 条 12)：meta 节流落盘；写盘失败时立即落一次（保住已成功的 seq 事实）。
     if (this.seq - this._metaSavedSeq >= META_SAVE_EVERY || !wrote) this._saveMeta();
     // 写盘失败可观测，供 EventHub 水位不推进、下轮补齐（RC5.2 契约）；不可恒吞错误致水位虚进。
     this._lastAppendOk = wrote;

@@ -59,9 +59,9 @@ function createDesired(deps) {
    *  返回**落盘成败**：成功 true；无 configPath（未配置落点）或写失败均 false。
    *  为什么返回布尔：调用方需要如实上报"配置是否真的落盘"，此前只能靠"回读 configPath 逐键比对"
    *  来核验 —— 那是第二套落盘判定，与这里必然分叉（P4-A #6）。既有调用方一律忽略返回值，故向后兼容。
-   *  A1-a（2026-09-19 审计修复）：既有文件**读失败或解析失败时拒绝写回**（fail-closed）。
+   *  既有文件**读失败或解析失败时拒绝写回**（fail-closed）。
    *  旧行为是 catch{} 后以 cur={} 继续写 —— 一次瞬时读错/半截 JSON 就把 apiAccessKey 等
-   *  全部键抹掉且不可回滚（2026-09-13 凭据覆盖事故的运行时同型根因）。文件缺失（ENOENT）
+   *  全部键抹掉且不可回滚。文件缺失（ENOENT）
    *  仍视为首启空配置，照常写入。 */
   function persistConfigPatch(patch) {
     const p = configPath();

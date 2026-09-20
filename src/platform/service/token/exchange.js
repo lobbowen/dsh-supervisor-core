@@ -3,7 +3,7 @@
 // dsh-auth 派生令牌的换取（DshTokenService 契约1 的 exchange 策略）。
 // 生成侧是 DSH 进程：GET /?token=<launchToken> 返回 303 与 Set-Cookie: dsh-auth-<hash>=<v1 前缀值>，我方负责换取、缓存与轮换重换。
 // 放在 platform/service/token 是因为换取属于令牌组件自身职责；原先内联在 domains/relay/index.js，导致 dsh-auth 协议知识散落到消费方。
-// TK-4：本模块不缓存任何结果，缓存 dshCookie 仍由调用方 relay 掌握，令牌值始终由令牌池按需提供。
+// 本模块不缓存任何结果，缓存 dshCookie 仍由调用方 relay 掌握，令牌值始终由令牌池按需提供。
 
 const http = require('node:http');
 

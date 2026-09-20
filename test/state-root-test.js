@@ -1,18 +1,18 @@
 #!/usr/bin/env node
 'use strict';
 
-// ═══════════════════════════════════════════════════════════════════════════
-// 产品状态根门禁（SR-1..SR-6；2026-09-15 架构纠偏）
+// ---------------------------------------------------------------------------
+// 产品状态根门禁
 //
 // 本产品**管控 DSH**，状态不得寄在被管控对象的 ~/.dsh 下。内核侧单一事实源 =
 //   src/platform/service/state-root.js（XDG + DSH_SUPERVISOR_HOME 覆盖 + 前向自愈迁移）。
-//   · SR-1 schema=1（与壳 env.rs 的 STATE_ROOT_SCHEMA 握手）
-//   · SR-2 DSH_SUPERVISOR_HOME 覆盖优先
-//   · SR-3 默认根**不在** ~/.dsh 之下（独立于 DSH）
-//   · SR-4 supervisor/shell 子目录
-//   · SR-5 迁移：旧 ~/.dsh/{supervisor,shell} 按条目搬到新根
-//   · SR-6 负向：产品代码不得再直拼 ~/.dsh/supervisor|shell（state-root.js 除外）
-// ═══════════════════════════════════════════════════════════════════════════
+//   - SR-1 schema=1（与壳 env.rs 的 STATE_ROOT_SCHEMA 握手）
+//   - SR-2 DSH_SUPERVISOR_HOME 覆盖优先
+//   - SR-3 默认根**不在** ~/.dsh 之下（独立于 DSH）
+//   - SR-4 supervisor/shell 子目录
+//   - SR-5 迁移：旧 ~/.dsh/{supervisor,shell} 按条目搬到新根
+//   - SR-6 负向：产品代码不得再直拼 ~/.dsh/supervisor|shell（state-root.js 除外）
+// ---------------------------------------------------------------------------
 
 const fs = require('node:fs');
 const os = require('node:os');
@@ -24,10 +24,10 @@ const check = (n, c, x) => { results.push(!!c); console.log((c ? 'PASS' : 'FAIL'
 
 const sr = require(path.join(ROOT, 'src', 'platform', 'service', 'state-root.js'));
 
-// ── SR-1：schema 握手 ──
+// -- SR-1：schema 握手 --
 check('SR-1 schema = 1（与壳 STATE_ROOT_SCHEMA 握手）', sr.SCHEMA === 1, String(sr.SCHEMA));
 
-// ── SR-2：覆盖优先 ──
+// -- SR-2：覆盖优先 --
 const tmpNew = fs.mkdtempSync(path.join(os.tmpdir(), 'sr-new-'));
 process.env.DSH_SUPERVISOR_HOME = tmpNew;
 check('SR-2 DSH_SUPERVISOR_HOME 覆盖优先', sr.root() === path.resolve(tmpNew), sr.root());
@@ -35,7 +35,7 @@ check('SR-2 supervisor/shell 子目录正确',
   sr.supervisorDir() === path.join(path.resolve(tmpNew), 'supervisor')
   && sr.shellDir() === path.join(path.resolve(tmpNew), 'shell'), sr.supervisorDir());
 
-// ── SR-3：默认根独立于 DSH 的 ~/.dsh ──
+// -- SR-3：默认根独立于 DSH 的 ~/.dsh --
 delete process.env.DSH_SUPERVISOR_HOME;
 const realHome = os.homedir();
 const def = sr.root();
@@ -43,12 +43,12 @@ check('SR-3 默认根不在 ~/.dsh 之下', !def.startsWith(path.join(realHome, 
   def + ' (home=' + realHome + ')');
 check('SR-3 默认根不是 ~/.dsh 本身', def !== path.join(realHome, '.dsh'), def);
 
-// ── SR-4：source 断言（默认值也走 state-root 单一入口）──
+// -- SR-4：source 断言（默认值也走 state-root 单一入口）--
 const cfg = fs.readFileSync(path.join(ROOT, 'src', 'platform', 'service', 'config.js'), 'utf8');
 check('SR-4 config 默认路径经 state-root', /require\('\.\/state-root'\)\.supervisorDir\(\)/.test(cfg), 'ok');
 check('SR-4 config 不再硬编码 ~/.dsh/supervisor', !/stateFile:\s*'~\.dsh\/supervisor/.test(cfg), 'ok');
 
-// ── SR-5：迁移行为（隔离 HOME + 新根覆盖）──
+// -- SR-5：迁移行为（隔离 HOME + 新根覆盖）--
 {
   const fakeHome = fs.mkdtempSync(path.join(os.tmpdir(), 'sr-home-'));
   const newRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'sr-dst-'));
@@ -78,7 +78,7 @@ check('SR-4 config 不再硬编码 ~/.dsh/supervisor', !/stateFile:\s*'~\.dsh\/s
   delete process.env.DSH_SUPERVISOR_HOME;
 }
 
-// ── SR-6：负向扫描（产品代码不得再直拼 ~/.dsh/supervisor|shell）──
+// -- SR-6：负向扫描（产品代码不得再直拼 ~/.dsh/supervisor|shell）--
 {
   const walk = (dir, out) => {
     for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
@@ -105,11 +105,11 @@ check('SR-4 config 不再硬编码 ~/.dsh/supervisor', !/stateFile:\s*'~\.dsh\/s
   check('SR-6 反向：旧形态被识别', looksHardcoded("path.join(os.homedir(), '.dsh', 'supervisor')"), 'ok');
 }
 
-// ── SR-7：测试隔离 hygiene（防回归：测试不得再写真实 HOME 的产品状态）──
+// -- SR-7：测试隔离 hygiene（防回归：测试不得再写真实 HOME 的产品状态）--
 {
   const pkg = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8'));
   const chain = pkg.scripts.test || '';
-  // ⚠ 2026-09-17：接受 `-r`（--require 的短形式）—— 二者语义相同。
+  //接受 `-r`（--require 的短形式）—— 二者语义相同。
   //   改用短形式是为压 scripts.test 长度以适配 **Windows cmd.exe 8191 命令行上限**
   //   （CI 实测 windows-latest 报 "The command line is too long."，Linux/macOS 不受限）；
   //   本判据的意图（链经 _preload 注入隔离、不依赖 shell 语法）不变。

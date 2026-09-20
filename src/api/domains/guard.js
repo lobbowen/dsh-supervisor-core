@@ -89,7 +89,7 @@ function handle(ctx) {
         try { const j = body ? JSON.parse(body) : {}; if (typeof j.enabled === 'boolean') enabled = j.enabled; } catch {}
         if (enabled === null) return send(400, { ok: false, error: '需要 {"enabled":true|false}' });
         const r = sup.setLanPanel(enabled);
-        // 未设访问密钥属客户端可修正的前置条件失败 → 400（原为 500，与 FIX-1 的暴露闸语义矛盾）；内部异常仍 500。
+        // 未设访问密钥属客户端可修正的前置条件失败 -> 400（原为 500，与 FIX-1 的暴露闸语义矛盾）；内部异常仍 500。
         return send(r.ok === false ? (r.code === 'ACCESS_KEY_REQUIRED' ? 400 : 500) : 200, r);
       });
       return;
@@ -136,7 +136,7 @@ function handle(ctx) {
       return;
     }
 
-    // 内核更新（单写入者 = 壳，见 RELEASE-AND-UPDATE-MECHANISM.md §6）：
+    // 内核更新（单写入者 = 壳，见 RELEASE-AND-UPDATE-MECHANISM.md）：
     //   只保留**只读**状态查询；安装/重启守卫归壳，写端点**已下架**。
     //   下架用 410 Gone + 稳定错误码（而非 404），让任何旧客户端得到可诊断的迁移结论。
     if (req.method === 'GET' && pathname === '/self-update/status') {
@@ -172,7 +172,7 @@ function handle(ctx) {
       return send(200, sup.envStatus());
     }
     if (req.method === 'GET' && pathname === '/env/node-lts') {
-      // Node LTS 本地判定（偶数主版本≈LTS；6h 缓存，无远端查询，见 supervisor.nodeLtsStatus）
+      // Node LTS 本地判定（偶数主版本~LTS；6h 缓存，无远端查询，见 supervisor.nodeLtsStatus）
       return sup.nodeLtsStatus().then((r) => send(200, r)).catch((e) => send(500, { ok: false, error: e.message }));
     }
 

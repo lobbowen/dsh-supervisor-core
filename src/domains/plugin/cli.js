@@ -3,15 +3,16 @@
 // 插件域 CLI 执行（无状态函数）。
 // 以目标描述的 env/runtime 起 dsh plugin 子进程，整树超时终止，逐行回吐日志；
 // registryOrigin / logger 显式入参。
-// 注意：test/round8-fixes-test.js J-i/J-g 按域聚合断言本文件的 spawn/killTree/registry
-// 注入形态与文案，实现与字符串须逐字保持。
+// 注意：test/round8-fixes-test.js J-i/J-g 按域聚合断言本文件的 spawn/detached、
+// 杀树单源（procOS.killTree）与 registry 注入形态；改这些形态要同步改判据。
 
 // 统一 spawn 封装（NO-CONSOLE-WINDOW-STANDARD W1）：插件 CLI 是 detached
-// （需 -pid 杀整棵树），Windows 上 detached 会新建控制台窗口，故经 spawn.piped
-// ({detached:true})，它固定 windowsHide:true。
+// （子进程自成进程组，超时才能整树终止），Windows 上 detached 会新建控制台窗口，
+// 故经 spawn.piped({detached:true})，它固定 windowsHide:true。
 const spawn = require('../../platform/os/spawn');
-// 平台能力查询经唯一事实源矩阵，不自行判断 platform。
-const matrix = require('../../platform/contract/matrix');
+// 整树终止走平台层单源（platform/os/process.killTree）：Windows 无进程组语义，
+// 域内自写 process.kill(-pid) 只杀得到 .cmd 那层壳，pnpm 孙进程照旧成孤儿。
+const procOS = require('../../platform/os/process');
 const { assertSafeCliArgs, cliArgv } = require('./policies');
 
 const CLI_TIMEOUT_MS = 180000;
@@ -55,14 +56,11 @@ function runCli({ target, args, opts, registryOrigin, logger }) {
         const argvPrefix = target.runtime ? [target.bin] : [];
         child = spawn.piped(argv0, [...argvPrefix, ...cliArgs, ...args], { env, detached: true });
       } catch (e) { return settle({ ok: false, error: e.message }); }
-      // 整树终止（POSIX 进程组；Windows 退化为单进程，与平台能力声明一致）
+      // 整树终止（POSIX 进程组；Windows 经 taskkill /T /F，两平台语义等价）
       const killTree = (sig) => {
-        if (!child) return;
-        try {
-          // 能力查询而非自行判断 platform：进程组语义只在支持的平台可用。
-          if (matrix.supportsProcessGroup() && child.pid) process.kill(-child.pid, sig);
-          else child.kill(sig);
-        } catch { try { child.kill(sig); } catch {} }
+        if (!child || !child.pid) return;
+        // ownGroup：detached 子进程必为本组组长，故组信号安全（判据见 platform/os/process）。
+        try { procOS.killTree(child.pid, sig, () => {}, { ownGroup: true }); } catch { /* 尽力而为 */ }
       };
       timer = setTimeout(() => {
         killTree('SIGTERM');

@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 'use strict';
 
-// ═══════════════════════════════════════════════════════════════════════════
-// 第十三轮续：frpc 下载必须校验完整性（2026-09-13 P1 安全）
+// ---------------------------------------------------------------------------
+// 第十三轮续：frpc 下载必须校验完整性
 //
 // ## 缺陷（失效模式 b）
 //
@@ -16,15 +16,15 @@
 //
 // 校验和从**官方 GitHub 主机直连**取得（frp_<ver>_checksums.txt），**不经镜像前缀** ——
 // 于是「只控制镜像的攻击者」无法同时伪造校验和。
-// A2（2026-09-19 审计修复）：语义由「取不到降级放行」翻转为 **fail-closed** ——
+// 语义由「取不到降级放行」翻转为 **fail-closed** ——
 // 取不到期望校验和即拒绝安装（可重试）；一旦取得校验和，不匹配同样拒绝该镜像。
 //
 // ## 门禁（行为级：桩掉网络层，断言拒绝/放行语义）
-//   A 校验和不匹配 → install 必须失败且**不落盘** frpc
-//   B 校验和匹配 → install 成功
-//   C 取不到校验和（官方不可达 / 校验表缺项）→ **拒绝安装**且**不落盘**（A2 fail-closed），不静默
+//   A 校验和不匹配 -> install 必须失败且**不落盘** frpc
+//   B 校验和匹配 -> install 成功
+//   C 取不到校验和（官方不可达 / 校验表缺项）-> **拒绝安装**且**不落盘**（A2 fail-closed），不静默
 //   D 校验和取自官方主机（不经镜像前缀）——结构断言，防信任根被换回镜像
-// ═══════════════════════════════════════════════════════════════════════════
+// ---------------------------------------------------------------------------
 
 const fs = require('node:fs');
 const os = require('node:os');
@@ -76,13 +76,13 @@ function makeTarGz(frpcBody) {
       dir: path.join(TMP, 's-' + Math.random().toString(36).slice(2)),
       logger: { warn: (m) => warns.push(String(m)), info() {}, error() {} },
     });
-    // ⚠ 2026-09-13 修复（P1）：覆盖 frpTag 后**必须同步重算 binPath**。
-    //   构造函数按**真实平台**算 binPath（Windows → bin/frpc.exe，其余 → bin/frpc），
+    //  复（P1）：覆盖 frpTag 后**必须同步重算 binPath**。
+    //   构造函数按**真实平台**算 binPath（Windows -> bin/frpc.exe，其余 -> bin/frpc），
     //   而本测试把 frpTag 固定为 linux/amd64（exe:false）以避开平台差异 ——
     //   但若不同步重算，Windows 上就会出现：
     //     解包写入 bin/frpc（按覆盖后的 exe:false）
     //     断言检查 bin/frpc.exe（仍是构造函数按 win32 算出的路径）
-    //   → 「frpc not found in archive (linux_amd64)」——
+    //   -> 「frpc not found in archive (linux_amd64)」——
     //     这是**测试夹具的缺陷**，不是产品问题（产品侧两者同源）。
     //   修法：与构造函数**同一表达式**重算 binPath，保证两侧始终一致。
     mgr.frpTag = { os: 'linux', arch: 'amd64', tag: 'linux_amd64', exe: false };
@@ -134,7 +134,7 @@ function makeTarGz(frpcBody) {
       warns.some((w) => /校验和失败|sha256/.test(w)), JSON.stringify(warns).slice(0, 120));
   }
   {
-    // C2 官方校验表可达但缺该 asset 行 → expectedSha256 返回 null，同样必须拒绝
+    // C2 官方校验表可达但缺该 asset 行 -> expectedSha256 返回 null，同样必须拒绝
     const other = 'a'.repeat(64) + '  frp_0.61.1_windows_arm64.tar.gz\n';
     const { mgr } = mk(other, goodTgz);
     const r = await mgr.install(() => {});
@@ -142,7 +142,7 @@ function makeTarGz(frpcBody) {
     check('C2 **未落盘** frpc', !fs.existsSync(mgr.binPath), String(fs.existsSync(mgr.binPath)));
   }
   {
-    // C3 离线一次不得永久化：先失败（不可达），再恢复可得校验和 → 必须能装成功
+    // C3 离线一次不得永久化：先失败（不可达），再恢复可得校验和 -> 必须能装成功
     const { mgr } = mk(null, goodTgz);
     const r1 = await mgr.install(() => {});
     check('C3 首次（不可达）失败', r1.ok === false, JSON.stringify(r1).slice(0, 80));
@@ -158,7 +158,7 @@ function makeTarGz(frpcBody) {
   {
     const src = fs.readFileSync(path.join(ROOT, 'src', 'domains', 'relay', 'frp-install.js'), 'utf8');
     const code = src.split('\n').filter((l) => !l.trim().startsWith('//')).join('\n');
-    //   ⚠ 必须**按行定界**断言，不能用无锚点的子串匹配 ——
+    //    必须**按行定界**断言，不能用无锚点的子串匹配 ——
     //     前者在「MIRROR_PREFIXES[0] + 'https://github.com/...'」下仍会命中（假绿，已实测）。
     const sumLine = code.split('\n').find((l) => l.indexOf('_checksums.txt') >= 0 && l.indexOf('const url') >= 0) || '';
     check('D 校验表 URL 表达式存在', sumLine.length > 0, sumLine.trim().slice(0, 80));

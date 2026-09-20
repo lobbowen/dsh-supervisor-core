@@ -1,8 +1,8 @@
 /**
  * Supervisor App（dsh-supervisor 控制面板宿主）
  * ============================================================================
- * 以 supervisor HTTP API（同源 :3100）为后端的 7 域管理面板，完全按新 UI 标准：
- *   AppShell(web) → AppLayout(sidebar) → Toolbar(页标题) → ContentArea(页) → StatusBar
+ * 以 supervisor HTTP API（同源:3100）为后端的 7 域管理面板，完全按新 UI 标准：
+ *   AppShell(web) -> AppLayout(sidebar) -> Toolbar(页标题) -> ContentArea(页) -> StatusBar
  * 数据：supervisorStore 统一 2s 轮询快照；页面只读消费 + 动作经 supervisorApi。
  * 说明：这是 dsh-supervisor 的"管家面板"；skiff 清理工具 App 是另一个独立宿主，
  *       两者各自挂载（main.tsx 按宿主/路由选择）。
@@ -47,11 +47,11 @@ export function SupervisorApp() {
   const [routerActions, setRouterActions] = useState<{ onAdd: () => void; onDelete: () => void } | null>(null);
   const { snap } = useSupervisorData();
   const online = snap.online;
-  const authFailed = snap.authFailed; // B8：401 鉴权被拒 ≠ 离线，呈现可操作错误
+  const authFailed = snap.authFailed; // 401 鉴权被拒 != 离线，呈现可操作错误
   const status = snap.status;
 
   // 轮询生命周期与宿主绑定（R3 修复）：start 只在装配层调用一次，卸载即 stop；
-  // 兼容 React 19 StrictMode 开发双挂载（start→stop→start 幂等）。
+  // 兼容 React 19 StrictMode 开发双挂载（start->stop->start 幂等）。
   useEffect(() => {
     supervisorStore.start();
     return () => supervisorStore.stop();
@@ -72,8 +72,8 @@ export function SupervisorApp() {
   const sessionState = status?.sessionState;
   const running = Boolean(status?.dshPid);
 
-  // 共用壳架构（2026-09-07 定稿）：窗口栏唯一由壳框架 shell.html 提供；
-  // 面板无论浏览器 :3100 还是壳内 iframe 都统一 web 铺满纯内容（不再自绘窗口栏）。
+  // 共用壳架构：窗口栏唯一由壳框架 shell.html 提供；
+  // 面板无论浏览器:3100 还是壳内 iframe 都统一 web 铺满纯内容（不再自绘窗口栏）。
   return (
     <AppShell mode="classic">
       <AppLayout
@@ -97,7 +97,7 @@ export function SupervisorApp() {
                 </Button>
               ) : view === "router" && routerActions ? (
                 <>
-                  {/* 添加/删除供应商: 小屏(≤640px)隐藏——供应商管理经卡片内操作(2026-09 用户定稿) */}
+                  {/* 添加/删除供应商: 小屏(<=640px)隐藏——供应商管理经卡片内操作(用户定稿) */}
                   <Button onClick={routerActions.onAdd} variant="outline" className="hidden md:inline-flex">
                     <Plus className="size-4" />添加供应商
                   </Button>
@@ -143,9 +143,9 @@ export function SupervisorApp() {
             }
             right={
               // 安装标识（UUID）显示在**运行状态之前**（用户确认的落点）：
-              //   灰度名单按它匹配（RELEASE-CHANNEL-CONTRACT §5.2），用户需要能直接读到并报给我们。
+              //   灰度名单按它匹配（RELEASE-CHANNEL-CONTRACT），用户需要能直接读到并报给我们。
               //   故**完整显示、不截断**，并支持点击复制，省去手工选中一段长 UUID。
-              // ⚠ 外层 StatusBar 的 right 容器是 overflow-hidden + text-ellipsis（通用框架行为，
+              //  外层 StatusBar 的 right 容器是 overflow-hidden + text-ellipsis（通用框架行为，
               //   所有页面共用，不应为一个页面改它）。故这里让 **UUID 自身 shrink-0 不可压缩**，
               //   否则中等窗口宽度下它会被截断成 "550e8400-e29b-41d4-a716-…"（用户要求完整显示）。
               //   代价：极窄窗口下是**运行状态文字**被压缩（它是可读摘要，且缩窄时整体转为纵向布局）。
@@ -185,7 +185,7 @@ export function SupervisorApp() {
                   </button>
                 ) : null}
                 {
-                  // 会话生命周期优先（契约 §3，INV-S4）：stopping/stopped 时明确表达「退出中/已退出」——
+                  // 会话生命周期优先（契约 ，INV-S4）：stopping/stopped 时明确表达「退出中/已退出」——
                   // 这是整个服务链的运行相位，比单看 main phase 更准确（退出中 main 可能已 STOPPED）。
                   sessionState === "stopping" ? (
                 <span className="inline-flex items-center gap-1.5 text-xs leading-tight text-muted-foreground">

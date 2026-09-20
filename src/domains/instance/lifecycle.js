@@ -54,14 +54,14 @@ function createLifecycle(deps) {
     try {
       const cmdArr = sandbox.effectiveCommand(instancesRoot, deps.dshBin, inst);
       if (!cmdArr || !cmdArr.length) return { ok: false, error: '实例未配置启动命令' };
-      // 执行边界复校（EXECUTION-CONTRACT §8.4）：effectiveCommand 对**用户显式 command** 原样返回，
+      // 执行边界复校（EXECUTION-CONTRACT）：effectiveCommand 对**用户显式 command** 原样返回，
       //   故在执行前用 realpath 归属复校收口「basename 改名绕过」与「伪包内路径」残留。
       //   允许位置 = 该实例安装根之下，或内核自己解析出的已知 DSH 入口（exec-path 单一事实源）；
       //   ENOENT/不可解析一律 fail-closed（否则「先提交、后由外部创建」可绕过）。
-      //   ⚠ **适用范围仅 sandbox**：§8 的 command 覆盖契约是沙箱实例的（值来自 POST /instances/add 的
+      //    **适用范围仅 sandbox**：的 command 覆盖契约是沙箱实例的（值来自 POST /instances/add 的
       //   请求体 = 真正的攻击面，api 侧另有 requireAbsoluteEntry 形态闸）；native/main 的命令来自
       //   **操作者配置文件 cfg.command**（如 ['node', <mock 绝对路径>, port]），不是 API 供给 ——
-      //   对配置文件做"执行边界复校"既不必要、也会误拒合法入口（P3-C 设计 §10.3 记「非 sandbox 域
+      //   对配置文件做"执行边界复校"既不必要、也会误拒合法入口（P3-C 设计 记「非 sandbox 域
       //   须单独定义」，此处即该定义：排除）。裸名（[node, 裸 dshBin]）另由判据本身放行。
       const boundary = inst.domain === 'sandbox'
         ? execPath.commandEntryViolation(cmdArr, {
@@ -129,7 +129,7 @@ function createLifecycle(deps) {
     if (!isSandboxSupported()) return { ok: false, error: '当前平台不支持沙箱实例（需 Linux + systemd-run；能力矩阵见 GET /env/status 的 capabilities.multiInstance）' };
     const unit = 'dsh-web@' + inst.id;
     let stopped;
-    try { stopped = service.stopUnit(unit, { timeoutMs: 20000 }); } // RC4：有界，防 dbus 挂起冻结守卫
+    try { stopped = service.stopUnit(unit, { timeoutMs: 20000 }); } // 有界，防 dbus 挂起冻结守卫
     catch (e) { stopped = false; logger.warn && logger.warn('[' + inst.id + '] 停止单元 ' + unit + ' 异常: ' + (e && e.message)); }
     if (stopped === false) {
       // 停止未确认：如实报错并保持原相位，绝不谎报已停止（否则 supervise 不再自愈、用户误以为已停）。
@@ -208,7 +208,7 @@ function createLifecycle(deps) {
           break;
         }
         case 'BACKOFF': { // 到期则重试启动；失败继续退避（自愈）
-          // B15（AUDIT-2026-09-19 §B-15）：退避/失败同样是「自动拉起」——守护开关关掉后
+          // 退避/失败同样是「自动拉起」——守护开关关掉后
           // 仍按 BACKOFF 无限重试，破「停就停」红线。未守护：落 STOPPED，等用户显式 start。
           if (!guarded) { stateMachine.setStopped(stateDeps(), inst); break; }
           if (state.backoffUntil && now >= state.backoffUntil) {
@@ -221,7 +221,7 @@ function createLifecycle(deps) {
         case 'FAILED': {
           // 安装任务登记失败等会把进行中的安装误判 FAILED；若 npm 实际已成功（installOk===true），
           // 必须自愈拉起，否则永久卡死。重试超限后不再自动拉起，交用户处理。
-          // B15：同上，未守护实例不做任何自愈拉起（installOk 兜底也归守护语义）。
+          // 同上，未守护实例不做任何自愈拉起（installOk 兜底也归守护语义）。
           if (!guarded) break;
           if (state.installOk === true && !st.running && !/重试超限/.test(state.lastError || '')) {
             const r = _systemdStart(inst);

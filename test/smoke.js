@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 'use strict';
 
-// 冒烟测试：按设计文档 §12 的核心用例验证 dsh-supervisor（全部针对 mock 目标，不触碰真实 DSH）。
+// 冒烟测试：按设计文档第 12 节的核心用例验证 dsh-supervisor（全部针对 mock 目标，不触碰真实 DSH）。
 // 用法: node test/smoke.js
 
 const fs = require('node:fs');
@@ -118,7 +118,7 @@ async function killDaemon(d) {
 
 // ---- 场景 ----
 async function main() {
-  // 2026-09: 守护跟着开关走(默认关,守护开才自动拉起)
+  //: 守护跟着开关走(默认关,守护开才自动拉起)
   try {
     fs.writeFileSync(path.join(TMP, 'dsh-main.json'), JSON.stringify({ guardian: true }));
   } catch (e) {}
@@ -147,7 +147,7 @@ async function main() {
   try {
     process.kill(pid2, 'SIGSTOP');
   } catch {}
-  // 当前设计只做端口+pid 判定(已删HTTP探测)：进程虽被 SIGSTOP 挂起，但端口仍监听、pid 仍存活 → 视为健康，不重启
+  // 当前设计只做端口+pid 判定(已删HTTP探测)：进程虽被 SIGSTOP 挂起，但端口仍监听、pid 仍存活 -> 视为健康，不重启
   await sleep(1200);
   s = await api(3900, 'GET', '/status');
   check('挂起进程不误重启(仍运行同一 pid)', s && s.phase === 'RUNNING' && s.dshPid === pid2, JSON.stringify(s));
@@ -192,7 +192,7 @@ async function main() {
   check('manual_restart_requested 事件存在', ev.some((e) => e.type === 'manual_restart_requested'));
   check('restartCount 未被手动重启计入', s.restartCount === rcBefore, `before=${rcBefore} after=${s.restartCount}`);
   await killDaemon(d1);
-  // 场景卫生：守卫退出不动目标（守护语义）→ 显式清掉本场景最后的目标进程，防遗留 mock 在下一场景
+  // 场景卫生：守卫退出不动目标（守护语义）-> 显式清掉本场景最后的目标进程，防遗留 mock 在下一场景
   // 被 re-derive/adopt 误接管（S7 崩溃循环与 S1 目标端口曾因该遗留偶发串扰）。
   if (s && s.dshPid) { try { process.kill(s.dshPid, 'SIGKILL'); } catch {} }
 
@@ -230,7 +230,7 @@ async function main() {
   const occupier = http.createServer((req, res) => { res.writeHead(500); res.end('no'); });
   await new Promise((r) => occupier.listen(3961, '127.0.0.1', r));
   const d9 = startDaemon(makeConfig(3960, 3961));
-  // ⚠ 不要用固定 sleep：守卫完成「探测目标端口 → 判定被占」的耗时随 runner 负载波动，
+  //  不要用固定 sleep：守卫完成「探测目标端口 -> 判定被占」的耗时随 runner 负载波动，
   //   固定的 3s 在较慢的 runner 上不够（实测 Windows CI #24 只有 guard_started/api_listening，
   //   于是偶发失败）。改为轮询等待目标事件，超时再判定。
   ev = await getEvents(3960);
@@ -310,7 +310,7 @@ async function main() {
   try { ext12.kill('SIGKILL'); } catch {}
 
   // 清理残留 mock：先 SIGCONT（S3 场景 SIGSTOP 过的挂起进程不响应 SIGTERM，pkill 默认信号会漏杀
-  // → 残留 mock 占住 3900-3991 端口段，下一轮链序的 S1 会 adopt 而非 spawn，导致偶发 FAIL）；
+  // -> 残留 mock 占住 3900-3991 端口段，下一轮链序的 S1 会 adopt 而非 spawn，导致偶发 FAIL）；
   // 再用 SIGKILL（对任意态进程有效，含 T 态）。
   try {
     const { execSync } = require('node:child_process');

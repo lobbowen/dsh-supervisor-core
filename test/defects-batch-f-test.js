@@ -1,19 +1,19 @@
 #!/usr/bin/env node
 'use strict';
 
-// ═══════════════════════════════════════════════════════════════════════════
-// 批 F 缺陷回归（K6 / K7 / K9 / K10，2026-09-11）
+// ---------------------------------------------------------------------------
+// 批 F 缺陷回归
 //
 // 四个缺陷各自独立，但**共享同一根因族**：
 //   「注释声称的行为」与「代码实际行为」不一致，且不一致处**静默**。
 //
 //   K6  identity.js 声称有 Host 校验，实现里从未读取 req.headers.host
-//   K7  ports.js 用 process.env.HOME || '/tmp'，Windows 无 HOME → 状态文件分裂
+//   K7  ports.js 用 process.env.HOME || '/tmp'，Windows 无 HOME -> 状态文件分裂
 //   K9  正则 [^s] 写成字符类（意图 [^\s]），静默截断/跨行
-//   K10 卸载失败仍无条件删 manifest → 残留不可追
+//   K10 卸载失败仍无条件删 manifest -> 残留不可追
 //
 // 本测试逐条把「声称」变成「断言」。
-// ═══════════════════════════════════════════════════════════════════════════
+// ---------------------------------------------------------------------------
 
 const fs = require('node:fs');
 const path = require('node:path');
@@ -24,7 +24,7 @@ const TEST_PORT = safePort('defects-batch-f', 0);
 const results = [];
 const check = (n, c, x) => { results.push(!!c); console.log((c ? 'PASS' : 'FAIL') + ' ' + n + (x !== undefined && x !== '' ? '  ← ' + x : '')); };
 
-// ── K6 Origin/Host 双闸 ──
+// -- K6 Origin/Host 双闸 --
 console.log('== K6 CSRF 深化校验（Host + Origin）==');
 {
   const apiPath = path.join(ROOT, 'src', 'api', 'index.js');
@@ -37,10 +37,10 @@ console.log('== K6 CSRF 深化校验（Host + Origin）==');
     const P = TEST_PORT;              // 测试端口（安全段，经 safePort 取）
     const R = TEST_PORT + 1;          // 另一个端口（用于「异端口」用例）
     const evil = `http://evil.com:${P}`;
-    // 闸 ①：Host 必须是回环名（防 DNS-rebinding）
+    // 闸 1)：Host 必须是回环名（防 DNS-rebinding）
     check('K6-a 恶意 Host（evil.com）被拒',
       originAllowed(mk({ host: 'evil.com' }), P) === false, 'evil.com');
-    // C-1 批 4：Host 闸 fail-closed —— 缺 Host 不再整块跳过（旧行为=两闸同时归零）。
+    // Host 闸 fail-closed —— 缺 Host 不再整块跳过（旧行为=两闸同时归零）。
     check('K6-a 缺 Host 被拒（C-1 fail-closed）', originAllowed(mk({}), P) === false, 'no-host');
     check('K6-a 回环 Host（127.0.0.1:port）被接受',
       originAllowed(mk({ host: `127.0.0.1:${P}` }), P) === true);
@@ -48,7 +48,7 @@ console.log('== K6 CSRF 深化校验（Host + Origin）==');
       originAllowed(mk({ host: `[::1]:${P}` }), P) === true);
     check('K6-a localhost:port 被接受',
       originAllowed(mk({ host: `localhost:${P}` }), P) === true);
-    // 闸 ②：Origin（以下桩一律带合法 Host —— C-1 后缺 Host 先被闸 1 拒）
+    // 闸 2)：Origin（以下桩一律带合法 Host —— C-1 后缺 Host 先被闸 1 拒）
     check('K6-b 恶意 Origin（http://evil.com:同端口）被拒（旧实现只比端口 → 会放行）',
       originAllowed(mk({ host: `127.0.0.1:${P}`, origin: evil }), P) === false, evil);
     check('K6-b 回环 Origin + 同端口被接受',
@@ -71,10 +71,10 @@ console.log('== K6 CSRF 深化校验（Host + Origin）==');
   check('K6 接受壳 origin（tauri://）', /tauri:/.test(src), 'tauri:');
 }
 
-// ── K7 ports.js 不用 HOME 兜底 ──
+// -- K7 ports.js 不用 HOME 兜底 --
 console.log('== K7 端口注册表路径（三平台一致）==');
 {
-  // 2026-09-16（§4.5 测试指针同步）：ports/index.js 已缩为 20 行门面，
+  // （测试指针同步）：ports/index.js 已缩为 20 行门面，
   //   路径解析实现在同层 pool.js/core.js —— 改为读取整个 ports 目录（剥注释），覆盖面不缩小。
   const dir = path.join(ROOT, 'src', 'platform', 'service', 'ports');
   const code = fs.readdirSync(dir)
@@ -87,21 +87,21 @@ console.log('== K7 端口注册表路径（三平台一致）==');
     !/process\.env\.HOME/.test(code), 'HOME');
   check('K7 不再把 /tmp 作为兜底（状态文件会与 state.json 分裂）',
     !code.includes("'/tmp'"), '/tmp');
-  // 2026-09-15：路径改由**产品状态根**（src/platform/service/state-root.js）给出 ——
+  //路径改由**产品状态根**（src/platform/service/state-root.js）给出 ——
   //   仍是三平台正确来源，且与 state.json 同域（不分裂）；不再各自 os.homedir()。
-  // ⚠ 2026-09-16 Phase 1：ports 上游化到 platform/service/ports/ 后，其**同层**引用变为 '../state-root'
+  //  Phase 1：ports 上游化到 platform/service/ports/ 后，其**同层**引用变为 '../state-root'
   //   （原 '.../platform/service/state-root' 的跨层写法不存在了）——判据随之放宽为"经 state-root 的 supervisorDir()"。
   check('K7 经产品状态根解析端口文件（state-root.supervisorDir）',
     /state-root/.test(code) && /supervisorDir\(\)/.test(code), 'state-root');
 }
 
-// ── K9 版本解析正则 ──
+// -- K9 版本解析正则 --
 console.log('== K9 版本解析正则 ==');
 {
-  // ⚠ 2026-09-16 步骤7：版本解析正则已从 settings-view.js 拆到 app/settings/versions.js。
+  //  步骤7：版本解析正则已从 settings-view.js 拆到 app/settings/versions.js。
   const p = path.join(ROOT, 'src', 'app', 'settings', 'versions.js');
   const srcAll = fs.readFileSync(p, 'utf8');
-  // ⚠ 必须**先剥离注释**再断言：修复说明里会引用错误形态 [^s] 作对照，
+  //  必须**先剥离注释**再断言：修复说明里会引用错误形态 [^s] 作对照，
   //   若不剥注释，正确的修复反而会被自己的说明文字判为「仍有误用」。
   const src = srcAll.split(String.fromCharCode(10))
     .filter((l) => !/^\s*\/\//.test(l)).join(String.fromCharCode(10));
@@ -116,10 +116,10 @@ console.log('== K9 版本解析正则 ==');
     JSON.stringify(re.exec('dsh-supervisor v1.0.0\nEXTRA')?.[1]));
 }
 
-// ── K10 卸载失败保留 manifest ──
+// -- K10 卸载失败保留 manifest --
 console.log('== K10 卸载失败时保留 manifest ==');
 {
-  // ⚠ R3-A（2026-09-17）：卸载编排已从 installer.js 下沉到 app/native/ops.js（DF-1/DF-2）。
+  //  R3-A：卸载编排已从 installer.js 下沉到 app/native/ops.js（DF-1/DF-2）。
   //   不变量不变：rm(manifestFile) 必须在 exitCode===0 成功分支内；断言随之改址。
   const p = path.join(ROOT, 'src', 'app', 'native', 'ops.js');
   const src = fs.readFileSync(p, 'utf8');
@@ -137,13 +137,13 @@ console.log('== K10 卸载失败时保留 manifest ==');
   }
 }
 
-// ── 批 4（AUDIT-2026-09-19 §C）：C-3/C-4/C-5/C-6/C-7/C-8 纯函数级逐例断言 ──
-// 判据纪律（§G-6-9）：多子句一律拆逐例 + 判据值回显。
+// --：C-3/C-4/C-5/C-6/C-7/C-8 纯函数级逐例断言 --
+// 判据纪律：多子句一律拆逐例 + 判据值回显。
 console.log('== 批4 C-3 remoteTokenStrength（shared/credential）/ backoffGate（relay/core）==');
 {
   const core = require(path.join(ROOT, 'src', 'domains', 'relay', 'core.js'));
   // 强度闸的实现住在 shared/credential（L0 纯判定）：三个消费点跨 relay/instance 两域 + app 编排层，
-  //   放在任一域内都会逼出 domains 间跨域边（DS-G1，第 4 批 run 35489272772 实抓，见 §H-7-17）。
+  //   放在任一域内都会逼出 domains 间跨域边。
   const cred = require(path.join(ROOT, 'src', 'shared', 'credential.js'));
   const cases = [
     ['empty-string', '', false, 'empty'],
@@ -169,10 +169,10 @@ console.log('== 批4 C-3 remoteTokenStrength（shared/credential）/ backoffGate
     'ok');
   const bgCases = [
     ['低于阈值', { failCount: 9, firstAt: 1000, now: 5000 }, null],
-    // ⚠ 勘误（第 4 批 run 35485774896：五个 job 同点红，与平台无关）：原期望 59000 是**把 5000 当成了
-    //   已耗时长**，而语义是 `now`——真实耗时 = now - firstAt = 5000 - 1000 = 4000，
-    //   剩余 = lockMs(60000) - 4000 = **56000**。产品算得对（回显即 56000），是夹具的算术错。
-    //   补一条 elapsed=0 的配对例：它把「剩余窗口」与「已耗时长」彻底分开，两者再混用必红其一。
+    //   入参语义是 `now` 而非已耗时长：真实耗时 = now - firstAt = 5000 - 1000 = 4000，
+    //   剩余 = lockMs(60000) - 4000 = 56000（把 `now` 当已耗时长会算出 59000 这种错期望）。
+    //   夹具的账必须与产品同定义，判据回显里带着算式两端。
+    //   配一条 elapsed=0 的对照例：它把「剩余窗口」与「已耗时长」彻底分开，两者再混用必红其一。
     ['达阈值窗口内（已耗 4000ms）', { failCount: 10, firstAt: 1000, now: 5000 }, 56000],
     ['达阈值窗口起点（已耗 0ms → 整锁时长）', { failCount: 10, firstAt: 1000, now: 1000 }, 60000],
     ['超窗重置', { failCount: 10, firstAt: 1000, now: 61001 }, null],
@@ -189,7 +189,7 @@ console.log('== 批4 C-3 remoteTokenStrength（shared/credential）/ backoffGate
   check('C-3 实例域写入口引用 remoteTokenStrength', /remoteTokenStrength\(/.test(opsSrc), '有');
   const actSrc = fs.readFileSync(path.join(ROOT, 'src', 'app', 'domain-actions', 'main.js'), 'utf8');
   check('C-3 main 写入口引用 remoteTokenStrength', /remoteTokenStrength\(/.test(actSrc), '有');
-  // 归属判据（run 35489272772 的 DS-G1 红固化成门禁）：单一实现 + 三个消费点全部经 shared 取用。
+  // 归属判据：单一实现 + 三个消费点全部经 shared 取用。
   const credSrc = fs.readFileSync(path.join(ROOT, 'src', 'shared', 'credential.js'), 'utf8');
   check('C-3 强度闸实现在 shared/credential 且已导出',
     /^function remoteTokenStrength\(/m.test(credSrc) && /remoteTokenStrength/.test(credSrc.split('module.exports')[1] || ''),
@@ -234,7 +234,7 @@ console.log('== 批4 C-5 有界读取（Buffer 累积不切碎多字节）==');
     setTimeout(() => finish({ code: '<<timeout>>' }), 2000);
   });
   (async () => {
-    const b = Buffer.from('你好', 'utf8'); // 6 字节，在 2 字节处切断 → 半字符跨 chunk
+    const b = Buffer.from('你好', 'utf8'); // 6 字节，在 2 字节处切断 -> 半字符跨 chunk
     const r2 = await run([b.subarray(0, 2), b.subarray(2)], 100);
     check('C-5 collectBody 跨 chunk 多字节不损坏', r2.body === '你好', JSON.stringify(r2.body));
     const r3 = await run([Buffer.from('x'.repeat(50)), Buffer.from('y'.repeat(50))], 60);

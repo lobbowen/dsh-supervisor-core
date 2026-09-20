@@ -6,8 +6,8 @@
 // （rollback -> canary -> latest -> versions 最高兜底（我们的包排除 -BETA.）-> null）；
 // 第三方包（DSH 本体、代理/插件包）
 // 不采纳其 rollback/canary —— 他人的 dist-tag 策略不受我们控制，套用会把别人的 tag
-// 误当我们的发布纪律。但选版同样 **latest 优先**（条 7，AUDIT-2026-09-19 批 4 C）：
-// 旧「dist-tags ∪ versions 全量最高」会把他人杂 tag（next/alpha/旧 beta）当候选而装到
+// 误当我们的发布纪律。但选版同样 **latest 优先**：
+// 旧「dist-tags 并 versions 全量最高」会把他人杂 tag（next/alpha/旧 beta）当候选而装到
 // 未验证版；latest 缺失/非法才回落 versions 最高。
 // 收敛点：fetchNpmLatest（install.js）只负责拉元数据并
 // 调本函数，选版算法只此一份，禁止在任何调用点再写第二套。
@@ -23,9 +23,9 @@ function isOurReleasePackage(pkg) {
 }
 
 /**
- * A3-b（AUDIT-2026-09-19）：rollback 防降级下限。低于此版本的 rollback tag 一律忽略。
+ * rollback 防降级下限。低于此版本的 rollback tag 一律忽略。
  * 背景：持有发布令牌即可 `npm dist-tag add <pkg>@<任意旧版> rollback`，而客户端原本
- * 无条件服从（RC-2「最高优先级」）→ 一条 tag 写入即可把全员定向降级到已知漏洞旧版。
+ * 无条件服从（RC-2「最高优先级」）-> 一条 tag 写入即可把全员定向降级到已知漏洞旧版。
  * 下限 = 本次审计时点的已发布安全基线；每次携带安全修复的发布应同步上调
  * （发布纪律，见 RELEASE-CHANNEL-CONTRACT.md RC-7）。
  */
@@ -52,8 +52,8 @@ function rollbackAllowed(version, meta, o) {
   return true;
 }
 
-/** 我们的测试版形态（契约 §1：`-BETA.n` → tag beta）。
- *  发布条 4（AUDIT-2026-09-19 第 4 批）：④ 兼容兜底不得把测试版当正式版候选。 */
+/** 我们的测试版形态（`-BETA.n` -> tag beta）。
+ *  发布条 4：4) 兼容兜底不得把测试版当正式版候选。 */
 function isOurBetaRelease(v) { return /-BETA\./.test(String(v)); }
 
 /** 在候选版本集合里取最高合法版本（semverCompare 判定）；空集返回 null。 */
@@ -69,14 +69,14 @@ function highestVersion(candidates, isValid) {
 /**
  * 选版算法（契约第3节冻结）——唯一实现。
  *
- *   1) dist-tags.rollback 合法且通过防降级下限核验（RC-7）→ 返回它（回退，最高优先级）
+ *   1) dist-tags.rollback 合法且通过防降级下限核验（RC-7）-> 返回它（回退，最高优先级）
  *   2) 灰度名单内且 dist-tags.canary 合法 -> 返回它（灰度）
  *   3) dist-tags.latest 合法 -> 返回它（正式，跟随我们的发布）
  *   4) 否则 versions 中最高合法版本（兼容兜底；**排除我们的 -BETA. 测试版**，发布条 4）
  *   5) 以上皆无（含排除后为空）-> null（明确失败，绝不猜，契约 RC-5）
  *
- * 第三方包（isOurs !== true）跳过 1)/2)，按 3) latest 优先 → 4) versions 最高 → 5) null
- * （条 7 起；旧语义「dist-tags ∪ versions 全量最高」已废）。
+ * 第三方包（isOurs !== true）跳过 1)/2)，按 3) latest 优先 -> 4) versions 最高 -> 5) null
+ * （条 7 起；旧语义「dist-tags 并 versions 全量最高」已废）。
  *
  * @param {object} meta npm registry 元数据：{ 'dist-tags': {...}, versions: {...} }
  * @param {object} opts
@@ -113,13 +113,13 @@ function pickReleaseVersion(meta, opts) {
     //    镜像元数据丢掉 dist-tags 是常见而合法的缺失形态，它要恢复的事实是「最新正式版」，
     //    而不是「最新发布的任何东西」—— 让 -BETA. 进候选等于把通道控制交给镜像
     //    （不带 latest tag 的一次响应即可把全员静默升到测试版）。
-    // 5) 只剩测试版或皆无 → null（RC-5 明确失败，绝不猜）。
+    // 5) 只剩测试版或皆无 -> null（RC-5 明确失败，绝不猜）。
     return highestVersion(versionKeys.filter((v) => !isOurBetaRelease(v)), isValid);
   }
 
   // 第三方包（条 7）：不套 rollback/canary，但同样 latest 优先 —— 旧「全量最高」把他人杂 tag
   // 当候选（next/alpha/被遗忘的旧 beta 都进池），会把未验证版当最新装。latest 缺失/非法
-  // 才回落 versions 最高；两路都无 → null（RC-5）。
+  // 才回落 versions 最高；两路都无 -> null（RC-5）。
   const thirdLatest = validTag(tags.latest);
   if (thirdLatest) return thirdLatest;
   return highestVersion(versionKeys, isValid);

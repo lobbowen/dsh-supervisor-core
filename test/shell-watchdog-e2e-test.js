@@ -1,23 +1,23 @@
 #!/usr/bin/env node
 'use strict';
 
-// ═══════════════════════════════════════════════════════════════════════════
-// 桌面壳看护 —— **端到端**验证（2026-09-11）
+// ---------------------------------------------------------------------------
+// 桌面壳看护 —— **端到端**验证
 //
 // 与 shell-watchdog-test.js 的分工：
-//   · shell-watchdog-test.js         —— 纯决策逻辑（注入 mock，毫秒级、离线）
-//   · 本测试                         —— **真实 Supervisor 进程 + 真实 spawn**，
-//                                        证明「壳缺失 → 真的被拉起」这条链是通的
+//   - shell-watchdog-test.js         —— 纯决策逻辑（注入 mock，毫秒级、离线）
+//   - 本测试                         —— **真实 Supervisor 进程 + 真实 spawn**，
+//                                        证明「壳缺失 -> 真的被拉起」这条链是通的
 //
 // 为什么必须有端到端：单元测试能证明「决策正确」，但不能证明「接进守卫后真的会拉起」——
 //   本项目已多次出现「逻辑对、接线断」的失效（能力矩阵/registry 等）。
 //
 // 隔离手段：
-//   · 沙箱 HOME（守卫的状态/identity/日志全在其中）；
-//   · 假壳脚本写标记文件（拉起即证明）；
-//   · **唯一进程名** —— 本机可能真有壳在跑，用不存在的名字确保进入「缺失」分支；
-//   · 端口取自 test/_ports.js 安全段（避开 OS ephemeral 与生产池）。
-// ═══════════════════════════════════════════════════════════════════════════
+//   - 沙箱 HOME（守卫的状态/identity/日志全在其中）；
+//   - 假壳脚本写标记文件（拉起即证明）；
+//   - **唯一进程名** —— 本机可能真有壳在跑，用不存在的名字确保进入「缺失」分支；
+//   - 端口取自 test/_ports.js 安全段（避开 OS ephemeral 与生产池）。
+// ---------------------------------------------------------------------------
 
 const fs = require('node:fs');
 const os = require('node:os');
@@ -29,7 +29,7 @@ const results = [];
 const check = (n, c, x) => { results.push(!!c); console.log((c ? 'PASS' : 'FAIL') + ' ' + n + (x !== undefined && x !== '' ? '  ← ' + x : '')); };
 
 const HOME = fs.mkdtempSync(path.join(os.tmpdir(), 'wd-e2e-'));
-// 产品状态根隔离（独立于 DSH）：DSH_SUPERVISOR_HOME=HOME ⇒ <HOME>/{supervisor,shell}。
+// 产品状态根隔离（独立于 DSH）：DSH_SUPERVISOR_HOME=HOME => <HOME>/{supervisor,shell}。
 process.env.DSH_SUPERVISOR_HOME = HOME;
 const swDir = path.join(HOME, 'supervisor');
 const shDir = path.join(HOME, 'shell');
@@ -38,16 +38,16 @@ fs.mkdirSync(shDir, { recursive: true });
 
 // 假壳：被拉起即写标记，然后挂住（避免立刻退出被当成又缺失）。
 //
-// 2026-09-13（P1）：**必须让假壳是可被 spawn 的可执行**。
+// （P1）：**必须让假壳是可被 spawn 的可执行**。
 //   历史缺陷演进：
-//     ① 原实现是 '#!/bin/sh' + echo/sleep 的 POSIX 脚本 —— Windows 无法执行；
-//     ② 我改成 .cmd 批处理 —— 仍然失败：Node 的 child_process.spawn **不能直接
+//     1) 原实现是 '#!/bin/sh' + echo/sleep 的 POSIX 脚本 —— Windows 无法执行；
+//     2) 我改成 .cmd 批处理 —— 仍然失败：Node 的 child_process.spawn **不能直接
 //        spawn .cmd/.bat**（需要 shell:true），而产品用的是
-//        spawn(exe, [], {detached:true, stdio:'ignore'}) → 实测 CI 日志：
+//        spawn(exe, [], {detached:true, stdio:'ignore'}) -> 实测 CI 日志：
 //            [shell-watchdog] 拉起桌面壳失败：拉起新壳失败: spawn EINVAL
-//     ③ 最终方案（两平台都真的能跑）：
-//        · POSIX  ：可执行 shell 脚本（最贴近真实情形）；
-//        · Windows：**拷贝一份 node.exe 作为假壳**（真实 PE，可被 spawn），
+//     3) 最终方案（两平台都真的能跑）：
+//        - POSIX：可执行 shell 脚本（最贴近真实情形）；
+//        - Windows：**拷贝一份 node.exe 作为假壳**（真实 PE，可被 spawn），
 //          再用 NODE_OPTIONS=--require <hook> 让它在启动时写标记并挂住。
 //          hook 经 env 透传（产品 spawn 时传 env: process.env），已实测有效。
 //   两者行为一致：把 "launched <pid>" 追加到标记文件，并挂住约 20s（便于回收）。
@@ -94,7 +94,7 @@ const cfg = {
   upgradeLogFile: path.join(swDir, 'upgrade.log'),
   probeIntervalMs: 1000,
   updateCheckEnabled: false, notifyEnabled: false,
-  // 唯一进程名 → 恒定「壳缺失」；短宽限 → 验证快速
+  // 唯一进程名 -> 恒定「壳缺失」；短宽限 -> 验证快速
   shellProcPattern: 'dsh-supervisor-gui-watchdog-e2e-only',
   shellWatchdogIntervalMs: 1000,
   shellWatchdogGraceMs: 1500,
@@ -102,13 +102,13 @@ const cfg = {
 };
 
 process.env.HOME = HOME;
-// ⚠ 2026-09-13 修复（P1）：**必须同时设 USERPROFILE**。
+//  复（P1）：**必须同时设 USERPROFILE**。
 //   本仓既有约定（见 test/shell-safety-net-test.js:27 与 test/guard-update-test.js:172-180）：
 //   Node 的 os.homedir() 在 **Windows 上优先读 USERPROFILE**（Windows 没有 HOME）。
 //   而 shell.identity() 经 shellDir()（产品状态根；本夹具经 DSH_SUPERVISOR_HOME=HOME）定位 identity.json ——
-//   只设 HOME 时 Windows 读不到本夹具写入的 identity.json →
-//   watchdog 的 hasExe=false → 「无法定位壳可执行文件（identity.json 未记录 exe）」→
-//   **不拉起** → E2E-1/3/4/5 在 Windows 必红（CI 日志给出了该确切原因）。
+//   只设 HOME 时 Windows 读不到本夹具写入的 identity.json ->
+//   watchdog 的 hasExe=false -> 「无法定位壳可执行文件（identity.json 未记录 exe）」->
+//   **不拉起** -> E2E-1/3/4/5 在 Windows 必红（CI 日志给出了该确切原因）。
 //   这是夹具未遵循本仓既有约定，不是产品问题（产品用 os.homedir() 是正确的三平台来源）。
 process.env.USERPROFILE = HOME;
 
@@ -144,7 +144,7 @@ process.env.USERPROFILE = HOME;
     check('E2E 执行未抛异常', false, (e && e.stack) || String(e));
   } finally {
     try { if (sup) sup.shutdown(); } catch {}
-    // ⚠ 清掉被拉起的假壳：restartShell 以 detached+unref 方式 spawn，
+    //  清掉被拉起的假壳：restartShell 以 detached+unref 方式 spawn，
     //   不清会**遗留进程**（测试不应泄漏进程）。标记文件里记了它的 pid。
     try {
       if (fs.existsSync(marker)) {

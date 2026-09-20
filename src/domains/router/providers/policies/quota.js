@@ -86,7 +86,7 @@ function fmtClock(ms) {
   } catch { return ''; }
 }
 
-/** credits 受限判定（单源纯函数）：月度池=0 / 低余额提醒 / 汇总≤0 即受限。 */
+/** credits 受限判定（单源纯函数）：月度池=0 / 低余额提醒 / 汇总<=0 即受限。 */
 function isQuotaCreditsLow(q) {
   if (!q) return false;
   const c = q.credits;
@@ -168,7 +168,7 @@ function creditsResetDue(acc, now) {
 /** credits 冻结的正向恢复证据 b)：余额较冻结时刻回升（充值场景）。 */
 function creditsRefilled(acc) {
   if (!acc || !acc.limit || acc.limit.kind !== 'credits') return false;
-  // B18（AUDIT-2026-09-19）：基线缺失必须显式判空。Number(null)===0 是有限值，
+  // 基线缺失必须显式判空。Number(null)===0 是有限值，
   //   冻结时以 null 记录基线（freeze.js 无余额证据分支）会让任意正余额被判「已充值」，
   //   耗尽账号被重新选路 —— fail-closed：无基线只认证据 a)。
   const raw = acc.limit.creditsAt;

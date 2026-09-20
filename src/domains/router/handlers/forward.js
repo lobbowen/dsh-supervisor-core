@@ -73,7 +73,7 @@ function createForwarder(deps) {
     const attempts = Math.max((prov.accounts || []).length, 1);
     let stripInjectionRetried = false, injectedThisAttempt = false;
     const triedKeys = new Set();
-    // D-1（AUDIT-2026-09-19 第4批）：inflight.begin 之后任何跳出（writeThrough 抛错、
+    // inflight.begin 之后任何跳出（writeThrough 抛错、
     //   writeHead 抛错、await 中断、上游 reader 事件里抛错冒泡）都不许留在途计数。
     //   一次 begin 只结束一次：endAttempt 幂等，漏调由 finally 兜底。
     //   泄漏后果：instance-lifecycle 的 canStopInstance/stopInstance 与 proxy 的 pendingStop
@@ -144,7 +144,7 @@ function createForwarder(deps) {
           }
         }
         if (!isTimeout) {
-          // D-3（AUDIT-2026-09-19 第4批）：先停实例再清 pid。原先只置 pid=null，
+          // 先停实例再清 pid。原先只置 pid=null，
           //   而 stopInstance 的 kill 段以 inst.pid 为判据（instance-lifecycle.js:38）——
           //   先把 pid 抹掉等于让唯一 kill 路径恒不可达，本地反代进程留存并继续占端口。
           //   endAttempt() 已在上方执行，inflight 归零后 stopInstance 不会走 pendingStop 延后分支。
@@ -255,7 +255,7 @@ function createForwarder(deps) {
       if (events) events.append('router_stream_aborted', { key: maskKey(acc.key), model: meta.model, bytes });
       try { res.destroy(); } catch {}
     };
-    // #2：上游体透传统一走 handlers/upstream-body.js；非流式带总时长上限（流式长流不限）。
+    // 上游体透传统一走 handlers/upstream-body.js；非流式带总时长上限（流式长流不限）。
     const body = trackUpstreamBody(ur, {
       res, streamRequested: meta.streamRequested,
       onData: (c) => { bytes += c.length; tailText += c.toString('utf8'); if (tailText.length > 131072) tailText = tailText.slice(-65536); return res.write(c); },
@@ -263,13 +263,13 @@ function createForwarder(deps) {
       onAbort: () => finishAborted(),
     });
     res.on('close', () => {
-      // D-1：原先此处 `if (ur.readableEnded) return;` 早退——上游读完了但 onEnd 尚未跑
+      // 原先此处 `if (ur.readableEnded) return;` 早退——上游读完了但 onEnd 尚未跑
       //   （或永不跑：res 已关闭，write 回调链断裂）时在途计数就永久泄漏。
       //   收口判据只用 completed（它已覆盖 finishOK/abort 两条正常路径），readableEnded
       //   只作为诊断信息写进日志。
       if (completed) return;
       completed = true;
-      body.cancel(); // #2：其它结束路径须清掉非流式体守卫的定时器
+      body.cancel(); // 其它结束路径须清掉非流式体守卫的定时器
       endInflight(acc, prov);
       if (logger && logger.warn) logger.warn('[stream] CLIENT-ABORT key=' + maskKey(acc.key) + ' bytesSent=' + bytes + ' upstreamReadableEnded=' + !!ur.readableEnded + ' content=' + JSON.stringify((tailText || '').slice(0, 400)));
       destroyUpstream();

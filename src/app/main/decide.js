@@ -5,7 +5,7 @@
 //
 // 阶段六 B-2 原地去 this：实现体不再经 this 的隐式方法调用取事实，改经按 host 缓存的**惰性 deps**
 // （WeakMap）。方法名/{ methods }/逐字体保留，装配路径与读源码形态的门禁不变，AT 棘轮计数归零。
-// ⚠ _decideMainAction 保持**零 this**：shadow-decision-test 直接以 `decide(base())` 形式调用它
+//  _decideMainAction 保持**零 this**：shadow-decision-test 直接以 `decide(base())` 形式调用它
 //   （this=undefined），故其内部经模块内纯函数 decideCrashRestart() 协作，绝不触碰 deps。
 const pidlook = require('../../platform/os/pidlookup');
 

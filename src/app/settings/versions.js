@@ -38,7 +38,7 @@ function depsOf(host) {
 module.exports = {
   methods: {
     // ---- 内核更新（单写入者契约：安装/重启归桌面壳）----
-    // 内核 npm 包的唯一写入者是桌面壳（见 RELEASE-AND-UPDATE-MECHANISM.md §6）；
+    // 内核 npm 包的唯一写入者是桌面壳（见 RELEASE-AND-UPDATE-MECHANISM.md）；
     // 守卫只保留只读的 guardSelfUpdateStatus，接口 /self-update/apply|restart-guard 返回 410。
 
     /** 内核 npm 子包名（按当前平台/架构）。corePackageName 可为显式常量或含 {os}/{arch} 占位的模板。 */
@@ -50,7 +50,7 @@ module.exports = {
     },
 
     /** 内核更新状态（只读；安装/重启归桌面壳，单写入者契约）。
-     *  查 @dsh-sup/dsh-core-<os>-<arch> 的通道版本（RELEASE-CHANNEL-CONTRACT §3：
+     *  查 @dsh-sup/dsh-core-<os>-<arch> 的通道版本（RELEASE-CHANNEL-CONTRACT：
      *  rollback -> canary -> latest；latest 缺失才回落最高），与本机 guardVersion 比较。
      *  本方法不写任何东西：面板据此显示可更新，实际安装由桌面壳 kernel_update_apply 执行。 */
     async guardSelfUpdateStatus() {
@@ -136,7 +136,7 @@ module.exports = {
       const base = d.guardVersionLocal();
       if (base.upstream !== 'git-repo') return base;
       const root = d.vcsRoot();
-      // 条 6（批 4 平台）：改走统一有界异步封装（原裸 execFile 缺 windowsHide，Windows 上
+      // 改走统一有界异步封装（原裸 execFile 缺 windowsHide，Windows 上
       // git 会弹控制台窗口；且绕过 SIGKILL/maxBuffer 纪律）。runOutAsync 失败/超时 resolve(null)。
       const fetchOk = (await ex.runOutAsync('git', ['-C', root, 'fetch', '--quiet'], { timeoutMs: 10000 })) !== null;
       if (!fetchOk) return base; // fetch 失败：保持本地视图，不误报

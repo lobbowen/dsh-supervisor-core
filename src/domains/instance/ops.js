@@ -6,7 +6,7 @@
 
 const fs = require('node:fs');
 const ports = require('../../platform/service/ports').shared;
-// C-3（批 4）：远程令牌强度闸。实现在 shared/credential（L0 纯判定），经它共用同一份下限——
+// 远程令牌强度闸。实现在 shared/credential（L0 纯判定），经它共用同一份下限——
 // 直接 require 兄弟域 relay/core 会构成 domains 间跨域边（DS-G1 判红）。
 const { remoteTokenStrength } = require('../../shared/credential');
 const model = require('./model');
@@ -34,12 +34,12 @@ function createOps(deps) {
     const port = parseInt(payload.port, 10);
     if (!Number.isInteger(port) || port <= 0 || port > 65535) return { ok: false, error: '无效端口' };
     if (store.instances.some((i) => i.port === port)) return { ok: false, error: '端口 ' + port + ' 已被实例占用' };
-    // C-3（批 4）：写入口强度闸 —— remoteToken 守护经 frp 暴露的 DSH 特权面，
+    // 写入口强度闸 —— remoteToken 守护经 frp 暴露的 DSH 特权面，
     //   1~7 位令牌等同无令牌（暴露闸/执行边界复校会拒，但必须拒绝落盘而非静默存弱值）。
     const tk = String(payload.remoteToken || '');
     if (tk && !remoteTokenStrength(tk).ok) return { ok: false, error: '远程访问令牌（remoteToken）至少 8 位' };
     const id = 'inst-' + Date.now() + '-' + Math.floor(Math.random() * 1000);
-    // 新增时必须探测端口是否真的被占用（注册表 ∪ 本机实际监听）：只查实例重名与注册表，
+    // 新增时必须探测端口是否真的被占用（注册表 并 本机实际监听）：只查实例重名与注册表，
     // 会建到被占端口后 bind 失败并陷入 BACKOFF 反复重试。
     try {
       if (await ports.isTaken(port)) {
@@ -108,7 +108,7 @@ function createOps(deps) {
   function updateInstance(id, patch) {
     const inst = store.instances.find((i) => i.id === id);
     if (!inst) return { ok: false, error: '实例不存在' };
-    // C-3（批 4）：令牌强度校验前置到**任何**字段变更之前 —— 放在 remoteToken 赋值点处会造成
+    // 令牌强度校验前置到**任何**字段变更之前 —— 放在 remoteToken 赋值点处会造成
     //   guardian/remoteEnabled 已改而令牌被拒的半改状态（与本文件 removeInstance 的互斥检查同理）。
     //   空串=清除（放行），非空但过短=拒绝整次补丁。
     if (patch.remoteToken !== undefined) {
@@ -121,7 +121,7 @@ function createOps(deps) {
       if (gChanged && events) events.append('inst_guardian_changed', { id: inst.id, name: inst.name, enabled: inst.guardian === true });
     }
     // 远程暴露意图（remoteEnabled/remoteToken）任一变化都必须触发 onRemoteChange（AUDIT B-1）：
-    // 只换令牌不换开关时，旧实现不触发任何同步 → 运行中的 relay 继续放行旧令牌、frpc 不收敛。
+    // 只换令牌不换开关时，旧实现不触发任何同步 -> 运行中的 relay 继续放行旧令牌、frpc 不收敛。
     let remoteChanged = false;
     if (patch.remoteEnabled !== undefined) {
       const changed = inst.remoteEnabled !== !!patch.remoteEnabled;
@@ -140,7 +140,7 @@ function createOps(deps) {
     }
     if (remoteChanged && hooks.onRemoteChange) hooks.onRemoteChange(inst);
     // 历史/原生记录可能没有 sandbox 对象（model.normalizeInstance 只补 guardian 与 state，不建 sandbox）：
-    // 直接写 inst.sandbox.memoryMax 会抛 TypeError，而此处 guardian 与 remoteEnabled 可能已被改 → 半改状态。
+    // 直接写 inst.sandbox.memoryMax 会抛 TypeError，而此处 guardian 与 remoteEnabled 可能已被改 -> 半改状态。
     if (patch.memoryMax !== undefined || patch.cpuQuota !== undefined) inst.sandbox = inst.sandbox || {};
     if (patch.memoryMax !== undefined) inst.sandbox.memoryMax = String(patch.memoryMax);
     if (patch.cpuQuota !== undefined) inst.sandbox.cpuQuota = String(patch.cpuQuota);

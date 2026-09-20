@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 'use strict';
 
-// ═══════════════════════════════════════════════════════════════════════════
+// ---------------------------------------------------------------------------
 // P1-G：`processTreeKill` 的**声明必须有实现产物**
 //
 // ## 缺陷
@@ -23,7 +23,7 @@
 //   G-c  接管实例（无 child 句柄）路径同样走整树
 //   G-d  `processTreeKill` 的声明与使用点对应（注释指向接入处）
 //   G-e  优雅期仍先发 SIGTERM（整树只是**升级**手段，不是一上来就杀树）
-// ═══════════════════════════════════════════════════════════════════════════
+// ---------------------------------------------------------------------------
 
 const path = require('node:path');
 const fs = require('node:fs');
@@ -33,12 +33,12 @@ const results = [];
 const check = (n, c, x) => { results.push(!!c); console.log((c ? 'PASS' : 'FAIL') + ' ' + n + (x !== undefined && x !== '' ? '  ← ' + x : '')); };
 
 const processSrc = fs.readFileSync(path.join(ROOT, 'src', 'platform', 'os', 'process.js'), 'utf8');
-// ⚠ 2026-09-16 步骤7：main-process.js 拆为 app/main/{process,signals}.js；
+//  步骤7：main-process.js 拆为 app/main/{process,signals}.js；
 //   判据须读**两者**（进程机制 + 信号序列），否则拆分即静默失去覆盖面。
 const mainProc = ['process.js', 'signals.js']
   .map((f) => fs.readFileSync(path.join(ROOT, 'src', 'app', 'main', f), 'utf8'))
   .join(String.fromCharCode(10));
-// 2026-09-16（§4.5 测试指针同步）：os/index.js 已缩为平台分派门面，
+// （测试指针同步）：os/index.js 已缩为平台分派门面，
 //   能力档位纯数据下沉到 os/capability-profile.js —— 聚合整个 os/ 目录，覆盖面不缩小。
 const _osDir = path.join(ROOT, 'src', 'platform', 'os');
 const osIndex = (function walk(dir) {
@@ -51,13 +51,13 @@ const osIndex = (function walk(dir) {
 
 const pc = require(path.join(ROOT, 'src', 'platform', 'os', 'process.js'));
 
-// ── G-a：平台层实现 ──
+// -- G-a：平台层实现 --
 check('G-a 平台层导出 killTree', typeof pc.killTree === 'function', typeof pc.killTree);
-// 条 6（批 4 C 平台）：异步 taskkill 收编进统一有界封装（裸 execFile 是 K-W2 盲区）。
+// 异步 taskkill 收编进统一有界封装（裸 execFile 是 K-W2 盲区）。
 // 钉子随实现形态更新：/T /F 语义（B13）不变，只是入口从 execFile 换成 exec.runAsync。
 check('G-a killTree 的 Windows 分支用 taskkill /T /F（整树+强制，B13；经统一封装，条 6）',
   /ex\.runAsync\('taskkill', \['\/PID', String\(pid\), '\/T', '\/F'\]/.test(processSrc), '有');
-// B13（AUDIT-2026-09-19）：POSIX 组信号必须显式声明 ownGroup——接管（外来）pid 不得 kill(-pid)
+// POSIX 组信号必须显式声明 ownGroup——接管（外来）pid 不得 kill(-pid)
 check('B13 POSIX 组信号仅限 ownGroup（外来 pid 退化单进程）',
   /opts && opts\.ownGroup === true/.test(processSrc), '有');
 check('B13 自有子进程升级路径显式 ownGroup:true',
@@ -68,15 +68,15 @@ check('B13 自有子进程升级路径显式 ownGroup:true',
     !!m && /killTree\(pid, 'SIGKILL', \(\) => \{\}\)/.test(m[0]) && !/ownGroup:/.test(m[0]), 'ok');
 }
 
-// ── G-b：supervisor 实际调用（这是缺陷的核心）──
+// -- G-b：supervisor 实际调用（这是缺陷的核心）--
 check('G-b main-process 定义 _killTree 并调用 platform killTree',
   /_killTree\(child/.test(mainProc) && /pc\.killTree\(/.test(mainProc),
   '已接入');
 check('G-b SIGKILL 升级路径改用 _killTree（不再是 signalProcess）',
   /killTree\(child, 'SIGKILL'\)/.test(mainProc), '已改');
 
-// ── G-c：接管实例（无 child 句柄）──
-//   ⚠ 不能用 indexOf('_killAdopted') 切片：'stopProcess' 里**先**出现调用/提及，
+// -- G-c：接管实例（无 child 句柄）--
+//    不能用 indexOf('_killAdopted') 切片：'stopProcess' 里**先**出现调用/提及，
 //     定义在后面 —— 从首次出现处切片会拿到错误的区间（我第一版就踩了这个）。
 //     改为直接断言「存在 `killTree(pid` 调用」且「_killAdopted 函数体内有它」。
 {
@@ -86,11 +86,11 @@ check('G-b SIGKILL 升级路径改用 _killTree（不再是 signalProcess）',
     !!m && /killTree\(pid/.test(m[0]), '已接入');
 }
 
-// ── G-d：声明与使用点对应 ──
+// -- G-d：声明与使用点对应 --
 check('G-d processTreeKill 的注释指向实现（防再次「声明无产物」）',
   /processTreeKill: true[^\n]*(main-process\._killTree|_killTree)/.test(osIndex), '已指向');
 
-// ── G-e：整树只是升级，优雅期仍先 SIGTERM ──
+// -- G-e：整树只是升级，优雅期仍先 SIGTERM --
 {
   // 同上：用**函数体正则**定位，而非 indexOf（避免命中调用处/注释）。
   const m = mainProc.match(/\n  _killSequence\(child\) \{[\s\S]*?\n  \}/);
@@ -102,7 +102,7 @@ check('G-d processTreeKill 的注释指向实现（防再次「声明无产物�
     iTerm >= 0 && iTree >= 0 && iTerm < iTree, 'term@' + iTerm + ' tree@' + iTree);
 }
 
-// ── 反向：不得把所有停止都改成整树（那会丢掉优雅期语义）──
+// -- 反向：不得把所有停止都改成整树（那会丢掉优雅期语义）--
 check('反向：优雅期仍用 signalProcess（非整树）',
   /signalChild\(child, 'SIGTERM'\)/.test(mainProc), '保留');
 

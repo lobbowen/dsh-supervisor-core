@@ -43,7 +43,7 @@ const FACETS = [
   { name: 'facade/main', mod: require('../facade/main') },
   { name: 'facade/status', mod: require('../facade/status'), hostFirst: true },
   // 域写动作下沉 app/domain-actions/（facade 只读），同一装配契约。
-  //   ⚠ P6-B：三者已改为**真 ctor 工厂**（实现体经显式 deps 取事实，不再直连 this），
+  //    P6-B：三者已改为**真 ctor 工厂**（实现体经显式 deps 取事实，不再直连 this），
   //   故不再走 `f.mod.methods` 分支 —— 用 factory 名在装配期构造，并把产物**平铺安装**到 host，
   //   保证 api 消费面（sup.setRouterRunning / patchDshMain / setLanFrp …）名字逐个不变。
   { name: 'domain-actions/router', mod: require('../domain-actions/router'), factory: 'createRouterActions' },

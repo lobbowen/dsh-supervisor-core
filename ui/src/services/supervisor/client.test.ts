@@ -122,7 +122,7 @@ describe("B8 访问密钥携带与 401 语义", () => {
 });
 
 /**
- * UI 条 5（AUDIT-2026-09-19 第 4 批）：2xx 响应体里的 `{ ok: false }` 是「假成功」形态。
+ * 2xx 响应体里的 `{ ok: false }` 是「假成功」形态。
  * http() 只看状态码（探测类端点的 ok:false 属于数据，不是请求失败），所以判失败
  * 的责任在 failureFromResult —— 由共享动作 hook run() 消费（其接线由内核侧
  * test/round8-fixes-test.js 的 UI 条 5 静态门禁锁定，vitest 环境为 node 无法挂载 React hook）。

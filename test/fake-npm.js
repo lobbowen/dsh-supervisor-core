@@ -9,10 +9,10 @@
 //   FAKE_PID_FILE  hang 模式：把自身 pid 写到这里（D-10 用它证明「子进程真的活过」）
 //   FAKE_HANG_MS   hang 模式挂起时长，默认 60000
 //
-// ⚠ 为什么 hang 用**环境变量**而不是 argv（第 4 批 CI run 35483224735 实测）：
+//  为什么 hang 用**环境变量**而不是 argv：
 //   runNpmInstall 的 commandTemplate 逐项过禁用字符集（B11 fail-closed），而 Windows
 //   runner 的 os.tmpdir() 是 **8.3 短名** `C:\Users\RUNNER~1\AppData\Local\Temp\…`，
-//   `~` 属禁用字符 → 合法的临时脚本路径被拒。pid 文件路径经 env 传入，argv 只留仓库内路径。
+//   `~` 属禁用字符 -> 合法的临时脚本路径被拒。pid 文件路径经 env 传入，argv 只留仓库内路径。
 
 const fs = require('node:fs');
 

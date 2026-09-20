@@ -1,34 +1,34 @@
 #!/usr/bin/env node
 'use strict';
 
-// ═══════════════════════════════════════════════════════════════════════════
-// 第十三轮续：router / relay 域「纪律只在一处执行」类缺陷回归（2026-09-13）
+// ---------------------------------------------------------------------------
+// 第十三轮续：router / relay 域「纪律只在一处执行」类缺陷回归
 //
 // ## 缺陷（全部为失效模式 g，兼 b/e）
 //
-// ① P1 公网暴露安全闸（必须先设 remoteToken）只在 setFrp 一处执行
+// 1) P1 公网暴露安全闸（必须先设 remoteToken）只在 setFrp 一处执行
 //    manager.js::setFrp 有令牌闸 + 端口合法性 + 端口占用校验；
 //    而 registry-view.js::patchDshMain **同样能开启 frpEnabled** 却无闸 ——
-//    /native/settings 把 body 原样透传（api/domains/native.js）→ 可绕过令牌闸开公网暴露。
-//    frpc 以回环身份连 relay，来源闸放行；relay token 为空时 tokenGate 恒放行 → 公网零认证。
+//    /native/settings 把 body 原样透传（api/domains/native.js）-> 可绕过令牌闸开公网暴露。
+//    frpc 以回环身份连 relay，来源闸放行；relay token 为空时 tokenGate 恒放行 -> 公网零认证。
 //
-// ② P1 remoteToken 变更永远到不了已在运行的 relay
+// 2) P1 remoteToken 变更永远到不了已在运行的 relay
 //    syncProxy 的「已存在则 return」快路径不重读 remoteToken；applyToken 只处理 dshToken。
-//    → 令牌闸已放行，而 relay 进程内 token 仍是空串 → tokenGate 恒放行。
+//    -> 令牌闸已放行，而 relay 进程内 token 仍是空串 -> tokenGate 恒放行。
 //
-// ③ P1 删除供应商/账号/批量删 Key 时 stopInstance 不带 force
-//    proxy.js::_canStopInstance 对「ready+可用+被 selected 指向」返回 false →
-//    只置 _stopPendingUntilIdle 不 kill；而删除路径随即把账号/实例摘除 →
-//    延迟标记不可达 → 进程与端口**永久泄漏**。
+// 3) P1 删除供应商/账号/批量删 Key 时 stopInstance 不带 force
+//    proxy.js::_canStopInstance 对「ready+可用+被 selected 指向」返回 false ->
+//    只置 _stopPendingUntilIdle 不 kill；而删除路径随即把账号/实例摘除 ->
+//    延迟标记不可达 -> 进程与端口**永久泄漏**。
 //
-// ④ P2 实例重启被自身的在用保护吃掉
+// 4) P2 实例重启被自身的在用保护吃掉
 //    restartInstance 已自行处理在途（写 _restartPending），却又调不带 force 的
-//    stopInstance → 被更宽的 _canStopInstance 拦下 → 未 kill、_restartPending 已被清 null、
-//    _restartAt 已置 +2min → 自愈链静默失效 2 分钟。
+//    stopInstance -> 被更宽的 _canStopInstance 拦下 -> 未 kill、_restartPending 已被清 null、
+//    _restartAt 已置 +2min -> 自愈链静默失效 2 分钟。
 //
 // ## 门禁性质：以**源码形态 + 真实构造**为主（这些路径需真实子进程/systemd，无法在
 //    无头 CI 完整驱动），但每条都锁定**可证伪的特征调用**与**计数**，且附反向断言防空转。
-// ═══════════════════════════════════════════════════════════════════════════
+// ---------------------------------------------------------------------------
 
 const fs = require('node:fs');
 const path = require('node:path');
@@ -43,11 +43,11 @@ const read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8');
 /** 剥离整行注释（本仓多次被自己的说明文字骗过）。 */
 const strip = (s) => s.split('\n').filter((l) => !l.trim().startsWith('//')).join('\n');
 
-// ── ① 公网暴露令牌闸必须两条路径同规 ──
+// -- 1) 公网暴露令牌闸必须两条路径同规 --
 console.log('== ① frp 令牌闸两条路径同规 ==');
 {
-  // ⚠ 2026-09-16 步骤7：patchDshMain/dshMainView 已从 registry-view.js 拆到 app/facade/main.js。
-  // ⚠ 2026-09-17 R7：写动作 patchDshMain 再下沉 app/domain-actions/main.js（facade 只读）；
+  //  步骤7：patchDshMain/dshMainView 已从 registry-view.js 拆到 app/facade/main.js。
+  //  写动作 patchDshMain 再下沉 app/domain-actions/main.js（facade 只读）；
   //   安全闸收敛到 domains/relay/core.validateFrpExposure（app 侧与 relay 侧同一份纯函数）。
   const act = strip(read('src/app/domain-actions/main.js'));
   const mgr = strip(read('src/domains/relay/ops.js'));
@@ -60,7 +60,7 @@ console.log('== ① frp 令牌闸两条路径同规 ==');
   check('① patchDshMain 调用同一份安全闸（消除重复实现，旧实现无 → 可绕过）',
     /validateFrpExposure\s*\(/.test(act), '有');
   // 反向：闸必须在落盘 **之前**（否则已落盘半改状态）。
-  // ⚠ P6-B-3：判据改为**形态无关** —— 实现已由 { methods }+this 改为真 ctor 工厂
+  //  P6-B-3：判据改为**形态无关** —— 实现已由 { methods }+this 改为真 ctor 工厂
   //   （createMainActions(deps)，不再读 this），故不再要求 `this.state.` 前缀，只锁「该写入发生」。
   //   同时把闸的定位由**导入行**改为**调用行**（`validateFrpExposure(`）：原写法 `indexOf('validateFrpExposure')`
   //   命中的是文件头的 require（恒在落盘之前），判据近乎恒真；改为调用行后才是真正的顺序判定。
@@ -86,7 +86,7 @@ console.log('== ① frp 令牌闸两条路径同规 ==');
   inst.state.readMainMeta = () => ({ guardian: false, remoteEnabled: false, remoteToken: '', frpEnabled: false, frpRemotePort: null, wanPort: null });
   inst.state.writeMainMeta = (m) => written.push(m);
   inst.dshMainView = () => ({ ok: true });
-  // R7：冲突清单改为注入的只读投影（不再直读 instances.instances）
+  // 冲突清单改为注入的只读投影（不再直读 instances.instances）
   inst.exposurePeers = () => [];
   inst.config = { stateFile: '/tmp/x.json' };
   inst.logger = { warn() {} };
@@ -112,11 +112,11 @@ console.log('== ① frp 令牌闸两条路径同规 ==');
   check('① 行为：关闭 frp 不被闸拦', off && off.ok === true, JSON.stringify(off));
   check('① 行为：关闭 frp 属于合法写（正常落盘一次）',
     written.length === wBeforeOff + 1, 'before=' + wBeforeOff + ' after=' + written.length);
-  // C-3（批 4）：弱令牌在**写入口**即拒（与暴露闸同规；此前仅 '非空白' 一票闸）
-  //   ⚠ 勘误（第 4 批 run 35484641560：五个 job 同点红、与平台无关）：原断言写死
-  //   `written.length === 1`，漏算了**上一条 off 是一次合法落盘**（走到这里已写 2 次）。
-  //   回显 `{"weak":{"ok":false,...至少 8 位},"written":2}` 证明产品判得对，是夹具的账算错。
-  //   改为相对断言（被拒前后写次数不变）：既保住「拒且未落盘」的牙，也不再钉死前面用例的条数。
+  // 弱令牌在**写入口**即拒（与暴露闸同规；此前仅 '非空白' 一票闸）
+  //   断言必须是**相对**的（被拒前后写次数不变）：绝对值 `written.length === 1` 会漏算
+  //   上一条 off 的那次合法落盘（走到这里已写 2 次），产品判得对而夹具的账算错。
+  //   相对断言既保住「拒且未落盘」的牙，也不钉死前面用例的条数。
+  //   判据回显把 `weak` 与 `written` 一并带出，定位时不必再猜是哪个数错了。
   const wBefore = written.length;
   const weak = actions.patchDshMain({ remoteToken: 'tok', frpEnabled: true, frpRemotePort: 7001 });
   check('C-3 行为：4 位令牌 patch main → 写入口即拒（ok:false）', weak && weak.ok === false, JSON.stringify(weak));
@@ -124,10 +124,10 @@ console.log('== ① frp 令牌闸两条路径同规 ==');
     written.length === wBefore, 'before=' + wBefore + ' after=' + written.length);
 }
 
-// ── ② relay 门卫令牌必须可热换 ──
+// -- 2) relay 门卫令牌必须可热换 --
 console.log('== ② relay 门卫令牌热换 ==');
 {
-  // ⚠ 服务本体 index.js → proxy.js（SSOT §5.2）；编排 manager.js → ops.js。
+  //  服务本体 index.js -> proxy.js（SSOT）；编排 manager.js -> ops.js。
   const rl = strip(read('src/domains/relay/proxy.js'));
   const mgr = strip(read('src/domains/relay/ops.js'));
   check('② createRelay 的 token 是 let（旧为 const，永不变化）',
@@ -138,7 +138,7 @@ console.log('== ② relay 门卫令牌热换 ==');
   check('② syncProxy 快路径下发令牌（旧实现直接 return）',
     /existing\.token !== want/.test(mgr) && /setToken\(want\)/.test(mgr), '有');
 
-  // ── AUDIT B-1 补链：令牌变更的「触发—复判—收敛」三段缺一不可 ──
+  // -- AUDIT B-1 补链：令牌变更的「触发—复判—收敛」三段缺一不可 --
   const iops = strip(read('src/domains/instance/ops.js'));
   check('② updateInstance 只改 remoteToken 也必须触发 onRemoteChange（旧仅 remoteEnabled 变化才触发）',
     /inst\.remoteToken !== next/.test(iops) && /remoteChanged && hooks\.onRemoteChange/.test(iops), '有');
@@ -160,7 +160,7 @@ console.log('== ② relay 门卫令牌热换 ==');
     events: { append(t) { seen.push(t); } },
     hooks: { onRemoteChange(i) { seen.push('sync:' + i.remoteToken); } },
   });
-  // C-3（批 4）：弱令牌写入口即拒，且**不改任何字段**（半改状态防线）
+  // 弱令牌写入口即拒，且**不改任何字段**（半改状态防线）
   {
     const before = it2.guardian;
     const r = ops2.updateInstance('i1', { guardian: false, remoteToken: 'B' });
@@ -187,10 +187,10 @@ console.log('== ② relay 门卫令牌热换 ==');
   check('② 行为：清空令牌后 hasToken() false', srv.hasToken() === false, 'false');
 }
 
-// ── ③ 删除路径必须 force 停实例 ──
+// -- 3) 删除路径必须 force 停实例 --
 console.log('== ③ 删除路径 force 停实例 ==');
 {
-  // ⚠ 域改造后删除路径编排从 index.js/router-ops.js 收敛到 ops.js（SSOT §5.1）。
+  //  域改造后删除路径编排从 index.js/router-ops.js 收敛到 ops.js（SSOT）。
   //   按「删除路径所在文件整组」读取（排除 proxy.js 内部的非删除 stopInstance），
   //   文件一搬判据仍覆盖；计数仍是**删除路径**的 force 调用，未放宽。
   const del = strip([
@@ -210,7 +210,7 @@ console.log('== ③ 删除路径 force 停实例 ==');
   check('③ 删除路径 force 调用 >= 3 处', forceDeletes >= 3, String(forceDeletes));
 }
 
-// ── ④ 重启必须真正停掉进程 ──
+// -- 4) 重启必须真正停掉进程 --
 console.log('== ④ 重启真正停进程 ==');
 {
   const px = strip(read('src/domains/router/providers/proxy.js'));
@@ -223,9 +223,9 @@ console.log('== ④ 重启真正停进程 ==');
     /inst\._restartAt = 0;/.test(px), '有');
 }
 
-// ── D-5（AUDIT-2026-09-19 第4批 D）：relay HTML 注入的全量缓冲必须有上限 ──
+// -- D-5：relay HTML 注入的全量缓冲必须有上限 --
 //   原实现 `chunks.push(c)` 无上限，且 buildForwardHeaders 强制 accept-encoding: identity
-//   ⇒ 单个被代理文档按真实字节无界进内存。上限语义：**超限放弃注入并按流透传**，
+//   => 单个被代理文档按真实字节无界进内存。上限语义：**超限放弃注入并按流透传**，
 //   绝不截断（半份 HTML 会把浏览器打穿），也不静默降级（必须 warn）。
 console.log('== D-5 relay HTML 注入缓冲上限 ==');
 const asyncResults = [];
@@ -298,7 +298,7 @@ const runUpstream = (headers, chunks, chunkMs) => new Promise((resolve) => {
       r.body.startsWith('<html><head>') && r.body.endsWith('</body></html>'), 'len=' + r.body.length);
   }
   {
-    // 单块即越限 + end 抢先到达：后挂的 pipeWithHold 监听器永不触发 ⇒ 必须自收口
+    // 单块即越限 + end 抢先到达：后挂的 pipeWithHold 监听器永不触发 => 必须自收口
     const CAP = relayProxy.HTML_INJECT_MAX_BYTES;
     const huge = '<html><head>' + 'y'.repeat(CAP + 10) + '</head><body>z</body></html>';
     const r = await runUpstream({ 'content-type': 'text/html' }, [huge], 0);

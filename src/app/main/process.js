@@ -5,7 +5,7 @@
 //
 // 阶段六 B-2 原地去 this：实现体不再经 this 的隐式方法调用取事实，改经按 host 缓存的**惰性 deps**。
 // 方法名/{ methods }/逐字体保留，装配路径不变，AT 棘轮计数归零。
-// ⚠ applyMainPort(this, ...) 仍显式传**宿主**（this）：该函数签名要求真实 host，不能传 deps 对象。
+//  applyMainPort(this, ...) 仍显式传**宿主**（this）：该函数签名要求真实 host，不能传 deps 对象。
 const spawnOS = require('../../platform/os/spawn');
 const pidlook = require('../../platform/os/pidlookup');
 const { LineBuffer } = require('../../platform/service/log/log');
@@ -32,7 +32,7 @@ function depsOf(host) {
       // 兄弟方法经 host 上的既有安装转发（等价于原经 this 的调用）。
       spawnCommand: () => host.spawnCommand(),
       beginRestart: (reason, opts) => host._beginRestart(reason, opts),
-      // D-11：取得所有权的两条路线（spawn / adopt）都要落归属凭据（实现在 main/signals.js）。
+      // 取得所有权的两条路线（spawn / adopt）都要落归属凭据（实现在 main/signals.js）。
       writeMainOwner: (pid, port) => host._writeMainOwner(pid, port),
     };
     for (const n of HELPERS) d['m' + n] = (...a) => host['_m' + n](...a);
@@ -148,7 +148,7 @@ module.exports = {
       }
     });
     d.events().append('spawned', { pid: child.pid });
-    // D-11：本守卫 spawn 的实例即归本守卫负责，先落凭据再写状态（后续 adopt 判定要读它）。
+    // 本守卫 spawn 的实例即归本守卫负责，先落凭据再写状态（后续 adopt 判定要读它）。
     d.writeMainOwner(child.pid, d.config().targetPort);
     d.state().write();
   },
@@ -231,7 +231,7 @@ module.exports = {
     }
     d.events().append('adopted', { pid: d.mAdoptPid() });
     d.logger().info('adopted existing instance pid=' + d.mAdoptPid());
-    // D-11：接管即认领——不写凭据的话，另一个守卫只凭 cmdline 相似会把同一个 DSH 再接管一次
+    // 接管即认领——不写凭据的话，另一个守卫只凭 cmdline 相似会把同一个 DSH 再接管一次
     //   （两守卫互相 stop/kill 对方的实例）。
     d.writeMainOwner(d.mAdoptPid(), d.config().targetPort);
     // 接管既有实例：统一令牌服务从已登记源（journald / stdout 行缓冲）取最新令牌并下发
@@ -276,7 +276,7 @@ module.exports = {
     const child = d.mChild();
     const adoptedPid = d.mAdoptPid();
     // 相位裁定（D12）：即便 kill 未能确认成功，仍置 STOPPED —— controller 的
-    //   portUp → adoptObserved 语义依赖 STOPPED；失败经 stop_failed 事件如实上报，
+    //   portUp -> adoptObserved 语义依赖 STOPPED；失败经 stop_failed 事件如实上报，
     //   而不是把相位停在一个既非运行也非停止的中间态。
     d.state().setPhase('STOPPED');
     d.mSetChild(null);

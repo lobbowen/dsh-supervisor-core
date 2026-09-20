@@ -29,7 +29,7 @@ async function checkUpdate(dist, opts) {
     return { ok: false, installed, latest: null, updateAvailable: false, error: '分发服务未初始化' };
   }
   try {
-    // shell-release 属我方发布 scope（契约 §1）-> 走通道控制
+    // shell-release 属我方发布 scope-> 走通道控制
     //（rollback -> canary -> latest；latest 缺失才回落最高）。
     const latest = await dist.fetchLatestVersion(SHELL_RELEASE_PKG, 'npm', { authoritative: (opts && opts.authoritative) === true });
     if (!latest) {
@@ -89,7 +89,7 @@ async function restartShell(opts) {
     return { ok: false, error: '旧壳进程未能在超时内退出，已放弃重启（避免双实例）', killed };
   }
 
-  // 在飞复判（2026-09-18，K4）：上面杀旧壳 + 等待最多 ~8s；若这期间用户发起「退出管家」，
+  // 在飞复判：上面杀旧壳 + 等待最多 ~8s；若这期间用户发起「退出管家」，
   //   spawn 前必须再判一次，否则退出请求会与重启赛跑，刚退出的壳被拉回（与看护门同源缺陷）。
   if (typeof o.shouldAbort === 'function') {
     try {

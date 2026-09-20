@@ -5,15 +5,15 @@
 //
 // == 为什么改成"反向"守卫（历史背景） ==
 // 本文件原先锁定的是 _maybeReclaimAdoptToken 的观察窗语义：被接管的主 DSH 令牌空置 ->
-// 观察窗（默认 20s）过后受控重建一次。该行为本身违反 SSOT §2：
-//   · TK-1 令牌恒存在 —— 不存在"令牌不可达"这一状态；"拿不到"只能是我方捕捉链路的 bug；
-//   · TK-2 令牌状态绝不驱动进程生命周期 —— 凭据维度与进程健康正交。
+// 观察窗（默认 20s）过后受控重建一次。该行为本身违反 SSOT：
+//   - TK-1 令牌恒存在 —— 不存在"令牌不可达"这一状态；"拿不到"只能是我方捕捉链路的 bug；
+//   - TK-2 令牌状态绝不驱动进程生命周期 —— 凭据维度与进程健康正交。
 // 用杀进程去掩盖链路 bug 的代价是"莫名重启 DSH"，无预警中断用户正在运行的会话。
 //
 // == 本测试现在锁定什么 ==
-//   ① 新不变量：令牌缺失不得触发任何 phase 迁移 / 重启（运行时场景 + 反向对照）；
-//   ② 删除彻底：该方法与其专属状态（观察窗字段）在实例/原型上都不再存在；
-//   ③ 删除没有变成"空转"：源码扫描判据对"旧形态"样本必须报违规（G8 式反向判据）。
+//   1) 新不变量：令牌缺失不得触发任何 phase 迁移 / 重启（运行时场景 + 反向对照）；
+//   2) 删除彻底：该方法与其专属状态（观察窗字段）在实例/原型上都不再存在；
+//   3) 删除没有变成"空转"：源码扫描判据对"旧形态"样本必须报违规（G8 式反向判据）。
 // 独立门禁（TK-G2 等）属于别的分片；本文件只保证本分片自己的判据可执行、可失败。
 //
 // 运行：node --require ./test/_preload.js test/adopt-token-reclaim-test.js
@@ -88,7 +88,7 @@ function removedHits(src, symbols) {
  *  为什么单独抠出来：TK-2 的不变式是「phase 迁移决策不读令牌池」——必须能精确断言
  *  switch 内部干净，而不是只断言整个文件里没有某个名字。 */
 function extractPhaseSwitch(src) {
-  // ⚠ 2026-09-17 阶段六 B-2：controller.js 原地去 this 后 phase switch 变为 switch (d.state().phase())。
+  //  阶段六 B-2：controller.js 原地去 this 后 phase switch 变为 switch (d.state().phase())。
   //   判据改为**形态无关**：匹配任意接收者（this/d/…）的 .state().phase()。判据本意不变。
   //   兼容两种形态：this.state.phase()（state 为属性对象）与 d.state().phase()（state 为 deps 方法）。
   const m = /switch\s*\([\w.$()]*\.phase\(\)\s*\)/.exec(src);
@@ -110,10 +110,10 @@ function extractPhaseSwitch(src) {
 
 async function main() {
   const SUP_PATH = path.join(ROOT, 'src', 'app', 'daemons', 'probe.js');
-  // ⚠ 2026-09-16 步骤7：converge-view.js → app/main/controller.js（_dshConverge 所在）。
+  //  步骤7：converge-view.js -> app/main/controller.js（_dshConverge 所在）。
   //   phase switch 仍在该文件的 _dshConverge 内，判据语义不变。
   const CONV_PATH = path.join(ROOT, 'src', 'app', 'main', 'controller.js');
-  // ⚠ 2026-09-16 步骤7：影子决策（_shadowExcluded/_shadowTickNote 等）已拆到 app/main/shadow.js。
+  //  步骤7：影子决策（_shadowExcluded/_shadowTickNote 等）已拆到 app/main/shadow.js。
   //   本测试的两组断言横跨 controller（phase switch）与 shadow（排除集），故 convSrc 读**两者**。
   const SHADOW_PATH = path.join(ROOT, 'src', 'app', 'main', 'shadow.js');
   const supSrc = fs.readFileSync(SUP_PATH, 'utf8');
@@ -139,7 +139,7 @@ async function main() {
     check('影子排除集已不含令牌回收 reason', convSrc.indexOf('adopt_token_reclaim') < 0);
     check('影子排除集仍保留异步钩子豁免', /_shadowExcluded\s*\(/.test(convSrc) && convSrc.indexOf('http_unhealthy') >= 0);
 
-    // ── 反向判据（防空转，TK-G8 同义）──
+    // -- 反向判据（防空转，TK-G8 同义）--
     // 若判据本身失效（比如符号表写错、大小写不匹配），上面的断言会永远为真。
     // 用"旧形态"样本喂给**同一个判据函数**，必须报出违规——证明它能识别错误行为。
     const legacySample = 'class X { _maybeReclaimAdoptToken() { if (this._tokenReclaimAt === null) { this._tokenReclaimTried = true; this._beginRestart("adopt_token_reclaim"); } } }';
@@ -181,11 +181,11 @@ async function main() {
 
     // 场景 A：RUNNING + 被接管（adoptedPid 非空、无 child、令牌空置）。
     // 观察窗参数给到 1ms —— 旧逻辑下这必然已经"超窗"，若错误路径还在就会立刻重建。
-    // ⚠ 不用"伪造 isAlive"来表达存活/死亡（test-safety-gate A/B）：
+    //  不用"伪造 isAlive"来表达存活/死亡（test-safety-gate A/B）：
     //   先前写 `pidlook.isAlive = () => true` 是对模块导出的属性赋值——对 CommonJS 值绑定无效
     //   （仍是真实 isAlive），既无效又误导。
     //   改用**真实事实**：isAlive 实现为 `process.kill(pid, 0)`，故
-    //     · 存活 = 本进程 pid（一定活着）；  · 死亡 = 一个远超 pid_max 的 pid（一定不存在）。
+    //     - 存活 = 本进程 pid（一定活着）；  - 死亡 = 一个远超 pid_max 的 pid（一定不存在）。
     //   这样测的是真实判定路径，无需任何伪造，也不触碰共享模块状态。
     const ALIVE_PID = process.pid;
     const DEAD_PID = 4000000; // 远超 Linux pid_max（默认 4194304 上限内亦不存在的低位值）
@@ -252,7 +252,7 @@ async function main() {
     check('普通迁移（如 start_timeout）不被排除', sup._shadowExcluded('start_timeout') === false);
   }
 
-  // ── D-11（AUDIT-2026-09-19 第 4 批）：接管必须有**归属凭据**，不得只凭 cmdline 相似 ──
+  // -- D-11：接管必须有**归属凭据**，不得只凭 cmdline 相似 --
   //   缺陷：两个守卫（线上守卫 + 测试/手工起的第二实例）看到同一个监听 pid，cmdline 特征都匹配，
   //   于是双方都认领它，彼此 stop/kill 对方刚接管的 DSH（审计原述「疑似双管家互杀」）。
   //   修法：与 daemon 侧 *-daemon.identity.json 同范式落 dsh-main.owner.json；凭据**只做否决**
@@ -279,7 +279,7 @@ async function main() {
     check('D-11 原子写：不留 .tmp 残留（按派生名枚举，不依赖具体命名）',
       ownerStrays.length === 0, ownerStrays.join(',') || 'clean');
     // 权限位是 POSIX 语义：Windows 的 chmod 只切换只读位（mode 恒 666），在此断言既不可能成立也无意义。
-    //   收口纪律由 §E.1 writeAtomic 单源 + J-n 门禁保证；POSIX 上仍做真实行为断言（先例 install-id-test ID-3b）。
+    //   收口纪律由 writeAtomic 单源 + J-n 门禁保证；POSIX 上仍做真实行为断言（先例 install-id-test ID-3b）。
     if (process.platform !== 'win32') {
       check('D-11 落盘权限 0600', (fs.statSync(f).mode & 0o777) === 0o600,
         (fs.statSync(f).mode & 0o777).toString(8));

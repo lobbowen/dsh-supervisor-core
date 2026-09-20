@@ -7,8 +7,8 @@ import { Progress } from "../ui/progress";
  * DSH 通用 UI 框架 — Toolbar（响应式页面工具栏）
  * ============================================================================
  * 统一三列 grid：[左槽] [标题区] [右槽]，断点只切换列内容：
- *  - ≥641px：左槽隐藏（menuButton 仅在 ≤640 渲染），标题 = 大标题 + 副标题。
- *  - ≤640px：左槽 = menuButton（汉堡），标题 = 紧凑页名，副标题/进度隐藏。
+ *  - >=641px：左槽隐藏（menuButton 仅在 <=640 渲染），标题 = 大标题 + 副标题。
+ *  - <=640px：左槽 = menuButton（汉堡），标题 = 紧凑页名，副标题/进度隐藏。
  * 同一组件按断点自适应 —— 无并列头部行。
  * ============================================================================
  */
@@ -16,11 +16,11 @@ import { Progress } from "../ui/progress";
 export type ToolbarProps = {
   title: string;
   subtitle?: string;
-  /** 忙碌进度（0-100），≥641px 显示 */
+  /** 忙碌进度（0-100），>=641px 显示 */
   progress?: number | null;
   /** 右侧动作区 */
   actions?: ReactNode;
-  /** ≤640px 的菜单按钮（汉堡）插槽 */
+  /** <=640px 的菜单按钮（汉堡）插槽 */
   menuButton?: ReactNode;
   className?: string;
 };
@@ -42,7 +42,7 @@ export function Toolbar({
         className,
       )}
     >
-      {/* 左槽：仅 ≤640px 显示菜单按钮 */}
+      {/* 左槽：仅 <=640px 显示菜单按钮 */}
       {menuButton ? (
         <div className="hidden max-[640px]:block">{menuButton}</div>
       ) : null}
@@ -59,7 +59,7 @@ export function Toolbar({
         ) : null}
       </div>
 
-      {/* 右槽：动作区（进度并入其前，≥641 显示） */}
+      {/* 右槽：动作区（进度并入其前，>=641 显示） */}
       <div className="flex items-center justify-end gap-4 max-[640px]:gap-2 max-[640px]:[&_button]:h-7 max-[640px]:[&_button]:px-2.5 max-[640px]:[&_button]:text-xs">
         {busy ? (
           <div className="hidden w-[190px] max-[640px]:hidden">

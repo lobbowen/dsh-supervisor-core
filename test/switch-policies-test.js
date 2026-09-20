@@ -1,12 +1,12 @@
 #!/usr/bin/env node
 'use strict';
 
-// ═══════════════════════════════════════════════════════════════════════════
+// ---------------------------------------------------------------------------
 // router 纯策略单测（DF-6）：只 require policies/switch 与 policies/failure，
 // 给假 state / 假 ctx，不构造 RouterService、不碰 provider、零 IO。
 // 覆盖：选号序列（selected/sticky/rotate/clearSelected/excludeKeys/反代就绪优先）
 //       与失败动作映射（credits/window/banned/transient/none + retryMs 阈值）。
-// ═══════════════════════════════════════════════════════════════════════════
+// ---------------------------------------------------------------------------
 
 const path = require('node:path');
 const ROOT = path.join(__dirname, '..');
@@ -20,7 +20,7 @@ const check = (n, c, x) => {
 const { pickAccount } = require(path.join(ROOT, 'src', 'domains', 'router', 'policies', 'switch'));
 const { decideFailure, headerRetryMs, bodyResetMs } = require(path.join(ROOT, 'src', 'domains', 'router', 'policies', 'failure'));
 
-// ── S1 选号策略 ──
+// -- S1 选号策略 --
 {
   const state = { accounts: [{ keyId: 'k1', usable: true }, { keyId: 'k2', usable: false }], kind: 'direct', cursor: 0 };
   const d = pickAccount(state, {});
@@ -49,7 +49,7 @@ const { decideFailure, headerRetryMs, bodyResetMs } = require(path.join(ROOT, 's
   check('S1 无就绪账号降级全可用池', proxyFallback.keyId === 'k1', JSON.stringify(proxyFallback));
 }
 
-// ── S2 失败反应策略：动作映射 + retryMs ──
+// -- S2 失败反应策略：动作映射 + retryMs --
 {
   const credits = decideFailure('credits', { status: 400, key: '...k9' });
   check('S2 credits → retry + needEffect', credits.action === 'retry' && credits.needEffect === true, JSON.stringify(credits));
@@ -71,7 +71,7 @@ const { decideFailure, headerRetryMs, bodyResetMs } = require(path.join(ROOT, 's
   check('S2 unknown → passthrough', unknown.action === 'passthrough', JSON.stringify(unknown));
 }
 
-// ── retry 时长解析与 providers/base 逐字对齐（防两处漂移）──
+// -- retry 时长解析与 providers/base 逐字对齐（防两处漂移）--
 {
   const base = require(path.join(ROOT, 'src', 'domains', 'router', 'providers', 'base'));
   // 绝对时刻样本（retry-after 的 HTTP-date、resets at <ISO>）返回「距该时刻的剩余 ms」，

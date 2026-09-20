@@ -3,7 +3,7 @@
 // 平台化浏览器打开：三端同一 open(url) 接口；仅接受本机回环 URL（调用方已校验），失败返回 false。
 // launchIsolated 把「隔离 profile + 无痕 + 反指纹参数打开浏览器」的平台差异收敛到平台层，
 // 调用方只提供策略参数，不再出现 process.platform 分支与二进制名。
-// A4（2026-09-19 审计修复）：win32 不再借道 `cmd /c start` —— URL 会被 cmd.exe 二次解析
+// win32 不再借道 `cmd /c start` —— URL 会被 cmd.exe 二次解析
 //   （& ^ " ( ) 均为活性字符），改直启 chrome.exe 或 explorer.exe（argv 数组不经 shell）。
 //   入口统一过 isSafeHttpUrl：仅 http(s) 绝对 URL 可进 argv。
 
@@ -12,7 +12,7 @@ const path = require('node:path');
 // 异步 spawn 统一封装（固定 windowsHide:true）；浏览器打开完全脱离本进程，
 // 用 detachedIgnored（detached + stdio ignore）。
 const spawnOS = require('./spawn');
-// 条 4（AUDIT-2026-09-19 第4批 C）：spawn 前的可用性预检依赖 PATH 解析与执行位判定。
+// spawn 前的可用性预检依赖 PATH 解析与执行位判定。
 const { resolveExecutable, isExecutableFile } = require('./exec-path');
 
 /** 仅接受 http/https 绝对 URL（A4：进 argv 前的唯一闸门；解析失败即拒）。 */
@@ -24,7 +24,7 @@ function isSafeHttpUrl(url) {
 }
 
 /** 平台到打开 URL 的命令（纯函数，可穷举；不 spawn）。
- *  A4：win32 用 explorer.exe 直启（ShellExecute 走默认浏览器），**不再有 cmd /c start 的
+ *  win32 用 explorer.exe 直启（ShellExecute 走默认浏览器），**不再有 cmd /c start 的
  *  二次解析注入面**；空标题陷阱随 cmd 一并消失。
  *  未知平台有意退化为 xdg-open（best-effort 且失败静默）：这里不宣称任何能力，只尽力尝试；
  *  与 autostart 不同 —— 那里要向用户宣称服务管理器 kind，故未知平台必须显式 none。 */
@@ -56,7 +56,7 @@ function _spawnDetached(bin, args, env, onExit) {
   return child;
 }
 
-/** win32 Chrome 探测（仅运行期调用；找不到返回 null → 计划退化为 explorer 兜底）。
+/** win32 Chrome 探测（仅运行期调用；找不到返回 null -> 计划退化为 explorer 兜底）。
  *  只查标准安装路径，不查 PATH（免得再引一层 where.exe 进程）。 */
 function findChromeWin(env, exists) {
   const e = env || process.env;
@@ -73,7 +73,7 @@ function findChromeWin(env, exists) {
 
 /** 平台到隔离打开的命令规划（纯函数，可穷举；不 spawn）。
  *  返回 {kind:single,bin,args,isolated} 或 {kind:chain,candidates}（linux 按可用性依次尝试）。
- *  A4：win32 直启 chrome.exe（opts.chromeBin 由调用方探测传入）—— argv 不经 cmd，
+ *  win32 直启 chrome.exe（opts.chromeBin 由调用方探测传入）—— argv 不经 cmd，
  *  反指纹参数可以安全带全；无 chrome 时退化 explorer.exe（默认浏览器，放弃隔离故明示 isolated:false）。
  *  @param {{profileDir?:string, antiArgs?:string[], chromeBin?:string|null}} [opts] */
 function isolatedPlan(platform, url, opts) {
@@ -109,7 +109,7 @@ function isolatedPlan(platform, url, opts) {
   };
 }
 
-/** 条 4：spawn 前的可用性预检。绝对路径 → 直接判执行位；裸名 → PATH 解析。
+/** 条 4：spawn 前的可用性预检。绝对路径 -> 直接判执行位；裸名 -> PATH 解析。
  *  为什么必须在 spawn 前判：Node 的 ENOENT 是**异步** error 事件，旧实现
  *  `child.on('error', () => tryNext())` 的递归返回值被丢弃 —— tryNext() 已先返回
  *  ok:true/该 bin，降级链形同虚设（错误 bin 被如实上报，且没有任何候选真正接力）。 */
@@ -144,13 +144,13 @@ function launchIsolated(url, o) {
       : (process.platform === 'win32' ? findChromeWin() : null);
     const plan = isolatedPlan(process.platform, url, { profileDir, antiArgs, chromeBin });
     if (plan.kind === 'single') {
-      // 条 4：single 分支同预检——不可用即如实 ok:false，不 spawn 必死的 bin
+      // single 分支同预检——不可用即如实 ok:false，不 spawn 必死的 bin
       if (!avail(plan.bin)) return { ok: false, bin: null, isolated: false };
       const env = (plan.envKind ? plan.envKind === 'anti' : plan.bin === 'open') ? antiEnv : sysEnv;
       const p = spawnWith(plan.bin, plan.args, env, onExit);
       return { ok: !!p, bin: p ? plan.label : null, isolated: plan.isolated };
     }
-    // 条 4：chain 分支按预检过滤后再逐个尝试；error 事件只静默吞（结果已在 spawn 前定）。
+    // chain 分支按预检过滤后再逐个尝试；error 事件只静默吞（结果已在 spawn 前定）。
     const cands = plan.candidates.filter((c) => avail(c.bin));
     for (const c of cands) {
       const env = c.envKind === 'anti' ? antiEnv : sysEnv;

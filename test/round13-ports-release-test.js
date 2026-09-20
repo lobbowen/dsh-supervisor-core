@@ -1,34 +1,34 @@
 #!/usr/bin/env node
 'use strict';
 
-// ═══════════════════════════════════════════════════════════════════════════
-// 第十三轮续：端口注册表 release 的空值顺序缺陷 + 调用方 ownerId 纪律（2026-09-13 P2）
+// ---------------------------------------------------------------------------
+// 第十三轮续：端口注册表 release 的空值顺序缺陷 + 调用方 ownerId 纪律
 //
 // ## 缺陷（失效模式 a + g）
 //
-// ① PortRegistry.release(port, ownerId) 的**空值检查在 owner 比较之后**：
+// 1) PortRegistry.release(port, ownerId) 的**空值检查在 owner 比较之后**：
 //      const rec = this._records.get(p);
-//      if (ownerId != null && rec.owner !== ownerId) return false;   // ← rec 可能 undefined
-//      if (!rec) return false;                                       // ← 永远到不了
-//    实测：release(未登记端口, 任意 ownerId) → **TypeError: Cannot read properties of
+//      if (ownerId != null && rec.owner !== ownerId) return false;   // <- rec 可能 undefined
+//      if (!rec) return false;                                       // <- 永远到不了
+//    实测：release(未登记端口, 任意 ownerId) -> **TypeError: Cannot read properties of
 //    undefined (reading 'owner')**。
-//    而其文档明确写「传了 ownerId → 仅当登记 owner 匹配才释放（不匹配即 no-op，并返回 false）」——
+//    而其文档明确写「传了 ownerId -> 仅当登记 owner 匹配才释放（不匹配即 no-op，并返回 false）」——
 //    「端口尚未登记/已被别处释放」恰恰是良构调用方**最常见的场景**（ownerId 参数的存在意义
-//    就是让「如果归我再释放」安全）。包裹 try/catch 的调用方把它静默吞掉 → 契约无声失效；
+//    就是让「如果归我再释放」安全）。包裹 try/catch 的调用方把它静默吞掉 -> 契约无声失效；
 //    未包裹的直接崩。
 //
-// ② 三处调用方仍**不带 ownerId** 释放（与实例域 P1-3 同一类）：
+// 2) 三处调用方仍**不带 ownerId** 释放（与实例域 P1-3 同一类）：
 //      main-process.js  ports.release(oldPort)
-//      proxy.js         ports.release(rec.port)      （list→release 之间存在 TOCTOU）
+//      proxy.js         ports.release(rec.port)      （list->release 之间存在 TOCTOU）
 //      manager.js       ports.release(rec.port)      （同）
-//    按端口号无条件释放可能删掉**他人**在期间重新登记的记录 → 新 owner 失去登记（泄漏/被重复分配）。
+//    按端口号无条件释放可能删掉**他人**在期间重新登记的记录 -> 新 owner 失去登记（泄漏/被重复分配）。
 //
 // ## 门禁
 //   R-a  release 对**未登记端口 + ownerId** 必须返回 false（不抛）
 //   R-b  release 的 owner 不匹配/no-op/匹配 三种语义都正确
 //   R-c  全仓 release 调用方**都带 ownerId**（owner 归属纪律）
 //   R-d  反向：判据能识别「先比 owner 后判空」的旧顺序（门禁非空转）
-// ═══════════════════════════════════════════════════════════════════════════
+// ---------------------------------------------------------------------------
 
 const fs = require('node:fs');
 const os = require('node:os');
@@ -44,7 +44,7 @@ const check = (n, c, x) => {
 
 const TMP = fs.mkdtempSync(path.join(os.tmpdir(), 'r13prt-'));
 
-// ── R-a/R-b：release 语义 ──
+// -- R-a/R-b：release 语义 --
 {
   const reg = new PortRegistry({ file: path.join(TMP, 'ports.json') });
   const P = 19001; // 两个动态池之外（managed 20000-23999 / providerApi 24000-25999）
@@ -63,15 +63,15 @@ const TMP = fs.mkdtempSync(path.join(os.tmpdir(), 'r13prt-'));
   check('R-a release(未登记端口, 无 ownerId) 也不抛且返回 false',
     threw2 === null && ret2 === false, JSON.stringify({ threw2: !!threw2, ret2 }));
 
-  // 已登记 + 错 owner → no-op 且记录保留
+  // 已登记 + 错 owner -> no-op 且记录保留
   check('R-b 错 owner → no-op 返回 false 且**不删**记录',
     reg.release(P, 'owner-B') === false && reg.isRegistered(P) === true, 'ok');
-  // 已登记 + 对 owner → 释放
+  // 已登记 + 对 owner -> 释放
   check('R-b 对 owner → 释放返回 true',
     reg.release(P, 'owner-A') === true && reg.isRegistered(P) === false, 'ok');
 }
 
-// ── R-c：调用方 ownerId 纪律 ──
+// -- R-c：调用方 ownerId 纪律 --
 {
   const files = [];
   const walk = (d) => {
@@ -86,7 +86,7 @@ const TMP = fs.mkdtempSync(path.join(os.tmpdir(), 'r13prt-'));
   for (const f of files) {
     if (f.endsWith(path.join('ports', 'pool.js'))) continue; // 定义处（EXEC3 拆分：实现已移入 pool.js）
     const src = fs.readFileSync(f, 'utf8');
-    // ⚠ 必须同时剥离 `*` 开头的**块注释续行** —— 本仓注释里会写
+    //  必须同时剥离 `*` 开头的**块注释续行** —— 本仓注释里会写
     //   「PortRegistry.release() 现已支持 ownerId」这类**说明文字**，
     //   只剥 `//` 会把它当成一次无参调用（假红，我第一版即如此）。
     const code = src.split('\n').filter((l) => {
@@ -106,7 +106,7 @@ const TMP = fs.mkdtempSync(path.join(os.tmpdir(), 'r13prt-'));
     offenders.length === 0, offenders.length ? offenders.join(' | ') : '0 处');
 }
 
-// ── R-d：反向判据 ──
+// -- R-d：反向判据 --
 {
   const oldOrder = "const rec = m.get(p);\nif (ownerId != null && rec.owner !== ownerId) return false;\nif (!rec) return false;";
   // 判据：owner 比较出现在 !rec 判断之前

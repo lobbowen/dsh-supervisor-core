@@ -1,7 +1,7 @@
 /**
  * 共享动作 hook —— 统一页面写操作模式（消灭各页重复的 act()/busy）
  *
- * 模式：任一后端写操作 = setBusy(key) → await api → 成功 toast / 失败 toast → onDone/refresh
+ * 模式：任一后端写操作 = setBusy(key) -> await api -> 成功 toast / 失败 toast -> onDone/refresh
  *  - success：成功 toast 文案
  *  - refresh：是否刷新全局 supervisor 快照（默认 true）
  *  - onDone：页面级差异化后置动作（如重载本页列表），成功与失败后都会执行
@@ -33,7 +33,7 @@ export function useSupervisorAction() {
     setBusy(key);
     let ok = true;
     try {
-      // UI 条 5：后端部分写端点在 HTTP 200 里回 `{ ok: false, error }`（http() 只看状态码），
+      // 后端部分写端点在 HTTP 200 里回 `{ ok: false, error }`（http() 只看状态码），
       // 必须按返回值判失败，否则被拒的操作也弹成功 toast。页面自管的分支反馈（回调返回
       // undefined）不受影响。
       const rejected = failureFromResult(await fn());

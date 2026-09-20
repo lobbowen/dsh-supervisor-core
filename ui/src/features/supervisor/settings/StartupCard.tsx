@@ -61,7 +61,7 @@ export function StartupCard() {
       refresh: false,
       onDone: () => { setAkInput(""); void load(); },
     });
-    // B8：保存成功后把 key 同步进**本机**缓存（localStorage），此后本面板请求自动带
+    // 保存成功后把 key 同步进**本机**缓存（localStorage），此后本面板请求自动带
     // Authorization: Bearer——否则局域网/公网访问会被后端 401 门卫整体挡死。
     // 清除密钥（ok 且 key 为空）同步清空缓存。run 的 onDone 成败皆跑，故按返回值落盘。
     if (ok) setStoredAccessKey(key);

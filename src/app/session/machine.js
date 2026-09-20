@@ -6,7 +6,7 @@
 function createSession(deps) {
   const g = deps || {};
   const ev = () => (typeof g.events === 'function' ? g.events() : null);
-  let state = 'starting'; // 契约 §3：starting -> running -> stopping -> stopped
+  let state = 'starting'; // 契约：starting -> running -> stopping -> stopped
 
   /** 会话态迁移（同值短路；迁移发事件）。 */
   function setState(s) {
@@ -20,7 +20,7 @@ function createSession(deps) {
   /** 是否处于「退出中/已退出」——此期间一切自动拉起必须抑制（INV-S1）。 */
   function halting() { return state === 'stopping' || state === 'stopped'; }
 
-  /** 契约 §6：是否应运行 = desired==running && 非 halting && 非崩溃停靠。 */
+  /** 契约：是否应运行 = desired==running && 非 halting && 非崩溃停靠。 */
   function shouldRun() {
     if (g.desired() !== 'running') return false;
     if (halting()) return false;

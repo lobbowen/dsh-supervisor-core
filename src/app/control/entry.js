@@ -9,8 +9,8 @@
 // 关键语义：
 //   - phase 状态机统一：stopped -> starting -> running -> draining -> stopped
 //   - 启停只经 LifecycleManager 统一入口（start/stop/restart），模块不对外自出接口；
-//     写权分工（谁可直写 phase/desired/_monitoring/healthy）见契约 GUARD-DOMAIN-MODEL.md §6.3，
-//     违规基线由该契约 §6.4 的 ML-2 ratchet 机器执法；
+//     写权分工（谁可直写 phase/desired/_monitoring/healthy）见契约 GUARD-DOMAIN-MODEL.md ，
+//     违规基线由该契约 的 ML-2 ratchet 机器执法；
 //   - 阶段由 start/stop 迁移驱动；周期拉起在守卫侧（daemon 监督 / 实例 watchdog+guardian），
 //     本对象不内置探活；
 //   - 进程独立性：本抽象描述「管理视图」，模块的实际进程可独立于守卫存在——
@@ -56,14 +56,14 @@ class ManagedLifecycle {
     this.lastTransitionAt = null;
     this.error = null;            // 最近一次错误
     this.startedAt = null;
-    //  2026-09-16 域模型归位（GUARD-DOMAIN-MODEL §2）：**已删除 `this.restartCount`**。
+    //  域模型归位（GUARD-DOMAIN-MODEL）：**已删除 `this.restartCount`**。
     //   它的语义是「守卫代其拉起的累计次数（守护动作侧 +1）」——即「用户意图被守护触发了几次」，
     //   属**域 A**（dsh/沙箱）概念。此前只有域 B 的 router/lan 分支写它（且 lan 那处还因 A/B 平面
     //   id 混用而恒不生效），域 B 归位后两处写入随之删除 -> 该字段既无写入者、也无消费方
     //   （snapshot() 虽暴露、UI 亦未渲染），成为**语义孤儿**；留着会误导后来者以为「模块级守护计数存在」。
     //   注意 域 A 的真实计数**不在这里**：dsh 走 app/main/process.js 的 `restart_triggered` + `restartCount`
     //     （supervisor._mSetRestartCount）；沙箱走 instance 自身的 `state.restartCount`。
-    // 守护开关（**契约 GUARD-DOMAIN-MODEL §2 域 A 专有**）：true=崩溃时按用户意图自愈；false=停就停。
+    // 守护开关（**契约 GUARD-DOMAIN-MODEL 域 A 专有**）：true=崩溃时按用户意图自愈；false=停就停。
     // 注意 域 B 基础设施（router-daemon/lan-daemon）**不属此轴**——它们由保活路径无条件拉起，
     //   adapters 不再为其置 guardian（G-1：基础设施不得有用户意图字段）。
     // guardable=false 的模块**恒为 false**（能力锁，不依赖调用方自律）。

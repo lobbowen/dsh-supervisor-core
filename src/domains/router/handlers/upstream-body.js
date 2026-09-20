@@ -12,7 +12,7 @@
 const NONSTREAM_BODY_MAX_MS = 300000;
 
 /** 有界读上游响应体（字节 + 时间上限；超时带部分内容 resolve，不悬挂调用方）。
- *  C-5 同源修正（批 4）：Buffer 累积 + 一次性 utf8 解码（旧 `text += c` 逐块 toString
+ *  C-5 同源修正：Buffer 累积 + 一次性 utf8 解码（旧 `text += c` 逐块 toString
  *  会拆坏跨块多字节字符，且上限按字符数而非字节数计）。 */
 function readUpstreamBody(ur, maxBytes, timeoutMs) {
   return new Promise((resolve) => {
@@ -36,9 +36,9 @@ function readUpstreamBody(ur, maxBytes, timeoutMs) {
 }
 
 /** 上游体 -> 客户端透传（含背压）。opts={ res, streamRequested, onData, onEnd, onAbort, timeoutMs }：
- *   · onData(chunk) 返回 false 即暂停上游，客户端 'drain' 时恢复；
- *   · 非流式（streamRequested 非真）设总时长上限，到期 destroy 上游并走 onAbort；
- *   · onEnd/onAbort 各只触发一次（内部 done 闸）。
+ *   - onData(chunk) 返回 false 即暂停上游，客户端 'drain' 时恢复；
+ *   - 非流式（streamRequested 非真）设总时长上限，到期 destroy 上游并走 onAbort；
+ *   - onEnd/onAbort 各只触发一次（内部 done 闸）。
  *  返回 { cancel }：调用方在其它结束路径（如客户端断开）清除定时器。 */
 function trackUpstreamBody(ur, opts) {
   const o = opts || {};

@@ -495,10 +495,14 @@
 2. **§E.1 与原述偏离（实现位置与职责边界）**：原述要求「统一注入 `persist.writeAtomic`（tmp 含 pid **+ 读失败禁写内建**）」。实际单源落在 `platform/util/fs.js`（`persist.js` 反而在豁免清单），且「读失败禁写」**仍由各调用点自守**（`canPersist()` / `loadedOk`），单源不内建——helper 不该反向依赖每个调用点的健康语义。规则已按实际形态写进 ACCEPTANCE-STANDARD §8。
 3. **§E.4 只统一字符集层**：URL/SSRF 分级（`shared/ip` + `policies.isValidOrigin`）与 semver/通道语义仍留在各域，未纳入 `input.js`（边界见 ACCEPTANCE-STANDARD §9）。
 4. **审计原述错锚点（本批实测证伪/纠正）**：① §C「令牌条 1 = 4 处裸 `.tmp` 写」低估为 25 处（见 H-6）；② §C「domains 条：shell 看护不认目录 desired 轴」→ D-2 判为**不成立**；③ §E-1「至少 4 处独立实现」同样低估；④ 本批另有 4 处「取全量最高」失实注释与 1 处 build.yml 虚构步骤名归正（发布条 2/3）。
-5. **cred.sh 的行为级验证在 CI 侧覆盖有限**：`bash -n` + 静态判据是本批证据上限；空 stdin 路径的端到端（真起 `put </dev/null`）未新增用例——`release/scripts` 不在 `npm test` 链内，脚本改动历史上只经 dry-run 类 CI 步骤。此项留作后续批次的测试基建议题（与 §G-6-8「测试单独运行缺省不落沙箱」同源）。
+5. **~~cred.sh 的行为级验证在 CI 侧覆盖有限~~ —— 已由第 5 批结案（见 §I-3）**：
+   `test/credential-hygiene-test.js`（在 `npm test` 链内）现对 `put` / `backup` 做子进程行为级断言
+   （D-7 ~ D-13：空/全空白 stdin、覆盖前备份等价、备份目标拒 ephemeral、未知子命令与未知条目、清单含值）。
+   留档：本条的原始顾虑「`release/scripts` 不在链内」仍然成立——链是通过**测试文件调脚本**接入的，不是脚本自跑。
 6. **C-3 首版断言是夹具误设**：`a7a31f4` 记录——429 出现在第 11 发而非第 10 发，且循环起点账本已被前序 cookie 放行 clear；修法为前置清零断言 + 11 发循环拆两条（§G-6-9 逐例拆分 + 判据回显）。
 7. **registry 版本**：本批**不发布**（npm 仍 0.1.5-BETA.10）。合入与发布分两步，发布另需确认。
-8. **B-11 闸门的对称性缺口（本轮取证时发现，未在本批修）**：`runNpmInstall` 只在 **commandTemplate 分支**逐项过禁用字符集；默认分支的 `argv.push('--prefix', o.prefix)` 完全不过闸（install.js:149）。因 spawn 不经 shell，实际不构成注入面，但它与 B-11「任何一环被污染都直达 spawn」的立项理由不对称——prefix 来自配置/环境（win 上含空白的安装前缀是常态）。修法有两种且语义相反（放宽=给绝对路径豁免；收紧=prefix 也过同一判据并明确要求引号语义），属裁决题不是手到活，留第 5 批立项。
+8. **~~B-11 闸门的对称性缺口~~ —— 已由第 5 批结案（见 §I-1）**：默认分支的 `--prefix` 值现过 `input.prefixViolation`
+   （路径形态尺：控制符 / 前导 `-` / 非绝对形态 / 超长），既非「放宽」也非「套用 argv 字符集」，是第三种解法。
 9. **~~挂账：真实 PATH 下 windows 能否解析到 `icacls`~~ —— 已由 run `35488336734` 结案（见 §H-7-16 第三条）**：
    windows job 真实 PATH 实测 `hasIcacls()=true`、探针 `{ok:true,code:"0"}`，「可用 ⇒ 绝不谎报 `none`」成立。
    结论：**生产机 ACL 收紧链路可用，`hasIcacls` 探测方式无缺陷**；上一轮「清空 PATH 仍可用」的推演依据作废，
@@ -508,6 +512,143 @@
     X-2 是上一批遗留的文档原文），已全部清零并用门禁同一口径本机穷举复扫确认（§H-7-16）。**残留风险**：X-1 只扫 `src,test,release,bin,.github,ui/src`
     且剥离注释，X-2 扫全部 .md 但排除 CHANGELOG 与门禁自身——注释里的示例路径、`ui/` 非 `ui/src` 的构建产物、
     以及 CHANGELOG 的历史条目都不在执法范围内。这是**有意的宽**（注释举例不构成机器绑定），不要误读成「全仓无绑定」。
+
+## I. 第 5 批裁决与修复登记（注释纪律 + §H-8-5/§H-8-8 结案）
+
+### I-1 B-11 对称性缺口：`--prefix` 过路径形态尺（结案 §H-8-8）
+
+| 项 | 内容 |
+|---|---|
+| 缺陷 | `runNpmInstall` 默认分支把 `o.prefix` 原样 push 进 spawn argv，而同分支的 pkg/version 逐项过闸——同一风险面两套标准 |
+| 修法 | 新增 `input.prefixViolation()`（第五把尺）：拦控制符、前导 `-`（会被 npm 当成下一个选项 = 选项注入）、非绝对形态（落到进程 CWD）、超长；`install.js` 在 `push('--prefix')` **之前**判定并 fail-closed 返回 `{ok:false}` |
+| 为什么不复用 `argvViolation` | 那条尺子禁空白与反斜杠，而 Windows 真实前缀普遍含二者（8.3 短名段带 `~`、`Program Files` 带空白）。套用即误杀合法安装路径——同一字符集在第 4 批的 Windows job 上已误杀过 `fake-npm.js` |
+| 判据 | `test/npm-resolution-test.js` C-g：结构闸（过闸调用必须在 push 之前）+ 单源（`install.js` 不得自写 `prefixViolation`）+ 7 正例 / 10 负例逐例断言 + 4096 边界 + 异步行为 5 例（合法 win/posix 前缀用坏 registry 反证「已经过前缀闸」） |
+
+### I-2 插件域整树终止收口平台层（附：判据钉住被禁形态）
+
+| 项 | 内容 |
+|---|---|
+| 缺陷 | `domains/plugin/cli.js` 超时自写 `process.kill(-child.pid, sig)`。Windows 无进程组语义：负 pid 必抛，即使命中也只杀得到 `.cmd` 那层壳，pnpm 孙进程成孤儿——与 §H-7 在 `install.js` 上取证的同一产品缺陷的第二处 |
+| 修法 | 改调 `platform/os/process.killTree(pid, sig, cb, { ownGroup: true })`（Windows 经 `taskkill /T /F`，两平台语义等价）；detached 子进程必为本组组长，故 `ownGroup` 成立 |
+| 判据同批改 | `round8-fixes-test` J-i 原**要求** `process.kill(-child.pid, sig)` 存在于源码——收口后这条判据会把正确实现判红（第 4 批同类失效：判据钉住旧实现）。现改为「经 `procOS.killTree(child.pid, sig, () => {}, { ownGroup: true })`」+ 反向「插件域不得再出现 `process.kill(-`」 |
+
+### I-3 cred.sh 行为级断言（结案 §H-8-5）
+
+`test/credential-hygiene-test.js`（链内，未新增文件）补 D-7 ~ D-13：空/全空白 stdin 的 `put` 必须 fail-closed
+（非零退出、原值未截断、清单未变、不留 `.tmp`/`.bak`）；覆盖写只留一份 `<文件>.bak-<14 位时间戳>` 且内容 = 旧值；
+`backup` 拒无目标与实例目录内目标、合法目标产 0700/0600 副本且不回显令牌值；未知子命令与未知条目；清单写入令牌值 → `doctor` 判红。
+`runCredIn` 显式清空宿主侧 `DSH_CRED_ALLOW_OVERWRITE` / `DSH_CRED_FORCE` / `DSH_CRED_BACKUP_DIR`，
+防「负例因宿主环境变绿」。真机覆盖保护的模拟已在 `destructive-op-safety-test` W-1 ~ W-4，未重复。
+
+### I-4 注释纪律（CS 组）
+
+| 项 | 内容 |
+|---|---|
+| 规则 | 注释只写「为何这样写」与不可见约束，不写修复过程（批次号 / run 号 / 日期 / 章节号 / 裁决史）；字符白名单 = ASCII 可打印 + 汉字假名 + 中文标点 + 全角 + `‘’“”–—…`，图标与制表符（含 `→ ⚠ § ├──`）一律禁，映射写 ASCII（`->`、`<=`） |
+| 执法 | `test/comment-pin-gate-test.js` CS-1（字符白名单，硬失败）+ CS-2（过程叙事标记，硬失败）；规则正文在 DEVELOPMENT-TRACK 注释纪律节 |
+| 存量清理 | src/ + test/ + release/ + ui/ + .github/ 注释全量改写 |
+| 不误伤代码的证据 | 对清理提交做「剥注释后逐字节比对」探针：167 个 js/ts 文件 **code drift = 0**，即改动全在注释内 |
+| 清理引入的次生错误（本批自查纠正） | ① `docs-reference-gate-test.js` 两处注释把树连接符写成 `+--/+--`（代码实际匹配 `├──/└──`）——注释描述失真，改为文字描述；② 一批 `（Linux → 条件执行）` 之类符号映射留下的读感问题按行复核 |
+
+### I-5 顺手抓出的既有缺陷：darwin 真实 home 解析把 `\s` 写成 `s`
+
+`credential-hygiene-test.js` 与 `destructive-op-safety-test.js` 的 `realHome()` 用
+`.trim().split(/s+/).pop()`（缺反斜杠，按字面 `s` 切）解析 `dscl` 输出，
+macOS 上拿到的是**裸账号名**而不是绝对 home 目录。后果只在 macOS 成立：`REAL_STORE` 变相对路径 ->
+`持久化-3` 判红，或 R 组因路径不存在而静默 SKIP（门禁在该规则本应守护的平台上空转）。
+现改 `/\s+/`，与 `cred.sh`/`_npm-auth.sh` 里 `awk '{print $2}'` 的口径一致。
+
+### I-6 文档纠错（会造成错误引导的表述）
+
+| 文件 | 原表述 | 纠正 |
+|---|---|---|
+| DEVELOPMENT-TRACK 第 2 步 / release/README 铁律二 | 把 `matrix.supportsProcessGroup()` 当作「POSIX 进程组」的推荐入口 | 该能力只回答「本平台有无组语义」；整树终止的唯一入口是 `platform/os/process.killTree`，示例改用 `capabilityProfile().processTreeKill` |
+| ACCEPTANCE-STANDARD §9 | 四把尺（包名 / argv / 单元名 / 账本键） | 补第五把 `prefixViolation`，并写明「尺子按值的形态分把，不按调用点分把」 |
+| CREDENTIALS-STANDARD §1、§6 | 门禁标签写成 C-1 ~ C-9、并固化「18 断言」；§6 自己也声明不固化条数（自相矛盾） | 表头按脚本内真实标签重写（D / S / R / 持久化 / 反向），条数改为「以脚本输出为准」；§1 铁律的门禁列同步改为可 grep 的判据名 |
+
+### I-7 design-notes 与实现的偏差（登记，不改原文）
+
+`design-notes/plugin.md` 与 `design-notes/_p2-ws1b-domains-plugin-instance.md` 仍描述 `cli.js`
+使用 `matrix.supportsProcessGroup()`、J-i 钉 `process.kill(-child.pid, sig)`。
+design-notes 是**带日期的过程记录**（非现行规范、不在 DR-1 扫描面），按「历史记录不改写」保留原文，以 §I-2 为准。
+
+### I-8 本批证据上限与未做项
+
+1. 本批全部改动只经**静态**验证：`node --check`、`bash -n`、纯函数探针（前缀 19 例逐例）、
+   CS/CP 门禁扫描、剥注释逐字节比对、照 `cred.sh` 与 `install.js` 源码逐字对出的消息子串与退出码。
+   运行时裁决权在 CI 四平台矩阵；若 CI 与静态推演冲突，以 CI 为准并回改判据。
+2. `release/scripts/*.sh` 仍不自跑于链内（由测试文件调起），Linux-only 的 `doctor` 分支在 macOS/Windows 走 SKIP 臂。
+3. **本批不发布**：registry 仍 0.1.5-BETA.10；第 3/4/5 批的修复不在任何已发布产物内。合入与发布分两步，发布另需确认。
+
+### I-9 本批 CI 取证（PR #7 第一轮，run 35497600197）
+
+1. **唯一红点是本批注释精简自己造成的回归**：`test/round8-fixes-test.js` 的 J-o 四条判红
+   （glibc / 令牌契约 / 无控制台窗口 / 有界执行 四份门禁「无缺口块」）。机理：I-4 的精简把
+   `## 覆盖缺口（E-2 制度化登记` 的括号部分删成 `## 覆盖缺口`，而 J-o 是用**字符串**匹配定位块首的，
+   匹配落空即判「块不存在」。门禁逻辑没写错，被改动的是它的**判据对象**。
+   与 CP 节登记的「断言钉注释」是同一失效族，差别在这次走 `indexOf()` 而非正则字面量，故 CP-1 抽不到。
+   修法取「恢复契约字面量」，不放宽 J-o。
+2. **连带后果比红点本身更重要**：`npm test` 链是 `&&` 串接的 129 个文件，round8 在第 57 位，
+   首个非零退出即截断 ⇒ 其后 **71 个文件本轮零执行**。「本轮只报 4 条红」不等于其余已绿。
+   据此把「按未执行段做同口径只读复算」写进 ACCEPTANCE-STANDARD 第 2 节（第 4 条）与第 5 节。
+3. 预拆雷在**未执行段**又抓到一处同类隐藏红：`release-spec-consistency-test.js` P-9 B25 的段首锚点
+   取的是 `cred.sh` 里那条注释（`B25（AUDIT`），同一次精简把它改成 `B25：` 后失配，
+   start 与 end 同为 -1、段长 0，两条判据连带判红。改法：段首锚点改取**代码行** `BK="$f.bak-`
+   （注释会被改措辞，代码行不会），终点仍向后找 `umask 077`，「段非空」前提例保留。
+   本轮未执行段共 20 个纯静态门禁做了同口径复算，除上述一处外全部 0 失败。
+4. 顺带清掉精简残留的断句八处（引用被删后剩下的「把 的」「是 的」「按设计文档 的」一类），
+   补回所指实名（文档名或「第 N 节」），**写之前先核对被引文档的小标题**，以免用新错误引导替换旧错误引导。
+5. **制度化**：ACCEPTANCE-STANDARD 第 7 节边界增「标记本身是契约字面量」；第 10 节增第 6 种失效形态
+   「判据的对象可能是注释措辞」；第 2 节第 4 条增链截断口径；第 5 节把「同口径只读复算」列为允许事项，
+   并明确它只是预拆雷、不是裁决。
+
+### I-10 第二轮取证（run 35498660397）：windows-only 的产品缺陷
+
+1. 上一项修复后，Linux 的 test job 与 mac/linux 的 build job 全绿，唯一红点在 windows 的 D-10：
+   `cred.sh backup` 那道「不得把凭据备份进 ephemeral 实例子目录」的闸用的是 POSIX glob
+   （`*/instances/inst-*`），Windows 传进来的是反斜杠路径 ⇒ **闸整体漏判**，
+   备份可以一路写进实例目录——正是本闸防的那次事故形态。
+2. 判红报的是「产品没做」，这次**产品真的没做**：与第 3 批那次（字符集闸误杀 win32 盘符路径，闸太严）
+   互为反向，这次是闸太窄。修法只改产品：先 `DEST_NORM=${DEST//\\//}` 归一分隔符再判，
+   判据、消息、退出码都不变。
+3. 夹具侧同时补一条**跨平台**判据：以反斜杠的合成盘符字面量为目标调 `backup`，三平台都必须判红，
+   使「分隔符归一」在 Linux/mac runner 上也被证明一次；并按「多子句断言逐例独立 + 判据值回显」
+   把 D-10 的退出码与理由文案拆成两条。
+4. 本项裁决权只在 CI：本机不跑 `cred.sh` 的行为级测试。
+
+### I-11 第三轮取证（run 35499144735）：P9 是不成立前提造成的假失败
+
+1. windows 转绿（上一项的分隔符归一生效），红点换到 Linux test job 的 `p2p-api-test` P9 一条，
+   证据是 `["registering"]`。同一次运行的产品日志随后就打出了
+   `[guard] account ...: registering -> ready`——账号是在夹具放弃之后的一瞬才入终态的。
+   判据没写错、产品也没错，错在**夹具把轮询上限当成了产品时限**。
+2. 定性依据：该转换由实例被拉起的那一刻驱动（同轮 P10 回显 `st:COLD / h:false`），
+   产品从不承诺「`/router/start` 之后 N 秒内必到终态」。原 20s 预算因此是一个不成立的前提，
+   属第 10 节第 4 种形态（拿推演出来的环境事实当判据前提）。
+3. 修法不降强度：轮询改写成带回显的具名函数（`elapsedMs` / `polls` / 末态），上限退化为
+   **失控守卫**，到终态即退出（正常路径不多等）；并把「账号已进入视图」与「已到终态」
+   拆成两条独立断言。终态仍必须是 ready 或 frozen。
+4. 本轮其余全绿：precheck 成功、四平台 build 全部成功。
+5. 同一次改动将判据前提的成因坐实到产品代码，避免下次又靠翻日志反推：`_ensurePkgCached` 在缓存未命中时
+   自身预算即 `timeoutMs: 120000`，`waitHealthy` 最坏约 `6 轮 × 3s 探活 + 5 × 1.5s 间隔`，
+   两者相加远大于任何「几十秒」夹具上限——所以夹具的上限**只能**是失控守卫，不能是时限承诺。
+6. 按同一失效形态复扫夹具（不只看红的那一条）：`p2p-router-test` 的 B3/B5 有一处**同构**的 20s 轮询上限。
+   本轮它是绿的（链上在第 20 位、先于 `p2p-api-test` 的第 21 位执行完），但押的是同一个不成立前提，
+   差别只在它走进程内 API、少了 HTTP 层那几拍——已知的第 4 次复发不该留给下一轮 CI，故同修法一并处理。
+
+### I-12 第四轮（run 35500043097）全绿之后的排障面复查：一处「注释与命令矛盾」
+
+1. 裁决：precheck 成功、Linux test job 成功、四平台 build 腿全部成功、release 按 PR 语义 skipped。
+   逐腿核对日志（`结果: ` 汇总行各 125 条、非零 failed 为 0；全 zip 硬 FAIL 行为 0），
+   确认是「链全量跑完且绿」而不是「链早退被截断」。
+2. 复查排障面时发现 `build.yml` 的 test 步：注释写「不截断：门禁失败时断言文案就是排障依据」，
+   命令却是 `xvfb-run -a npm test 2>&1 | tail -60`。129 个文件的链只留最后 60 行，
+   红点的断言文案几乎必被截掉（本轮 P9 的回显就只在这条腿上看不见）。属 §7 同族失效：
+   **注释声称的覆盖面大于命令实际做的事**，且这条注释会阻止下一个人去查日志为什么是空的。
+3. 修法取「让注释为真」而非「把注释改小」：去掉该管道的截断。四平台产线腿（`ci-core.sh`）本就全量输出，
+   两腿口径由此一致；`build:launcher:all` 的 `| tail -20` 保留（那是构建进度噪音，非判据文案）。
+4. 同轮附带发现（不改动，留作事实）：test job 与四平台 build 腿**各自**执行同一串 129 文件链，
+   即「windows-only / linux-only」红点其实来自某条腿的执行环境差异，而不是「只有那条腿跑测试」。
 
 ## 附录：分域审计明细索引
 

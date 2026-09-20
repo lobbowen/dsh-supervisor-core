@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 'use strict';
 
-// ═══════════════════════════════════════════════════════════════════════════
+// ---------------------------------------------------------------------------
 // P1-1/P1-2/P1-3：反代实例的**请求级熔断**此前完全失效（三处叠加）
 //
 // ## 三个缺陷为何必须一起看
@@ -9,11 +9,11 @@
 // 它们都作用在「坏实例能否被自动重启」这一条链上，任一失效即整链失效：
 //
 //   P1-1  `markUsed` 在**请求发出前**无条件清零 `_unhealthyCount`，
-//         而重启阈值是「连续 ≥2 次失败」→ 计数**数学上到不了 2**。
+//         而重启阈值是「连续 >=2 次失败」-> 计数**数学上到不了 2**。
 //   P1-2  断流自愈调用的是 `prov.markNetFail(acc)` —— **该方法全仓不存在**，
-//         `typeof === 'function'` 恒 false → 调用是死代码。
+//         `typeof === 'function'` 恒 false -> 调用是死代码。
 //   P1-3  在途请求期间的重启被记为 `_restartPending` 但**无任何读取点**，
-//         且 2 分钟退避**在延迟之前**就已置位 → 坏实例至少卡死 2 分钟。
+//         且 2 分钟退避**在延迟之前**就已置位 -> 坏实例至少卡死 2 分钟。
 //
 // 后果：稳定 5xx/400（不触发 180s 超时）的坏实例会被持续选中吃流量，
 //   只能靠另一套独立的 _monitorFails（探活）兜底。
@@ -23,7 +23,7 @@
 //   R-b  `markNetFail` 不得再出现在调用位置（改用真实存在的 markInstanceNetFail）
 //   R-c  `_restartPending` 必须有**读取点**（出现在某方法的实参位置）
 //   R-d  退避 `_restartAt` 只在**真正执行**重启时置位（不得在延迟分支前）
-// ═══════════════════════════════════════════════════════════════════════════
+// ---------------------------------------------------------------------------
 
 const path = require('node:path');
 const fs = require('node:fs');
@@ -36,21 +36,21 @@ const proxy = fs.readFileSync(path.join(ROOT, 'src', 'domains', 'router', 'provi
 const fwd = fs.readFileSync(path.join(ROOT, 'src', 'domains', 'router', 'handlers', 'forward.js'), 'utf8');
 const inflight = fs.readFileSync(path.join(ROOT, 'src', 'domains', 'router', 'model', 'inflight.js'), 'utf8');
 
-// ── R-a：清零时机 ──
+// -- R-a：清零时机 --
 {
   const m = proxy.match(/markUsed\(inst\) \{[\s\S]{0,200}?\n  \}/);
   check('R-a 定位到 markUsed', !!m, m ? 'ok' : '未找到');
   check('R-a markUsed **不再**清零 _unhealthyCount',
     !!m && !/_unhealthyCount\s*=/.test(m[0]), m ? '已移除' : '');
   check('R-a 存在 markRequestOk（成功后才清零）', /markRequestOk\(inst\)/.test(proxy), '有');
-  // ⚠ 断言「调用了 markRequestOk」而不绑定具体实参名 ——
+  //  断言「调用了 markRequestOk」而不绑定具体实参名 ——
   //   P2 双事实源修复后实参已改为 instOf(...) 的结果（okInst），
   //   写死 `acc.instance` 会让「纯重构」误报（我第一版就踩了这个）。
   check('R-a handlers/forward 在 2xx 成功路径调用 markRequestOk',
     /markRequestOk\(\w+\)/.test(fwd), '已接入');
 }
 
-// ── R-b：markNetFail 死调用 ──
+// -- R-b：markNetFail 死调用 --
 // 剥离注释后不得再有 markNetFail 的**调用**（形如 .markNetFail( ）
 {
   // 注释剥离统一走 test/_strip.js（阶段六）。原实现只丢「// 开头的整行」——语义等价且字符串/正则感知，
@@ -71,11 +71,11 @@ const inflight = fs.readFileSync(path.join(ROOT, 'src', 'domains', 'router', 'mo
   check('R-b 该方法确实定义在 proxy.js',
     /markInstanceNetFail\s*\(instOrAcc\)/.test(proxy), '有定义');
 
-  // ── R-b 升级（P3-B）：从「字符串出现过」升级为「实参正确 + 确实计数」的行为断言 ──
+  // -- R-b 升级（P3-B）：从「字符串出现过」升级为「实参正确 + 确实计数」的行为断言 --
   //   旧断言只查 markInstanceNetFail 字符串存在，故 forward.js 传错实参也绿。
   //   真实缺陷：markInstanceProblem 以 instOrAcc.pid 判定实参是否为实例；传累加器 acc
-  //   （无 pid）会**静默早退、完全不计数** —— 流式中断不进熔断（forward.js:132 与 :229）。
-  //   ⚠ 本断言为硬判据，必须与修复 forward.js 两处实参的改动**同批提交**。
+  //   （无 pid）会**静默早退、完全不计数** —— 流式中断不进熔断（forward.js:132 与:229）。
+  //    本断言为硬判据，必须与修复 forward.js 两处实参的改动**同批提交**。
   const fwdCode = strip(fwd);
   const callArgs = [];
   for (const line of fwdCode.split(String.fromCharCode(10))) {
@@ -96,7 +96,7 @@ const inflight = fs.readFileSync(path.join(ROOT, 'src', 'domains', 'router', 'mo
     BARE_ACC.test('parse.instOf(prov, acc)') === false, 'miss');
   check('R-b 反向：正确样本 inst 不误报', BARE_ACC.test('inst') === false, 'miss');
 
-  // ── 行为面：沙箱内执行真实的 markInstanceProblem 本体，证明「计数」语义与实参形状要求 ──
+  // -- 行为面：沙箱内执行真实的 markInstanceProblem 本体，证明「计数」语义与实参形状要求 --
   const mBody = proxy.match(/markInstanceProblem\(instOrAcc, reason\) \{[\s\S]*?\n  \}/);
   check('R-b 定位到 markInstanceProblem 实现', !!mBody, mBody ? 'ok' : '未找到');
   let impl = null;
@@ -126,7 +126,7 @@ const inflight = fs.readFileSync(path.join(ROOT, 'src', 'domains', 'router', 'mo
   }
 }
 
-// ── R-c：_restartPending 必须有读取点 ──
+// -- R-c：_restartPending 必须有读取点 --
 {
   // 写入点是赋值；读取点应出现在 `if (... _restartPending)` 或实参位置
   const hasRead = /if\s*\([^)]*_restartPending\s*\)/.test(proxy)
@@ -136,7 +136,7 @@ const inflight = fs.readFileSync(path.join(ROOT, 'src', 'domains', 'router', 'mo
   check('R-c 存在 flushRestartPending 消费方法', /flushRestartPending\(inst\)/.test(proxy), '有');
   check('R-c handlers/forward 在 inflight 归零时执行 flushRestartPending',
     /prov\.flushRestartPending\([^)]+\)/.test(fwd), '已接入');
-  // ★ 行为修复锁（PG-D3-4）：单一 end() 产生 flushRestartPending effect，
+  //  行为修复锁（PG-D3-4）：单一 end() 产生 flushRestartPending effect，
   //   且流式成功/中断两条路径共用 endInflight（旧缺陷：成功路径漏补重启）。
   check('R-c 单一 end() 生成 flushRestartPending effect',
     /kind:\s*'flushRestartPending'/.test(inflight), '有');
@@ -144,7 +144,7 @@ const inflight = fs.readFileSync(path.join(ROOT, 'src', 'domains', 'router', 'mo
     (fwd.match(/endInflight\(acc,\s*prov\)/g) || []).length >= 2, '共用');
 }
 
-// ── R-d：退避置位时机 ──
+// -- R-d：退避置位时机 --
 {
   const m = proxy.match(/restartInstance\(inst, reason\) \{[\s\S]*?\n  \}/);
   check('R-d 定位到 restartInstance', !!m, m ? 'ok' : '未找到');
@@ -157,16 +157,16 @@ const inflight = fs.readFileSync(path.join(ROOT, 'src', 'domains', 'router', 'mo
   }
 }
 
-// ── 反向：成功路径仍要清零（防「修成永不清零」）──
+// -- 反向：成功路径仍要清零（防「修成永不清零」）--
 check('反向：成功路径保留了清零语义（markRequestOk 内有赋值）',
   /markRequestOk\(inst\) \{[\s\S]{0,120}?_unhealthyCount\s*=\s*0/.test(proxy), '保留');
 check('反向：markInstanceProblem 仍累加（熔断本身没被删）',
   /_unhealthyCount\s*=\s*\(inst\._unhealthyCount \|\| 0\) \+ 1/.test(proxy), '保留');
 
-// ── D-4 / D-6（AUDIT-2026-09-19 第4批 D）：providers/probe.js 实例治理 ──
+// -- D-4 / D-6：providers/probe.js 实例治理 --
 //   D-4 实例日志裸 createWriteStream({flags:'a'})：全仓唯一无轮转、且默认 0644 的日志落盘点。
 //   D-6 monitorLifecycle 的 `listening !== inst.pid` 等值判据在 npx --yes 兜底形态下恒不成立
-//       （监听者是子孙进程），误判后抹 pid ⇒ stopInstance 的 kill 段恒不可达 ⇒ 留孤儿占端口。
+//       （监听者是子孙进程），误判后抹 pid => stopInstance 的 kill 段恒不可达 => 留孤儿占端口。
 {
   const { stripComments } = require('./_strip');
   const probeRaw = fs.readFileSync(path.join(ROOT, 'src', 'domains', 'router', 'providers', 'probe.js'), 'utf8');
@@ -184,7 +184,7 @@ check('反向：markInstanceProblem 仍累加（熔断本身没被删）',
   check('D-4 无缓冲写入器不需要 end()（close 里遗留的 logStream.end 已删）',
     !/logStream/.test(probe), 'ok');
 
-  // D-6 的实现落在平台层（run 35487214678 的 CP-1 五 job 同点红：`process.platform` 出现在
+  // D-6 的实现落在平台层（的 CP-1 五 job 同点红：`process.platform` 出现在
   //   src/domains/** 即架构越界）。判据随之搬家：从平台文件取本体，业务域只验「问了闸 + 没留副本」。
   const pidProbe = fs.readFileSync(path.join(ROOT, 'src', 'platform', 'os', 'pidlookup', 'probe.js'), 'utf8');
   const pidIndex = fs.readFileSync(path.join(ROOT, 'src', 'platform', 'os', 'pidlookup', 'index.js'), 'utf8');
@@ -233,7 +233,7 @@ check('反向：markInstanceProblem 仍累加（熔断本身没被删）',
 const asyncChecks = [];
 const acheck = (n, c, x) => { asyncChecks.push(!!c); console.log((c ? 'PASS' : 'FAIL') + ' ' + n + (x !== undefined && x !== '' ? '  ← ' + x : '')); };
 
-// ── D-1 / D-3（AUDIT-2026-09-19 第4批 D）：inflight 配对与「先停实例再清 pid」 ──
+// -- D-1 / D-3：inflight 配对与「先停实例再清 pid」 --
 // 行为面：经依赖注入跑真 proxyFor（不触网：forwardOnceImpl 可注入）。
 (async () => {
   const { createForwarder } = require(path.join(ROOT, 'src', 'domains', 'router', 'handlers', 'forward.js'));
@@ -248,9 +248,9 @@ const acheck = (n, c, x) => { asyncChecks.push(!!c); console.log((c ? 'PASS' : '
       markUsed() {}, startInstance: async () => ({ ok: true }), _waitHealthy: async () => true,
       _switchBudgetMs: () => 50,
       stopInstance(called) { stops.push(called); called.pid = null; },
-      // ⚠ 夹具勘误（第 4 批 CI：run 35483224735）：原写 `restarts++` / `netFails++`，
-      //   而两者是 const 数组 → 自增抛 TypeError → 被产品侧 try/catch 吞掉 → 计数恒 0，
-      //   「超时走 restartInstance」这条**从来没有牙**。改为 push（本文件上方 stub 的既有范式）。
+      // 夹具计数用 push：`restarts` / `netFails` 是 const 数组，
+      //   自增抛 TypeError -> 被产品侧 try/catch 吞掉 -> 计数恒 0，
+      //   「超时走 restartInstance」这条就没有牙（与本文件上方 stub 的既有范式一致）。
       restartInstance(inst, why) { restarts.push(why || 'called'); }, markInstanceNetFail(inst) { netFails.push(inst); },
       _retryPendingStop() {}, flushRestartPending() {},
     };
@@ -276,7 +276,7 @@ const acheck = (n, c, x) => { asyncChecks.push(!!c); console.log((c ? 'PASS' : '
   const mkRes = () => { const r = { headers: {}, ended: null, writeHead(c, h) { this.code = c; this.headers = h || {}; }, end(b) { this.ended = b; }, once() {}, on() {} }; return r; };
   const mkReq = () => ({ method: 'POST', url: '/v1/messages', headers: {} });
 
-  // D-1a：上游实现同步抛错（parse/joinUpstream/连接期非 error 事件异常等形态）
+  // 上游实现同步抛错（parse/joinUpstream/连接期非 error 事件异常等形态）
   {
     const { deps, prov, acc, inflight } = mkDeps({
       forwardOnceImpl: async () => { throw new Error('boom'); },
@@ -291,7 +291,7 @@ const acheck = (n, c, x) => { asyncChecks.push(!!c); console.log((c ? 'PASS' : '
     acheck('D-1a 抛错原样冒泡给端点层（不静默吞）', threw === 'boom', String(threw));
   }
 
-  // D-1b：反向对照 —— 判据必须有鉴别力（且不被注释同形干扰）
+  // 反向对照 —— 判据必须有鉴别力（且不被注释同形干扰）
   {
     const { stripComments } = require('./_strip');
     const src = stripComments(fwd);
@@ -311,9 +311,9 @@ const acheck = (n, c, x) => { asyncChecks.push(!!c); console.log((c ? 'PASS' : '
       direct === 1 && viaEnd >= 5, JSON.stringify({ direct, viaEnd }));
     acheck('D-1b 反向：readableEnded 不再作为 close 收口的早退判据',
       !/if\s*\(ur\.readableEnded\)\s*return;/.test(src), '已移除');
-    // ⚠ 判据勘误（第 4 批 CI：run 35483224735 四平台同点红）：原正则把
-    //   `function endInflight(acc, prov) {` 这行**声明**也数成调用（3 → 4）。
-    //   先摘掉声明再计数，否则本条永远数出一个不存在的「第四处结束点」。
+    // 计数前先摘掉声明行：
+    //   `function endInflight(acc, prov) {` 也会命中调用正则（3 -> 4），
+    //   不摘就永远数出一个不存在的「第四处结束点」。
     const DECL_RE = /function endInflight\(acc,\s*prov\)\s*\{/;
     const decls = (src.match(new RegExp(DECL_RE, 'g')) || []).length;
     const callOnly = src.replace(DECL_RE, '');
@@ -322,7 +322,7 @@ const acheck = (n, c, x) => { asyncChecks.push(!!c); console.log((c ? 'PASS' : '
       ends === 3 && decls === 1, '调用 ' + ends + ' 处 / 声明 ' + decls + ' 处');
   }
 
-  // D-3：非超时 net-error 必须先经 stopInstance（kill 路径可达），不得只抹 pid
+  // 非超时 net-error 必须先经 stopInstance（kill 路径可达），不得只抹 pid
   {
     const { deps, prov, state } = mkDeps({
       forwardOnceImpl: async () => ({ phase: 'net-error', error: 'socket hang up' }),

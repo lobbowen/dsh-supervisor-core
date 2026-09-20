@@ -4,7 +4,7 @@
 // 阶段 1「所有权归一」契约回归（ARCHITECTURE-CONTRACT-phase0）：
 //   INV-X1 守卫内核不得 systemctl stop/restart 自己所属单元（自停死锁的结构防线）
 //   INV-S1 stopping/stopped 期间抑制一切自动拉起
-//   INV-S2 退出唯一入口 shutdownAll（→ /session/stop）
+//   INV-S2 退出唯一入口 shutdownAll（-> /session/stop）
 //   INV-S4 会话态唯一读取口 sessionState()
 //   V1     壳不得直接 spawn 守卫进程（存在即校验）
 // 自包含：构造最小 Supervisor（TMP stateFile，不 start 定时器），不触碰生产文件。
@@ -20,7 +20,7 @@ const results = [];
 const check = (n, c, x) => { results.push(!!c); console.log((c ? 'PASS' : 'FAIL') + ' ' + n + (x !== undefined ? '  ← ' + x : '')); };
 
 (async () => {
-  // ── 1) INV-X1：内核静态不变量——不得出现自停/自重启自己所属单元 ──
+  // -- 1) INV-X1：内核静态不变量——不得出现自停/自重启自己所属单元 --
   console.log('== INV-X1 所有权：内核不得自停/自重启守卫单元 ==');
   const supSrc = fs.readFileSync(path.join(ROOT, 'src', 'supervisor.js'), 'utf8');
   // 匹配 systemctl 调用且参数含 dsh-supervisor 的 stop/restart（自停）
@@ -29,7 +29,7 @@ const check = (n, c, x) => { results.push(!!c); console.log((c ? 'PASS' : 'FAIL'
   const daemonLifecycleSrc = fs.readFileSync(path.join(ROOT, 'src', 'app', 'daemons', 'process.js'), 'utf8');
   check('INV-X1b daemon-lifecycle 无守卫单元自停', !/dsh-supervisor/.test(daemonLifecycleSrc), 'ok');
 
-  // ── 2) 会话状态机基础 ──
+  // -- 2) 会话状态机基础 --
   console.log('== 会话状态机（契约 §3）==');
   const { Supervisor } = require(path.join(ROOT, 'src', 'supervisor'));
   const cfg = {
@@ -48,7 +48,7 @@ const check = (n, c, x) => { results.push(!!c); console.log((c ? 'PASS' : 'FAIL'
   check('INV-S4 会话态经 sessionState() 读取', typeof sup.sessionState === 'function');
   check('_sessionHalting() 初始为 false', sup._sessionHalting() === false);
 
-  // ── 3) INV-S1：stopping 期间抑制自动拉起 ──
+  // -- 3) INV-S1：stopping 期间抑制自动拉起 --
   console.log('== INV-S1 stopping 抑制拉起 ==');
   let spawned = 0;
   sup._startProcess = async () => { spawned++; sup._mSetPhase('STARTING'); };
@@ -60,7 +60,7 @@ const check = (n, c, x) => { results.push(!!c); console.log((c ? 'PASS' : 'FAIL'
   const spawnedWhenRunning = spawned;
   check('running 会话态：显式意图可触发拉起', spawnedWhenRunning >= 1, 'spawned=' + spawnedWhenRunning);
 
-  // 进入 stopping → 同一条件下必须抑制
+  // 进入 stopping -> 同一条件下必须抑制
   spawned = 0;
   sup._setSessionState('stopping');
   sup.intents.register('start');
@@ -68,7 +68,7 @@ const check = (n, c, x) => { results.push(!!c); console.log((c ? 'PASS' : 'FAIL'
   await sup.tick();
   check('INV-S1 stopping 期间抑制拉起（spawned=0）', spawned === 0, 'spawned=' + spawned);
 
-  // ── 4) 退出：shutdownAll 置 stopped 且幂等 ──
+  // -- 4) 退出：shutdownAll 置 stopped 且幂等 --
   console.log('== 退出（契约 §4.1）==');
   sup._setSessionState('running'); // 复位（上一步 INV-S1 测试停在 stopping）
   const r1 = await sup.shutdownAll();
@@ -87,12 +87,12 @@ const check = (n, c, x) => { results.push(!!c); console.log((c ? 'PASS' : 'FAIL'
   await sup.tick();
   check('INV-S1 stopped 期间同样抑制拉起', spawned === 0, 'spawned=' + spawned);
 
-  // ── 4b) 阶段 2 意图单源：desired 是恢复权威（契约 §5/§6）──
+  // -- 4b) 阶段 2 意图单源：desired 是恢复权威--
   console.log('== 阶段 2 意图单源（恢复语义）==');
   {
     const s2 = new Supervisor(cfg);
     s2._startProcess = async () => { spawned++; s2._mSetPhase('STARTING'); };
-    // 场景 A：守卫重启后 desired=running + guardian=false + 无任何内存意图 → 必须拉起
+    // 场景 A：守卫重启后 desired=running + guardian=false + 无任何内存意图 -> 必须拉起
     spawned = 0;
     s2._mSetDesired('running');
     s2._mSetGuardianForTest ? s2._mSetGuardianForTest(false) : null;
@@ -102,7 +102,7 @@ const check = (n, c, x) => { results.push(!!c); console.log((c ? 'PASS' : 'FAIL'
     await s2.tick();
     check('P2-A desired=running+guardian=false+无意图 → 拉起（恢复语义）', spawned >= 1, 'spawned=' + spawned);
 
-    // 场景 B：desired=stopped → 绝不拉起
+    // 场景 B：desired=stopped -> 绝不拉起
     spawned = 0;
     s2._mSetDesired('stopped');
     s2._setSessionState('running');
@@ -111,7 +111,7 @@ const check = (n, c, x) => { results.push(!!c); console.log((c ? 'PASS' : 'FAIL'
     await s2.tick();
     check('P2-B desired=stopped → 不拉起', spawned === 0, 'spawned=' + spawned);
 
-    // 场景 C：未守护崩溃 → 停靠；下一拍（desired 仍 running）不得自动拉起
+    // 场景 C：未守护崩溃 -> 停靠；下一拍（desired 仍 running）不得自动拉起
     spawned = 0;
     s2._mSetDesired('running');
     s2._setSessionState('running');
@@ -121,7 +121,7 @@ const check = (n, c, x) => { results.push(!!c); console.log((c ? 'PASS' : 'FAIL'
     await s2.tick();
     check('P2-C 未守护崩溃停靠后不自动拉起（guardian 语义保留）', spawned === 0, 'spawned=' + spawned);
 
-    // 场景 D：显式启动清除停靠 → 拉起（setDesired 内部自带 tick；等其结算）
+    // 场景 D：显式启动清除停靠 -> 拉起（setDesired 内部自带 tick；等其结算）
     spawned = 0;
     s2._mSetDesired('stopped');
     s2._crashHalted = true;
@@ -132,20 +132,20 @@ const check = (n, c, x) => { results.push(!!c); console.log((c ? 'PASS' : 'FAIL'
     check('P2-D 显式启动后拉起', spawned >= 1, 'spawned=' + spawned);
   }
 
-  // ── 5) V1 段已移除（2026-09-11 清理）──
+  // -- 5) V1 段已移除--
   // 该段读 `<内核仓>/.shell-work/src-tauri/src/main.rs` —— 即**从内核仓跨仓读取壳仓源码**，
   // 是双仓隔离未彻底的残留（壳 checkout 本就不该出现在内核仓目录内）。
   // 且其断言在内核 P0 修复后已**语义过时**：壳现在确实会 spawn 守卫作为服务管理器不可用时的兜底，
   // 且该逻辑已从 main.rs 迁至 service.rs（断言仍在查 main.rs）。
   // 壳侧不变量由**壳仓自身**的测试保证（bootstrap_flow.rs 的 B13/B14 等），内核仓不再越界。
 
-  // ── 6) /session API 契约 ──
+  // -- 6) /session API 契约 --
   console.log('== /session API ==');
   const lifecycleApi = require(path.join(ROOT, 'src', 'api', 'domains', 'lifecycle'));
   check('lifecycle.owns(/session/status)', lifecycleApi.owns('/session/status') === true);
   check('lifecycle.owns(/session/stop)', lifecycleApi.owns('/session/stop') === true);
 
-  // ── 7) 阶段 3：会话态贯通（statusSummary / 全域抑制 / 前端 / 壳握手）──
+  // -- 7) 阶段 3：会话态贯通（statusSummary / 全域抑制 / 前端 / 壳握手）--
   console.log('== 阶段 3 会话态贯通 ==');
   {
     const s3 = new Supervisor(cfg);
@@ -175,10 +175,10 @@ const check = (n, c, x) => { results.push(!!c); console.log((c ? 'PASS' : 'FAIL'
     check('P3-F 前端 types 声明 sessionState', /sessionState\?:\s*SessionState/.test(typesTs) && /export type SessionState/.test(typesTs), 'ok');
   }
 
-  // P3-G / P3-H 段已移除（2026-09-11 清理）：原为跨仓静态断言（读壳仓源码字符串），
+  // P3-G / P3-H 段已移除：原为跨仓静态断言（读壳仓源码字符串），
   // 属双仓隔离残留。壳的握手/超时契约由壳仓自身测试保证。
 
-  // ── 8) 阶段 4：遗留债清零 ──
+  // -- 8) 阶段 4：遗留债清零 --
   console.log('== 阶段 4 遗留债 ==');
   {
     const lifecycleSrc = fs.readFileSync(path.join(ROOT, 'src', 'api', 'domains', 'lifecycle.js'), 'utf8');
@@ -197,10 +197,10 @@ const check = (n, c, x) => { results.push(!!c); console.log((c ? 'PASS' : 'FAIL'
     check('P4-D EventReader.readVisible 过滤 internal 且同 EventHub 语义', rd.readVisible(0, 50).every((e) => e.type !== 'shadow_beat'), JSON.stringify(rd.readVisible(0, 50)));
     check('P4-E EventReader.seq 透传本地事件流', rd.seq === 7, 'seq=' + rd.seq);
   }
-  // P4-F / P4-G 段已移除（2026-09-11 清理）：同样是从内核仓跨仓读取壳仓 env.rs，
+  // P4-F / P4-G 段已移除：同样是从内核仓跨仓读取壳仓 env.rs，
   // 属双仓隔离残留。壳的 closeAction 实现细节由壳仓自身测试保证。
 
-  // ── 9) P2：B1 能力元数据执法 + C1/A5 前端接线 ──
+  // -- 9) P2：B1 能力元数据执法 + C1/A5 前端接线 --
   console.log('== P2 B1 能力执法 ==');
   {
     const { LifecycleManager } = require(path.join(ROOT, 'src', 'app', 'control', 'manager'));
@@ -227,7 +227,7 @@ const check = (n, c, x) => { results.push(!!c); console.log((c ? 'PASS' : 'FAIL'
     check('B1-f 可启停模块仍放行', (await mgr.start('router')).ok === true, 'ok');
     // 能力声明单一源：adapters 从 MANAGED_KINDS 取（改表即生效）
     const adaptersSrc = fs.readFileSync(path.join(ROOT, 'src', 'app', 'control', 'adapters.js'), 'utf8');
-    // ⚠ 2026-09-16 步骤6：guard/lifecycle/objects.js → app/control/registry.js（编排层重组）
+    //  步骤6：guard/lifecycle/objects.js -> app/control/registry.js（编排层重组）
     check('B1-g adapters 从 MANAGED_KINDS 取能力（单一源）', adaptersSrc.includes('capsOf(') && adaptersSrc.includes("require('./registry')"), 'ok');
   }
 
@@ -241,14 +241,14 @@ const check = (n, c, x) => { results.push(!!c); console.log((c ? 'PASS' : 'FAIL'
     check('A5-b 自更新不可用时回退而非直接报错', aboutTsx.includes('upstream === "git-repo"'), 'ok');
   }
 
-  // ── E-3（AUDIT-2026-09-19）：意图轴单源谓词拆分 + B17 外部关停持久化（源码形态门禁）──
+  // -- E-3：意图轴单源谓词拆分 + B17 外部关停持久化（源码形态门禁）--
   console.log('== E-3 谓词单源 + B17 ==');
   {
     const collab = fs.readFileSync(path.join(ROOT, 'src', 'app', 'assembly', 'collaborators.js'), 'utf8');
     const boot = fs.readFileSync(path.join(ROOT, 'src', 'app', 'assembly', 'bootstrap.js'), 'utf8');
     const shut = fs.readFileSync(path.join(ROOT, 'src', 'app', 'session', 'shutdown.js'), 'utf8');
     const lineOf = (src, re) => (src.match(re) || [''])[0];
-    // 1) _exitIntended = 通用退出（stopping ∨ session halting），且【不含】_shellHalted。
+    // 1) _exitIntended = 通用退出（stopping 或 session halting），且【不含】_shellHalted。
     const exitDef = lineOf(collab, /host\._exitIntended = [^\n]*\n/);
     check('E-3 _exitIntended 定义含 stopping 与 halting', /_stopping/.test(exitDef) && /halting\(\)/.test(exitDef), exitDef.trim());
     check('E-3 _exitIntended 不含 _shellHalted（主 DSH 恢复权威是 desired，非壳退出）', !/_shellHalted/.test(exitDef), exitDef.trim());

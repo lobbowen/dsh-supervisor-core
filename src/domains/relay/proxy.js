@@ -16,7 +16,7 @@ const { createTunnelHandler } = require('./tunnel');
  *  取 2MB：DSH 壳文档远小于此；上限只兜异常上游，同时把并发最坏情形钉在可算的内存量级。 */
 const HTML_INJECT_MAX_BYTES = 2 * 1024 * 1024;
 
-/** 门卫令牌失败退避账本（C-3，批 4）：按来源 IP 计失败，窗口内超阈值即拒（429）。
+/** 门卫令牌失败退避账本：按来源 IP 计失败，窗口内超阈值即拒（429）。
  *  仅内存、进程重启即清空；判定纯函数在 core.backoffGate，本层只管计时与账本。 */
 function createGateLedger() {
   const map = new Map();
@@ -98,15 +98,15 @@ function handleUpstream(ur, res, clientReqPath, onStatus, logger) {
   }
   res.writeHead(ur.statusCode || 502, h);
   if (!isHtml) { pipeWithHold(ur, res, clientReqPath, logger); return; }
-  // D-5（AUDIT-2026-09-19 第4批）：polyfill 注入需全量缓冲整份文档，原实现 chunks 无上限
-  //   ⇒ 单个被代理页面可无界吃内存（identity 强制未压缩，体积即真实字节）。
+  // polyfill 注入需全量缓冲整份文档，原实现 chunks 无上限
+  //   => 单个被代理页面可无界吃内存（identity 强制未压缩，体积即真实字节）。
   //   超上限**不截断**（截断会给浏览器半份 HTML）：改为放弃注入、按原始流继续透传，降级留痕。
   const chunks = [];
   let total = 0, passed = false, done = false;
   const log = (msg) => { if (logger && logger.warn) { try { logger.warn('[relay] ' + msg); } catch {} } };
   // 超限切透传：吐出已缓冲部分并挂 pipeWithHold 接管后续 end/error/close。
   //   越限的**当前块**不能指望 pipeWithHold 写出——本次 data 分发早已开始，后挂监听器收不到它；
-  //   ur.end 已抢先到达（单块即越限）时后挂监听器也永不触发 ⇒ 两处都要显式收口，
+  //   ur.end 已抢先到达（单块即越限）时后挂监听器也永不触发 => 两处都要显式收口，
   //   否则浏览器永久挂在未结束的 chunked 响应上。
   const switchToPassThrough = () => {
     passed = true;
@@ -157,7 +157,7 @@ function createRelay(targetHost, targetPort, opts) {
   let token = o.token || '';
   const logger = o.logger || null;
   const authority = targetHost + ':' + targetPort;
-  // 门卫会话盐（批 4，令牌条 5）：每进程随机，dsh_lan_token cookie 只存派生值（sha256(salt|token)），
+  // 门卫会话盐：每进程随机，dsh_lan_token cookie 只存派生值（sha256(salt|token)），
   //   门卫令牌原文永不上会话通道；重启/换令牌即全部会话失效（重凭 ?token= 进入）。
   const gateSalt = crypto.randomBytes(16).toString('hex');
 
@@ -182,7 +182,7 @@ function createRelay(targetHost, targetPort, opts) {
     const peerIp = (req.socket && req.socket.remoteAddress) || '?';
     const gate = tokenGateDecision(req, token, gateSalt);
     if (!gate.ok) {
-      // C-3（批 4）：凭据失败退避——同 IP 60s 窗口内 ≥10 次失败即 429（Retry-After），
+      // 凭据失败退避——同 IP 60s 窗口内 >=10 次失败即 429（Retry-After），
       //   封堵门卫令牌的公网侧无限速爆破（frp 通道把公网访客呈现为回环/私网来源）。
       const waitMs = gateLedger.waitMsFor(peerIp);
       if (waitMs !== null) {

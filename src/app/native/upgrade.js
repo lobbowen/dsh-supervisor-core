@@ -190,7 +190,7 @@ async function rollbackAfterFailure(host) {
     if (host.events) host.events.append('upgrade_rollback_failed', {});
     if (host.hooks.notify) host.hooks.notify('DSH 升级失败', '回滚也失败，请立即人工检查 npm 全局目录');
     if (taskId && host.tasks) host.tasks.fail(taskId, '回滚也失败：' + host.upgradeError, { meta: { rolledBack: false, rollbackFailed: true } });
-    // B22：hold 释放统一收敛到 handleUpgradeFailure 尾部（本函数不再各自 resume），
+    // hold 释放统一收敛到 handleUpgradeFailure 尾部（本函数不再各自 resume），
     //   否则「回滚失败 -> 调用方提前 return -> 释放点分裂、_activeTaskId 泄漏」。
     return { ok: false };
   }
