@@ -22,19 +22,24 @@
 
 ### D4 的影响与契合度（重要）
 
-**你的决定实际上让分发回归了生产现状**——已取证：
+**这个决定让分发回归当时的生产现状**——取证是**一次性现场快照**（立规时那台生产机）：
 
 ```
 $ dpkg -S /usr/bin/dsh-supervisor-gui
-dsh-supervisor: /usr/bin/dsh-supervisor-gui      # 当前生产就是 deb 安装
+dsh-supervisor: /usr/bin/dsh-supervisor-gui      # 当时生产就是 deb 安装
 ```
 
-且这**同时带来两个净收益**（均为实测/源码证据）：
+> **该快照不可复现，也不作为现在的依据**：2026-09-20 在开发机复跑 `dpkg -S /usr/bin/dsh-supervisor-gui`
+> 返回「没有找到与 … 相匹配的路径」（本机未装任何 `dsh*` 包），且那个 `/usr/bin/dsh-supervisor-gui`
+> 路径属旧的单文件安装形态。D4 之所以仍然成立，靠的是**产线事实**：壳仓 CI 的 Linux 腿
+> 就打着 `deb,rpm` 包（见壳仓 `docs/RELEASE-STANDARD.md` 的矩阵），不需要任何本机取证。
+
+且这**同时带来两个净收益**（下表数字是**立规当时的估算**，不是当前测量；量级结论成立，绝对值请以 CI 产物实测为准）：
 
 | 收益 | 证据 |
 |---|---|
-| **体积缩小 20 倍** | deb **3.8MB** vs AppImage **77MB** |
-| **更新耗时缩短 20 倍** | unpkg@1.71MB/s：deb **约 2 秒** vs AppImage 约 45 秒 |
+| **体积缩小约 20 倍** | deb 约 **3.8MB** vs AppImage 约 **77MB** |
+| **更新耗时缩短约 20 倍** | 按 unpkg 约 1.71MB/s 的链路估算：deb **约 2 秒** vs AppImage 约 45 秒 |
 | **自更新仍然成立** | Tauri 源码 `Some(Installer::Deb) => self.install_deb(bytes)`，实现为 `pkexec dpkg -i` |
 
 **代价**：deb 安装到系统目录（`/usr/bin`，root 所有）→ 更新时需**一次 pkexec 密码确认**。

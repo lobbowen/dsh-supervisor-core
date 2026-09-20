@@ -1,14 +1,17 @@
 #!/usr/bin/env bash
 # 内核 npm 子包发布（构建物 = Node launcher；版本 = 单源注入，裸版本——npm 强制不带 v 前缀）。
 # 用法（由 ci-core.sh 调用；按本机 platform/arch 或 DSH_*_OVERRIDE 识别）：
-#   release/scripts/publish-core.sh                  # 组装 + npm publish --dry-run（本地验证；推荐先跑）
-#   release/scripts/publish-core.sh --publish        # 真发布（**仅 GitHub CI 内**；本地 exit 2）
+#   **本脚本整体只在 GitHub CI 内运行**：它组装子包并落 dist/ 产物，属发布产物，
+#   按硬标准不得在本机执行（本机自查上限是纯静态检查）。
+#   release/scripts/publish-core.sh                  # 组装 + npm publish --dry-run（默认，不触网）
+#   release/scripts/publish-core.sh --publish        # 真发布（**另需 GITHUB_ACTIONS=true**；本地 exit 2）
 #   release/scripts/publish-core.sh --all-platforms  # 一律拒绝（已废弃；四平台由 CI 各 runner 各自发布）
 #   release/scripts/publish-core.sh --scope @acme    # 指定 scope（不传则读 npmPublish.scope / DSH_CORE_SCOPE）
 #
 # -- 防误发保护（默认 dry-run；须两道显式条件才真发）--
-#   1) 默认 PUBLISH=0：不传 --publish 即 npm publish --dry-run —— 本地跑一遍只做组装/校验，
+#   1) 默认 PUBLISH=0：不传 --publish 即 npm publish --dry-run —— 只做组装/校验，
 #      绝不触网写 registry。这是**默认值**，不是靠调用方记得加 --dry-run。
+#   2) 传 --publish 后还有第二道门：GITHUB_ACTIONS 必须为 true（下面的硬标准，本地 exit 2）。
 #   2) 传 --publish 后还有第二道门：GITHUB_ACTIONS 必须为 true（下面的硬标准，本地 exit 2）。
 #   两道都满足才会执行真发布（且发布后按版本补打通道标签，见文件末尾）。
 #   tag 策略见下方「dist-tag 规范」；rollback/canary **不由本脚本设置**（人工运维，契约）。
@@ -102,10 +105,13 @@ PKG_NAME="$SCOPE/dsh-core-$OS_TAG-$ARCH"
 SRC_DIR="dist/launcher/dsh-supervisor-$VER-$PLAT-$ARCH"
 [ -d "$SRC_DIR" ] || {
   echo "缺少构建产物: $SRC_DIR"
+  # 本脚本只在 CI 内运行，产物由同一次 CI run 的 launcher 构建步产出，
+  #   所以缺产物意味着那条构建步骤本身没跑或跑错平台 —— 去查同一 run 的构建步，
+  #   **不要**按旧提示在本机补跑构建（本地不得产生发布产物）。
   if [ "${ALL:-0}" = 1 ]; then
-    echo "  全平台发布需先构建全部平台：npm run build:launcher:all"
+    echo "  同一 run 内的全平台构建入口：npm run build:launcher:all（仅 CI 内）"
   else
-    echo "  请先构建：npm run build:launcher（本机平台）或 npm run build:launcher:all（全平台）"
+    echo "  同一 run 内的 launcher 构建入口：npm run build:launcher（仅 CI 内，按 DSH_*_OVERRIDE 定平台）"
   fi
   exit 1
 }

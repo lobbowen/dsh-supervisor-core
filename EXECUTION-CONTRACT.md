@@ -2,6 +2,15 @@
 
 > **本文件是并行施工的接口冻结书**。所有执行子代理必须严格遵守。
 > 权威依据：`DOMAIN-STRUCTURE-DESIGN.md`（SSOT）+ `design-notes/*.md`（逐域详细设计）。
+>
+> **时效声明（读之前先看）**：本文件是那一轮改造**开工时**的施工契约，约束的是当时那批子代理。
+> 因此它**不是现状说明书**，尤其**不得**用里面的行号定位代码 —— §7 里的锚点
+> （`src/supervisor.js:100`、`APP_MODULES` 数组、`index.js:758-759`）在改造完成后已不存在：
+> `src/supervisor.js` 现为 66 行的薄壳，`APP_MODULES` 只剩 `src/app/assembly/facets.js:15` 的一行注释提到它，
+> 组装改走 `installFacets()` + `compose/{core,domains,observers}`。
+> 要看**当前**规模与判据结果，读 `ARCHITECTURE-ACCEPTANCE.md` §二/§三（标了复算日期），
+> 或直接跑只读门禁 `node test/domain-structure-gate-test.js`。
+> 冻结的**接口契约本体**（§3、§8）仍然有效，它们是导出面与参数形态的约定，不随行号变动。
 
 ## §0 目标（归一化，非最小代价）
 
@@ -13,6 +22,9 @@
 4. **可独立单测**：每个非门面文件能 `require` 后不构造整个域对象即可测。
 
 ## §1 判据（DF-1..DF-7，全部硬性）
+
+> 本节只列施工当时冻结的 7 条。SSOT 现为 **DF-1..DF-9**（另有 DF-8 `require()` 必在顶层 = DG-15、
+> DF-9 函数嵌套 ≤6 = DG-16），判据本体与取严值一律以 `DOMAIN-STRUCTURE-DESIGN.md` §2 为准。
 
 | 编号 | 判据 | 阈值 |
 |---|---|---|
@@ -35,7 +47,7 @@
 6. **公共导出面（对外契约）不得变**：
    - router → `RouterService`（含 static `presets`、`.providers` getter、`switcher`）
    - relay → `LanManager`；instance → `InstanceManager`；plugin → `PluginManager`；
-   - shell → `{ ... }`（现 index.js 35 行的键集**逐字保持**）
+   - shell → `{ ... }`（现 index.js 24 行的键集**逐字保持**）
 7. **`daemon.js` 文件名与目录不得改**（`probe.js:27/46` 等 5 处 cmdline 字面量匹配）；
 8. **不得引入新的跨层边**（`domains` 不得 require `app`/`api`；`platform` 不得 require 上层）。
 
@@ -119,6 +131,9 @@ instances.effectiveCommand(inst)
 - 产出 `design-notes/EXEC-<你的主题>.md`：记录实际改动 + 与原设计的偏差 + 遗留。
 ## §7 越界授权与并发纪律（主代理裁决 D-1..D-6，2026-09-17）
 
+> 本节是**那一轮的派工记录**：下面的行号锚点全部是施工当时的现场，现已失效（见顶部时效声明）。
+> 保留它们只为说明「当时谁被授权改了哪几行」，**不要**据此定位代码。
+
 ### D-1 relay 改名：授权改 2 行域外文件
 `src/app/assembly/compose.js:21` + `src/supervisor.js:100`（**仅此两行**）：
 `require('../../domains/relay/manager')` → `require('../../domains/relay')`。
@@ -140,9 +155,12 @@ RT1 把 index.js 改为 **ctor 组装 + 删除这两行**。
 ### D-5 relay 改名的连锁测试失败由 **R1 负责修完**，其他代理不得代修。
 
 ### D-6 已完成（不再改动）
-- **shell 域**（S1）：核心落在 `core.js`；已删除 `restart → watchdog` 反序边；测试 34/52/7/11/66 全绿。
+- **shell 域**（S1）：核心落在 `core.js`；已删除 `restart → watchdog` 反序边。
+  （此处原文抄了五个本机测试条数 —— 条数随门禁演进必然过期，且本机结果不构成证据，已删除；
+  现状由 `shell-watchdog-test` / `session-lifecycle-test` 在 CI 上裁决。）
 - **文档同步**（D1）：DS-9 取严、README 登记 `EXECUTION-CONTRACT.md`。
-  → 交接：`test/directory-structure-gate-test.js` 的 DS-G3 **仍只禁 defineProperties**，由 **G0** 补 `Object.assign`。
+  DS-G3 的交接**已落地**：`test/directory-structure-gate-test.js` 现有 **DS-G3b** 禁
+  `Object.assign(X.prototype, ...)` 注入（实测 PASS），不再是「只禁 defineProperties」。
 
 ## §8 instance `command` 契约（沙箱启动命令的事实契约）
 

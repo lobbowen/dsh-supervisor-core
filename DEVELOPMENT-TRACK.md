@@ -143,15 +143,19 @@ const frp = matrix.frpTag();            // 第三方命名 'windows_amd64'
 
 ## 5. 守住边界的七道门禁
 
-| 门禁 | 断言 | 守什么 |
-|---|---|---|
-| `platform-matrix-single-source-test` | 17 | 矩阵与发布清单逐项一致；src/ 无第二份 os/arch 映射表 |
-| `cross-platform-architecture-gate-test` | 11 | 平台事实只在 `src/platform/**` |
-| `four-platform-behavior-matrix-test` | 43 | 四平台**逻辑**一次穷举 |
-| `platform-layer-portability-test` | 61 | 平台层**11 个模块**行为穷举 |
-| `platform-parsers-and-commands-test` | 38 | 平台输出解析 + 命令构造穷举 |
-| `layering-and-dependency-gate-test` | 10 | 分层与跨层依赖登记（**开发轨道**）|
-| `test-chain-completeness-test` | 10 | 新增测试必有归属 |
+| 门禁 | 守什么 |
+|---|---|
+| `platform-matrix-single-source-test` | 矩阵与发布清单逐项一致；src/ 无第二份 os/arch 映射表 |
+| `cross-platform-architecture-gate-test` | 平台事实只在 `src/platform/**` |
+| `four-platform-behavior-matrix-test` | 四平台**逻辑**一次穷举 |
+| `platform-layer-portability-test` | 平台层模块的平台行为穷举（exec-path / service / autostart / browser 等） |
+| `platform-parsers-and-commands-test` | 平台输出解析 + 命令构造穷举 |
+| `layering-and-dependency-gate-test` | 分层与跨层依赖登记（**开发轨道**）|
+| `test-chain-completeness-test` | 新增测试必有归属 |
+
+> **本表刻意不记各门禁的断言条数**：条数由 `results.length` 在运行时统计（含循环与子进程内展开），
+> 静态数不出来，写死必然过期 —— 此处曾同时存在「41」与「61」两份 `platform-layer-portability` 条数，
+> 两者都不等于实际值。条数以 CI 输出的 `结果: N passed, M failed` 为准。
 
 > **诚实边界**：这些门禁证明的是**逻辑**（映射/档位/解析/命令/分层），
 > **不能**证明**平台原生行为**（真能跑 systemd/launchctl/schtasks、真能 spawn Windows 可执行、真能出 MSI）。
@@ -299,12 +303,16 @@ git switch -c feat/xxx
 git commit -am '...'
 git push origin HEAD:refs/heads/feat/xxx
 
-# 2) 开 PR（随后 precheck/test 自动跑）
-#    gh pr create --fill   或经 GitHub UI/API
+# 2) 开 PR：经 GitHub UI，或用 REST `POST /repos/{owner}/{repo}/pulls`
+#    （作业环境无 gh / curl；`gh pr create` 只在装有 gh 的机器上可用。
+#     推送非 master 分支本身不触发 CI，必须开 PR 或由 workflow_dispatch 触发。）
 
-# 3) 两个 required check 通过后合并（GitHub UI「Merge」或 API）
+# 3) CI 的 precheck 与 test 全绿后合并，再同步本地主干
 git switch master && git pull --ff-only
 ```
+
+> 第 3 步是**纪律**，不是服务端强制：见本节开头「兜底当前不在」的实测。
+> required checks 恢复之前，GitHub 不会拦下带红点的合并。
 
 > **发布标签不受影响**：`v*` tag 推送走 tag 通道，分支保护只管分支。
 > 故发布流程（打 tag → 触发 release）保持不变。
@@ -315,7 +323,8 @@ git switch master && git pull --ff-only
 |---|---|
 | 管理员可直推（其余人仍受门禁）| `enforce_admins: false` |
 | 完全回到无保护 | `DELETE .../branches/master/protection` |
-| 保持现状（**默认**，最强）| 不改，走 PR |
+| 维持**当前实测状态**（无服务端保护，靠 PR + CI 状态纪律）| 不发任何 protection API 调用 |
+| 回到本节表格描述的强度（**设计默认**，最强）| 按上方「恢复保护时要写入的字段」写入 |
 
 ### 为什么只设 precheck 与 test（重申）
 
@@ -342,7 +351,7 @@ required 只设 `precheck` 与 `test` 两个**无条件** job；`build` 不设�
 > ⚠ 陷阱：壳仓 required context **内嵌矩阵参数**（如 `build (ubuntu-22.04, linux-x64, deb,rpm, 2.35)`），
 > 增删平台或改 arch 组合后旧语境变为「预期但永不出现」→ 所有 PR 合不进去。改矩阵时必须同步更新保护配置。
 
-### 本次启用的完整设置（内核仓 `master`）
+### 恢复保护时要写入的字段（内核仓 `master`；**当前一项都没生效**）
 
 | 项 | 值 |
 |---|---|
@@ -351,6 +360,9 @@ required 只设 `precheck` 与 `test` 两个**无条件** job；`build` 不设�
 | enforce_admins | `true` |
 | required_conversation_resolution | `true` |
 | allow_force_pushes / allow_deletions | `false` |
+
+> 这是**待执行的目标配置**（与上方「旧账号仓配置」表同义，一份给人读、一份给 API 调用用），
+> 不是现状。写入属仓库管理员决策：会同时限制直推与管理员，须单独定案。
 
 ---
 

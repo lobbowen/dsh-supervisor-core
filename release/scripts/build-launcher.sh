@@ -10,8 +10,8 @@
 #     +-- ui-react/                 # 面板发布镜像
 # 依赖：Node.js >=18 运行时（非 SEA 免运行时——发布物需目标机有 node）。
 #
-# 用法:
-#   release/scripts/build-launcher.sh [outDir]          # 单平台（本机；可用 DSH_*_OVERRIDE 指定）
+# 用法（**只允许在 GitHub CI 内运行**，见下面的守卫）:
+#   release/scripts/build-launcher.sh [outDir]          # 单平台（按宿主；可用 DSH_*_OVERRIDE 指定）
 #   release/scripts/build-launcher.sh --all-platforms   # **一次构建**产出全部 4 个平台目录
 #
 # 为什么 --all-platforms 是「一次构建 + 派生四份」而非「构建四次」：
@@ -22,22 +22,25 @@
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 cd "$ROOT"
+
+# 硬标准：**任何平台构建都必须经 GitHub CI**，本地不得产生发布产物。
+#   守卫放在参数解析之前、覆盖全部调用形态：此前只有 `--all-platforms` 分支带守卫，
+#   单平台路径无守卫，等于这条旁路只封了一半（规范禁止本机跑 build:launcher，脚本却不拦）。
+#   CI 的 test job 需要四平台产物供 T6-d/T6-e 断言，故 CI 内照常放行。
+if [ "${GITHUB_ACTIONS:-}" != 'true' ]; then
+  echo '拒绝：launcher 构建只允许在 GitHub CI 内运行（GITHUB_ACTIONS=true）。' >&2
+  echo '  硬标准：所有平台构建与发布必须经 GitHub CI 完成；本地不得产生发布产物。' >&2
+  echo '  本机自查上限是纯静态检查（bash -n / node --check）；构建与回归都由 CI 裁决。' >&2
+  exit 2
+fi
+
 VER="$(node -p "require('./package.json').version")"
 
 ALL=0
 OUT_REL="dist/launcher"
 while [ $# -gt 0 ]; do
   case "$1" in
-    --all-platforms)
-      # 硬标准：**任何平台构建都必须经 GitHub CI**，本地不得有全平台构建残留。
-      #   本选项仅允许在 GitHub Actions 内（CI 的 test job 需四平台产物供 T6-d/T6-e 断言）。
-      #   本地一律拒绝 —— 防止「本地构建 -> 本地发布」这条旁路复活。
-      if [ "${GITHUB_ACTIONS:-}" != 'true' ]; then
-        echo '拒绝：--all-platforms 只允许在 GitHub CI 内运行（GITHUB_ACTIONS=true）。' >&2
-        echo '  硬标准：所有平台构建必须经 GitHub CI 完成；本地不得产生发布产物。' >&2
-        exit 2
-      fi
-      ALL=1 ;;
+    --all-platforms) ALL=1 ;;
     -*) echo "未知参数: $1（支持 [outDir] / --all-platforms）"; exit 2 ;;
     *) OUT_REL="$1" ;;
   esac
