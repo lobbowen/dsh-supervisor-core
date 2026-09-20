@@ -125,12 +125,16 @@ procOS.killTree(pid, 'SIGKILL', cb, { ownGroup: true });   // 整树终止，两
 
 | 门禁 | 守什么 |
 |---|---|
-| `test/platform-matrix-single-source-test.js`（17 断言）| 矩阵与发布清单**逐项一致**；`src/` 中**除 matrix.js 外无第二份 os/arch 映射表**；标签取值正确（含 FRP 的第三方命名 `windows_amd64` ≠ npm 的 `win-x64`）|
-| `test/cross-platform-architecture-gate-test.js`（11 断言）| **平台事实只在 `src/platform/**`**；业务域无映射表；三平台档位齐备且与矩阵同集合；`engines.node` 单一声明 |
-| `test/four-platform-behavior-matrix-test.js`（43 断言）| **四平台逻辑一次穷举**（在 Linux 上）：标签映射 / 能力档位 / 模板替换 / 运行时与矩阵同源；**能力字段集合四平台必须一致**（防「新增能力只加一个平台」）|
-| `test/platform-layer-portability-test.js`（41 断言）| **平台层模块**的平台行为穷举：exec-path 的候选名/标准目录/`npm.cmd` 解析（P1-C 复现）、service 的四 provider 方法集一致与显式抛错、autostart 的 `status().kind` 与能力档位**表达同一事实** |
-| `test/platform-parsers-and-commands-test.js`（38 断言）| **平台输出解析 + 命令构造**穷举：netstat/lsof/ss/`/proc/net/tcp` 解析（端口整段匹配、CRLF、0A 状态）、**P1-2 锚点**（wmic 空输出必须回退 CIM）、notify 的**按平台转义规则**（AppleScript 反斜杠 / PowerShell 双写）、desktop 会话判定与 `sessionAvailable()` **同源** |
-| `test/test-chain-completeness-test.js`（10 断言）| `test/*-test.js` **要么在链中、要么在显式排除表里写理由** —— 消灭「新增门禁静默不进 CI」|
+| `test/platform-matrix-single-source-test.js`| 矩阵与发布清单**逐项一致**；`src/` 中**除 matrix.js 外无第二份 os/arch 映射表**；标签取值正确（含 FRP 的第三方命名 `windows_amd64` ≠ npm 的 `win-x64`）|
+| `test/cross-platform-architecture-gate-test.js`| **平台事实只在 `src/platform/**`**；业务域无映射表；三平台档位齐备且与矩阵同集合；`engines.node` 单一声明 |
+| `test/four-platform-behavior-matrix-test.js`| **四平台逻辑一次穷举**（在 Linux 上）：标签映射 / 能力档位 / 模板替换 / 运行时与矩阵同源；**能力字段集合四平台必须一致**（防「新增能力只加一个平台」）|
+| `test/platform-layer-portability-test.js`| **平台层模块**的平台行为穷举：exec-path 的候选名/标准目录/`npm.cmd` 解析（P1-C 复现）、service 的四 provider 方法集一致与显式抛错、autostart 的 `status().kind` 与能力档位**表达同一事实** |
+| `test/platform-parsers-and-commands-test.js`| **平台输出解析 + 命令构造**穷举：netstat/lsof/ss/`/proc/net/tcp` 解析（端口整段匹配、CRLF、0A 状态）、**P1-2 锚点**（wmic 空输出必须回退 CIM）、notify 的**按平台转义规则**（AppleScript 反斜杠 / PowerShell 双写）、desktop 会话判定与 `sessionAvailable()` **同源** |
+| `test/test-chain-completeness-test.js` | `test/*-test.js` **要么在链中、要么在显式排除表里写理由** —— 消灭「新增门禁静默不进 CI」|
+
+> 本表**不记各门禁的断言条数**：条数由运行时 `results.length` 统计（含循环与子进程展开），静态数不出来，
+> 写死必然过期。此处此前有「41」与「61」两份 `platform-layer-portability` 条数，两者皆不成立。
+> 条数以 CI 输出的 `结果: N passed, M failed` 为准。
 
 > **诚实边界**：这六道门禁证明的是**逻辑**（映射 / 档位 / 模板 / 同源），**不能**证明**平台原生行为**
 > （真能跑 systemd/launchctl/schtasks、真能 spawn Windows 可执行、真能出 MSI）——后者仍必须由**真实四平台 CI 构建**裁决。两者互补，不可互相替代。
@@ -228,14 +232,14 @@ release/
 
 ## npm 命令映射
 
-| npm 命令 | 对应脚本 | 用途 |
+| npm 命令 | 对应脚本 | 用途与**执行位置** |
 |---|---|---|
-| `npm run verify:versions` | verify-versions.js --core | 内核版本自洽校验 |
-| `npm run build:launcher` | build-launcher.sh | 构建本机平台 launcher（发布链路在 CI 内） |
-| `npm run publish:core` | publish-core.sh | 子包组装 + dry-run（本地可用） |
+| `npm run verify:versions` | verify-versions.js --core | 内核版本自洽校验（纯静态，本机可跑） |
+| `npm run build:launcher` | build-launcher.sh | 单平台 launcher 构建 —— **仅 CI 内**（脚本内 `GITHUB_ACTIONS` 守卫，本机 exit 2） |
+| `npm run publish:core` | publish-core.sh | 子包组装 + dry-run —— **仅 CI 内**（产 dist/ 发布产物；本机不得执行） |
 | `npm run publish:core -- --publish` | publish-core.sh | 真发布 —— **仅 CI 内**（本地 exit 2） |
 | `npm run build:launcher:all` | build-launcher.sh --all-platforms | 一次构建 → 派生 4 平台目录 —— **仅 CI 内**（本地 exit 2） |
-| `npm run release:guard` | release.sh | 源码打包 |
+| `npm run release:guard` | release.sh | 源码打包（**非发布通道**，D1 定案；本机可跑） |
 
 > 已移除：`build:sea` / `verify:shell`（2026-09 双仓拆分：SEA 形态全平台弃用 → launcher 形态）。
 
@@ -277,7 +281,7 @@ release/
 ```bash
 # 1) 整理 CHANGELOG：[未发布] 段 → 新版本号段，并新开 [未发布]
 # 2) 提升版本
-bash release/scripts/bump.sh --core 0.1.2-BETA.7
+bash release/scripts/bump.sh --core <下一版本>   # 只允许递增；低于 package.json 当前值会被拒（拒绝回退）
 # 3) 一键编排 dry-run（干净树+CHANGELOG 预检 → 委托 ci-core.sh 全部门禁 → 打印发布计划）
 见 `RELEASE-STANDARD.md`（本地只做 S0–S3，S4 起在 CI）
 # 4) 真发（commit + tag v<ver> + push --tags 触发 CI；四个平台全部由 CI 产出并在各自的 token-scoped 发布步骤真发）

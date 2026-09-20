@@ -6,6 +6,42 @@
 
 ## [未发布]
 
+### 第 3b 轮：结构判定假象 + 单平台构建旁路 + 一次性证据当现状
+
+- **结构门禁的「全部满足」是假的**：`ARCHITECTURE-ACCEPTANCE.md` §二 写「终态 257 文件 / 最大 300 行 /
+  `>300` 的文件 0」、§三 写「DF-1..DF-9 全部满足」，只读复算实测 **260 文件、3 处越硬线**
+  （`domains/router/handlers/forward.js` 324、`app/control/registry.js` 308、`app/main/process.js` 302），
+  另有 DG-10 一处越权（`api/domains/instances.js` 取 `instances.dshBin`）。
+  根因是这两道门禁**整体 report-only**（退出码恒 0，只有 `DG_STRICT=1` / `GATE_STRICT=1` 才转硬失败），
+  而 CI 从未设过这两个变量 —— 「门禁存在且 CI 全绿」不等于「门禁在强制」。
+  §二/§三 改为带复算日期的实测并写明该开关事实；`DOMAIN-STRUCTURE-DESIGN.md` §5.0 删掉
+  「故下表全部满足硬门禁」，15 行漂移的实测值与超目标量一并重算。
+- **单平台 launcher 构建是一条未被封堵的旁路（根因修复，不止改文档）**：`ACCEPTANCE-STANDARD.md` §4
+  早已禁止本机跑 `build:launcher`，但 `build-launcher.sh` 只给 `--all-platforms` 分支加了
+  `GITHUB_ACTIONS` 守卫，单平台形态随便跑；`release/README.md` 命令表把它写成「构建本机平台 launcher」、
+  `publish-core.sh` 缺产物时提示「请先构建：npm run build:launcher」、`release.sh` 结尾也如此建议。
+  现把守卫**上移到参数解析之前**、覆盖全部调用形态（新增门禁 T2-a4 以「守卫在 while 之前」这一结构事实钉住，
+  并配反向合成样本），三处提示与命令表同步改为「仅 CI 内」。
+- **分支保护假象**：`bump.sh` 成功后打印「master 有分支保护」，`DEVELOPMENT-TRACK.md` §7 一边写
+  「两个 required check 通过后合并」、一边留着一份「本次启用的完整设置」表。实测两仓 protection API
+  均返回 404 Branch not protected。改为：该表题为「恢复保护时要写入的字段（当前一项都没生效）」，
+  流程第 3 步降级为**纪律**并显式说明服务端不拦；「若要放开直推」表补上当前真实状态一行；
+  `gh pr create` 不再当作唯一入口（作业环境无 gh/curl，改列 UI 与 REST 两条）。
+- **一次性证据被当现行事实**：`RELEASE-AND-UPDATE-MECHANISM.md` 用 `dpkg -S /usr/bin/dsh-supervisor-gui`
+  的现场输出论证 deb 形态，2026-09-20 在本机复跑是「没有找到相匹配的路径」（该路径且属旧单文件形态）。
+  现标注为立规时的一次性快照，结论改挂在**产线事实**（壳仓 CI Linux 腿就打 `deb,rpm`）上；
+  体积/耗时两条一并标明是当时估算。`INCIDENT-2026-09-18-exit-manager-relaunch.md` 状态行仍写「验收待 CI」
+  且引用的内核 #20 / 壳 #23 属迁仓前旧账号仓，改为已随 0.1.5-BETA.9 发布（提交 `1107c34`）。
+- **必然过期的数字不再抄**：门禁断言条数此前两份互相矛盾（`release/README.md` 41 / `DEVELOPMENT-TRACK.md` 61，
+  而条数由运行时 `results.length` 统计、静态数不出），两处一并删除并注明以 CI 输出为准；
+  `ARCHITECTURE-ACCEPTANCE.md` 三处测试链条数（127 / 125 / 129）退化为「不在此处维护」；
+  两处 `bump.sh --core <版本号>` 示例值低于当前 `0.1.5-BETA.10`（照抄必被「拒绝回退」拦下）改为占位。
+- **施工契约的失效锚点**：`EXECUTION-CONTRACT.md` 顶部加时效声明（它是那一轮的施工契约，不是现状说明书），
+  §7 标为派工记录并注明其锚点已不可定位（`src/supervisor.js` 现 66 行、`APP_MODULES` 只剩
+  `src/app/assembly/facets.js:15` 的一行注释提到它）、shell 门面行数由 35 更正为实测 24、
+  D-6 的「DS-G3 仍只禁 defineProperties」交接其实早已落地（DS-G3b 实测 PASS），本机测试条数删除。
+- **本批不含发布动作**：registry 仍 `0.1.5-BETA.10`，未打 tag、未 npm 发布。
+
 ### 文档纠正：以现在时态写着的假现状（第 3 轮残留清扫）
 
 - **指引本机跑测试（引导性最强的一条）**：`PLATFORM-CAPABILITY-MATRIX.md` §七「如何运行审计」直接给出
