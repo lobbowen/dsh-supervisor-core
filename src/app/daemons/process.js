@@ -60,7 +60,12 @@ class DaemonLifecycle {
       const tmp = this.identityFile + '.tmp';
       fs.writeFileSync(tmp, JSON.stringify({ guardPid: process.pid, daemonPid, startedAt: Date.now() }), { mode: 0o600 });
       fs.renameSync(tmp, this.identityFile);
-    } catch {}
+    } catch (e) {
+      // D-13：身份文件写失败**必须留痕**。它决定下次守卫重启能否按 owner 连续接管该 daemon；
+      //   静默失败会让接管判定退回 cmdline 形态（异主/双监督风险变成不可见的），正是 9-13 同族。
+      if (this.logger && this.logger.warn) this.logger.warn(this.name + ' identity write failed: ' + ((e && e.message) || e));
+      try { if (this.events && this.events.append) this.events.append('daemon_identity_write_error', { name: this.name, pid: daemonPid, error: (e && e.message) || String(e) }); } catch {}
+    }
   }
   _clearIdentity() { try { fs.unlinkSync(this.identityFile); } catch {} }
 

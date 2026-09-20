@@ -294,6 +294,61 @@ const lanBranch = fnBody ? lanBranchOf(fnBody) : null;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
+// ML-2 / ML-3 应然写权 ratchet（契约 §6.3/§6.4，AUDIT-2026-09-19 第 4 批 D-7）
+//
+// 判据对象：守卫核心层（src/app/**，**排除 src/app/control/**）里对 ManagedLifecycle 内部字段
+//   的直写与 _setPhase() 直调。control/ 是驱动与观测合成的合法落点（§6.3 角色表），
+//   src/domains/** 是域自治对象改自己的状态机（§2 要求的形态），两者都不在本门禁范围内。
+// 执法形态：**只减不增的基线**（新增违规文件 / 在已登记文件里加写 → 判红；
+//   收敛一处后把基线调小，防止"改了但没登记"造成静默回潮）。
+// ═══════════════════════════════════════════════════════════════════════════
+{
+  const LIFECYCLE_WRITE_RE = /\.\s*(?:_monitoring|desired|healthy|phase)\s*=(?!=)|_setPhase\s*\(/g;
+  // 登记基线：rel -> { n: 处数上限, legal: 是否为 §6.3 承认的合法出口 }
+  const BASELINE = {
+    'src/app/domain-actions/router.js': { n: 12, legal: false },
+    'src/app/assembly/bootstrap.js': { n: 9, legal: false },
+    'src/app/session/shutdown.js': { n: 2, legal: false },
+    'src/app/daemons/supervise.js': { n: 1, legal: false },
+    'src/app/state/fields.js': { n: 2, legal: true }, // 守卫内 main 域 phase/desired 唯一写口的兜底分支
+  };
+  /** 对一份（已去注释的）源码计数违规写入。 */
+  const countLifecycleWrites = (src) => {
+    let n = 0;
+    for (const line of src.split(String.fromCharCode(10))) { LIFECYCLE_WRITE_RE.lastIndex = 0; const m = line.match(LIFECYCLE_WRITE_RE); if (m) n += m.length; }
+    return n;
+  };
+  const appDir = path.join(ROOT, 'src', 'app');
+  const scanned = walkSrc(appDir, [])
+    .map((p) => path.relative(ROOT, p).split(path.sep).join('/'))
+    .filter((rel) => !rel.startsWith('src/app/control/'));
+  const found = {};
+  for (const rel of scanned) {
+    const n = countLifecycleWrites(stripComments(read(rel)));
+    if (n) found[rel] = n;
+  }
+  const unknown = Object.keys(found).filter((f) => !BASELINE[f]);
+  check('ML-2 判据覆盖面非空（扫描 src/app 排除 control/ 的文件数）', scanned.length > 20,
+    '扫描 ' + scanned.length + ' 个文件，命中 ' + Object.keys(found).length + ' 个');
+  check('ML-2 不新增违规文件（违例文件集合 ⊆ 契约 §6.3 登记集合）',
+    unknown.length === 0,
+    unknown.length ? '未登记直写者: ' + unknown.map((f) => f + '(' + found[f] + ')').join(', ') : Object.keys(found).sort().join(', '));
+  const grew = Object.keys(found).filter((f) => BASELINE[f] && found[f] > BASELINE[f].n);
+  check('ML-2 已登记文件处数只减不增（每文件 ≤ 基线）',
+    grew.length === 0,
+    grew.length ? grew.map((f) => f + ' ' + found[f] + '>' + BASELINE[f].n).join('; ')
+      : Object.keys(BASELINE).map((f) => f.split('/').pop() + '=' + (found[f] || 0) + '/' + BASELINE[f].n).join(' '));
+  // ML-3 反向：判据对合成的旧违例源码确实计数 > 0（否则上面两条是空转的正则）
+  const SYNTH_OLD = "const lc = mgr.get('router');\nlc.desired = 'stopped';\nlc._monitoring = false;\nlc._setPhase('stopped');\nlc.healthy = false;\n";
+  const synthN = countLifecycleWrites(SYNTH_OLD);
+  check('ML-3 反向：判据对「动作层直写生命周期视图」旧形态计数 > 0（门禁非空转）',
+    synthN === 4, '计数=' + synthN + '（期望 4）');
+  check('ML-3 反向：判据不误报合法形态（经 manager 发指令 / 只读比较）',
+    countLifecycleWrites("const lc = mgr.get('router');\nif (lc.desired === 'running' && lc.phase !== 'running') lc = null;\n") === 0,
+    'ok');
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
 const failed = results.filter((r) => !r);
 console.log(String.fromCharCode(10) + '结果: ' + (results.length - failed.length) + ' passed, ' + failed.length + ' failed');
 process.exit(failed.length ? 1 : 0);

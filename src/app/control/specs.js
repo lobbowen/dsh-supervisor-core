@@ -58,13 +58,22 @@ function createSpecs(deps) {
     };
   }
 
-  /** 申报或更新（存在->update 应然；否则 register）。 */
-  function upsert(spec) {
+  /** 申报或更新（存在->update 应然；否则 register）。
+   *  @param opts { keepDesired?:boolean } —— D-8（AUDIT-2026-09-19 第 4 批）：**观测推导**路径
+   *  （心跳同步、启动对齐）**不得**把由实然推出的 desired 写回目录（铁律 1：实然绝不写回应然）。沙箱实例一旦崩溃进入
+   *  BACKOFF/FAILED，`sandboxSpec` 由 phase 推导出的 desired 就是 'stopped'，每拍 upsert 会
+   *  把用户意图静默抹掉（且与 9-18 事故同形：应然被实然覆盖）。置本旗标后**只**同步
+   *  name/guardian/ownership，desired 保持目录既有值——改意图的唯一入口是 entry 的
+   *  start()/stop() 与动作路径（observers 的 onInstanceStart/Stop）。
+   *  ⚠ 仅对 update 分支生效：register 分支必须带 desired（否则 createEntry 缺省成 running，
+   *  会把一个已停止的实例登记成「用户想要它在跑」）。 */
+  function upsert(spec, opts) {
     const m = reg();
     if (!m || !spec) return;
+    const keepDesired = !!(opts && opts.keepDesired);
     try {
       const existing = m.get(spec.id);
-      if (existing) m.update(spec.id, { desired: spec.desired, guardian: spec.guardian, name: spec.name, ownership: spec.ownership });
+      if (existing) m.update(spec.id, { desired: keepDesired ? undefined : spec.desired, guardian: spec.guardian, name: spec.name, ownership: spec.ownership });
       else m.register(spec);
     } catch (e) {
       const l = logger();
@@ -91,7 +100,10 @@ function createSpecs(deps) {
       const sandboxes = (_m && typeof _m.all === 'function' && _m.all()) || [];
       for (const inst of sandboxes) {
         if (inst.id === 'main' || inst.domain === 'native') continue;
-        upsert(sandboxSpec(inst));
+        // D-8：启动对齐同样**不得**回写 desired。`load()` 后的 inst.state.phase 是崩溃/停机
+        //   时的实然快照（BACKOFF/FAILED/STOPPED 一律推导成 stopped），照本拍写入会在
+        //   「守卫重启时实例正好在退避」这一窗口把用户的运行意图抹掉，且抹掉后无人恢复。
+        upsert(sandboxSpec(inst), { keepDesired: true });
       }
       // 域 B 基础设施（router/lan daemon）不写 guardian（GUARD-DOMAIN-MODEL §2）。
       const c = ctl();

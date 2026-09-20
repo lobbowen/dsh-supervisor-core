@@ -163,6 +163,173 @@ check('反向：成功路径保留了清零语义（markRequestOk 内有赋值�
 check('反向：markInstanceProblem 仍累加（熔断本身没被删）',
   /_unhealthyCount\s*=\s*\(inst\._unhealthyCount \|\| 0\) \+ 1/.test(proxy), '保留');
 
-const failed = results.filter((r) => !r);
-console.log(String.fromCharCode(10) + '结果: ' + (results.length - failed.length) + ' passed, ' + failed.length + ' failed');
-process.exit(failed.length ? 1 : 0);
+// ── D-4 / D-6（AUDIT-2026-09-19 第4批 D）：providers/probe.js 实例治理 ──
+//   D-4 实例日志裸 createWriteStream({flags:'a'})：全仓唯一无轮转、且默认 0644 的日志落盘点。
+//   D-6 monitorLifecycle 的 `listening !== inst.pid` 等值判据在 npx --yes 兜底形态下恒不成立
+//       （监听者是子孙进程），误判后抹 pid ⇒ stopInstance 的 kill 段恒不可达 ⇒ 留孤儿占端口。
+{
+  const { stripComments } = require('./_strip');
+  const probeRaw = fs.readFileSync(path.join(ROOT, 'src', 'domains', 'router', 'providers', 'probe.js'), 'utf8');
+  const probe = stripComments(probeRaw);
+  const logMod = fs.readFileSync(path.join(ROOT, 'src', 'platform', 'service', 'log', 'log.js'), 'utf8');
+
+  const bareStream = /createWriteStream\s*\(/.test(probe);
+  check('D-4 实例日志不再走裸 fs.createWriteStream', !bareStream, bareStream ? '仍有裸流' : '已移除');
+  check('D-4 改走平台层 Rotator（带显式 maxBytes）',
+    /new Rotator\(.*INSTANCE_LOG_MAX_BYTES\s*\)/.test(probe), 'ok');
+  check('D-4 Rotator 来自平台层日志模块（不是本地复制品）',
+    /require\('[^']*platform\/service\/log\/log'\)/.test(probe), 'ok');
+  check('D-4 兜底：Rotator 落盘确实是 0600 且超阈值轮转',
+    /mode:\s*0o600/.test(logMod) && /this\.file \+ '\.1'/.test(logMod), 'ok');
+  check('D-4 无缓冲写入器不需要 end()（close 里遗留的 logStream.end 已删）',
+    !/logStream/.test(probe), 'ok');
+
+  const m = probe.match(/function sameProcessGroup\(pid, pgidLeader\) \{[\s\S]*?\n\}/);
+  check('D-6 定位到 sameProcessGroup 实现', !!m, m ? 'ok' : '未找到');
+  let impl = null;
+  if (m) {
+    try {
+      const inner = m[0].replace(/^function sameProcessGroup\(pid, pgidLeader\) \{/, '');
+      impl = new Function('pid', 'pgidLeader', 'fs', 'process', inner.slice(0, inner.lastIndexOf(String.fromCharCode(10) + '}')));
+    } catch { impl = null; }
+    check('D-6 行为断言前提：本体可在沙箱求值（fs/process 经参数注入）', typeof impl === 'function', typeof impl);
+  }
+  if (typeof impl === 'function') {
+    // /proc/<pid>/stat 真实形态：pid (comm with spaces) state ppid pgrp session …
+    const stubFs = (text) => ({ readFileSync: () => text });
+    const posix = { platform: 'linux' };
+    const win = { platform: 'win32' };
+    const stat = '2001 (my proxy bin) S 1990 2001 2001 0 -1 4194304';
+    check('D-6 行为：子孙进程（pgrp==leader）判为同组放行',
+      impl(2002, 2001, stubFs('2002 (node) S 2001 2001 2001 0 -1'), posix) === true, 'true');
+    check('D-6 行为：comm 自带括号/空格时不错位（取 pgrp 而非 ppid）',
+      impl(2001, 2001, stubFs(stat), posix) === true, 'pgrp=fields[2]=2001');
+    check('D-6 行为：反向 —— 外部进程（pgrp 不同）判为不同组',
+      impl(3000, 2001, stubFs('3000 (evil) S 1 3000 3000 0 -1'), posix) === false, 'false');
+    check('D-6 行为：win32 无 pgid 语义 -> 恒 false（不误判同组）',
+      impl(2001, 2001, stubFs(stat), win) === false, 'false');
+    check('D-6 行为：stat 读取失败 -> false（交给 HTTP 探活兜底，不静默放行外部占用）',
+      impl(2001, 2001, { readFileSync: () => { throw new Error('ENOENT'); } }, posix) === false, 'false');
+    check('D-6 行为：实参缺失（pid=0/null）-> false',
+      impl(null, 2001, stubFs(stat), posix) === false && impl(2001, 0, stubFs(stat), posix) === false, 'false');
+  }
+  // 判据替换：等值比较必须被「不同进程组」限定，且查不到监听者时不改判
+  const judged = /if\s*\(listening && listening !== inst\.pid && !sameProcessGroup\(listening, inst\.pid\)\)/.test(probe);
+  check('D-6 监控判据 = listening 存在 && 非本 pid && 非本进程组', judged, judged ? 'ok' : '仍是 exact-pid 等值判据');
+  check('D-6 反向：裸等值判据（无进程组限定）不得残留',
+    !/if\s*\(listening !== inst\.pid\)/.test(probe), '已替换');
+}
+
+const asyncChecks = [];
+const acheck = (n, c, x) => { asyncChecks.push(!!c); console.log((c ? 'PASS' : 'FAIL') + ' ' + n + (x !== undefined && x !== '' ? '  ← ' + x : '')); };
+
+// ── D-1 / D-3（AUDIT-2026-09-19 第4批 D）：inflight 配对与「先停实例再清 pid」 ──
+// 行为面：经依赖注入跑真 proxyFor（不触网：forwardOnceImpl 可注入）。
+(async () => {
+  const { createForwarder } = require(path.join(ROOT, 'src', 'domains', 'router', 'handlers', 'forward.js'));
+
+  const mkDeps = (overrides) => {
+    const inst = { keyId: 'k1', pid: 4242, status: 'HOT', healthy: true };
+    const acc = { key: 'sk-1', keyId: 'k1', maskedKey: 'sk-1', instance: inst, status: 'ready' };
+    const stops = [], restarts = [], netFails = [];
+    const prov = {
+      name: 'p', kind: 'proxy', apiPort: 18080, accounts: [acc], instances: [inst],
+      supports: (f) => f === 'instanceLifecycle',
+      markUsed() {}, startInstance: async () => ({ ok: true }), _waitHealthy: async () => true,
+      _switchBudgetMs: () => 50,
+      stopInstance(called) { stops.push(called); called.pid = null; },
+      restartInstance() { restarts++; }, markInstanceNetFail() { netFails++; },
+      _retryPendingStop() {}, flushRestartPending() {},
+    };
+    const inflight = require(path.join(ROOT, 'src', 'domains', 'router', 'model', 'inflight.js')).createInflight();
+    const usage = { recordError() {}, recordUsage() {} };
+    let picked = null;
+    const switcher = { pickFor: (p) => (picked ? null : (picked = p.accounts[0])), reactToFailure: () => ({ action: 'giveup' }) };
+    const parse = {
+      parseRequest: () => ({ model: 'm', streamRequested: false, bodyJson: {}, pathname: '/v1/messages', search: '' }),
+      resolveTarget: () => ({ prov, targetBase: 'http://127.0.0.1:9' }),
+      joinUpstream: (b) => b,
+      instOf: (p, a) => (a && a.instance) || null,
+      extractUsage: () => null,
+    };
+    const deps = Object.assign({
+      parse, usage, inflight, switcher,
+      logger: null, log: () => {}, maskKey: (k) => k,
+      readBody: async () => Buffer.from('{}'),
+    }, overrides || {});
+    deps.switcher = switcher;
+    return { deps, prov, acc, inst, inflight, usage, state: () => ({ stops, restarts: restarts.length, netFails: netFails.length }) };
+  };
+  const mkRes = () => { const r = { headers: {}, ended: null, writeHead(c, h) { this.code = c; this.headers = h || {}; }, end(b) { this.ended = b; }, once() {}, on() {} }; return r; };
+  const mkReq = () => ({ method: 'POST', url: '/v1/messages', headers: {} });
+
+  // D-1a：上游实现同步抛错（parse/joinUpstream/连接期非 error 事件异常等形态）
+  {
+    const { deps, prov, acc, inflight } = mkDeps({
+      forwardOnceImpl: async () => { throw new Error('boom'); },
+    });
+    const f = createForwarder(deps);
+    const res = mkRes();
+    let threw = null;
+    try { await f.proxyFor(prov, mkReq(), res); } catch (e) { threw = e && e.message; }
+    const st = inflight.stats();
+    acheck('D-1a 上游抛错时在途计数不泄漏（begun==ended）', st.active === 0, JSON.stringify(st));
+    acheck('D-1a 账号 inflight 归零', (acc.inflight || 0) === 0, 'acc.inflight=' + acc.inflight);
+    acheck('D-1a 抛错原样冒泡给端点层（不静默吞）', threw === 'boom', String(threw));
+  }
+
+  // D-1b：反向对照 —— 判据必须有鉴别力（且不被注释同形干扰）
+  {
+    const { stripComments } = require('./_strip');
+    const src = stripComments(fwd);
+    const m = src.match(/async function proxyFor\([\s\S]*?\n  \}/);
+    acheck('D-1b 定位到 proxyFor 函数体', !!m, m ? 'ok' : '未找到');
+    const body = m ? m[0] : '';
+    const hasFinally = /finally\s*\{[\s\S]{0,80}?endAttempt\(\)/.test(body);
+    const hasReset = /attemptEnded\s*=\s*false/.test(body);
+    const hasIdem = /if\s*\(attemptEnded\)\s*return;/.test(src);
+    acheck('D-1b 收口三要素齐备（finally 兜底 + begin 后置位 + 幂等守卫）',
+      hasFinally && hasReset && hasIdem, JSON.stringify({ hasFinally, hasReset, hasIdem }));
+    // 循环体各显式结束点全部改走 endAttempt()；proxyFor 内 endInflight(acc,…) 只应剩
+    // endAttempt 定义里那一处（多出一处即说明有新分支绕过幂等收口）。
+    const direct = (body.match(/endInflight\(acc,/g) || []).length;
+    const viaEnd = (body.match(/endAttempt\(\)/g) || []).length;
+    acheck('D-1b proxyFor 内 endInflight(acc,…) 仅 1 处（endAttempt 内），结束点均走收口',
+      direct === 1 && viaEnd >= 5, JSON.stringify({ direct, viaEnd }));
+    acheck('D-1b 反向：readableEnded 不再作为 close 收口的早退判据',
+      !/if\s*\(ur\.readableEnded\)\s*return;/.test(src), '已移除');
+    acheck('D-1b 收口后 writeThrough 三处结束仍共用 endInflight(acc, prov)',
+      (src.match(/endInflight\(acc,\s*prov\)/g) || []).length === 3,
+      '共 ' + (src.match(/endInflight\(acc,\s*prov\)/g) || []).length + ' 处');
+  }
+
+  // D-3：非超时 net-error 必须先经 stopInstance（kill 路径可达），不得只抹 pid
+  {
+    const { deps, prov, state } = mkDeps({
+      forwardOnceImpl: async () => ({ phase: 'net-error', error: 'socket hang up' }),
+    });
+    const f = createForwarder(deps);
+    await f.proxyFor(prov, mkReq(), mkRes()).catch(() => {});
+    const s = state();
+    acheck('D-3 非超时 net-error：stopInstance 被调用一次（kill 段可达）',
+      s.stops.length === 1, 'stops=' + JSON.stringify(s.stops.map((x) => x && x.keyId)));
+    acheck('D-3 实参是实例（带 pid 快照）而非累加器', s.stops[0] && s.stops[0].keyId === 'k1', JSON.stringify(s.stops[0] && s.stops[0].keyId));
+  }
+
+  // D-3 反向：超时路径仍走 restartInstance，不得被 stopInstance 抢跑
+  {
+    const { deps, prov, state } = mkDeps({
+      forwardOnceImpl: async () => ({ phase: 'net-error', error: 'response timeout after 180s' }),
+    });
+    const f = createForwarder(deps);
+    await f.proxyFor(prov, mkReq(), mkRes()).catch(() => {});
+    const s = state();
+    acheck('D-3 反向：超时不直接 stopInstance，改走 restartInstance',
+      s.stops.length === 0 && s.restarts === 1, JSON.stringify({ stops: s.stops.length, restarts: s.restarts }));
+  }
+
+  const failedAsync = asyncChecks.filter((r) => !r);
+  const failed = results.filter((r) => !r).concat(failedAsync);
+  console.log(String.fromCharCode(10) + '结果: ' + (results.length + asyncChecks.length - failed.length) + ' passed, ' + failed.length + ' failed');
+  process.exit(failed.length ? 1 : 0);
+})();

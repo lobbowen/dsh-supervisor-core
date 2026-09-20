@@ -252,6 +252,52 @@ async function main() {
     check('普通迁移（如 start_timeout）不被排除', sup._shadowExcluded('start_timeout') === false);
   }
 
+  // ── D-11（AUDIT-2026-09-19 第 4 批）：接管必须有**归属凭据**，不得只凭 cmdline 相似 ──
+  //   缺陷：两个守卫（线上守卫 + 测试/手工起的第二实例）看到同一个监听 pid，cmdline 特征都匹配，
+  //   于是双方都认领它，彼此 stop/kill 对方刚接管的 DSH（审计原述「疑似双管家互杀」）。
+  //   修法：与 daemon 侧 *-daemon.identity.json 同范式落 dsh-main.owner.json；凭据**只做否决**
+  //   （他主存活 -> 不接管），放行权威仍是 cmdline —— 陈旧凭据（pid 被内核复用）不得单独放行。
+  {
+    const { spawn, spawnSync } = require('node:child_process');
+    // 让 cmdline 判定在本进程上为真：command[1] 取测试自身命令行里的可辨识片段。
+    const sup2 = buildSupervisor({ command: ['node', 'adopt-token-reclaim-test.js', 'web'] });
+    const f = sup2._mainOwnerFile();
+    check('D-11 凭据与 daemon 身份/锁文件同址（stateFile 目录）',
+      f === path.join(TMP, 'dsh-main.owner.json'), f);
+    check('D-11 无凭据时 read=null（读失败既不接管也不否决）', sup2._readMainOwner() === null, String(sup2._readMainOwner()));
+    check('D-11 无凭据 -> 接管判定回落 cmdline（本进程形态可接管）',
+      sup2._isManagedProcess(process.pid) === true, '放行');
+
+    sup2._writeMainOwner(4242, 3080);
+    const o = sup2._readMainOwner();
+    check('D-11 写后读回 {guardPid=本守卫, dshPid, port}',
+      !!o && o.dshPid === 4242 && o.guardPid === process.pid && o.port === 3080, JSON.stringify(o));
+    check('D-11 原子写：不留 .tmp 残留', !fs.existsSync(f + '.' + process.pid + '.tmp'), 'clean');
+    check('D-11 落盘权限 0600', (fs.statSync(f).mode & 0o777) === 0o600,
+      (fs.statSync(f).mode & 0o777).toString(8));
+
+    // 「另一个存活的守卫」：起一个真实子进程当它（跨平台；win 上 pid 1 是空闲进程，不能拿来代表存活）
+    const other = spawn(process.execPath, ['-e', 'setTimeout(function () {}, 5000);'], { stdio: 'ignore' });
+    try {
+      fs.writeFileSync(f, JSON.stringify({ guardPid: other.pid, dshPid: process.pid, port: 3080, startedAt: 0 }));
+      check('D-11 否决：他主存活守卫拥有该 pid 时绝不接管（即使 cmdline 匹配）',
+        sup2._isManagedProcess(process.pid) === false, '已否决');
+    } finally { try { other.kill('SIGKILL'); } catch {} }
+
+    // 陈旧凭据（原守卫已死）-> 不否决：接管链路不能被一次崩溃永久封死
+    const dead = spawnSync(process.execPath, ['-e', '']);
+    fs.writeFileSync(f, JSON.stringify({ guardPid: dead.pid, dshPid: process.pid, port: 3080, startedAt: 0 }));
+    check('D-11 反向：他主**已死**的凭据不否决接管（陈旧凭据不封死恢复）',
+      dead.pid && sup2._isManagedProcess(process.pid) === true, 'guardPid=' + dead.pid);
+    // 自持凭据（自己的 pid）-> 不否决（同守卫重启后重新认领自己留下的实例）
+    fs.writeFileSync(f, JSON.stringify({ guardPid: process.pid, dshPid: process.pid, port: 3080, startedAt: 0 }));
+    check('D-11 自持凭据不否决', sup2._isManagedProcess(process.pid) === true, '放行');
+    // 凭据指向**别的** pid -> 与本次判定无关（不得误否决）
+    fs.writeFileSync(f, JSON.stringify({ guardPid: 999998, dshPid: 999997, port: 3080, startedAt: 0 }));
+    check('D-11 凭据 pid 不匹配时不参与判定', sup2._isManagedProcess(process.pid) === true, '放行');
+    try { fs.unlinkSync(f); } catch {}
+  }
+
   console.log('\n==============================');
   console.log('结果: ' + passed + ' passed, ' + failed + ' failed');
   try { fs.rmSync(TMP, { recursive: true, force: true }); } catch {}

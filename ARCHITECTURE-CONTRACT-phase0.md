@@ -189,6 +189,18 @@
     是否应运行 = (desired == running) && (sessionState ∈ {starting, running, failed})
     崩溃是否重启 = 是否应运行 && (guardian == true)
 
+**适用边界（D-2 裁决，2026-09-20）**：上式的 `desired` 只覆盖**受管对象目录的 kind**
+（`src/app/control/managed-object.js:13` MANAGED_KINDS：dsh / sandbox-instance / router-daemon /
+lan-daemon / plugin）。**桌面壳不是受管对象**——§2.1 已把其生命周期所有者判给「桌面会话（用户登录/
+autostart）」，故目录里根本没有壳条目，上式对壳无定义。壳的「是否应自愈」由**壳域专属单源谓词**表达
+（`src/app/assembly/collaborators.js:153` `_shellExitIntended()` = 通用退出 ∨ 持久 `_shellHalted`，
+注入点 `src/app/assembly/bootstrap.js:170`），另有 `config.shellWatchdog === false` 作总开关。
+⚠ **禁止**为让壳「符合」上式而向目录补登壳条目或在看护内另读 desired——那是同一意图的第二事实源，
+正是 9-18 事故的根因形态（E-3）。
+
+`desired` 的**写权归属**（谁能改、观测推导路径为何必须带 `keepDesired`）另有 SSOT：
+`GUARD-DOMAIN-MODEL.md` §6.1..§6.3；本契约只冻结上式，不重复定义写口。
+
 ---
 
 ## 7. 契约 → 根因 → 阶段映射

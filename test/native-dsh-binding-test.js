@@ -145,6 +145,51 @@ const OLD8 = "async function install(host, version) { host._recordManifest(targe
 const oldS = OLD8.slice(0, OLD8.indexOf('function startInstall'));
 check('B21 反向：旧无绑定形态被判失败', oldS.indexOf('host._bindNativeDshCommand') === -1, 'ok');
 
+// 9) D-9（AUDIT-2026-09-19 第4批）：升级/重装不得用空数组抹掉 dataPaths 认领。
+//    manifest.record 的继承分支判据是「未显式传 dataPaths」（claim===null）；
+//    而 Array.isArray([]) 为真 ⇒ 传 [] 会把上一代认领写成 []，卸载清理恒 no-op（目录永久残留）。
+{
+  const mf = require(path.join(ROOT, 'src', 'app', 'native', 'manifest.js'));
+  const opsSrc = fs.readFileSync(path.join(ROOT, 'src', 'app', 'native', 'ops.js'), 'utf8');
+  const mdir = path.join(TMP, 'd9-manifest');
+  fs.mkdirSync(mdir, { recursive: true });
+  const mfFile = path.join(mdir, 'native-manifest.json');
+  const host = {
+    manifestFile: mfFile, dshHome: path.join(mdir, 'dsh-home'), stateDir: mdir,
+    logger: { info() {}, warn() {}, error() {} },
+    config: { command: ['node', path.join(mdir, 'no-such-bin')], packageName: '@deepseek-ai/dsh' },
+  };
+  const readM = () => { try { return JSON.parse(fs.readFileSync(mfFile, 'utf8')); } catch { return null; } };
+
+  mf.record(host, '1.0.0', ['/home/.dsh/sessions'], '/npmroot');
+  const m1 = readM();
+  check('D-9 首装显式传认领被写入', !!m1 && JSON.stringify(m1.dataPaths) === JSON.stringify(['/home/.dsh/sessions']), JSON.stringify(m1 && m1.dataPaths));
+
+  mf.record(host, '1.0.1', undefined, '/npmroot');
+  const m2 = readM();
+  check('D-9 升级（不传 dataPaths）继承上一代认领', !!m2 && JSON.stringify(m2.dataPaths) === JSON.stringify(['/home/.dsh/sessions']) && m2.version === '1.0.1', JSON.stringify(m2 && m2.dataPaths));
+
+  mf.record(host, '1.0.2', [], '/npmroot');
+  const m3 = readM();
+  check('D-9 缺陷形态复现：显式传 [] 会抹掉认领（故调用点禁止传 []）',
+    !!m3 && Array.isArray(m3.dataPaths) && m3.dataPaths.length === 0, JSON.stringify(m3 && m3.dataPaths));
+
+  mf.record(host, '1.0.3', undefined, '/npmroot');
+  const m4 = readM();
+  check('D-9 被抹成 [] 后 undefined 也救不回（说明必须在调用点修）',
+    !!m4 && m4.dataPaths.length === 0, JSON.stringify(m4 && m4.dataPaths));
+
+  mf.record(host, '1.0.4', ['/a', '/b'], '/npmroot');
+  check('D-9 反向：非数组（null）才走继承而不覆盖',
+    readM().dataPaths.length === 2, JSON.stringify(readM().dataPaths));
+
+  const badCall = /_recordManifest\(target,\s*(?:isFirstInstall\s*\?\s*host\._claimDataPaths\(\)\s*:\s*)?\[\]\s*\)/.test(opsSrc);
+  check('D-9 ops.install 调用点不再向 manifest 传空数组', !badCall, badCall ? '仍有 [] 传参' : 'ok');
+  check('D-9 调用点显式用 undefined 触发继承',
+    /_recordManifest\(target, isFirstInstall \? host\._claimDataPaths\(\) : undefined\)/.test(opsSrc), 'ok');
+  try { fs.rmSync(mdir, { recursive: true, force: true }); } catch {}
+}
+
 restore();
 try { fs.rmSync(TMP, { recursive: true, force: true }); } catch {}
 

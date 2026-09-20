@@ -136,3 +136,64 @@ const waitCtl = async (ms = 8000) => { const t0 = Date.now(); while (Date.now() 
   console.log('\n结果: ' + (results.length - failed.length) + ' passed, ' + failed.length + ' failed');
   process.exit(failed.length ? 1 : 0);
 })().catch((e) => { console.error('ERR', e); process.exit(1); });
+
+// ── D-12（AUDIT-2026-09-19 第4批）：管理锁 = 原子取锁 + 持有者存活检测 + 只删自己的锁 ──
+// 旧实现三处不成立：writeFileSync 直接覆盖（后写者静默抢锁）、pid 从不回读（崩溃残留恒授权）、
+// unlinkSync 无条件删（可删掉别的守卫刚重建的锁）。范式出处：bin/dsh-supervisor 的守卫单实例锁。
+{
+  const idMod = require(path.join(ROOT, 'src', 'app', 'daemons', 'identity.js'));
+  const { acquireLock, releaseLock, lockPid, pidAlive } = idMod._lockPrimitives;
+  const dir = path.join(TMP, 'd12');
+  fs.mkdirSync(dir, { recursive: true });
+  const lock = path.join(dir, 'router-daemon.lock');
+  const writeRaw = (txt) => fs.writeFileSync(lock, txt);
+
+  check('D-12 全新取锁成功且内容为 pid',
+    acquireLock(lock) === true && lockPid(lock) === process.pid, 'pid=' + lockPid(lock));
+  check('D-12 二次取锁：持有者是自己 -> 仍成功（幂等，不误报易主）',
+    acquireLock(lock) === true, 'ok');
+  releaseLock(lock);
+  check('D-12 释放后锁文件消失', !fs.existsSync(lock), 'gone');
+
+  // 他主且存活：绝不能抢
+  writeRaw(String(process.ppid || 1));
+  const ppid = lockPid(lock);
+  check('D-12 前提：父进程 pid 可解析且存活', ppid > 0 && pidAlive(ppid) === true, 'ppid=' + ppid);
+  check('D-12 他主存活 -> 取锁失败且不覆盖内容',
+    acquireLock(lock) === false && lockPid(lock) === ppid, 'holder=' + lockPid(lock));
+  check('D-12 释放他人锁 -> no-op（只删自己的）',
+    (releaseLock(lock), fs.existsSync(lock) && lockPid(lock) === ppid), 'kept=' + lockPid(lock));
+  check('D-12 他主存活时即使目录/权限正常也不覆盖内容（无静默抢锁）',
+    (writeRaw(String(ppid)), acquireLock(lock) === false, fs.readFileSync(lock, 'utf8').trim() === String(ppid)),
+    'content=' + fs.readFileSync(lock, 'utf8').trim());
+  fs.rmSync(lock, { force: true });
+
+  // 真·死 pid：起一个即刻退出的子进程，用它的 pid 模拟崩溃残留
+  const { spawnSync } = require('node:child_process');
+  const r = spawnSync(process.execPath, ['-e', '']);
+  const dead = r && r.pid;
+  check('D-12 前提：取到已退出的 pid', !!dead && pidAlive(dead) === false, 'deadPid=' + dead);
+  writeRaw(String(dead));
+  check('D-12 崩溃残留（持有者已死）-> 清锁重试成功并改成本 pid',
+    acquireLock(lock) === true && lockPid(lock) === process.pid, 'holder=' + lockPid(lock));
+
+  // 内容不可解析（旧格式/半写）：按残留处理，取锁方胜出
+  fs.rmSync(lock, { force: true });
+  writeRaw('not-a-pid');
+  check('D-12 锁内容不可解析 -> 视为残留并自愈',
+    lockPid(lock) === null && acquireLock(lock) === true && lockPid(lock) === process.pid, 'ok');
+  releaseLock(lock);
+
+  // 反向（判据有牙）：旧缺陷形态必被识破
+  check('D-12 反向：不存在锁时取锁失败但绝不创建半成品',
+    acquireLock(path.join(dir, 'missing-dir-ghost.lock')) === false, 'null 路径安全');
+  const idSrc = fs.readFileSync(path.join(ROOT, 'src', 'app', 'daemons', 'identity.js'), 'utf8');
+  const lines = idSrc.split(String.fromCharCode(10)).filter((l) => !l.trim().startsWith('//'));
+  const bareWrite = lines.filter((l) => /fs\.writeFileSync\(.*pid/.test(l));
+  check('D-12 反向：源码不再有裸 writeFileSync(pid) 覆盖式写锁', bareWrite.length === 0, bareWrite.join('|'));
+  const bareUnlink = lines.filter((l) => /if \(p\) \{ try \{ fs\.unlinkSync/.test(l));
+  check('D-12 反向：无条件 unlinkSync 删锁的旧体已消失', bareUnlink.length === 0, bareUnlink.join('|'));
+  check('D-12 范式一致：取锁走 wx 原子创建（与守卫单实例锁同法）',
+    /fs\.openSync\(p, 'wx'\)/.test(idSrc) && /openSync\(LOCK_FILE, 'wx'\)/.test(fs.readFileSync(path.join(ROOT, 'bin', 'dsh-supervisor'), 'utf8')), 'wx');
+}
+

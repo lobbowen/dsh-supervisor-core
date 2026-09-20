@@ -44,7 +44,11 @@ function orphanAudit(deps) {
         const id = String(rec.owner).slice(5);
         if (!ids.has(id)) issues.push({ kind: 'port-registration', owner: rec.owner, port: rec.port, why: '端口登记 owner 指向已不存在的实例（残留登记）' });
       }
-    } catch {}
+    } catch (e) {
+      // D-13：整段静默会让「端口登记残留」这一维永久不可见（扫描器看起来在跑、其实从未扫到）。
+      const l = call(g.getLogger, null);
+      if (l && l.warn) l.warn('orphan-scan 端口登记段失败: ' + ((e && e.message) || e));
+    }
     // 幽灵登记观测线索：期望运行但实然长期失联（main 由收敛接管，跳过避免噪声）
     try {
       const staleMs = Math.max(3 * (g.getConfig().probeIntervalMs || 5000), 30000);
@@ -56,7 +60,10 @@ function orphanAudit(deps) {
           issues.push({ kind: e.kind, id: e.id, why: '期望运行但观测长期失联（幽灵登记）' });
         }
       }
-    } catch {}
+    } catch (err) {
+      const l = call(g.getLogger, null);
+      if (l && l.warn) l.warn('orphan-scan 幽灵登记段失败: ' + ((err && err.message) || err));
+    }
     if (issues.length === 0) return;
     const key = issues.map((i) => i.kind + ':' + (i.id || i.port || i.owner)).join('|');
     const lastKey = call(g.getLastKey, null);

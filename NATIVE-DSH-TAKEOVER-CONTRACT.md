@@ -36,6 +36,7 @@
 | **N3** | 绑定结果必须是**可执行入口**：优先包内 JS（`node <abs lib/bin.js>`）；仅垫片时由 shell 承载；命令一律**绝对路径**。 |
 | **N4** | 原生域与沙箱域**独立**，共享实现抽象（target 描述符 + 安装/版本/插件/生命周期能力），不互相转化。原生 `home=~/.dsh` 由管家管理。 |
 | **N5** | 检测/绑定失败必须**如实报「未安装」**，绝不伪造路径或猜测；由用户显式安装或引导安装。 |
+| **N6** | 接管（adopt）必须有**归属凭据**，不得只凭 cmdline 形态相似认领：`<stateFile 同目录>/dsh-main.owner.json` 记 `{guardPid, dshPid, port, startedAt}`（与 daemon 侧 `*-daemon.identity.json` 同范式），spawn 与 adopt 两条取得所有权的路线都要写。**凭据只做否决**——`guardPid` 是另一个**存活**守卫且 `dshPid` 正是待接管 pid 时不接管（放行权威仍是 cmdline 特征）；他主已死或 pid 不匹配一律不否决，否则一次崩溃就把恢复链路永久封死。落点：`src/app/main/signals.js` 的 `_mainOwnerFile`/`_readMainOwner`/`_writeMainOwner`/`_isManagedProcess`；门禁：`adopt-token-reclaim-test` 的 D-11 块。 |
 
 ## 3. 单管线（N2 的落地语义）
 

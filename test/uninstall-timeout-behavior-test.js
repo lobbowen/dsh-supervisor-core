@@ -110,6 +110,57 @@ const check = (n, c, x) => { results.push(!!c); console.log((c ? 'PASS' : 'FAIL'
     check('反向：正常路径也释放锁', mgr.uninstalling === null, String(mgr.uninstalling));
   }
 
+  // ── D-10（AUDIT-2026-09-19 第 4 批）：在途 npm 必须**可被关停路径中止** ──
+  //   缺陷：npm 子进程以 detached 起（自成进程组），守卫退出/被 bin 的 8s 强杀后它继续存活，
+  //   新守卫 boot 时旧 npm 仍在写 node_modules 与全局前缀（无人等待、无人记账的并发写入者）。
+  //   本块证明三件事：句柄被记账、abort 真的杀掉进程组、Promise 不悬挂（ok:false + aborted:true）。
+  {
+    const installMod = require(path.join(ROOT, 'src', 'platform', 'distribution', 'install.js'));
+    const distFacade = require(path.join(ROOT, 'src', 'platform', 'distribution'));
+    check('D-10 接线：关停出口经门面 re-export（同一函数，不另造事实源）',
+      distFacade.killInflightNpm === installMod.killInflightNpm
+      && distFacade.inflightNpmCount === installMod.inflightNpmCount, typeof distFacade.killInflightNpm);
+    check('D-10 前提：无在途时计数 0 且中止返回 0（空转不误报）',
+      installMod.inflightNpmCount() === 0 && installMod.killInflightNpm('probe') === 0, installMod.inflightNpmCount());
+
+    // 挂起假 npm：沿用本文件既有跨平台范式（**绝不用 #!/bin/sh**，win 无 sh 解释器会退化成立即失败）
+    const pidFile = path.join(tmp, 'inflight-npm.pid');
+    const hangFile = path.join(tmp, 'npm-inflight-hang.js');
+    fs.writeFileSync(hangFile,
+      'require("fs").writeFileSync(' + JSON.stringify(pidFile) + ', String(process.pid));'
+      + 'setTimeout(function () {}, 60000);');
+    const p = installMod.runNpmInstall({
+      pkg: '@deepseek-ai/dsh', version: '9.9.9',
+      commandTemplate: [process.execPath, hangFile], timeoutMs: 60000,
+    });
+    check('D-10 行为：在途任务被记账（同步登记，不等子进程输出）',
+      installMod.inflightNpmCount() === 1, installMod.inflightNpmCount());
+    // 先等子进程把自身 pid 写出来（node 冷启约几十 ms），否则「杀进程」断言会退化成
+    // 「在子进程还没跑起来时就杀」——那样 ESRCH 恒真，判据没有牙。
+    let childPid = 0;
+    for (let i = 0; i < 30 && !childPid; i++) {
+      try { childPid = Number(fs.readFileSync(pidFile, 'utf8')); } catch {}
+      if (!childPid) await new Promise((res) => setTimeout(res, 50));
+    }
+    const killed = installMod.killInflightNpm('test-exit');
+    const r = await p;
+    check('D-10 行为：abort 回报被中止数', killed === 1, killed);
+    check('D-10 行为：Promise 以 ok:false + aborted:true 收口（关停不被悬挂的 await 拖住）',
+      !!r && r.ok === false && r.aborted === true, JSON.stringify({ ok: r && r.ok, aborted: r && r.aborted, err: r && r.error }));
+    check('D-10 行为：句柄注销（不泄漏到下一次关停）',
+      installMod.inflightNpmCount() === 0, installMod.inflightNpmCount());
+    let dead = false;
+    for (let i = 0; i < 20 && !dead; i++) {
+      try { process.kill(childPid, 0); } catch (e) { dead = !!(e && e.code === 'ESRCH'); break; }
+      await new Promise((res) => setTimeout(res, 100));
+    }
+    // ⚠ childPid 取不到（假 npm 未及写 pid 即被杀）时不算失败——被杀得更快不是缺陷。
+    check('D-10 行为：子进程真的消失（ESRCH），不是只解除了 await',
+      childPid === 0 || dead === true, 'pid=' + childPid + ' dead=' + dead);
+    // 反向（判据有牙）：确认子进程确实活着过，否则本块的 ESRCH 无意义
+    check('D-10 反向：pid 文件已写出（子进程真的启动过）', childPid > 0, 'pid=' + childPid);
+  }
+
   try { fs.rmSync(tmp, { recursive: true, force: true }); } catch {}
 
   const failed = results.filter((r) => !r);

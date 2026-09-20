@@ -13,6 +13,9 @@ const { getQuotaStrategy } = require('./quota-strategies');
 const { quotaOverallStatus } = require('./policies/quota');
 const { cachedPkgBin, ensurePkgCached } = require('./pkg-cache');
 const stateRoot = require('../../../platform/service/state-root');
+// D-4：实例日志落盘统一走平台层轮转写入器（0600 + 超阈值改名 .1，保留一代）。
+const { Rotator } = require('../../../platform/service/log/log');
+const INSTANCE_LOG_MAX_BYTES = 2 * 1024 * 1024;
 
 /** 启动实例（底层治理）：认领/弃用幸存者 -> 端口分配/等待 -> 命令 -> env -> spawn -> 日志。 */
 async function spawnInstance(provider, inst) {
@@ -80,16 +83,19 @@ async function spawnInstance(provider, inst) {
   try { child = spawnOS.piped(launch.cmd[0], launch.cmd.slice(1), { env: envVars, detached: true }); }
   catch (e) { return { ok: false, error: 'spawn 失败: ' + e.message }; }
   // 实例 stdout/stderr 全量落盘 + 关键词行落事件（stateDir 由 Provider 注入，D7）
+  // D-4（AUDIT-2026-09-19 第4批）：落盘统一走平台层 Rotator —— 原先裸
+  //   fs.createWriteStream({flags:'a'}) 是全仓唯一的无轮转日志（反代 stdout 可无界增长），
+  //   且默认 0644（Rotator 首建即 0600：实例日志含启动令牌 URL/环境变量派生行）。
   const logFilter = /error|streaming|idle|timeout|ECONN|abort|socket|finish|truncat/i;
-  let logStream = null;
+  let logWriter = null;
   try {
     const baseDir = provider.stateDir || stateRoot.supervisorDir();
     const logDir = path.join(baseDir, 'logs');
     fs.mkdirSync(logDir, { recursive: true });
-    logStream = fs.createWriteStream(path.join(logDir, 'proxy-instance-' + provider.proxyAppId + '-' + port + '.log'), { flags: 'a' });
+    logWriter = new Rotator(path.join(logDir, 'proxy-instance-' + provider.proxyAppId + '-' + port + '.log'), INSTANCE_LOG_MAX_BYTES);
   } catch {}
   const pushLog = (buf, src) => {
-    if (logStream) { try { logStream.write('[' + new Date().toISOString() + '][' + src + '] ' + String(buf)); } catch {} }
+    if (logWriter) { try { logWriter.write('[' + new Date().toISOString() + '][' + src + '] ' + String(buf).replace(/[\r\n]+$/, '')); } catch {} }
     for (const raw of String(buf).split(/\r?\n/)) {
       const l = raw.trim();
       if (!l || !logFilter.test(l)) continue;
@@ -99,7 +105,7 @@ async function spawnInstance(provider, inst) {
   };
   child.stdout.on('data', (c) => pushLog(c, 'out'));
   child.stderr.on('data', (c) => pushLog(c, 'err'));
-  child.on('close', () => { if (logStream) { try { logStream.end(); } catch {} } });
+  // Rotator 每次 write 即时 appendFileSync，无缓冲 ⇒ 关闭时不需（也无法）end()。
   inst.pid = child.pid;
   inst.port = port;
   inst.status = INSTANCE_STATES.WARM;
@@ -146,6 +152,20 @@ async function healthInstance(provider, inst) {
   }
 }
 
+/** 同进程组判定（Linux/POSIX）：detached spawn 的子孙进程 pgid == 子进程 pid。 */
+function sameProcessGroup(pid, pgidLeader) {
+  if (!pid || !pgidLeader || process.platform === 'win32') return false;
+  try {
+    const st = fs.readFileSync('/proc/' + pid + '/stat', 'utf8');
+    // comm 字段可含空格且自带括号：以最后一个 ") " 为锚点，其后依次为 state/ppid/pgrp
+    //   ⇒ fields[0]=state、fields[1]=ppid、fields[2]=pgrp（写成 fields[1] 会误比父 pid）
+    const idx = st.lastIndexOf(') ');
+    if (idx < 0) return false;
+    const fields = st.slice(idx + 2).trim().split(/\s+/);
+    return Number(fields[2]) === Number(pgidLeader);
+  } catch { return false; }
+}
+
 /** 实例生命周期监控：进程存活 + 端口监听 + HTTP 卡死检测（连续 ≥3 次 kill 重拉）。 */
 async function monitorLifecycle(provider) {
   if (provider._stopping || provider.activated !== true) return;
@@ -162,8 +182,15 @@ async function monitorLifecycle(provider) {
     }
     if (typeof pidlook.findListeningPid === 'function') {
       const listening = pidlook.findListeningPid(inst.port);
-      if (listening !== inst.pid) {
-        if (provider.logger && provider.logger.warn) provider.logger.warn('[proxy-instance] 生命周期监控：端口异常 key=' + inst.maskedKey + ' port=' + inst.port + ' pid=' + inst.pid + ' listener=' + (listening || '无'));
+      // D-6（AUDIT-2026-09-19 第4批）：exact-pid 等值判据在 npx --yes 兜底形态下恒不成立 ——
+      //   命令为 [npxBin, --yes, pkg, ...]，spawn 的是 npx，真正监听端口的是其子孙 node。
+      //   误判后果不是「重启」而是**留下孤儿**：此处把 pid 抹掉后，stopInstance 的 kill 段
+      //   以 inst.pid 为判据（instance-lifecycle.js:38），真实进程恒不可达地继续占端口。
+      //   改判据：监听者与被管实例**不同进程组**才算被外部进程占住（detached 子孙同组，放行）。
+      //   监听者查不到（inet-diag 回退）不改判：交给下方 HTTP 探活（进程活着但不健康
+      //   连续 3 次即 kill 重拉），避免探测工具缺失时误杀。
+      if (listening && listening !== inst.pid && !sameProcessGroup(listening, inst.pid)) {
+        if (provider.logger && provider.logger.warn) provider.logger.warn('[proxy-instance] 生命周期监控：端口被外部进程占住 key=' + inst.maskedKey + ' port=' + inst.port + ' pid=' + inst.pid + ' listener=' + listening);
         inst.pid = null; inst.healthy = false; inst._monitorFails = 0; inst.status = INSTANCE_STATES.COLD;
         continue;
       }

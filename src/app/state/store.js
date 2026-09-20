@@ -40,8 +40,19 @@ function createStore(deps) {
   }
 
   function loadState() {
+    // D-13：原来「读 + 解析 + 逐字段恢复」挤在同一个静默 catch 里 —— 文件不存在（首启，正常）
+    //   与「恢复中途抛错」（shellHalted/upgradeHold/desired 种子凭空丢失，9-18 同族）无痕同级。
+    //   拆成两段：读段只对 ENOENT 保持安静，恢复段失败一律留痕。
+    let raw = null;
     try {
-      const raw = JSON.parse(fs.readFileSync(config().stateFile, 'utf8'));
+      raw = JSON.parse(fs.readFileSync(config().stateFile, 'utf8'));
+    } catch (e) {
+      if (!e || e.code !== 'ENOENT') {
+        const l = logger();
+        if (l && l.warn) l.warn('state load failed（按空状态继续）: ' + ((e && e.message) || e));
+      }
+    }
+    if (raw && typeof raw === 'object') try {
       // 状态单源：desired 权威是受管目录；仅目录文件不存在时用 state.json 作迁移种子。
       if (raw.desired === 'stopped' || raw.desired === 'running') {
         const m = reg();
@@ -58,7 +69,10 @@ function createStore(deps) {
       if (raw.upgradeHold === true) upgradeHold.enter();
       // 用户「退出管家」标记跨守卫重启继承（只读 true；清除由看护观测到壳在线时执行）。
       if (raw.shellHalted === true && typeof g.setShellHalted === 'function') g.setShellHalted(true);
-    } catch {}
+    } catch (e) {
+      const l = logger();
+      if (l && l.warn) l.warn('state restore partial（字段级跳过，boot 仍继续）: ' + ((e && e.message) || e));
+    }
     // boot 相位不继承：复位 STOPPED，让首拍按真实探测收敛。
     try { fields.setPhase('STOPPED'); } catch {}
   }

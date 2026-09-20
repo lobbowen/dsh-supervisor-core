@@ -98,11 +98,26 @@ async function fetchLatestVersion(state, pkg, channel, opts) {
   return fetchNpmLatest(state, pkg, { authoritative: o.authoritative === true });
 }
 
+/** 在途 npm 安装句柄（D-10）。装/卸/升级全部经 runNpmInstall，故本集合就是「守卫内不可见的
+ *  外部写入者」清单。子进程 detached（自成进程组），守卫退出后不会随之消亡——关停必须先中止它们。 */
+const INFLIGHT_NPM = new Set();
+
+/** 在途 npm 任务数（关停路径据此决定是否留痕/发事件）。 */
+function inflightNpmCount() { return INFLIGHT_NPM.size; }
+
+/** 中止全部在途 npm 子进程（连同其进程组），并让对应 Promise 以 ok:false,aborted:true 收口。
+ *  @returns {number} 被中止的任务数 */
+function killInflightNpm(reason) {
+  const hs = [...INFLIGHT_NPM];
+  for (const h of hs) { try { h.abort(reason); } catch { /* 已收口：不阻断关停 */ } }
+  return hs.length;
+}
+
 /** 安装执行器（统一 npm 安装）：镜像注入 / 超时 / 行日志 / 退出码 / 进程树清理。
  *
  *  @param {object} opts
  *   - pkg / version（version 必须显式）/ prefix（沙箱） / registry / timeoutMs / detached / onLine
- *  @returns Promise<{ ok, error, output }> */
+ *  @returns Promise<{ ok, error, output, aborted? }> */
 function runNpmInstall(opts) {
   const o = opts || {};
   const pkg = o.pkg || '@deepseek-ai/dsh';
@@ -157,14 +172,34 @@ function runNpmInstall(opts) {
       return resolve({ ok: false, error: e.message, output: [] });
     }
     const out = [];
+    // D-10（AUDIT-2026-09-19 第 4 批）：在途 npm 子进程必须**可被守卫主动中止**。
+    //   子进程以 detached 起（自成进程组），故守卫退出/被 8s 强杀后它会继续跑：
+    //   新守卫 boot 时旧 npm 仍在写 node_modules 与全局前缀 —— 无人等待、无人记账的
+    //   并发写入者，正是 9-13/半成品形态的复发面。关停路径经 killInflightNpm() 收口。
+    let settled = false;
+    const finish = (r) => {
+      if (settled) return;
+      settled = true;
+      INFLIGHT_NPM.delete(handle);
+      clearTimeout(timer);
+      resolve(r);
+    };
     const killTree = () => {
       if (!child || child.exitCode !== null) return;
       try { process.kill(-child.pid, 'SIGKILL'); } catch { try { child.kill('SIGKILL'); } catch { /* 已退出 */ } }
     };
+    const handle = {
+      pid: child.pid,
+      abort: (reason) => {
+        killTree();
+        finish({ ok: false, aborted: true, error: '安装被中止: ' + (reason || 'guard-exit'), output: out });
+      },
+    };
     const timer = setTimeout(() => {
       killTree();
-      resolve({ ok: false, error: '安装超时', output: out });
+      finish({ ok: false, error: '安装超时', output: out });
     }, o.timeoutMs || 600000);
+    INFLIGHT_NPM.add(handle);
     const onLine = (buf) => {
       for (const l of String(buf).split(/\r?\n/)) {
         const t = l.trim();
@@ -175,10 +210,9 @@ function runNpmInstall(opts) {
     };
     child.stdout.on('data', onLine);
     child.stderr.on('data', onLine);
-    child.on('error', (e) => { clearTimeout(timer); resolve({ ok: false, error: e.message, output: out }); });
+    child.on('error', (e) => { finish({ ok: false, error: e.message, output: out }); });
     child.on('exit', (code) => {
-      clearTimeout(timer);
-      resolve({ ok: code === 0, error: code === 0 ? null : 'npm install 退出码 ' + code, output: out });
+      finish({ ok: code === 0, error: code === 0 ? null : 'npm install 退出码 ' + code, output: out });
     });
   });
 }
@@ -238,4 +272,7 @@ module.exports = {
   fetchLatestVersion,
   runNpmInstall,
   waitPortHealthy,
+  // D-10：在途 npm 的记账/中止出口（关停路径经 platform/distribution 门面 re-export）
+  killInflightNpm,
+  inflightNpmCount,
 };
