@@ -97,7 +97,10 @@ async function main() {
     const sup = buildSupervisor();
     let pushed = null;
     const unsub = sup.tokenService.onChange((id, tok) => { pushed = { id, tok }; });
-    sup.tokenService.attach('inst-z', { unit: null });
+    // 批 4 令牌条 3（TK-3）：attach 必须给可登记的分类（显式 kind；unit 留空以隔离 journal 档，
+    //   本用例只测 stdout 链路）——旧写法 {unit:null} 下 attach 实为静默失败，
+    //   捕获全靠 feedLine 的隐式源旁路（正是 TK-3 要封的洞）。
+    check('B4-3 attach(dsh-instance) 登记成功（前置）', sup.tokenService.attach('inst-z', { kind: 'dsh-instance', unit: null }) === true);
     sup.tokenService.feedLine('inst-z', 'dsh web: http://127.0.0.1:3081/?token=AbC123');
     check('feedLine 捕获成功', sup.tokenService.get('inst-z') === 'AbC123');
     check('onChange 广播', pushed && pushed.id === 'inst-z' && pushed.tok === 'AbC123', pushed);
@@ -115,7 +118,7 @@ async function main() {
   console.log('== 令牌边界：clear() 必须同步清空 stdout 残留行（TK-1 死令牌回灌，AUDIT B-3）==');
   {
     const sup = buildSupervisor();
-    sup.tokenService.attach('inst-w', { unit: null });
+    sup.tokenService.attach('inst-w', { kind: 'dsh-instance', unit: null }); // B4-3：合规分类登记（同上）
     sup.tokenService.feedLine('inst-w', 'dsh web: http://127.0.0.1:3081/?token=OLD999');
     check('清除前 capture 正常（前置状态）', sup.tokenService.get('inst-w') === 'OLD999');
     sup.tokenService.clear('inst-w');
@@ -127,6 +130,37 @@ async function main() {
     sup.tokenService.feedLine('inst-w', 'dsh web: http://127.0.0.1:3081/?token=NEW111');
     check('clear 后重喂新行仍可捕获（链路未被清死，TK-1 恒通）', sup.tokenService.get('inst-w') === 'NEW111');
   }
+
+  console.log('== 令牌边界：批4 条3 feedLine 未 attach 旁路封堵（TK-3）==');
+  {
+    const sup = buildSupervisor();
+    // 既未 attach、inferKind 又推不出（id 不在 byId、无 unit/file）→ feedLine 必须拒绝入池。
+    const r = sup.tokenService.feedLine('ghost-id', 'dsh web: http://127.0.0.1:3081/?token=GHOST');
+    check('B4-3 无法分类的未 attach 源：feedLine 不入池（get 为空）', r === null && sup.tokenService.get('ghost-id') === '', String(r) + '/' + sup.tokenService.get('ghost-id'));
+  }
+
+  console.log('== 令牌边界：批4 条4 journal 捕获异步化（不阻塞心跳）==');
+  {
+    const fsx = require('node:fs');
+    const capPath = path.join(ROOT, 'src', 'platform', 'service', 'token', 'capture.js');
+    const capSrc = fsx.readFileSync(capPath, 'utf8').split(String.fromCharCode(10))
+      .filter((l) => !l.trim().startsWith('//') && !l.trim().startsWith('*') && !l.trim().startsWith('/*'))
+      .join(String.fromCharCode(10));
+    check('B4-4 capture.js 不再同步 exec（无 ex.runOut/execFileSync，改 runOutAsync）',
+      !/\.runOut\s*\(/.test(capSrc) && !/execFileSync/.test(capSrc) && /runOutAsync/.test(capSrc), '有 runOutAsync');
+    check('B4-4 capture.js 暴露异步 journal 档 captureJournal', /function captureJournal/.test(capSrc) && /captureJournal/.test(fsx.readFileSync(path.join(ROOT, 'src', 'platform', 'service', 'token', 'pool.js'), 'utf8')), '有');
+    const exSrc = fsx.readFileSync(path.join(ROOT, 'src', 'platform', 'util', 'exec.js'), 'utf8');
+    check('B4-4 exec 提供 runOutAsync（异步唯一子进程入口仍收口于此文件）',
+      /function runOutAsync/.test(exSrc) && /require\('node:child_process'\)/.test(exSrc), '有');
+    // 行为：journal 档不得阻塞——给一个必然查无的 unit，capture() 同步立即返回（不挂 5s）。
+    const sup = buildSupervisor();
+    sup.tokenService.attach('inst-j', { kind: 'dsh-instance', unit: 'nonexistent-unit-zz' });
+    const t0 = Date.now();
+    const hit = sup.tokenService.capture('inst-j');
+    const dt = Date.now() - t0;
+    check('B4-4 capture() 同步返回不等 journal（<50ms，不冻结心跳）', dt < 50, dt + 'ms 返回=' + hit);
+  }
+
 
   console.log('\n==============================');
   console.log('结果: ' + passed + ' passed, ' + failed + ' failed');

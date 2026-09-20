@@ -83,6 +83,8 @@ export function LanPage() {
     if (!it) return;
     const v = tokenInput.trim();
     if (!v) { toast.error("令牌不能为空"); return; }
+    // C-3（批 4）：与守卫写入口同规（remoteToken ≥8 位），先行提示避免提交后才见服务端拒因
+    if (v.length < 8) { toast.error("远程访问令牌至少 8 位（公网暴露可被暴力枚举）"); return; }
     setTokenFor(null);
     // 公网暴露的安全前置；写入走 /native/settings 或 /instances/update。
     await run(it.id, () => (it.domain === "native"

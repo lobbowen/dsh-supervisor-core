@@ -50,17 +50,20 @@ function listeningPid(port) {
   try { return pidlookup.findListeningPid(port); } catch { return null; }
 }
 
-/** 按 cmdline 特征回收「本工程旧代」进程（YAMA 免疫）；返回终止数。 */
+/** 按 cmdline 特征回收「本工程旧代」进程（YAMA 免疫）；返回终止数。
+ *  条 2（批 4 C 平台）fail-closed：cmdMark 与 cfgStr **二者皆必填**。旧实现只闸 cmdMark，
+ *  cfgStr 缺省时过滤条件（`cfg && 不含则跳过`）整条失效 —— 等价「全部匹配」，
+ *  pgrepList 命中的任何同名脚本进程（含他人/其它配置的 lan-daemon）一律被 SIGTERM 误杀。 */
 function reclaimByCmdMark(cmdMark, cfgStr) {
-  if (!cmdMark) return 0;
+  if (!cmdMark || !cfgStr) return 0;
   let killed = 0;
   try {
-    const cfg = cfgStr || '';
+    const cfg = cfgStr;
     for (const m of pidlookup.pgrepList(cmdMark)) {
       const pid = m.pid;
       if (pid === process.pid) continue;
       const cmd = m.cmdline;
-      if (cfg && cmd.indexOf(cfg) < 0) continue;
+      if (cmd.indexOf(cfg) < 0) continue; // cfg 非空已由入口闸保证（条 2）
       try { process.kill(pid, 'SIGTERM'); killed++; } catch {}
     }
   } catch {}

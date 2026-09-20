@@ -4,7 +4,8 @@
 // 真缺陷修复（行为变更）：旧实现有两条结束路径且 effect 不一致——流式成功只补
 // _retryPendingStop，错误/中断两件事都做，导致 2xx 流式成功路径永不补做「在途期间被延后的
 // 实例重启」。本模块提供单一 end()：归零时返回显式 effects 描述，调用方
-// （handlers/forward.js#endInflight）对两条路径执行同一组 effects。
+// （handlers/forward.js#endInflight）对**所有**结束路径执行同一组 effects；
+// begin/end 的配对由 forward.js 的 attempt-end 幂等收口保证（异常路径也不泄漏计数）。
 
 function createInflight() {
   let begun = 0;

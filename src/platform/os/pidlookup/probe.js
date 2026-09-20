@@ -7,6 +7,7 @@
 
 const fs = require('node:fs');
 const ex = require('../../util/exec');
+const { isExecutableFile } = require('../exec-path');
 const {
   parseProcNetTcpInodes, parseLsofPid, parseNetstatPid, parseSsPid,
   parseWmicCommandLine, parsePowerShellCommandLine,
@@ -71,6 +72,9 @@ function linuxFindSs(port) {
   // systemd user 环境 PATH 可能不含 /usr/sbin（ss 默认位置）——候选路径逐个试
   const candidates = ['ss', '/usr/sbin/ss', '/usr/bin/ss', '/bin/ss'];
   for (const ssBin of candidates) {
+    // 条 3（AUDIT-2026-09-19 第4批 C）：绝对路径候选先判可执行位——无权限的文件
+    //   spawn 只会同步抛 EACCES 白耗一轮；裸名留给 execFile 的 PATH 解析（自行兜底）。
+    if (ssBin.includes('/') && !isExecutableFile(ssBin)) continue;
     try {
       const out = ex.runOut(ssBin, ['-tlnHp', 'sport = :' + port], { timeoutMs: 3000 });
       const pid = parseSsPid(out);
@@ -84,6 +88,22 @@ function isAlive(pid) {
   if (!Number.isInteger(pid) || pid <= 0) return false;
   try { process.kill(pid, 0); return true; }
   catch (e) { return !!e && e.code === 'EPERM'; }
+}
+
+/** 同进程组判定（CP-1：平台事实留在平台层，业务域经本门面取用）。
+ *  POSIX：detached spawn 的子孙进程 pgrp == 子进程 pid；win32 无 pgid 语义恒 false。
+ *  macOS 无 /proc → 走 catch 返回 false（与迁移前逐字同形，不顺手改判）。 */
+function sameProcessGroup(pid, pgidLeader) {
+  if (!pid || !pgidLeader || isWindows) return false;
+  try {
+    const st = fs.readFileSync('/proc/' + pid + '/stat', 'utf8');
+    // comm 字段可含空格且自带括号：以最后一个 ") " 为锚点，其后依次为 state/ppid/pgrp
+    //   ⇒ fields[0]=state、fields[1]=ppid、fields[2]=pgrp（写成 fields[1] 会误比父 pid）
+    const idx = st.lastIndexOf(') ');
+    if (idx < 0) return false;
+    const fields = st.slice(idx + 2).trim().split(/\s+/);
+    return Number(fields[2]) === Number(pgidLeader);
+  } catch { return false; }
 }
 
 /** 读取进程命令行（三平台：Linux /proc、macOS ps、Windows wmic）。原实现非 Linux 返回 null，
@@ -162,5 +182,5 @@ function pgrepList(pattern) {
 
 module.exports = {
   linuxListeningInodes, linuxFind, macFind, winFind, linuxFindSs,
-  readCmdline, pgrepList, isAlive,
+  readCmdline, pgrepList, isAlive, sameProcessGroup,
 };

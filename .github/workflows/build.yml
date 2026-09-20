@@ -17,6 +17,26 @@ on:
   pull_request:
   workflow_dispatch: {}
 
+# ── 发布条 1（AUDIT-2026-09-19 第 4 批）：顶层最小权限 + 同 ref 串行 + action 钉 SHA ──
+# permissions：原文件只有 build/release 两个 job 级块，`test`/`precheck` 的 GITHUB_TOKEN 范围
+#   因此落在**仓库/组织设置**上（不写在文件里 = 随设置漂移、审查看不见）。显式收到
+#   contents: read 后，各 job 只按自己需要向上声明（build 另加 id-token: write、release 另加
+#   contents: write），新增 job 默认只读 —— fail-closed，且不影响任何既有步骤。
+# concurrency：同一 ref 的 run 不再并发。原形态下两次紧接的 push 会并行跑四平台矩阵，
+#   而本产线的发布部分**不是幂等的**（npm 同版本不可重发 + Release 资产挂载竞态，见文件末尾
+#   release job 的说明）。cancel-in-progress 对 **tag 运行取 false**：正在发布的 run 绝不能
+#   被后来者取消（半途取消会留下「已发部分平台」的裂状态）。
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
+
+# uses 全部钉 40 位 commit SHA（行尾注释保留可读版本名）。原 10 处均为可变 tag 引用
+#   （@v4 = 上游随时可把该 tag 移到新提交），而本产线既读 secrets 又产出发布物 ——
+#   上游被劫持即等于供应链注入。升级 = 显式改 SHA（可审、可回滚），不由上游代决。
+#   核对来源：GitHub API /repos/<owner>/<repo>/git/ref/tags/<tag>（附注标签已解引用到提交）。
 jobs:
   # ══════════════════════════════════════════════════════════════════════════
   # test：内核回归测试（P1-B 接线，2026-09-12）
@@ -30,10 +50,10 @@ jobs:
   test:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Install Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: '24'
 
@@ -102,10 +122,10 @@ jobs:
       need_build: ${{ steps.probe.outputs.need_build }}
       missing: ${{ steps.probe.outputs.missing }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Install Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: '24'
 
@@ -156,8 +176,13 @@ jobs:
           #   使「CI 绿 = 四平台产物齐备」成为单一且可验证的事实。
           #   Linux **必须**用 ubuntu-22.04 基座（glibc 2.35）：在 24.04（glibc 2.39）构建的产物
           #   无法在 22.04 / Debian 12 运行（Rust std 对 pidfd_* 的弱引用被解析成硬性 verneed）。
-          #   门禁：`test/glibc-gate-test.js` + `ci/check-glibc.sh`；构建后由 ci-core.sh 的
-          #   「glibc 基座门禁（Linux）」步骤校验产物不要求高于 2.35 的符号。
+          #   防线两层（§E.2 于 2026-09-20 收口，此前此处写着不存在的步骤）：
+          #     ① runner 标签本身 —— 由 release-auth-test R6-a3 机器钉死（矩阵里必须是 ubuntu-22.04）；
+          #     ② 产物 ELF 的 GLIBC_* 符号上限 —— ci-core.sh 的 [3.5/5] 步对 dist/ 下每个 ELF 调
+          #        ci/check-glibc.sh ≤ 2.35。**当前形态（纯 JS launcher，无 SEA）下 Linux 产物没有
+          #        ELF**，该步如实打印「无对象可检」；重新引入原生产物即自动执法，无需再改产线。
+          #   test/glibc-gate-test.js 测的是 check-glibc.sh **脚本自身**的行为（不是产物）；
+          #   壳仓的 Rust 产物由其仓内同名脚本自理（两仓各自维护，见 CROSS-PLATFORM-BUILD-AND-UPDATE.md §2.7）。
           - os: ubuntu-22.04
             artifact: linux-x64
             arch_override: ""
@@ -182,10 +207,10 @@ jobs:
     env:
       DSH_ARCH_OVERRIDE: ${{ matrix.arch_override }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Install Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: '24'
 
@@ -233,7 +258,7 @@ jobs:
           bash release/scripts/ci-core.sh --publish-only
 
       - name: Upload artifacts（内核 launcher 构建物）
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: ${{ matrix.artifact }}
           path: |
@@ -254,10 +279,10 @@ jobs:
     permissions:
       contents: write   # 挂 Release 需 GITHUB_TOKEN contents:write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: 收集各平台构建产物
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           path: artifacts
 
@@ -283,7 +308,7 @@ jobs:
           if [ -z "$(ls -A out 2>/dev/null)" ]; then echo "::error::未生成任何 Release 资产"; exit 1; fi
 
       - name: 附加到 GitHub Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
         with:
           files: out/*.tar.gz
           generate_release_notes: true

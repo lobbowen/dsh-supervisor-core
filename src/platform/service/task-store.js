@@ -6,6 +6,7 @@
 
 const fs = require('node:fs');
 const path = require('node:path');
+const { writeAtomic } = require('../util/fs');
 
 /** 读回任务数组；文件缺失/损坏返回 null。中断任务经 onRecover 通知。 */
 function loadTasks(file, onRecover) {
@@ -37,9 +38,7 @@ function readDiskTasks(file) {
 /** 原子写（唯一 tmp 名）；失败抛错，由调用方记录。 */
 function writeTasks(file, tasks) {
   fs.mkdirSync(path.dirname(file), { recursive: true });
-  const tmp = file + '.tmp.' + process.pid + '.' + Date.now();
-  fs.writeFileSync(tmp, JSON.stringify({ tasks }, null, 2), { mode: 0o600 });
-  fs.renameSync(tmp, file);
+  writeAtomic(file, JSON.stringify({ tasks }, null, 2), { mode: 0o600 });
 }
 
 /** 落盘：合并磁盘条目（同 id 以本方为准），创建时间倒序 + 上限截断，原子写。

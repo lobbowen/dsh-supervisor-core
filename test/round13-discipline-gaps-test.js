@@ -226,6 +226,24 @@ const TMP = fs.mkdtempSync(path.join(os.tmpdir(), 'r13-'));
       .join(String.fromCharCode(10));
     check('③-c 超限走轮转（rotate*）而非删除',
       /rotateByBackup/.test(tokenCode) && !/\brmSync\s*\(/.test(tokenCode), '有');
+    // ③-d（批 4 令牌条 2）：轮转必须「原子改名抢占」而非「读→写→截断」——
+    //   旧实现在 read 与 truncate 之间的跨进程追加行既进不了备份也会被截断抹掉。
+    //   用「先持有旧 fd、轮转后再写」确定性地复现该窗口：rename 语义下迟到行落进备份本体（不丢）。
+    const fpD = path.join(TMP, 'token-rotate.log');
+    fs.writeFileSync(fpD, 'OLD-LINE http://127.0.0.1:3080/?token=OLD\n');
+    const fdOld = fs.openSync(fpD, 'a'); // 模拟并发写者已打开的 fd
+    const rD = appendByRotation(fpD, 'http://127.0.0.1:3080/?token=NEW', { maxBytes: 1 });
+    check('③-d 前提：超限追加报告已轮转', rD.ok === true && rD.rotated === true, JSON.stringify(rD));
+    fs.writeSync(fdOld, 'RACE-LINE http://127.0.0.1:3080/?token=RACE\n'); // 「窗口内」迟到追加
+    fs.closeSync(fdOld);
+    const bakAll = ['.bak-0', '.bak-1'].map((s) => { try { return fs.readFileSync(fpD + s, 'utf8'); } catch { return ''; } }).join('');
+    const fpNow = fs.readFileSync(fpD, 'utf8');
+    check('③-d 备份槽携带轮转前旧内容', /token=OLD/.test(bakAll), JSON.stringify(bakAll.slice(0, 120)));
+    check('③-d 轮转窗口期的并发追加不丢失（旧实现此断言必红：截断抹掉）',
+      /token=RACE/.test(bakAll + fpNow), 'bak+fp=' + String(bakAll + fpNow).replace(/\n/g, '|'));
+    check('③-d 轮转后本次新行落入目标新文件', /token=NEW/.test(fpNow), JSON.stringify(fpNow));
+    check('③-d 形态：rotate 以 renameSync 抢占（截断仅作降级路径）',
+      /renameSync\(fp, slot\)/.test(tokenCode), '有');
   }
 
   fs.rmSync(TMP, { recursive: true, force: true });

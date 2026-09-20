@@ -35,7 +35,14 @@ function fakeRegistry() {
     get: (id) => entries.get(id),
     list: () => [...entries.values()],
     setPhase(id, ph) { const e = entries.get(id); if (e) { e.phase = ph; e.lastTransitionAt = 't'; } },
-    update(id, patch) { const e = entries.get(id); if (e) Object.assign(e, patch); },
+    // 与真实 registry.update 同源的关键语义：**值为 undefined 的键不改写**（D-8 的 keepDesired
+    //   正是靠这一点成立；用裸 Object.assign 会把 desired 抹成 undefined，假件反而比实现更严）。
+    update(id, patch) {
+      const e = entries.get(id);
+      if (!e) return { ok: false, error: '未注册: ' + id };
+      for (const k of Object.keys(patch || {})) if (patch[k] !== undefined) e[k] = patch[k];
+      return { ok: true, object: e };
+    },
     register(spec) { entries.set(spec.id, Object.assign({ phase: 'stopped' }, spec)); },
     unregister(id) { entries.delete(id); },
     persistCrashState() {},
@@ -229,6 +236,98 @@ function fakeRegistry() {
   check('P8 syncManagedRegistry 申报 main + router/lan daemon', keys.join(',') === 'lan-daemon,main,router-daemon', keys.join(','));
   check('P9 域 B daemon 申报不含 guardian 字段（G-1）',
     !('guardian' in reg.get('router-daemon')) && !('guardian' in reg.get('lan-daemon')), 'ok');
+
+  // ── D-8（AUDIT-2026-09-19 第 4 批）：心跳同步路径不得把观测推导的 desired 写回目录 ──
+  //   缺陷形态：_syncSandboxRegistryEntry 每拍 upsert(sandboxSpec(inst))，而 sandboxSpec 的
+  //   desired 由 inst.state.phase 推导 ⇒ 实例一崩进 BACKOFF/FAILED，目录里用户意图被静默改成
+  //   stopped（铁律 1「实然绝不写回目录」被违反；与 9-18 事故同形：应然被实然覆盖）。
+  {
+    // ⚠ 勘误（第 4 批 run 35485246398：五个 job 在这行**崩溃**，连 FAIL 都没打出来）：
+    //   原先这里另起 `const d8 = fakeRegistry()`，但上面 `control` 的 getManagedObjects 注入的是
+    //   那个 `reg` —— control.upsert() 写进 reg，d8 恒空，`d8.get('d8').desired` 直接 TypeError，
+    //   本文件 D-8 之后的全部用例被吃掉（&& 链也在此断）。两条教训：
+    //     ① 夹具的观测对象必须与被测对象的**注入源同一引用**，另造一个只会观测到空气；
+    //     ② 判据取值先落地成变量再解引用 —— 未接线应当**判红**，不该让进程崩，
+    //        因为崩溃会没收后面所有用例的覆盖面（比一条红的代价大得多）。
+    const d8 = reg;                                               // 与 control 的 getManagedObjects 同一引用
+    const ent = (id) => (d8.get(id) || { __absent: true });       // 未登记 → 判红，不抛
+    const instRunning = { id: 'd8', name: '沙箱', port: 3901, state: { phase: 'RUNNING' }, guardian: false };
+    control.upsert(control.sandboxSpec(instRunning));            // 首次登记（动作路径，允许带 desired）
+    check('D-8 前提：首登确实落到 control 的注册表（未接线即判红，不再崩溃）',
+      !!d8.get('d8'), d8.get('d8') ? 'registered' : 'ABSENT');
+    check('D-8 前提：首登按观测登记 desired=running',
+      ent('d8').desired === 'running', String(ent('d8').desired));
+    ent('d8').desired = 'running';                                // 用户意图：要它在跑
+    control.upsert(control.sandboxSpec({ ...instRunning, state: { phase: 'BACKOFF' } }), { keepDesired: true });
+    check('D-8 行为：keepDesired 同步不改写 desired（崩溃不被判成「用户想停」）',
+      ent('d8').desired === 'running', String(ent('d8').desired));
+    control.upsert(control.sandboxSpec({ ...instRunning, state: { phase: 'STOPPED' }, name: '改名' }), { keepDesired: true });
+    check('D-8 行为：keepDesired 仍同步其余应然（name/guardian/ownership）',
+      ent('d8').name === '改名', String(ent('d8').name));
+    control.upsert(control.sandboxSpec({ id: 'd8b', name: '沙箱2', port: 3902, state: { phase: 'STOPPED' }, guardian: false }), { keepDesired: true });
+    check('D-8 register 分支不受 keepDesired 影响（否则缺省会谎报 running）',
+      ent('d8b').desired === 'stopped', String(ent('d8b').desired));
+    control.upsert(control.sandboxSpec({ ...instRunning, state: { phase: 'STOPPED' } }));  // 动作路径（无旗标）
+    check('D-8 反向：动作路径仍按观测对齐 desired（停真实例必须落 stopped）',
+      ent('d8').desired === 'stopped', String(ent('d8').desired));
+
+    // 源码形态：心跳同步调用点必须带旗标；动作路径不得带（否则用户 stop 后目录永远 running）
+    const { stripComments } = require('./_strip');
+    const ad = stripComments(fs.readFileSync(path.join(ROOT, 'src', 'app', 'control', 'instance-adapter.js'), 'utf8'));
+    const bs = stripComments(fs.readFileSync(path.join(ROOT, 'src', 'app', 'assembly', 'compose', 'observers.js'), 'utf8'));
+    const FLAG_RE = /sandboxSpec\(inst\),\s*\{\s*keepDesired:\s*true\s*\}/;
+    check('D-8 接线：心跳同步路径带 keepDesired', FLAG_RE.test(ad), '已接');
+    check('D-8 接线：动作路径（onInstanceStart/Stop）仍同步 desired（不带旗标）',
+      !/keepDesired/.test(bs) && /_upsertManaged\(host\._managedSandboxSpec\(inst\)\)/.test(bs), '不带');
+    // 判据有牙：把旗标从源码里抹掉后必须不再命中（否则这条接线断言是空转的正则）
+    check('D-8 判据反向：抹掉旗标即判红（断言非空转）',
+      !FLAG_RE.test(ad.replace(', { keepDesired: true }', ')')), '识别为缺陷形态');
+
+    // 启动对齐路径（syncManagedRegistry，boot 时逐实例 upsert）与心跳同形：
+    //   `instances.load()` 后的 state.phase 是崩溃/停机快照，BACKOFF 推导成 stopped，
+    //   照写会把「守卫重启时实例正好在退避」的用户意图抹掉且无人恢复（9-18 同形）。
+    const d8b = fakeRegistry();
+    const bootInst = { id: 'd8b', name: '沙箱', port: 3903, state: { phase: 'BACKOFF' }, guardian: false };
+    const ctlBoot = createControlPlane({
+      getLifecycleManager: () => ({ get: () => null }),
+      getState: () => state,
+      getManagedObjects: () => d8b,
+      getInstances: () => ({ all: () => [bootInst], sandboxRoot: (i) => '/root/' + i.id }),
+      getConfig: () => ({ targetPort: 3080, routerAutostart: true }),
+      getCtl: () => ({ routerPort: () => 43107, lanPort: () => 43108 }),
+      getDaemons: () => ({ enabled: () => false }),
+      getLogger: () => ({ info() {}, warn() {} }),
+    });
+    const ent2 = (id) => (d8b.get(id) || {});   // 同上：未登记取值判红而非崩溃
+    ctlBoot.upsert(ctlBoot.sandboxSpec({ ...bootInst, state: { phase: 'RUNNING' } })); // 首登（动作路径）
+    check('D-8 前提：启动对齐前目录 desired=running（首登走动作路径）',
+      ent2('d8b').desired === 'running', String(ent2('d8b').desired));
+    check('D-8 前提：实然快照确实是 BACKOFF（否则本例没有防御对象）',
+      bootInst.state.phase === 'BACKOFF', String(bootInst.state.phase));
+    ctlBoot.syncManagedRegistry();
+    check('D-8 行为：启动对齐不改写既有 desired（退避快照不抹意图）',
+      ent2('d8b').desired === 'running', String(ent2('d8b').desired));
+    ent2('d8b').name = '旧名';                                       // 目录里是被替换前的显示名
+    ctlBoot.syncManagedRegistry();
+    check('D-8 行为：keepDesired 只冻结 desired（name 等其余应然仍随观测刷新）',
+      ent2('d8b').name === '沙箱', String(ent2('d8b').name));
+    check('D-8 行为：同一次刷新里 desired 未被顺手改写',
+      ent2('d8b').desired === 'running', String(ent2('d8b').desired));
+    // 域 B 的 desired 来源是**配置业务条件**（§2 域 B），启动对齐必须落目录——不得被 keepDesired 冻结
+    ctlBoot.syncManagedRegistry();
+    check('D-8 边界：router daemon 的 desired 仍由 config 驱动（routerAutostart=true → running）',
+      ent2('router-daemon').desired === 'running', String(ent2('router-daemon').desired));
+    check('D-8 边界：lan daemon 的 desired 仍由 config 驱动（未启用 → stopped）',
+      ent2('lan-daemon').desired === 'stopped', String(ent2('lan-daemon').desired));
+    const sp = stripComments(fs.readFileSync(path.join(ROOT, 'src', 'app', 'control', 'specs.js'), 'utf8'));
+    const bootLine = /upsert\(sandboxSpec\(inst\),\s*\{\s*keepDesired:\s*true\s*\}\)/.test(sp);
+    check('D-8 接线：启动对齐的实例循环带 keepDesired', bootLine, bootLine ? '已接' : '仍裸 upsert');
+    // 域 B（router/lan）与 main 的 desired 来源是 config / 目录自身，不得被冻结：
+    //   全文件只允许实例循环这一处旗标（别处加旗标 → 计数变 2 → 判红）。
+    const flagSites = (sp.match(/keepDesired:\s*true/g) || []).length;
+    check('D-8 接线：specs.js 内 keepDesired 仅实例循环一处（域 B/main 申报仍由 config 驱动）',
+      flagSites === 1, 'keepDesired 处数=' + flagSites);
+  }
 }
 
 try { fs.rmSync(tmp, { recursive: true, force: true }); } catch {}

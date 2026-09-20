@@ -7,6 +7,8 @@
 
 const fs = require('node:fs');
 const path = require('node:path');
+const { writeAtomic } = require('../../../platform/util/fs');
+const input = require('../../../platform/util/input');
 
 function defaults(t) {
   t.requests = t.requests || 0;
@@ -40,10 +42,13 @@ class UsageLedger {
     this._dirty = false;
   }
 
-  /** 归一 model 键：字符串化 + 截断；未知/空归 'unknown'。 */
+  /** 归一 model 键：E-4 单源字符集闸（platform/util/input.ledgerKey）。
+   *  旧实现只做「字符串化 + 截断」，于是客户端 body 里的 model 名可以就是
+   *  `__proto__` / `constructor` —— `t.byModel[key] = {...}` 走的是原型赋值，
+   *  账本静默失真且污染面在 Object.prototype 上（空白/控制符键同理，面板也没法看）。
+   *  违规值**折进 (other) 桶**而不是丢弃：B19 的上限语义与「不丢计数」都保持不变。 */
   _modelKey(model) {
-    if (typeof model !== 'string' || !model) return 'unknown';
-    return model.length > 128 ? model.slice(0, 128) : model;
+    return input.ledgerKey(model, { max: 128, empty: 'unknown', unsafe: '(other)' });
   }
 
   /** byModel 取桶：超上限的新键并入 '(other)'，防客户端任意 model 名撑爆账本。 */
@@ -136,9 +141,7 @@ class UsageLedger {
       const t = this.totals;
       if (!t || !this.file) return;
       fs.mkdirSync(path.dirname(this.file), { recursive: true });
-      const tmp = this.file + '.tmp.' + process.pid + '.' + Date.now();
-      fs.writeFileSync(tmp, JSON.stringify(t), { mode: 0o600 });
-      fs.renameSync(tmp, this.file);
+      writeAtomic(this.file, JSON.stringify(t), { mode: 0o600 });
       this._dirty = false;
     } catch {}
   }

@@ -4,6 +4,7 @@
 
 const fs = require('node:fs');
 const path = require('node:path');
+const { writeAtomic } = require('../../platform/util/fs');
 
 function createMainStore(deps) {
   const g = deps || {};
@@ -87,9 +88,7 @@ function createMainStore(deps) {
         frpRemotePort: merged.frpRemotePort || null,
         wanPort: merged.wanPort || null,
       }, null, 2);
-      const tmp = f + '.tmp';
-      fs.writeFileSync(tmp, body, { mode: 0o600 });
-      fs.renameSync(tmp, f);
+      writeAtomic(f, body, { mode: 0o600 });
     } catch (e) {
       const l = logger();
       if (l && l.warn) l.warn('_writeDshMain: ' + ((e && e.message) || e));

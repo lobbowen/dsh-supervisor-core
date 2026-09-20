@@ -108,6 +108,22 @@ case "${1:-list}" in
       echo "  如确需轮换，设 DSH_CRED_FORCE=1（会自动备份旧值到 .bak-<时间戳>）。" >&2
       exit 2
     fi
+    # B-25 收口（第 4 批 F 组）：**空 stdin 一律拒写**，且必须在动目标之前 fail-closed。
+    #   旧形态 `cat > "$f"` 是「先截断、再等数据」：管道断裂、误敲 `cred.sh put x </dev/null`、
+    #   或只喂进空白字符，都会写出 **0 字节**并把 status 置 active ——
+    #   与 9-13「不可逆覆盖」同族的第二条例径（这次连覆盖都不需要，空输入本身就毁库）。
+    #   顺序也是判据的一部分：**先校验输入，再备份/落盘**，否则一次被拒的 put 会留下
+    #   无意义的 .bak-<时间戳>（B25 的备份是尽力安全网，不该变成垃圾残留）。
+    TMP_IN="$f.tmp.$$"
+    if ! ( umask 077; mkdir -p "$(dirname "$f")"; cat > "$TMP_IN" ); then
+      rm -f "$TMP_IN" 2>/dev/null || true
+      echo "拒绝：读取 stdin 失败，未改动 $f" >&2; exit 2
+    fi
+    if [ ! -s "$TMP_IN" ] || [ -z "$(tr -d '[:space:]' < "$TMP_IN")" ]; then
+      rm -f "$TMP_IN" 2>/dev/null || true
+      echo "拒绝：stdin 为空（或只有空白）—— 不落 0 字节凭据、不改 status。$f 保持原样。" >&2
+      exit 2
+    fi
     # B25（AUDIT-2026-09-19）：备份是**尽力安全网**，不得成为写入的硬闸 ——
     #   原实现 cp&&chmod 链任一失败（如通配已有 .bak 不可改、目标FS 不支 chmod）即中止 put，
     #   把应急轮换路径堵死。降级为 warn 继续；确认项（①）不受影响仍为硬闸。
@@ -116,7 +132,9 @@ case "${1:-list}" in
       ( cp -p "$f" "$BK" && chmod 600 "$BK" ) 2>/dev/null \
         || echo "警告：旧值备份失败（${BK} 未落），写入仍继续；如需保底请先手工复制 ${f}。" >&2
     fi
-    umask 077; mkdir -p "$(dirname "$f")"; cat > "$f"; chmod 600 "$f";
+    # 写穿目标（而非 rename）：保留目标原为符号链接时的语义，与旧实现一致；内容已校验非空，
+    # 故此处截断不再有「截断后写不进」的窗口。
+    cat "$TMP_IN" > "$f"; rm -f "$TMP_IN" 2>/dev/null || true; chmod 600 "$f"
     node -e "
       const fs=require('fs'),p=process.env.INDEX;
       const j=JSON.parse(fs.readFileSync(p,'utf8'));

@@ -3,12 +3,14 @@
 // router 域持久化（providers.json + 用量 + 写权单闸）。
 // 写权单闸（PG-7）：本类是唯一判定「此刻能否落盘」的地方——服务级写开关（setPersistEnabled）
 // 与文件级健康（loadedOk）之并。save/writeUsage 都在方法体内自查 canPersist()，调用方不再各自判断。
-// 用量读写（readUsage/writeUsage）归口本文件（.tmp 命名与 save 统一，防并发写混合内容）。
+// 用量读写（readUsage/writeUsage）归口本文件。落盘走 platform/util/fs 的 writeAtomic 单源
+// （tmp 名含 pid+毫秒，防并发写混合内容）；本文件的 renameSync 只用于把损坏原件改名保留现场。
 // provider 反序列化：纯映射，工厂经 deps 注入，使 store 不 require providers（保持叶子方向）；
 // stateDir 由注入的 config.stateFile 派生，provider 落盘/落日志必须用它，不得各自 os.homedir()。
 
 const fs = require('node:fs');
 const path = require('node:path');
+const { writeAtomic } = require('../../platform/util/fs');
 
 class RouterStore {
   constructor(opts) {
@@ -62,9 +64,7 @@ class RouterStore {
     }
     fs.mkdirSync(path.dirname(this.file), { recursive: true });
     // 注意：tmp 名必须唯一；固定 '.tmp' 会让两个进程并发写同一临时文件，rename 出混合内容。
-    const tmp = this.file + '.tmp.' + process.pid + '.' + Date.now();
-    fs.writeFileSync(tmp, JSON.stringify({ providers: providers.map((p) => p.serialize()) }, null, 2), { mode: 0o600 });
-    fs.renameSync(tmp, this.file);
+    writeAtomic(this.file, JSON.stringify({ providers: providers.map((p) => p.serialize()) }, null, 2), { mode: 0o600 });
     return true;
   }
 
@@ -88,9 +88,7 @@ class RouterStore {
   writeUsage(totals) {
     if (!this.canPersist() || !totals || !this.usageFile) return false;
     fs.mkdirSync(path.dirname(this.usageFile), { recursive: true });
-    const tmp = this.usageFile + '.tmp.' + process.pid + '.' + Date.now();
-    fs.writeFileSync(tmp, JSON.stringify(totals), { mode: 0o600 });
-    fs.renameSync(tmp, this.usageFile);
+    writeAtomic(this.usageFile, JSON.stringify(totals), { mode: 0o600 });
     return true;
   }
 }

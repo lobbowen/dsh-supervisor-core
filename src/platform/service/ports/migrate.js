@@ -5,12 +5,7 @@
 
 const fs = require('node:fs');
 const path = require('node:path');
-
-function writeAtomic(file, obj) {
-  const tmp = file + '.tmp';
-  fs.writeFileSync(tmp, JSON.stringify(obj, null, 2), { mode: 0o600 });
-  fs.renameSync(tmp, file);
-}
+const { writeAtomic } = require('../../util/fs');
 
 /** owner 前缀迁移；@returns {number} 实际迁出的记录数。
  *
@@ -51,11 +46,11 @@ function migrateByOwnerPrefix(oldFile, newFile, prefixes) {
   const keep = doc.records.filter((r) => !matches(r));
   fs.mkdirSync(path.dirname(newFile), { recursive: true });
   try {
-    writeAtomic(oldFile, { records: keep }); // ① 先清源：此后任何失败都只会「少一份」，不会双份
-    writeAtomic(newFile, target);            // ② 再落目标
+    writeAtomic(oldFile, JSON.stringify({ records: keep }, null, 2), { mode: 0o600 }); // ① 先清源：此后任何失败都只会「少一份」，不会双份
+    writeAtomic(newFile, JSON.stringify(target, null, 2), { mode: 0o600 });            // ② 再落目标
   } catch (e) {
     if (!targetExisted && fs.existsSync(newFile)) { try { fs.unlinkSync(newFile); } catch { /* 尽力清理 */ } }
-    try { writeAtomic(oldFile, doc); } catch { /* 回写失败：源已被原子清走 picks，无双登记风险 */ }
+    try { writeAtomic(oldFile, JSON.stringify(doc, null, 2), { mode: 0o600 }); } catch { /* 回写失败：源已被原子清走 picks，无双登记风险 */ }
     throw e; // 调用方需知晓半途失败（旧实现静默）
   }
   return moved;

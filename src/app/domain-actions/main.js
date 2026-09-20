@@ -7,9 +7,11 @@
 // 公网暴露安全闸单一事实源：调用 domains/relay/core.validateFrpExposure，使 app 侧
 // patchDshMain 与 relay 侧 setFrp 同规。实例冲突清单经注入的只读投影 views.exposurePeers()，
 // 不直读实例域的内部数组（消除跨域穿透）。
-// 无 Node 内建依赖：仅用 relay/core 的纯判定 + 注入的 deps。
+// 无 Node 内建依赖：仅用 relay/core 的暴露闸判定 + shared/credential 的强度下限 + 注入的 deps。
 
 const { validateFrpExposure } = require('../../domains/relay/core');
+// 强度下限是 L0 纯判定，住在 shared/credential 与 relay/instance 域同源（app→domains 只取暴露闸）。
+const { remoteTokenStrength } = require('../../shared/credential');
 
 /** patchDshMain 工厂。
  *  @param deps { getState, getViews, getDaemons, getEvents, getLogger } 全为惰性取值。 */
@@ -24,6 +26,12 @@ function createMainActions(deps) {
       const views = g.getViews();
       const meta = state.readMainMeta();
       const prev = { ...meta };
+      // C-3（批 4）：remoteToken 写入口强度闸（与实例域 ops.updateInstance 同规）——
+      //   非空但过短的令牌拒绝落盘；空串=清除（放行，暴露闸另判）。校验前置于任何变更。
+      if (p.remoteToken !== undefined) {
+        const tk = String(p.remoteToken || '');
+        if (tk && !remoteTokenStrength(tk).ok) return { ok: false, error: '远程访问令牌（remoteToken）至少 8 位' };
+      }
       if (p.guardian !== undefined) meta.guardian = !!p.guardian;
       if (p.remoteEnabled !== undefined) meta.remoteEnabled = !!p.remoteEnabled;
       if (p.remoteToken !== undefined) meta.remoteToken = String(p.remoteToken || '');

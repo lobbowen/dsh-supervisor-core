@@ -8,6 +8,7 @@
 
 const fs = require('node:fs');
 const path = require('node:path');
+const { writeAtomic } = require('../../platform/util/fs');
 const { readProfile, readHomePatch } = require('./store');
 const { isProtectedName, isOwnRow, isOwnDisabled, targetHomePatchPath } = require('./model');
 
@@ -37,9 +38,7 @@ function createLayers({ overlayFile, logger }) {
     profile.dsh.profile = profile.dsh.profile || {};
     profile.dsh.profile.bundles = nextBundles;
     // 原子写(tmp+rename+0600)：裸 writeFileSync 在并发/中断下可能撕裂 package.json，且默认 umask 可能世界可读。
-    const tmp = profilePath + '.tmp';
-    fs.writeFileSync(tmp, JSON.stringify(profile, null, 2) + '\n', { mode: 0o600 });
-    fs.renameSync(tmp, profilePath);
+    writeAtomic(profilePath, JSON.stringify(profile, null, 2) + '\n', { mode: 0o600 });
     return true;
   };
 
@@ -47,18 +46,14 @@ function createLayers({ overlayFile, logger }) {
   const writeHomePatch = (target, entries) => {
     const file = targetHomePatchPath(target);
     fs.mkdirSync(path.dirname(file), { recursive: true });
-    const tmp = file + '.tmp';
-    fs.writeFileSync(tmp, JSON.stringify(entries, null, 2) + '\n', { mode: 0o600 });
-    fs.renameSync(tmp, file);
+    writeAtomic(file, JSON.stringify(entries, null, 2) + '\n', { mode: 0o600 });
     return file;
   };
 
   /** 写 legacy overlay（原子写 tmp+rename+0600）。 */
   const saveOverlayEntries = (entries) => {
     fs.mkdirSync(path.dirname(overlayFile), { recursive: true });
-    const tmp = overlayFile + '.tmp';
-    fs.writeFileSync(tmp, JSON.stringify(entries, null, 2), { mode: 0o600 });
-    fs.renameSync(tmp, overlayFile);
+    writeAtomic(overlayFile, JSON.stringify(entries, null, 2), { mode: 0o600 });
   };
 
   /** 卸载残留清理内层（home 补丁层 + 原生 overlay + profile 补丁层）。 */
@@ -114,9 +109,7 @@ function createLayers({ overlayFile, logger }) {
               });
               if (after.length !== j.length) {
                 fs.mkdirSync(path.dirname(file), { recursive: true });
-                const tmp = file + '.tmp';
-                fs.writeFileSync(tmp, JSON.stringify(after, null, 2) + '\n');
-                fs.renameSync(tmp, file);
+                writeAtomic(file, JSON.stringify(after, null, 2) + '\n', { mode: 0o600 });
                 cleaned = true;
                 findings.cleaned.push('profile 补丁层');
                 log('已清理 profile 补丁层残留');

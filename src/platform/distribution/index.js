@@ -73,4 +73,9 @@ module.exports = {
   OUR_RELEASE_SCOPE: release.OUR_RELEASE_SCOPE,
   ROLLBACK_FLOOR_VERSION: release.ROLLBACK_FLOOR_VERSION,
   ROLLBACK_MAX_AGE_DAYS: release.ROLLBACK_MAX_AGE_DAYS,
+  // 在途 npm 中止出口（D-10）：句柄登记在 install.js 的模块级集合（跨实例，覆盖全部调用路径），
+  // 故门面按**静态**导出，不挂 DistributionManager 实例方法——挂实例会漏掉直接 require('./install')
+  // 的调用方（app/native/installer.js 经 host.dist 走门面，但测试与未来 daemon 可直用）。
+  killInflightNpm: install.killInflightNpm,
+  inflightNpmCount: install.inflightNpmCount,
 };

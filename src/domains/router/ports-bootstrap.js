@@ -8,6 +8,7 @@ const { OWNER_PREFIXES } = require('./port-segments');
 
 const path = require('node:path');
 const fs = require('node:fs');
+const { writeAtomic } = require('../../platform/util/fs');
 
 /** 迁移 router 自治端口段（proxy/providerApi）到 ports-router.json，并按 providers.json 重建绑定。
  *  入参显式化（手法 C）：{ swDir, logger }。返回 { records } 供观察；异常内部吞掉并记日志（保留旧文件）。 */
@@ -35,9 +36,7 @@ function ensurePorts({ swDir, logger }) {
       }
       if (changed) {
         fs.mkdirSync(path.dirname(newP), { recursive: true });
-        const tmp = newP + '.tmp';
-        fs.writeFileSync(tmp, JSON.stringify(target, null, 2), { mode: 0o600 });
-        fs.renameSync(tmp, newP);
+        writeAtomic(newP, JSON.stringify(target, null, 2), { mode: 0o600 });
       }
     }
     const cnt = JSON.parse(fs.readFileSync(newP, 'utf8')).records || [];

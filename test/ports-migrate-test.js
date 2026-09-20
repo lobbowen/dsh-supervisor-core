@@ -84,7 +84,7 @@ const check = (n, c, x) => { results.push(!!c); console.log((c ? 'PASS' : 'FAIL'
       threw2 === null && r2 === 0 && tOldAfter.records.length === 1 && fs.readFileSync(tNew, 'utf8') === 'corrupt{{{',
       'r=' + r2);
     // ④ 半途失败：目标文件已存在（走 targetExisted 分支）且其父目录被设成只读（0500）。
-    //    writeAtomic 的第一步 writeFileSync(<dir>/target.json.tmp) → EACCES（rename 前就爆，
+    //    单源 writeAtomic 的第一步 writeFileSync(<dir>/target.json.tmp.<pid>.<ts>) → EACCES（rename 前就爆，
     //    与「清源后写目标失败」同构：源已清 → 必须回写源 + 上抛）。
     //    （注：直接拿目录当 newFile 命中坏目标/穿透分支；「目录下的新文件」会被
     //      writeAtomic 的 mkdirSync(dirname) 做成功 —— 都构造不出半途失败。）

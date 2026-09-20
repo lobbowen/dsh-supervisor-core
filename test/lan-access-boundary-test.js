@@ -70,6 +70,8 @@ check('E-c 恶意 Origin + LAN Host → DENY',
 check('E-d DNS-rebinding（Host=evil.com）→ DENY',
   allow({ host: 'evil.com:' + PORT, origin: 'http://127.0.0.1:' + PORT }) === false);
 check('E-e 公网 IP Host（8.8.8.8）→ DENY', allow({ host: '8.8.8.8:' + PORT }) === false);
+// C-1 批 4：Host 闸 fail-closed —— 缺 Host（HTTP/1.0 式客户端）不得静默跳过双闸。
+check('E-e 缺 Host → DENY（C-1 fail-closed）', allow({}) === false);
 check('E-e 公网 IP Origin → DENY',
   allow({ host: '127.0.0.1:' + PORT, origin: 'http://8.8.8.8:' + PORT }) === false);
 check('E-f 边界：172.32.x（非私有）→ DENY', allow({ host: '172.32.0.1:' + PORT }) === false);

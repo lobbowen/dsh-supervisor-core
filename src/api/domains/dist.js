@@ -72,7 +72,19 @@ function handle(ctx) {
     }
     if (req.method === 'POST' && pathname === '/dist/registry/set') {
       if (!originAllowed(req, sup.config.apiPort)) { req.resume(); return send(403, {}); }
-      collectBody(req, res, 8192, (body) => { try { const j = body ? JSON.parse(body) : {}; Promise.resolve(sup.dist.setRegistryConfig(j)).then((r) => send(200, { ok: true, ...r })).catch((e) => send(500, { ok: false, error: e.message })); } catch (e) { return send(400, { ok: false }); } });
+      // UI 条 5（AUDIT-2026-09-19 第 4 批）：被校验闸拒绝的配置**不能**回 200。
+      //   setRegistryConfig 的拒因写在返回对象的 error 字段（无 ok 键），原先
+      //   `send(200, { ok: true, ...r })` 把它展开成「200 + ok:true + error」，
+      //   而 UI 的 http() 只在 !res.ok 时抛错 → 镜像源被 SSRF 闸拦下仍弹「已保存」，
+      //   用户以为配置已生效（实为内存与磁盘都没改）。故按拒因归真为 400 + ok:false。
+      collectBody(req, res, 8192, (body) => {
+        let j = {};
+        try { j = body ? JSON.parse(body) : {}; } catch (e) { return send(400, { ok: false, error: '请求体不是合法 JSON' }); }
+        Promise.resolve(sup.dist.setRegistryConfig(j)).then((r) => {
+          const msg = r && r.error ? String(r.error) : '';
+          send(msg ? 400 : 200, msg ? { ok: false, ...r } : { ok: true, ...r });
+        }).catch((e) => send(500, { ok: false, error: e.message }));
+      });
       return;
     }
     if (req.method === 'POST' && pathname === '/dist/registry/refresh') {

@@ -12,6 +12,7 @@ const stateRoot = require('../../platform/service/state-root');
 
 const fs = require('node:fs');
 const path = require('node:path');
+const { writeAtomic } = require('../../platform/util/fs');
 // 纯判定内核（deriveState）在 core.js：evaluate 降为读快照 -> 委托纯内核 -> 按需落盘。
 const { deriveState } = require('./core');
 
@@ -29,9 +30,7 @@ function readJson(p) {
 function writeJson(p, v) {
   const dir = path.dirname(p);
   fs.mkdirSync(dir, { recursive: true });
-  const tmp = p + '.tmp';
-  fs.writeFileSync(tmp, JSON.stringify(v, null, 2) + '\n', { mode: 0o600 });
-  fs.renameSync(tmp, p);
+  writeAtomic(p, JSON.stringify(v, null, 2) + '\n', { mode: 0o600 });
 }
 
 // 壳身份：壳在启动最早期写入，内核只读 version/phase/exe/lastSeenAt 等运行时字段。

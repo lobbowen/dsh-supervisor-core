@@ -4,6 +4,7 @@
 
 const fs = require('node:fs');
 const path = require('node:path');
+const { writeAtomic } = require('../../platform/util/fs');
 const probe = require('./probe');
 
 /** 读安装清单；不存在/损坏返回 null（唯一读取实现）。 */
@@ -17,9 +18,7 @@ function save(host, m) {
     fs.mkdirSync(host.stateDir, { recursive: true });
     const f = host.manifestFile;
     fs.mkdirSync(path.dirname(f), { recursive: true });
-    const tmp = f + '.tmp';
-    fs.writeFileSync(tmp, JSON.stringify(m, null, 2), { mode: 0o600 });
-    fs.renameSync(tmp, f);
+    writeAtomic(f, JSON.stringify(m, null, 2), { mode: 0o600 });
   } catch (e) { host.logger.warn && host.logger.warn('manifest 保存失败: ' + e.message); }
 }
 

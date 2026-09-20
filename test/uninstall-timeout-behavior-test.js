@@ -12,7 +12,8 @@
 //   （我第一版只写静态断言，注入「看门狗永不触发」后它照样全绿 —— 那是假门禁）。
 //
 // 做法：
-//   1. 造一个**永不退出**的假 npm（`#!/bin/sh` + `sleep 1000`）；
+//   1. 造一个**永不退出**的假 npm（用 node 自己当解释器跑挂起脚本；**绝不用 `#!/bin/sh`** ——
+//      Windows 无 sh 解释器会退化成立即失败，本文件下方「假 npm」段落记着这条实测教训）；
 //   2. 把 config.uninstallTimeoutMs 设为 800ms（这就是可注入的用途）；
 //   3. 调 uninstall()，断言：在远小于 sleep 时长内返回、ok=false、timedOut=true；
 //   4. 断言 `manager.uninstalling === null`（锁已释放 —— 这是缺陷的核心症状）。
@@ -108,6 +109,75 @@ const check = (n, c, x) => { results.push(!!c); console.log((c ? 'PASS' : 'FAIL'
     check('反向：正常退出的 npm 不被误判为超时',
       r2 && r2.ok === true && r2.timedOut !== true, JSON.stringify({ ok: r2 && r2.ok, timedOut: r2 && r2.timedOut }));
     check('反向：正常路径也释放锁', mgr.uninstalling === null, String(mgr.uninstalling));
+  }
+
+  // ── D-10（AUDIT-2026-09-19 第 4 批）：在途 npm 必须**可被关停路径中止** ──
+  //   缺陷：npm 子进程以 detached 起（自成进程组），守卫退出/被 bin 的 8s 强杀后它继续存活，
+  //   新守卫 boot 时旧 npm 仍在写 node_modules 与全局前缀（无人等待、无人记账的并发写入者）。
+  //   本块证明三件事：句柄被记账、abort 真的杀掉进程组、Promise 不悬挂（ok:false + aborted:true）。
+  {
+    const installMod = require(path.join(ROOT, 'src', 'platform', 'distribution', 'install.js'));
+    const distFacade = require(path.join(ROOT, 'src', 'platform', 'distribution'));
+    check('D-10 接线：关停出口经门面 re-export（同一函数，不另造事实源）',
+      distFacade.killInflightNpm === installMod.killInflightNpm
+      && distFacade.inflightNpmCount === installMod.inflightNpmCount, typeof distFacade.killInflightNpm);
+    check('D-10 前提：无在途时计数 0 且中止返回 0（空转不误报）',
+      installMod.inflightNpmCount() === 0 && installMod.killInflightNpm('probe') === 0, installMod.inflightNpmCount());
+
+    // 挂起假 npm：复用仓库内夹具 test/fake-npm.js 的 hang 模式（FAKE_MODE 经 **env** 传入）。
+    //   ⚠ 绝不要把临时脚本路径放进 commandTemplate —— Windows runner 的 os.tmpdir() 是 8.3
+    //   短名（`C:\Users\RUNNER~1\…`），`~` 属 B11 禁用字符，runNpmInstall 会 fail-closed 拒掉
+    //   （run 35483224735 实测：D-10 四条同时红，回显直说「含禁用字符」）。仓库内路径只含 `\\`，
+    //   由 WIN_DRIVE_ABS_RE 豁免；pid 文件路径经 FAKE_PID_FILE 传，不进 argv。
+    const pidFile = path.join(tmp, 'inflight-npm.pid');
+    process.env.FAKE_MODE = 'hang';
+    process.env.FAKE_PID_FILE = pidFile;
+    process.env.FAKE_HANG_MS = '60000';
+    let p;
+    try {
+      p = installMod.runNpmInstall({
+        pkg: '@deepseek-ai/dsh', version: '9.9.9',
+        commandTemplate: [process.execPath, path.join(ROOT, 'test', 'fake-npm.js'), '9.9.9'], timeoutMs: 60000,
+      });
+    } finally {
+      delete process.env.FAKE_MODE; delete process.env.FAKE_PID_FILE; delete process.env.FAKE_HANG_MS;
+    }
+    check('D-10 行为：在途任务被记账（同步登记，不等子进程输出）',
+      installMod.inflightNpmCount() === 1, installMod.inflightNpmCount());
+    // 先等子进程把自身 pid 写出来（node 冷启约几十 ms），否则「杀进程」断言会退化成
+    // 「在子进程还没跑起来时就杀」——那样 ESRCH 恒真，判据没有牙。
+    let childPid = 0;
+    for (let i = 0; i < 30 && !childPid; i++) {
+      try { childPid = Number(fs.readFileSync(pidFile, 'utf8')); } catch {}
+      if (!childPid) await new Promise((res) => setTimeout(res, 50));
+    }
+    const killed = installMod.killInflightNpm('test-exit');
+    const r = await p;
+    check('D-10 行为：abort 回报被中止数', killed === 1, killed);
+    check('D-10 行为：Promise 以 ok:false + aborted:true 收口（关停不被悬挂的 await 拖住）',
+      !!r && r.ok === false && r.aborted === true, JSON.stringify({ ok: r && r.ok, aborted: r && r.aborted, err: r && r.error }));
+    check('D-10 行为：句柄注销（不泄漏到下一次关停）',
+      installMod.inflightNpmCount() === 0, installMod.inflightNpmCount());
+    let dead = false;
+    for (let i = 0; i < 20 && !dead; i++) {
+      try { process.kill(childPid, 0); } catch (e) { dead = !!(e && e.code === 'ESRCH'); break; }
+      await new Promise((res) => setTimeout(res, 100));
+    }
+    // ⚠ childPid 取不到（假 npm 未及写 pid 即被杀）时不算失败——被杀得更快不是缺陷。
+    check('D-10 行为：子进程真的消失（ESRCH），不是只解除了 await',
+      childPid === 0 || dead === true, 'pid=' + childPid + ' dead=' + dead);
+    // 反向（判据有牙）：确认子进程确实活着过，否则本块的 ESRCH 无意义
+    check('D-10 反向：pid 文件已写出（子进程真的启动过）', childPid > 0, 'pid=' + childPid);
+
+    // 结构闸（D-10 的 Windows 半边）：中止路径必须**复用平台层整树终止**，不得自造负 pid。
+    //   判据走 codeOnly —— 本条在产品源码里留下的解释性注释本身就含 `process.kill(-pid` 字样，
+    //   不剥注释则反向例恒红、正例恒绿，等于没有牙（§G-6-9 同形干扰）。
+    const { stripComments } = require('./_strip');
+    const codeOnly = stripComments(fs.readFileSync(path.join(ROOT, 'src', 'platform', 'distribution', 'install.js'), 'utf8'));
+    check('D-10 收口：在途 npm 的中止经 platform/os/process 的 killTree（win 有整树语义）',
+      /require\('\.\.\/os\/process'\)/.test(codeOnly) && /procOS\.killTree\(child\.pid/.test(codeOnly), '已接平台层');
+    check('D-10 反向：install.js 不再自写 process.kill(-pid) 组信号',
+      !/process\.kill\(-/.test(codeOnly), '已移除');
   }
 
   try { fs.rmSync(tmp, { recursive: true, force: true }); } catch {}

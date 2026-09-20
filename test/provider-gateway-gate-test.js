@@ -229,7 +229,11 @@ const idxSrc = read(IDX);
     'src/domains/router/store/usage.js',
     'src/domains/router/forward-core.js',
   ].map((f) => read(f)).join('\n'));
-  const gated = /canPersist\(\)/.test(usageSrc) && /writeFileSync/.test(usageSrc);
+  // E-1（原子写单源，2026-09-20）：落盘从各点自拼 `fs.writeFileSync(tmp,…)` 收敛进
+  // platform/util/fs 的 writeAtomic —— 只认 writeFileSync 会让本判据静默抓空。
+  // 不变量本身不变：**用量落盘必须先过 canPersist()**。落盘手段两式皆可（单源或直接写）。
+  const gated = /canPersist\(\)|_canPersist\s*\(\s*\)/.test(usageSrc)
+    && /writeAtomic|writeFileSync/.test(usageSrc);
   check('PG-7 用量落盘经统一写权闸 canPersist()',
     gated,
     gated ? 'ok' : '用量落盘未过闸（"守卫只读"仅成立于 providers.json）');

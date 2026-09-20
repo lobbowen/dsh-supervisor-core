@@ -12,6 +12,8 @@ const path = require('node:path');
 // 异步 spawn 统一封装（固定 windowsHide:true）；浏览器打开完全脱离本进程，
 // 用 detachedIgnored（detached + stdio ignore）。
 const spawnOS = require('./spawn');
+// 条 4（AUDIT-2026-09-19 第4批 C）：spawn 前的可用性预检依赖 PATH 解析与执行位判定。
+const { resolveExecutable, isExecutableFile } = require('./exec-path');
 
 /** 仅接受 http/https 绝对 URL（A4：进 argv 前的唯一闸门；解析失败即拒）。 */
 function isSafeHttpUrl(url) {
@@ -107,8 +109,24 @@ function isolatedPlan(platform, url, opts) {
   };
 }
 
+/** 条 4：spawn 前的可用性预检。绝对路径 → 直接判执行位；裸名 → PATH 解析。
+ *  为什么必须在 spawn 前判：Node 的 ENOENT 是**异步** error 事件，旧实现
+ *  `child.on('error', () => tryNext())` 的递归返回值被丢弃 —— tryNext() 已先返回
+ *  ok:true/该 bin，降级链形同虚设（错误 bin 被如实上报，且没有任何候选真正接力）。 */
+function binAvailable(bin) {
+  if (!bin) return false;
+  if (bin.includes('/') || bin.includes('\\') || /^[A-Za-z]:[\\/]/.test(bin)) return isExecutableFile(bin);
+  return resolveExecutable(bin) !== null;
+}
+
 /**
  * 以隔离 profile + 无痕打开浏览器（OAuth 反指纹登录用）。
+ * @param {{profileDir?:string, antiArgs?:string[], antiEnv?:object, sysEnv?:object,
+ *          onExit?:Function, binAvailable?:Function, spawn?:Function, chromeBin?:string|null}} [o]
+ *        binAvailable 可注入（条 4：行为测试不依赖宿主装了什么浏览器）；
+ *        spawn 亦可注入（同条：否则 darwin/win32 宿主上本用例会在 CI 机器里真起浏览器）；
+ *        chromeBin 亦可注入（缺省 = findChromeWin() 运行期探测）——夹具必须与产品用同一份计划
+ *        输入，否则「产品问的 bin」与「夹具认定的候选」不同源，预检恒 false 表现为不起进程
  * @returns {{ok:boolean, bin:string|null, isolated:boolean}} bin=null 表示全部候选失败
  */
 function launchIsolated(url, o) {
@@ -119,29 +137,29 @@ function launchIsolated(url, o) {
   const antiEnv = opts.antiEnv || opts.sysEnv || process.env;
   const sysEnv = opts.sysEnv || process.env;
   const onExit = opts.onExit;
+  const avail = typeof opts.binAvailable === 'function' ? opts.binAvailable : binAvailable;
+  const spawnWith = typeof opts.spawn === 'function' ? opts.spawn : _spawnDetached;
   try {
-    const chromeBin = process.platform === 'win32' ? findChromeWin() : null;
+    const chromeBin = 'chromeBin' in opts ? opts.chromeBin
+      : (process.platform === 'win32' ? findChromeWin() : null);
     const plan = isolatedPlan(process.platform, url, { profileDir, antiArgs, chromeBin });
     if (plan.kind === 'single') {
+      // 条 4：single 分支同预检——不可用即如实 ok:false，不 spawn 必死的 bin
+      if (!avail(plan.bin)) return { ok: false, bin: null, isolated: false };
       const env = (plan.envKind ? plan.envKind === 'anti' : plan.bin === 'open') ? antiEnv : sysEnv;
-      const p = _spawnDetached(plan.bin, plan.args, env, onExit);
+      const p = spawnWith(plan.bin, plan.args, env, onExit);
       return { ok: !!p, bin: p ? plan.label : null, isolated: plan.isolated };
     }
-    let idx = 0;
-    const tryNext = () => {
-      if (idx >= plan.candidates.length) return { ok: false, bin: null, isolated: false };
-      const c = plan.candidates[idx++];
+    // 条 4：chain 分支按预检过滤后再逐个尝试；error 事件只静默吞（结果已在 spawn 前定）。
+    const cands = plan.candidates.filter((c) => avail(c.bin));
+    for (const c of cands) {
       const env = c.envKind === 'anti' ? antiEnv : sysEnv;
-      let child;
-      try { child = spawnOS.detachedIgnored(c.bin, c.args, { env: env || sysEnv }); }
-      catch { return tryNext(); }
-      // bin 不存在 -> 下一个候选（error 事件同步触发，故递归前先注册）
-      child.on('error', () => { tryNext(); });
-      if (c.watch && typeof onExit === 'function') child.on('exit', () => { try { onExit(); } catch {} });
-      child.unref();
+      // watch=false 的候选（系统兜底）不接 onExit —— 与原实现同语义，交给 _spawnDetached 判定。
+      const p = spawnWith(c.bin, c.args, env, c.watch ? onExit : undefined);
+      if (!p) continue;
       return { ok: true, bin: c.bin, isolated: c.isolated };
-    };
-    return tryNext();
+    }
+    return { ok: false, bin: null, isolated: false };
   } catch { return { ok: false, bin: null, isolated: false }; }
 }
 

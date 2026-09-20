@@ -5,6 +5,8 @@
  * - 唯一允许直接 fetch 的模块（页面通过 services 层间接使用）
  * - GET 纯读；写操作方法名后缀 Post/Action 显式标注
  * - 错误统一 throw Error（含后端 error/message）
+ * - ⚠ 但 http() 只看 HTTP 状态码：2xx 里的 `{ ok: false }` 属于**数据**（如探活端点的
+ *   「探测不通」），不当作异常抛出。写操作的「假成功」由 failureFromResult 统一判据（UI 条 5）。
  * - 生产同源（/…），开发跨端口用 vite proxy 转发（去掉 Origin 走回环）
  * ============================================================================
  */
@@ -109,6 +111,23 @@ async function http<T>(method: string, path: string, body?: unknown, opts?: Http
 }
 const get = <T>(p: string, opts?: HttpOptions) => http<T>("GET", p, undefined, opts);
 const post = <T>(p: string, body?: unknown, opts?: HttpOptions) => http<T>("POST", p, body ?? {}, opts);
+
+/** 从 **2xx 响应体**里提取失败原因（UI 条 5，AUDIT-2026-09-19 第 4 批）。
+ *
+ *  后端有多个写端点形如 `send(200, { ok: true, ...r })`；当 r 自带 `ok: false`
+ *  （如 /dist/registry/probe 的非法 origin）展开会把 ok 覆盖成 false，但 HTTP 仍是 200。
+ *  而 http() 只在 `!res.ok`（状态码）时抛错 —— 于是「被拒的操作」在界面上表现为成功 toast。
+ *  这里给出单一判据，供共享动作 hook（useSupervisorAction.run）与页面复用。
+ *  返回 null = 不是这种失败形态（包括 result 为 null/非对象/无 ok 键）。 */
+export function failureFromResult(result: unknown): string | null {
+  if (!result || typeof result !== "object") return null;
+  const r = result as { ok?: unknown; error?: unknown; message?: unknown };
+  if (r.ok !== false) return null;
+  const msg = typeof r.error === "string" && r.error
+    ? r.error
+    : (typeof r.message === "string" && r.message ? r.message : "");
+  return msg || "操作未被接受（后端返回 ok:false）";
+}
 
 /** 文本端点（text/plain，如 /changelog、/guard/changelog）：http() 会尝试 JSON 解析失败后返回 null，
  *  故此处直接走 fetch 取原文（保持同源/CSP 与超时语义一致）。 */

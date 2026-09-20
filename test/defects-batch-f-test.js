@@ -40,25 +40,27 @@ console.log('== K6 CSRF 深化校验（Host + Origin）==');
     // 闸 ①：Host 必须是回环名（防 DNS-rebinding）
     check('K6-a 恶意 Host（evil.com）被拒',
       originAllowed(mk({ host: 'evil.com' }), P) === false, 'evil.com');
+    // C-1 批 4：Host 闸 fail-closed —— 缺 Host 不再整块跳过（旧行为=两闸同时归零）。
+    check('K6-a 缺 Host 被拒（C-1 fail-closed）', originAllowed(mk({}), P) === false, 'no-host');
     check('K6-a 回环 Host（127.0.0.1:port）被接受',
       originAllowed(mk({ host: `127.0.0.1:${P}` }), P) === true);
     check('K6-a IPv6 回环 Host（[::1]:port）被接受',
       originAllowed(mk({ host: `[::1]:${P}` }), P) === true);
     check('K6-a localhost:port 被接受',
       originAllowed(mk({ host: `localhost:${P}` }), P) === true);
-    // 闸 ②：Origin
+    // 闸 ②：Origin（以下桩一律带合法 Host —— C-1 后缺 Host 先被闸 1 拒）
     check('K6-b 恶意 Origin（http://evil.com:同端口）被拒（旧实现只比端口 → 会放行）',
-      originAllowed(mk({ origin: evil }), P) === false, evil);
+      originAllowed(mk({ host: `127.0.0.1:${P}`, origin: evil }), P) === false, evil);
     check('K6-b 回环 Origin + 同端口被接受',
-      originAllowed(mk({ origin: `http://127.0.0.1:${P}` }), P) === true);
+      originAllowed(mk({ host: `127.0.0.1:${P}`, origin: `http://127.0.0.1:${P}` }), P) === true);
     check('K6-b 回环 Origin + 异端口被拒',
-      originAllowed(mk({ origin: `http://127.0.0.1:${R}` }), P) === false);
+      originAllowed(mk({ host: `127.0.0.1:${P}`, origin: `http://127.0.0.1:${R}` }), P) === false);
     check('K6-b 壳内 webview（tauri://localhost）被接受',
-      originAllowed(mk({ origin: 'tauri://localhost' }), P) === true);
-    check('K6-b 无 Origin（curl/CLI）放行',
-      originAllowed(mk({}), TEST_PORT) === true);
+      originAllowed(mk({ host: `127.0.0.1:${P}`, origin: 'tauri://localhost' }), P) === true);
+    check('K6-b 无 Origin（curl/CLI）放行（C-2 裁决：浏览器 POST 必带 Origin，缺 Origin=非浏览器客户端）',
+      originAllowed(mk({ host: `127.0.0.1:${TEST_PORT}` }), TEST_PORT) === true);
     check('K6-b 畸形 Origin 被拒',
-      originAllowed(mk({ origin: 'not a url' }), TEST_PORT) === false);
+      originAllowed(mk({ host: `127.0.0.1:${TEST_PORT}`, origin: 'not a url' }), TEST_PORT) === false);
   } else {
     // 退回源码断言（函数未导出时）
     check('K6 读取 req.headers.host（identity.js 声称的深化校验已实现）',
@@ -133,6 +135,208 @@ console.log('== K10 卸载失败时保留 manifest ==');
     check('K10 失败分支保留 manifest',
       /保留 manifest/.test(seg), '保留 manifest');
   }
+}
+
+// ── 批 4（AUDIT-2026-09-19 §C）：C-3/C-4/C-5/C-6/C-7/C-8 纯函数级逐例断言 ──
+// 判据纪律（§G-6-9）：多子句一律拆逐例 + 判据值回显。
+console.log('== 批4 C-3 remoteTokenStrength（shared/credential）/ backoffGate（relay/core）==');
+{
+  const core = require(path.join(ROOT, 'src', 'domains', 'relay', 'core.js'));
+  // 强度闸的实现住在 shared/credential（L0 纯判定）：三个消费点跨 relay/instance 两域 + app 编排层，
+  //   放在任一域内都会逼出 domains 间跨域边（DS-G1，第 4 批 run 35489272772 实抓，见 §H-7-17）。
+  const cred = require(path.join(ROOT, 'src', 'shared', 'credential.js'));
+  const cases = [
+    ['empty-string', '', false, 'empty'],
+    ['spaces-only', '   ', false, 'empty'],
+    ['null', null, false, 'empty'],
+    ['undefined', undefined, false, 'empty'],
+    ['7 chars', '1234567', false, 'short'],
+    ['8 chars', '12345678', true, ''],
+    ['8 chars + pad', ' 12345678 ', true, ''],
+    ['long', 'a-very-remote-token-value-0123456789', true, ''],
+  ];
+  for (const [label, input, wantOk, wantReason] of cases) {
+    const r = cred.remoteTokenStrength(input);
+    check('C-3 strength ' + label + ' → ok=' + wantOk, r.ok === wantOk && r.reason === wantReason,
+      JSON.stringify(r));
+  }
+  // 暴露闸接线：过短令牌在 enabled=true 时必须被拒（reason 走 short 文案）
+  check('C-3 validateFrpExposure 拒 4 位令牌',
+    core.validateFrpExposure({ enabled: true, remoteToken: 'abcd', frpRemotePort: 30001, peers: [], selfId: 'main' }).ok === false,
+    'short-rejected');
+  check('C-3 validateFrpExposure 放行 8 位令牌',
+    core.validateFrpExposure({ enabled: true, remoteToken: '12345678', frpRemotePort: 30001, peers: [], selfId: 'main' }).ok === true,
+    'ok');
+  const bgCases = [
+    ['低于阈值', { failCount: 9, firstAt: 1000, now: 5000 }, null],
+    // ⚠ 勘误（第 4 批 run 35485774896：五个 job 同点红，与平台无关）：原期望 59000 是**把 5000 当成了
+    //   已耗时长**，而语义是 `now`——真实耗时 = now - firstAt = 5000 - 1000 = 4000，
+    //   剩余 = lockMs(60000) - 4000 = **56000**。产品算得对（回显即 56000），是夹具的算术错。
+    //   补一条 elapsed=0 的配对例：它把「剩余窗口」与「已耗时长」彻底分开，两者再混用必红其一。
+    ['达阈值窗口内（已耗 4000ms）', { failCount: 10, firstAt: 1000, now: 5000 }, 56000],
+    ['达阈值窗口起点（已耗 0ms → 整锁时长）', { failCount: 10, firstAt: 1000, now: 1000 }, 60000],
+    ['超窗重置', { failCount: 10, firstAt: 1000, now: 61001 }, null],
+    ['零失败', { failCount: 0, firstAt: 0, now: 5000 }, null],
+  ];
+  for (const [label, f, want] of bgCases) {
+    const r = core.backoffGate(f);
+    check('C-3 backoffGate ' + label + ' → waitMs=' + want,
+      r.waitMs === want, JSON.stringify(r) + ' 输入=' + JSON.stringify(f));
+  }
+  // 写入口接线（源码形态：两处写盘前都过同一纯函数）
+  const opsSrc = fs.readFileSync(path.join(ROOT, 'src', 'domains', 'instance', 'ops.js'), 'utf8');
+  const coreSrc = fs.readFileSync(path.join(ROOT, 'src', 'domains', 'relay', 'core.js'), 'utf8');
+  check('C-3 实例域写入口引用 remoteTokenStrength', /remoteTokenStrength\(/.test(opsSrc), '有');
+  const actSrc = fs.readFileSync(path.join(ROOT, 'src', 'app', 'domain-actions', 'main.js'), 'utf8');
+  check('C-3 main 写入口引用 remoteTokenStrength', /remoteTokenStrength\(/.test(actSrc), '有');
+  // 归属判据（run 35489272772 的 DS-G1 红固化成门禁）：单一实现 + 三个消费点全部经 shared 取用。
+  const credSrc = fs.readFileSync(path.join(ROOT, 'src', 'shared', 'credential.js'), 'utf8');
+  check('C-3 强度闸实现在 shared/credential 且已导出',
+    /^function remoteTokenStrength\(/m.test(credSrc) && /remoteTokenStrength/.test(credSrc.split('module.exports')[1] || ''),
+    '实现=' + /^function remoteTokenStrength\(/m.test(credSrc) + ' 导出=' + JSON.stringify(credSrc.split('module.exports')[1] || '').slice(0, 60));
+  check('C-3 反向：shared/credential 出度 = 0（L0 纯，不得 require 任何上层）',
+    !/require\(/.test(credSrc.replace(/^\/\*[\s\S]*?\*\//gm, '')), '无 require');
+  check('C-3 反向：relay/core 不再自带第二份实现',
+    !/function remoteTokenStrength\(/.test(coreSrc), coreSrc.indexOf('function remoteTokenStrength(') >= 0 ? '仍有本体' : '仅引用 shared');
+  check('C-3 反向：instance 域不再跨域 require relay（DS-G1 边的成因）',
+    !/require\(['"]\.\.\/relay/.test(opsSrc), '跨域 require 计数 0');
+}
+
+console.log('== 批4 C-4 upstreamPath（门卫令牌不进上游）==');
+{
+  const core = require(path.join(ROOT, 'src', 'domains', 'relay', 'core.js'));
+  const cases = [
+    ['/x?token=abc', '/x'],
+    ['/x?a=1&token=abc', '/x?a=1'],
+    ['/?token=', '/'],
+    ['/plain', '/plain'],
+    ['/keep?a=1&b=2', '/keep?a=1&b=2'],
+  ];
+  for (const [input, want] of cases) {
+    const got = core.upstreamPath(input);
+    check('C-4 upstreamPath ' + input + ' → ' + want, got === want, got);
+  }
+  check('C-4 tunnel 请求行经 upstreamPath',
+    /upstreamPath\(req\.url\)/.test(fs.readFileSync(path.join(ROOT, 'src', 'domains', 'relay', 'tunnel.js'), 'utf8')), '有');
+}
+
+console.log('== 批4 C-5 有界读取（Buffer 累积不切碎多字节）==');
+{
+  const { collectBody } = require(path.join(ROOT, 'src', 'api', 'transport', 'body.js'));
+  const { Readable } = require('node:stream');
+  // 汉字（3 字节）恰被切碎在 chunk 边界：旧的 string 拼接会产生 U+FFFD，Buffer 累积不会。
+  const mkRes = (settle) => ({ headersSent: false, writeHead(code) { this.headersSent = true; settle({ code }); }, end() { this.ended = true; } });
+  const run = (chunks, max) => new Promise((res) => {
+    const r = Readable.from(chunks.map((c) => (Buffer.isBuffer(c) ? c : Buffer.from(c))));
+    let done = false;
+    const finish = (v) => { if (!done) { done = true; res(v); } };
+    collectBody(r, mkRes(finish), max, (b) => finish({ body: b }));
+    setTimeout(() => finish({ code: '<<timeout>>' }), 2000);
+  });
+  (async () => {
+    const b = Buffer.from('你好', 'utf8'); // 6 字节，在 2 字节处切断 → 半字符跨 chunk
+    const r2 = await run([b.subarray(0, 2), b.subarray(2)], 100);
+    check('C-5 collectBody 跨 chunk 多字节不损坏', r2.body === '你好', JSON.stringify(r2.body));
+    const r3 = await run([Buffer.from('x'.repeat(50)), Buffer.from('y'.repeat(50))], 60);
+    check('C-5 collectBody 超限回 413', r3.code === 413, String(r3.code));
+    const { readUpstreamBody } = require(path.join(ROOT, 'src', 'domains', 'router', 'handlers', 'upstream-body.js'));
+    const ub = Buffer.from('你好世界', 'utf8');
+    const ur = Readable.from([ub.subarray(0, 5), ub.subarray(5)]);
+    const t = await readUpstreamBody(ur, 65536, 2000);
+    check('C-5 readUpstreamBody 跨 chunk 多字节不损坏', t === '你好世界', JSON.stringify(t));
+    const ur2 = Readable.from([Buffer.from('0123456789')]);
+    const t2 = await readUpstreamBody(ur2, 4, 2000);
+    check('C-5 readUpstreamBody 尊重 maxBytes（累积不超界）', Buffer.byteLength(t2) <= 12 && t2.startsWith('0123'), JSON.stringify({ len: t2.length, v: t2 }));
+  })();
+}
+
+console.log('== 批4 C-6 /open Set-Cookie SameSite=Strict ==');
+check('C-6 /open 303 cookie 带 SameSite=Strict',
+  /SameSite=Strict/.test(fs.readFileSync(path.join(ROOT, 'src', 'api', 'domains', 'instances.js'), 'utf8')), '有');
+
+console.log('== 批4 C-7 isShellOrigin 单一事实源（CORS=CSRF 集合）==');
+{
+  const { isShellOrigin } = require(path.join(ROOT, 'src', 'api', 'security.js'));
+  const cases = [
+    ['tauri: + localhost', 'tauri:', 'localhost', true],
+    ['tauri: + a.tauri.localhost', 'tauri:', 'a.tauri.localhost', true],
+    ['tauri: + evil.tld', 'tauri:', 'evil.com', false],
+    ['http: + tauri.localhost', 'http:', 'tauri.localhost', true],
+    ['http: + x.tauri.localhost（通配已收紧）', 'http:', 'x.tauri.localhost', false],
+    ['https: + tauri.localhost', 'https:', 'tauri.localhost', true],
+    ['http: + localhost（浏览器页不放行）', 'http:', 'localhost', false],
+    ['https: + evil', 'https:', 'evil.com', false],
+  ];
+  for (const [label, p, h, want] of cases) {
+    const got = isShellOrigin(p, h);
+    check('C-7 isShellOrigin ' + label + ' → ' + want, got === want, String(got));
+  }
+  const srv = fs.readFileSync(path.join(ROOT, 'src', 'api', 'transport', 'server.js'), 'utf8');
+  check('C-7 server.js 委托 isShellOrigin', /isShellOrigin\(u\.protocol, u\.hostname\)/.test(srv), '有');
+  check('C-7 server.js 不再自带通配字面量', !/endsWith\('\.tauri\.localhost'\)/.test(srv), '已删');
+}
+
+console.log('== 批4 C-8 isPrivateHostLiteral（SSRF 主机分级单一事实源）==');
+{
+  const { isPrivateHostLiteral } = require(path.join(ROOT, 'src', 'shared', 'ip.js'));
+  const cases = [
+    ['127.0.0.1', true], ['10.1.2.3', true], ['172.16.0.1', true], ['192.168.9.9', true],
+    ['169.254.169.254', true], ['100.64.0.1', true], ['0.0.0.0', true], ['224.0.0.1', true],
+    ['localhost', true], ['a.local', true], ['a.internal', true], ['a.home.arpa', true],
+    ['intranet', true], ['::1', true], ['[::1]', true], ['fd00::1', true], ['fe80::1', true],
+    ['registry.npmjs.org', false], ['registry.npmmirror.com', false], ['8.8.8.8', false],
+    ['a.example.com', false],
+  ];
+  for (const [h, want] of cases) {
+    const got = isPrivateHostLiteral(h);
+    check('C-8 isPrivateHostLiteral ' + h + ' → ' + want, got === want, String(got));
+  }
+  const policies = require(path.join(ROOT, 'src', 'platform', 'distribution', 'policies.js'));
+  const vcases = [
+    ['http://127.0.0.1:4873', true], ['http://169.254.169.254', true],
+    ['https://registry.npmjs.org', false], ['https://registry.npmjs.org/path', true],
+    ['ftp://a.example.com', true], ['http://u:p@a.example.com', true], ['https://x.test', false],
+  ];
+  for (const [o, wantReject] of vcases) {
+    const got = policies.registryOriginViolation(o);
+    check('C-8 registryOriginViolation ' + o + ' → ' + (wantReject ? '拒' : '放行'),
+      (got !== null) === wantReject, got === null ? 'pass' : got);
+  }
+  check('C-8 setRegistryConfig 接线 registryOriginViolation',
+    /registryOriginViolation\(/.test(fs.readFileSync(path.join(ROOT, 'src', 'platform', 'distribution', 'registry.js'), 'utf8')), '有');
+}
+
+console.log('== 批4 TK-3/条 5 令牌域形态钉（逐例 + 回显）==');
+{
+  const poolSrc = fs.readFileSync(path.join(ROOT, 'src', 'platform', 'service', 'token', 'pool.js'), 'utf8');
+  check('TK-3 feedLine 隐式源必须先过 kind 登记闸（推断不出或未登记即拒）',
+    /if \(!k \|\| !kinds\.isKnownKind\(k\)\) return null;/.test(poolSrc), '有');
+  const core = require(path.join(ROOT, 'src', 'domains', 'relay', 'core.js'));
+  check('条5 core 导出 lanGateCookieValue', typeof core.lanGateCookieValue === 'function', typeof core.lanGateCookieValue);
+  check('条5 salt 缺省时拒绝签发（返回空串）', core.lanGateCookieValue('tok12345678', undefined) === '', JSON.stringify(core.lanGateCookieValue('tok12345678', undefined)));
+  check('条5 token 缺省时拒绝签发（返回空串）', core.lanGateCookieValue('', 'salt') === '', JSON.stringify(core.lanGateCookieValue('', 'salt')));
+  const v1 = core.lanGateCookieValue('tok12345678', 'salt-A');
+  check('条5 派生值为 64hex（不含令牌原文）', /^[0-9a-f]{64}$/.test(v1) && !v1.includes('tok'), v1);
+  check('条5 同 (token,salt) 幂等（cookie 可在进程内复用）', core.lanGateCookieValue('tok12345678', 'salt-A') === v1, v1);
+  check('条5 换 salt 即换值（进程重启全员失效）', core.lanGateCookieValue('tok12345678', 'salt-B') !== v1, core.lanGateCookieValue('tok12345678', 'salt-B'));
+  check('条5 换 token 即换值（门卫令牌轮换旧 cookie 立即失配）', core.lanGateCookieValue('tok87654321', 'salt-A') !== v1, 'diff');
+  // tokenGateDecision：原文 cookie 不再等于放行
+  const gate = core.tokenGateDecision(
+    { url: 'http://x/', headers: { cookie: 'dsh_lan_token=tok12345678' } }, 'tok12345678', 'salt-A');
+  check('条5 令牌原文冒充 cookie → unauthorized（旧实现此处 ok:true）',
+    gate.ok === false && gate.unauthorized === true, JSON.stringify(gate));
+  const gate2 = core.tokenGateDecision(
+    { url: 'http://x/', headers: { cookie: 'dsh_lan_token=' + v1 } }, 'tok12345678', 'salt-A');
+  check('条5 派生值 cookie → 放行', gate2.ok === true, JSON.stringify(gate2));
+  const gate3 = core.tokenGateDecision(
+    { url: 'http://x/?token=tok12345678', headers: {} }, 'tok12345678', 'salt-A');
+  check('条5 首次 ?token= → 302 且所种 cookie 为派生值（非原文）',
+    gate3.ok === false && gate3.redirect === '/' && gate3.cookie.includes('dsh_lan_token=' + v1) && !gate3.cookie.includes('tok12345678'),
+    JSON.stringify(gate3));
+  const proxySrc = fs.readFileSync(path.join(ROOT, 'src', 'domains', 'relay', 'proxy.js'), 'utf8');
+  const tunnelSrc = fs.readFileSync(path.join(ROOT, 'src', 'domains', 'relay', 'tunnel.js'), 'utf8');
+  check('条5 HTTP 路径传盐给 tokenGateDecision', /tokenGateDecision\(req, token, gateSalt\)/.test(proxySrc), '有');
+  check('条5 WS 升级路径传盐给 hasValidToken', /hasValidToken\(req, getToken\(\), typeof getGateSalt === 'function' \? getGateSalt\(\) : undefined\)/.test(tunnelSrc), '有');
 }
 
 const failed = results.filter((r) => !r);

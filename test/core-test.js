@@ -29,6 +29,15 @@ function testLogger() {
     lines.some((l) => l.includes('[ERROR] error-line')));
   for (let i = 0; i < 30; i++) log.writer.write('pad-line-' + i + ' '.repeat(20));
   check('超限轮转出 .1 备份', fs.existsSync(file + '.1'));
+  // 条 1（AUDIT-2026-09-19 批 4 C）：轮转判定改用「首写 stat + 已写字节记账」，
+  //   必须仍可封住体积（记账失控 = 日志无限增长），且保留一代。
+  for (let i = 0; i < 200; i++) log.writer.write('x'.repeat(60));
+  const logSize = fs.statSync(file).size;
+  check('条1 记账不失控：连写 200 行后当前文件 < 2×maxBytes(400)',
+    logSize < 800, 'size=' + logSize);
+  check('条1 记账下仍保留一代备份且非空',
+    fs.existsSync(file + '.1') && fs.statSync(file + '.1').size > 0,
+    fs.existsSync(file + '.1') ? 'size=' + fs.statSync(file + '.1').size : '无 .1');
   // 行缓冲：半行 chunk 不落盘，拼接后完整
   let got = [];
   const lb = new LineBuffer((l) => got.push(l));
@@ -62,6 +71,17 @@ function testEventsRotation() {
   check('轮转后存在 .1 备份文件', fs.existsSync(file + '.1'));
   check('seq 全局连续（40 条）', ev.seq === 40, String(ev.seq));
   check('新实例续号不重置', new Events(file, 600).seq === 40);
+  // 条 1（AUDIT-2026-09-19 批 4 C）：meta 由「每事件重写」改为节流落盘，必须同时守住
+  //   ① 节流确实生效（否则写放大没收敛）② 轮转点仍即时持久化 ③ 窗口内重启续号单调。
+  const metaDoc = JSON.parse(fs.readFileSync(file + '.meta.json', 'utf8'));
+  check('条1 meta 节流生效：落盘 seq 落后于内存 seq（旧实现每事件重写 meta）',
+    metaDoc.seq < ev.seq, 'meta.seq=' + metaDoc.seq + ' ev.seq=' + ev.seq);
+  check('条1 轮转点即时持久化：meta.rotatedSeq == 内存水位（跨重启 .1 事件仍可见）',
+    ev.rotatedSeq !== null && metaDoc.rotatedSeq === ev.rotatedSeq,
+    'meta=' + JSON.stringify(metaDoc.rotatedSeq) + ' mem=' + JSON.stringify(ev.rotatedSeq));
+  check('条1 节流窗口内重启仍单调：新实例取文件末行 seq 而非落后的 meta.seq',
+    new Events(file, 600).seq === ev.seq && metaDoc.seq < ev.seq,
+    'new=' + new Events(file, 600).seq + ' meta=' + metaDoc.seq + ' ev=' + ev.seq);
   const all = ev.readSince(0, 500);
   check('readSince 跨轮转读全量', all.length === 40 && all[0].seq === 1 && all[39].seq === 40, String(all.length));
   const tail = ev.readSince(all[19].seq, 500);
@@ -264,18 +284,47 @@ async function testRelay() {
 
   // 令牌门卫
   const tfile = path.join(TMP, 'token-target.js');
-  const target2 = http.createServer((q, s) => { s.writeHead(200); s.end('ok-token'); });
+  let seenPath2 = '';
+  const target2 = http.createServer((q, s) => { seenPath2 = q.url; s.writeHead(200); s.end('ok-token'); });
   await new Promise((r) => target2.listen(3987, '127.0.0.1', r));
   const relay2 = createRelay('127.0.0.1', 3987, { token: 'secret123' });
   await new Promise((r) => relay2.listen(3988, '0.0.0.0', r));
   const noToken = await req(3988, 'GET', '/');
   check('未带令牌返回 401', noToken.code === 401, String(noToken.code));
+  // C-4（批 4）：401 凭证响应不得被任何缓存保存
+  check('C-4 401 响应带 Cache-Control: no-store',
+    String(noToken.headers['cache-control'] || '') === 'no-store', JSON.stringify(noToken.headers['cache-control']));
   const withToken = await req(3988, 'GET', '/?token=secret123');
-  check('URL 令牌放行并种 Cookie', withToken.code === 302 && /dsh_lan_token=/.test(withToken.headers['set-cookie'] ? withToken.headers['set-cookie'].join(';') : ''), JSON.stringify(withToken.headers));
+  const sc2 = String((withToken.headers['set-cookie'] || []).join(';'));
+  check('URL 令牌放行并种 Cookie', withToken.code === 302 && /dsh_lan_token=/.test(sc2), JSON.stringify(withToken.headers));
+  // 批 4 令牌条 5：种下的 cookie 是派生会话值，门卫令牌原文（secret123）绝不落 cookie。
+  check('令牌条5 种的 cookie 为派生 64hex 且不含令牌原文', /^dsh_lan_token=[0-9a-f]{64}(;|$)/.test(sc2) && !sc2.includes('secret123'), sc2);
+  const lanCk = 'dsh_lan_token=' + ((/dsh_lan_token=([^;]+)/.exec(sc2) || [])[1] || '');
+  check('C-4 302 种 Cookie 响应带 Cache-Control: no-store',
+    String(withToken.headers['cache-control'] || '') === 'no-store', JSON.stringify(withToken.headers['cache-control']));
+  // C-4（批 4）：门卫令牌不得随 path 泄进上游（DSH 访问日志）；其余查询参数原样保留。
+  //   经派生 cookie 放行（不再走 ?token= 的 302 分支），故能观测上游收到的 path。
+  await req(3988, 'GET', '/api/x?token=secret123&keep=1', { Cookie: lanCk });
+  check('C-4 上游收到的路径已剥离 token 参数', seenPath2 === '/api/x?keep=1', seenPath2);
   const badToken = await req(3988, 'GET', '/?token=wrong');
   check('错误令牌拒绝', badToken.code === 401, String(badToken.code));
-  const withCookie = await req(3988, 'GET', '/', { Cookie: 'dsh_lan_token=secret123' });
-  check('Cookie 令牌放行', withCookie.code === 200, String(withCookie.code));
+  const withCookie = await req(3988, 'GET', '/', { Cookie: lanCk });
+  check('派生 Cookie 令牌放行', withCookie.code === 200, String(withCookie.code));
+  const rawAsCookie = await req(3988, 'GET', '/', { Cookie: 'dsh_lan_token=secret123' });
+  check('令牌条5 门卫令牌原文冒充 cookie → 401', rawAsCookie.code === 401, String(rawAsCookie.code));
+  // C-3（批 4）：同 IP 失败退避——60s 窗口内累计 ≥10 次失败后、下一次请求即 429（HTTP 与 WS 共享账本）。
+  // CI run 35471888496 取证：本断言旧版**夹具误设**——循环只发 10 次（第 10 次是第 10 个失败、尚未越阈，
+  //   必回 401），且起点账本被上一条 401 污染过。先做一次成功放行清零，再钉「前 10 全 401、第 11 次 429」。
+  const prePass = await req(3988, 'GET', '/', { Cookie: lanCk });
+  check('C-3 前置：成功放行清零失败账本', prePass.code === 200, String(prePass.code));
+  const codes3 = [];
+  for (let i = 0; i < 11; i++) codes3.push((await req(3988, 'GET', '/?token=bad' + i)).code);
+  check('C-3 前 10 次失败各回 401（阈值=累计 10，未越阈不放行）',
+    codes3.slice(0, 10).every((c) => c === 401), codes3.join(','));
+  check('C-3 连续第 11 次请求返回 429', codes3[10] === 429, codes3.join(','));
+  const locked = await req(3988, 'GET', '/?token=secret123');
+  check('C-3 锁定期即使正确令牌也 429（Retry-After 存在）',
+    locked.code === 429 && !!locked.headers['retry-after'], locked.code + ' ' + JSON.stringify(locked.headers['retry-after']));
   await new Promise((r) => relay2.close(r));
   await new Promise((r) => target2.close(r));
 }

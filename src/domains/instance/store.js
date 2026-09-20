@@ -7,6 +7,7 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const ports = require('../../platform/service/ports').shared;
+const { writeAtomic } = require('../../platform/util/fs');
 const model = require('./model');
 const sandbox = require('./sandbox');
 
@@ -86,9 +87,7 @@ class InstanceStore {
       if (body === this._lastBody) return; // 内容未变不写盘（tick 每 5s 全量调用，稳态零写放大）
       this._lastBody = body;
       fs.mkdirSync(this.dir, { recursive: true });
-      const tmp = this.instancesFile + '.tmp';
-      fs.writeFileSync(tmp, body, { mode: 0o600 });
-      fs.renameSync(tmp, this.instancesFile);
+      writeAtomic(this.instancesFile, body, { mode: 0o600 });
     } catch (e) {
       this.logger && this.logger.error && this.logger.error('instances.json 持久化失败: ' + (e && e.message));
     }

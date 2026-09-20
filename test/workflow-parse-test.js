@@ -87,6 +87,35 @@ console.log('== W4 禁止裸读 .github/workflows ==');
   check('W4 无裸 fs.readFileSync 读 workflow', offenders.length === 0, offenders.join(', '));
 }
 
+// ── W5 供应链形态：顶层最小权限 + 同 ref 串行 + uses 全钉 SHA（发布条 1，2026-09-20）──
+console.log('== W5 workflow 供应链形态（发布条 1）==');
+{
+  const wf = W.readWorkflow('build.yml');
+  const lines = wf.split('\n');
+  const uses = lines.map((l) => l.trim()).filter((l) => /^(-\s+)?uses:\s+\S+/.test(l));
+  const unpinned = uses.filter((l) => !/^(-\s+)?uses:\s+[^@\s]+@[0-9a-f]{40}(\s+#\s*\S+)?$/.test(l));
+  check('W5-a uses 引用数与预期一致（非空转）', uses.length >= 9, uses.length + ' 处');
+  check('W5-b 全部 uses 钉 40 位 commit SHA', unpinned.length === 0, unpinned.join(' | ') || '无未钉项');
+  check('W5-c 反向非空转：可变 tag 形态（@vN 结尾）不再出现',
+    !/uses:\s+\S+@v\d+\s*$/m.test(wf), '无');
+  check('W5-d 顶层 permissions 存在且收在 contents: read',
+    /^permissions:\n {2}contents: read\n/m.test(wf), '有');
+  check('W5-e 顶层 concurrency 存在', /^concurrency:\n/m.test(wf), '有');
+  const ci = (wf.match(/^\s*cancel-in-progress:\s*(.+)$/m) || [])[1] || '';
+  check('W5-f tag 运行不被取消（cancel-in-progress 对 refs/tags 取 false）',
+    /!startsWith\(github\.ref,\s*'refs\/tags\/'\)/.test(ci), ci || '缺失');
+  // 各 job 只在上声明的基础上**加**自己需要的写权限（不得有 job 用 contents: none 之外的收窄把
+  // 既有步骤打断；build 需要 id-token、release 需要 contents:write —— 与 A3 审计裁决一致）。
+  const buildSec = W.jobSection(wf, 'build');
+  const relSec = W.jobSection(wf, 'release');
+  check('W5-g build job 仍显式声明 contents:read + id-token:write（provenance）',
+    /contents:\s*read/.test(buildSec) && /id-token:\s*write/.test(buildSec), '有');
+  check('W5-h release job 仍显式声明 contents:write（挂 Release 资产）',
+    /contents:\s*write/.test(relSec), '有');
+  check('W5-i NPM_TOKEN 只出现在发布步（验证步不得挂载）',
+    !/NPM_TOKEN/.test(W.jobSection(wf, 'test') || '') && /secrets\.NPM_TOKEN/.test(buildSec), '有');
+}
+
 const failed = results.filter((r) => !r);
 console.log(String.fromCharCode(10) + '结果: ' + (results.length - failed.length) + ' passed, ' + failed.length + ' failed');
 process.exit(failed.length ? 1 : 0);

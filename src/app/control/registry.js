@@ -8,7 +8,9 @@
 //   - 所有权（端口 owner 引用 / root 路径 / unit 或 daemon 声明 / 进程模式）——持久
 //   - 类型适配器引用（observe/apply 实现留在类型模块，经 registerAdapter 挂接，不持久化）
 //
-// 铁律（v3 设计公理落地）：
+// 铁律（v3 设计公理落地）—— **SSOT 在 GUARD-DOMAIN-MODEL.md §6.1**（M-1..M-4，含唯一合法出口与
+//   D-8 的 keepDesired 例外）；本处是摘要，两份冲突时以该契约为准（AUDIT-2026-09-19 第 4 批 D-7/D-8：
+//   正文此前只活在代码注释里 → 无契约索引、无门禁、评审无人引用，故提升为 .md 定本）。
 //   1) 实然（pid/占用/健康）只来自观测，绝不写回目录；
 //   2) 注册即存在、注销即不存在（限管家直接负责的对象）；域自治对象不入簿（经 ctl 摘要）；
 //   3) 目录不是第二状态源：phase 由调谐循环驱动（R3 挂接），业务不得直接改目录 phase；
@@ -17,6 +19,7 @@
 
 const fs = require('node:fs');
 const path = require('node:path');
+const { writeAtomic } = require('../../platform/util/fs');
 // 纯模型（词表/entry/所有权）已拆到 managed-object.js（DF-2：registry ≤400；DF-3：纯/IO 分离）。
 // 公开导出面不变（本文件 re-export createEntry/kindMeta/...）。
 const { DESIRED, MANAGED_KINDS, kindMeta, registerKind: registerManagedKind, isDomainA, createEntry, normalizeOwnership } = require('./managed-object');
@@ -130,9 +133,7 @@ class ManagedRegistry {
           startedAt: o.startedAt, createdAt: o.createdAt, updatedAt: o.updatedAt,
         }, isDomainA(o.kind) ? { guardian: o.guardian === true } : {})),
       }, null, 2);
-      const tmp = this.file + '.tmp';
-      fs.writeFileSync(tmp, body, { mode: 0o600 });
-      fs.renameSync(tmp, this.file);
+      writeAtomic(this.file, body, { mode: 0o600 });
     } catch (e) { this._log('warn', 'managed-objects 持久化失败: ' + (e && e.message)); }
   }
 

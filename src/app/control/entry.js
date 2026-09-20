@@ -9,6 +9,8 @@
 // 关键语义：
 //   - phase 状态机统一：stopped -> starting -> running -> draining -> stopped
 //   - 启停只经 LifecycleManager 统一入口（start/stop/restart），模块不对外自出接口；
+//     写权分工（谁可直写 phase/desired/_monitoring/healthy）见契约 GUARD-DOMAIN-MODEL.md §6.3，
+//     违规基线由该契约 §6.4 的 ML-2 ratchet 机器执法；
 //   - 阶段由 start/stop 迁移驱动；周期拉起在守卫侧（daemon 监督 / 实例 watchdog+guardian），
 //     本对象不内置探活；
 //   - 进程独立性：本抽象描述「管理视图」，模块的实际进程可独立于守卫存在——

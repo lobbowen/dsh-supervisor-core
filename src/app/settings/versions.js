@@ -9,7 +9,6 @@ const srcpath = require('../../platform/util/srcpath');
 // 逐字体保留；round8-fixes 的源码形态钉子同批改为按符号名。
 const fs = require('node:fs');
 const path = require('node:path');
-const { execFile } = require('node:child_process');
 const ex = require('../../platform/util/exec');
 // 平台知识唯一事实源（跨平台架构规范）：os/arch 到标签映射只在 src/platform/contract/matrix.js。
 const matrix = require('../../platform/contract/matrix');
@@ -130,21 +129,16 @@ module.exports = {
     /**
      * 完整版本检查（async）：本地 commit + 远端 fetch 比对。
      * 关键架构约束：git fetch 是网络 I/O，绝不能同步执行（会冻结整个事件循环，守卫假死且无法自愈）。
-     * 这里用 execFile（异步）+ 10s 超时；fetch 失败/超时只降级为「本地视图」，不抛错。
+     * 这里用 exec.runOutAsync（异步）+ 10s 超时；fetch 失败/超时只降级为「本地视图」，不抛错。
      */
     async guardVersionCheck() {
       const d = depsOf(this);
       const base = d.guardVersionLocal();
       if (base.upstream !== 'git-repo') return base;
       const root = d.vcsRoot();
-      const fetchOk = await new Promise((resolve) => {
-        let settled = false;
-        const done = (ok) => { if (!settled) { settled = true; resolve(ok); } };
-        try {
-          const child = execFile('git', ['-C', root, 'fetch', '--quiet'], { timeout: 10000 }, (err) => done(!err));
-          child.on('error', () => done(false));
-        } catch { done(false); }
-      });
+      // 条 6（批 4 平台）：改走统一有界异步封装（原裸 execFile 缺 windowsHide，Windows 上
+      // git 会弹控制台窗口；且绕过 SIGKILL/maxBuffer 纪律）。runOutAsync 失败/超时 resolve(null)。
+      const fetchOk = (await ex.runOutAsync('git', ['-C', root, 'fetch', '--quiet'], { timeoutMs: 10000 })) !== null;
       if (!fetchOk) return base; // fetch 失败：保持本地视图，不误报
       let updateAvailable = false;
       try {

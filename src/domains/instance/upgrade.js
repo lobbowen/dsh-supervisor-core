@@ -66,7 +66,7 @@ function createUpgrade(deps) {
     let latest = (cached && cached.latest) || null;
     if (!latest || !cached || (Date.now() - cached.checkedAt) > _updTTL) {
       try {
-        latest = await dist.fetchNpmLatest('@deepseek-ai/dsh'); // 第三方包：取全量最高
+        latest = await dist.fetchNpmLatest('@deepseek-ai/dsh'); // 第三方包：latest 优先（条 7）
         _updCache[id] = { latest, checkedAt: Date.now(), error: latest ? null : '查询失败' };
       } catch (e) {
         latest = null;

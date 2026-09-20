@@ -194,6 +194,314 @@
 8. **违例勘误（2026-09-20，用户纠偏）**：本批提交前曾在本机多遍运行全量链与行为探针——违反的是**仓库早已生效的硬标准**（`ACCEPTANCE-STANDARD.md:11`，2026-09-17 起；`HANDOFF.md §1-1` 同款禁令；「本地测试无跨平台证据力」在本报告 A2/§D 亦有同口径表述），并非用户当日新立规则；「口径由 2026-09-20 用户定调」的初版归因失实，本条为勘误后的正确表述。副作用已收口：脱离会话的 `dry-run-proxy` 孤儿进程已回收；`/tmp` 测试产物已清理（含 2026-09-20 复查时补删的 623 个探针 `mktemp` 目录与 `dsh-test/fuzz/sigterm/upg` 系列，共 ~9MB）；本地测试还写穿了 `DSH_SUPERVISOR_HOME` 隔离、在真实 `~/.local/state/dsh-supervisor/` 落下 18 个 `proxy-instance-vm-210xx.log`+`install-id`（该目录创建于违例时段、无既有用户数据，已整目录清除，`~/.dsh` 用户数据未触碰）。成因复核：`state-root.supervisorDir()` 认 `DSH_SUPERVISOR_HOME` 覆盖，而 `npm test` 链经 `_preload.js` 注入沙箱 HOME——违例时绕过链直跑 `node test/*.js`/裸探针才落到真实 HOME（**非产品缺陷**）；衍生观察留第 4 批裁决：测试单独运行缺省不落沙箱，属「测试基建裸奔面」，可考虑 `_preload` 判据或门禁提示。仓库工作区无残留。教训固化：本机检查止于 `node --check`/`bash -n`/纯静态门禁；第 7 条三处发现的修复保留（均为 CI 会同样判红的真缺陷），但**不得**以「本地已全绿」作为任何合入依据——最终裁决只看 PR #5 的 CI 矩阵。
 9. **CI 抓出的本批回归（B-11 windows 误杀，第 8 条口径的反向验证）**：PR #5 首推后 windows build job（`ci-core.sh` 内含全量 `npm test`）的 `upgrade-test` U2/U3 **确定性判红**（runs 14–17 四连红，linux/mac/ubuntu-test 全绿）。首轮日志无错误正文 → 按第 8 条口径**未本机重跑**，而是在 U2/U3 失败分支补 `[U2-diag]/[U3-diag]` 诊断输出（`lastError`/`rolledBack`/`logTail`，run 17 抓到）→ 定位为 `runNpmInstall` 报「commandTemplate 替换后含禁用字符: `D:\a\...\test\fake-npm.js`」：B-11 的 `BAD_ARGV_CHAR_RE` 禁用集含 `\\`，把 win32 盘符绝对路径整体误杀——**修复自身引入的跨平台缺陷**，曾违例本机跑过 9 遍全绿也零证明力，与第 8 条「本机绿灯对 win 语义零证明力」互为实证。修复：`WIN_DRIVE_ABS_RE` 仅对**完整匹配** `X:\...` 形态的 argv 项豁免（夹带 `;`/引号/`$`/空白/相对形态/`D:/` 正斜杠均不豁免），正反例并入 `npm-resolution-test` C-f。首版豁免夹具自身又误设期望（`D:\a\x\y` 连续分隔符断为应拒、run 18 红后 `2c832e3` 已翻正；拆逐例时又把 `C:rel\path` 误标为放行——均为**产品对、断言错**：豁免判据是 `X:\...` 盘符绝对**形态**，不做路径规范化也不豁免 drive-relative）→ run 18/20/21 三轮同条判红。关键取证改造（`8b6dafb`）：多子句 `&&` 串一条 check 时 CI 只报条名不报子句（run 20 因此白跑一轮），拆为 11 条逐例断言 + `BAD/WIN/gate` 三值回显后，run 21 一轮即精确定位唯一错例并翻正（`48cd8e9`→`8b6dafb` 链）。过程教训×2：① 错误正文经 `/native/status` `lastError` 本已可查，是诊断断言未打印导致两轮盲等——错误透出的验收价值再次确认（同 §B-22 裁决轴）；② 断言粒度即取证粒度——**门禁类多子句断言必须逐例独立 + 判据值回显**，这是本条三轮红换来的可复用纪律。
 
+## H. 第 4 批裁决与修复登记（C 类 P2 全量 + §E.1/§E.2/§E.4 立项收口）
+
+- **分支 / 提交**：`fix/audit-batch4-c-e` —— A 组 `1647225`、B 组 `f84e2ea`、C 组 `371a737`、D 组 `58fcb58`、CI 红因 `241446d`、E 组 `06162f8`、F 组 `bfe782c`。
+- **验证口径**：与 §G 相同——本机只 `node --check` / `bash -n` / 纯静态判据探针（一次性脚本，跑完即删），运行时裁判唯一是 CI 四平台矩阵。
+- **测试并入**：断言全部并入既有入链文件，`package.json#scripts.test` 链（129 文件 / 7899 字符）**零新增、零增长**；UI 侧由 CI `[1/5] 前端门禁` 跑 vitest。
+
+### H-0 编号消歧（必读，本批踩过一次歧义）
+
+本报告与代码注释里同时存在三套 `E-*`，**互不相关**：
+
+| 写法 | 含义 | 出现处 |
+|---|---|---|
+| `§E.1 … §E.4`（代码里常简写 `E-1…E-4`） | 本报告 **E 节跨域立项**（原子写单源 / 文档化门禁 / 意图轴 / 输入字符集） | J-n·J-o·J-p、`util/fs.js`、`util/input.js`、`glibc-gate-test`、ACCEPTANCE-STANDARD §7–§9 |
+| `发布条 N` / `UI 条 N` | 第 4 批 E 组 = §C「发布/UI」六条（workflow 供应链 / glibc 落点 / README 措辞 / 兜底④ / 200 假成功 / 轮询与桥） | `build.yml:20`、`ci-core.sh [3.5/5]`、`release.js`、`dist.js`、`ui/**`、J-l·J-m |
+| `E2E-N` | `shell-watchdog-e2e-test.js` 的端到端用例序号 | 该文件与 build.yml 的失败示例注释 |
+
+历史违例：commit `06162f8` 的标题写「发布链 E-1…E-4」，与同批 F 组收口的 §E.1/§E.2/§E.4 撞名（本段即为此登记）。**处置**：把发布/UI 轴的字面标签统一改为 `发布条 N` / `UI 条 N`（2026-09-20 已全量改标，涉及 `build.yml`、`release.js`、`RELEASE-CHANNEL-CONTRACT`、`dist.js`、`ui/**`、`round8-fixes-test` J-l/J-m、`workflow-parse-test`、`release-channel-test`、`kernel-update-single-writer-test`、README、CROSS-PLATFORM），立项轴继续写 `§E.N`。
+
+### H-1 API/安全域（C-1…C-9）
+
+| # | 裁决 | 修复锚点 | 测试/门禁 |
+|---|---|---|---|
+| C-1 | 确认缺陷（缺 Host 时整块跳过 → 两闸同时归零） | `api/security.js` `originAllowed`：Host 缺失即 fail-closed 拒绝 | `defects-batch-f-test`（K6-a 含反向：合法 Host 放行） |
+| C-2 | 裁决=**保持现状并钉死**（现代浏览器对 POST 一律发 Origin；不放宽为「无 Origin 即放行」） | `api/security.js` 注释登记裁决 + 判据 | `defects-batch-f-test` |
+| C-3 | 确认缺陷（令牌无长度下限、门卫凭据可无限爆破、WS 升级旁路） | `shared/credential.js` `remoteTokenStrength`（<8 拒，单一事实源；**批 4 二次改判**：原住 `relay/core.js` 被实例域跨域 require，触发 DS-G1，见 §H-7-17）+ `relay/core.js` `backoffGate` 纯函数（计时账本由调用方持有）；`domains/instance/ops.js` 三点写入口前置校验；`relay/proxy.js` per-IP 账本（60s 窗口 ≥10 次 → 429 + Retry-After）；`relay/tunnel.js` WS 升级同闸（`gateWaitMs`） | `lan-access-boundary-test` + `round13-router-relay-gaps-test`；UI 强度提示 |
+| C-4 | 确认缺陷（门卫令牌进上游请求行 + 凭证响应可被缓存） | `relay/core.js` 转发路径剥离 `token=`；`relay/proxy.js` 401/302/429 统一 `no-store` | `relay-dshauth-test`（A 组） |
+| C-5 | 确认缺陷（`body += d` 逐块隐式解码，跨块多字节损坏；上限按字符数可撑内存） | `api/transport/body.js` 改 Buffer 累积 + end 一次性 utf8 + **按字节**计上限 | `core-test` |
+| C-6 | 确认缺陷 | `api/domains/instances.js` `/open` 303 的 Cookie 补 `SameSite=Strict`（跨端口共享是设计意图，跨站不是） | `kernel-daemon-contract-test` |
+| C-7 | 确认缺陷（两份壳来源判定，server 侧更宽含 `*.tauri.localhost` 通配） | 收敛 `api/security.js` `isShellOrigin` 为单一事实源，`transport/server.js` CORS 白名单复用 | `core-test` + `defects-batch-f-test` |
+| C-8 | 确认缺陷（`registryOriginViolation` 只过 origin 形态，可指回环/元数据地址） | `platform/distribution/policies.js` 复用 `shared/ip` 的 `isPrivateHostLiteral` 分级；`registry.js:221` 写入口闸。**CI 首抓真回归**：早退分支把 `state.registryConfig.mode` 改了（rc 是别名不是副本）→ `241446d` 改副本、只有全闸通过才回写 | `round8-fixes-test`（C-8 早退零改动，:351 段） |
+| C-9（=B-22c） | 确认缺陷（非 EADDRINUSE 错误停在静默分支） | `app/assembly/api-rebind.js:27` 按可重试性分类：`EADDRINUSE/EADDRNOTAVAIL` 进快慢重试环，`EACCES` → `api_offline` 明确下线并留痕 | `round8-fixes-test` + UI `api_offline` 文案 |
+
+### H-2 令牌域（§C 令牌条 2…5；条 1「落盘点不唯一」归 §E.1，见 H-6）
+
+| # | 裁决 | 修复锚点 | 测试/门禁 |
+|---|---|---|---|
+| 条2 | 确认缺陷（跨进程轮转竞态） | `platform/service/token/persist.js` `rotateByBackup`：改「**原子 rename 抢占**进备份槽」；rename 失败降级为复制+截断（窗口更小但**不为零**，注释如实登记） | `round13-discipline-gaps-test`（③ 组） |
+| 条3 | 确认缺陷（TK-3 旁路：未 attach 的隐式源绕过 kind 闸） | `token/pool.js` `feedLine`：隐式源必须过与 attach **同一** kind 登记闸，推断不出/未登记一律拒入池 | `token-boundary-test`（夹具改走合规分类——旧夹具实为依赖旁路） |
+| 条4 | 确认缺陷（journal 同步 exec 冻结心跳 5s） | `util/exec.js` 新增 `runOutAsync`（沿用有界纪律）；`token/capture.js` `captureOnce` 收窄为 stdout/文件两档（同步零外进程），`captureJournal` 异步发射 | `core-test` + G9 门禁（`exec-bounded-gate-test`） |
+| 条5 | 确认缺陷（门卫令牌被当会话 cookie 长期驻留） | `relay/core.js` `lanGateCookieValue`：cookie 存 `sha256(salt\|token)`（salt 每 relay 进程随机），令牌原文只容 `?token=` 一次性出示；HTTP 与 WS 两路同闸 → 重启/换令牌即会话全失效 | `relay-dshauth-test`；DSH-TOKEN-CONTRACT §1 #7 |
+
+### H-3 平台层（§C 平台条 1…7）
+
+| # | 裁决 | 修复锚点 | 测试/门禁 |
+|---|---|---|---|
+| 条1 | 确认缺陷（写放大：每行/每事件 stat + meta 全量重写） | `platform/service/log/log.js` `Rotator`：首写 stat + 字节记账（每 64 行回读真值防多写者漂移，异常即作废账本）；`log/events.js` 估算越阈才真 stat 复核，meta 每 32 seq 落盘且轮转即时落，构造期 seq 取 `max(meta, 文件末行)` | `core-test` |
+| 条2 | 确认缺陷（`reclaimByCmdMark` 空 cfg 取消过滤 → 误杀） | `platform/service/ports/probe.js:57` 入口双闸（cmdMark/configPath 任一为空即 0 回收，fail-closed） | `adopt-token-reclaim-test` |
+| 条3 | 确认缺陷（候选不判 X_OK，0644 半截安装被当「已安装」） | `platform/os/exec-path.js` `isExecutableFile`（POSIX 判 X_OK、win32 免判），`firstExecutable`/envVar/`pidlookup.ss` 绝对路径候选全部改用 | `platform-layer-portability-test`（X-9） |
+| 条4 | 确认缺陷（Node 的 spawn ENOENT 是异步事件，旧递归降级返回值被丢弃 → 首候选固化死 bin） | `platform/os/browser.js` `launchIsolated`：spawn **前**可用性预检 + chain 预过滤 + `opts.binAvailable` 注入点 | `platform-audit-fixes-test`/`core-test` |
+| 条5 | 确认缺陷（不可产标宿主同步抛穿透 `Promise.all`；`platformTag` 空值把字面量 `undefined` 拼进 URL 恒 404） | `distribution/registry.js` `probeRegistry` 加 `matrix.isSupported` 闸 + try/catch；`resolveProbe` 补 platformTag 空值守卫（`platformTag` 本体一字不动，P-6 钉） | `round13-contract-reload-test` |
+| 条6 | 确认缺陷（异步 exec 面是 K-W2 盲区，Windows 弹黑框） | `util/exec.js` `runAsync/runOutAsync` 固定 `windowsHide`；收编 `process.killTree` 的 taskkill、`pkg-cache` 的 npx 预取、`versions` 的 git fetch；K-W2 判据扩到 spawn/spawnSync/execFile/execFileSync/execSync/裸 exec 六词形 + 双豁免 | `no-console-window-gate-test`（W1 措辞同步纠偏） |
+| 条7 | 契约改判（「dist-tags ∪ versions 全量最高」把他人杂 tag 当候选） | `distribution/release.js` 第三方选版改判 **latest 优先**、兜底只看 versions；`fetchNpmLatest` 注释同步；RELEASE-CHANNEL-CONTRACT 新增第三方段落（此前契约未写明） | `release-channel-test`（RC-3 期望随改判翻正 + 反向例） |
+
+### H-4 domains + app 生命周期（D-1…D-13）
+
+| # | 裁决 | 修复锚点 | 测试/门禁 |
+|---|---|---|---|
+| D-1 | 确认缺陷（inflight 计数泄漏 → 恒判「不可停」） | `router/handlers/forward.js`：begin 之后任何跳出统一走 `endAttempt` 幂等收口 | `router-circuit-breaker-test` |
+| D-2 | **审计原述不成立**（「壳的 desired 未纳管」——MANAGED_KINDS 本就无壳条目，`_shellExitIntended()` 已单源） | 改为在 ARCHITECTURE-CONTRACT §6 划**适用边界**，并明令**禁止**为壳补登目录条目（那会造出同一意图的第二事实源 = 9-18 根因形态） | 文档 + `session-lifecycle-test` 现状断言 |
+| D-3 | 确认缺陷（上游失败只置 `pid=null` → 唯一 kill 路径恒不可达，进程残留占端口） | `router/handlers/forward.js:147`：先 `stopInstance` 再清 pid | `router-circuit-breaker-test` |
+| D-4 | 确认缺陷（代理实例日志无轮转且默认 0644，内含启动令牌 URL） | `router/providers/probe.js:86`：落盘改接平台层 `log.js` `Rotator`（2MB 轮转、首建 0600） | `router-circuit-breaker-test` |
+| D-5 | 确认缺陷（relay HTML 缓冲无界） | `relay/proxy.js:101`：polyfill 注入加全量缓冲上限，超限按流透传 | `round13-router-relay-gaps-test` |
+| D-6 | 确认缺陷（`listening !== inst.pid` 等值判据在 npx --yes 兜底形态恒不成立 → 误判孤儿） | `router/providers/probe.js:185` `monitorLifecycle`：改同进程组判定（/proc pgrp，comm 以最后 `") "` 为锚；win32 与读失败一律 false，交 HTTP 探活兜底，不静默放行外部占用） | `daemon-lifecycle-test` |
+| D-7 | 契约裁决（SSOT 落 GUARD-DOMAIN-MODEL §6.3；**不**广域扫 `src/domains`——域自治对象改自己的状态机是契约要求的形态） | ML-2/ML-3「只减不增」棘轮，基线 14 处 / 5 文件（含 `state/fields.js` 合法出口） | `guard-domain-model-gate-test` |
+| D-8 | 确认缺陷（实然回写权威 desired，违铁律 1） | `app/control/specs.js:73` `upsert(spec,{keepDesired})` **只作用 update 分支**（register 必须带 desired）；本轮收口心跳同步 + 启动对齐两条观测推导路径（后者：load() 后的 BACKOFF 快照会抹掉用户运行意图）。域 B 的 desired 来自 config 业务条件，**不加**旗标 | `app-ctor-injection-test`（假件 `fakeRegistry.update` 同步改成语义对齐：值为 undefined 的键不改写） |
+| D-9 | 确认缺陷（`_recordManifest(target, [])`：`Array.isArray([])` 为真 ⇒ 继承分支不触发，上一代 dataPaths 认领被抹成空 → 卸载清理静默失效） | 改传 `undefined` | `uninstall-timeout-behavior-test` + `native-dsh-binding-test` |
+| D-10 | 确认缺陷（守卫被 8s 强杀后 detached npm 继续写 node_modules = 并发写入者，9-13 半成品同族） | `platform/distribution` 记在途句柄 + `killInflightNpm()`；`guard-shutdown` / `session-exit` 两条关停路径在**同步段**先切断并落 aborted + warn + 事件 | `graceful-shutdown-test`（⚠ windows tmpdir 短名含 `~` 风险见 H-7） |
+| D-11 | 确认缺陷（只凭 cmdline 相似认领 → 双管家互杀） | `app/main/signals.js` `_mainOwnerFile`/`_writeMainOwner`：与 daemon 身份/锁同址落 `dsh-main.owner.json`（0600、原子写）；**凭据只做否决**（他主且 guardPid 存活才拒），他主已死/pid 不匹配一律不否决（否则一次崩溃永久封死恢复）；契约新增 N6 | `adopt-token-reclaim-test`（D-11 全链） |
+| D-12 | 确认缺陷（`writeFileSync` 覆盖=后写者静默抢锁；pid 从不回读=对已死持有者持续授权；无条件 unlink=可删别人的新锁） | `app/daemons/identity.js`：`'wx'` 原子取锁 + 持有者存活检测（ESRCH 清残留 / EPERM 视为存活）+ 释放只删自己的锁 | `daemon-lifecycle-test` |
+| D-13 | 确认缺陷（宽作用域静默 catch 无痕降级） | 收口 3 处：`state/store.js` `loadState` 拆「读/恢复」两段（首启 ENOENT 安静、恢复失败留痕）、`daemons/process.js` `_writeIdentity` warn+事件、`audit/orphan-scan` 两段扫描失败可见 | `app-this-ratchet-gate-test`（SC-1…SC-3 棘轮，基线 8 + 反向样例证明对窄/留痕形态不误报） |
+
+### H-5 发布链 + UI（发布条 1…4 / UI 条 5…6）
+
+| # | 裁决 | 修复锚点 | 测试/门禁 |
+|---|---|---|---|
+| 发布条1 | 确认缺陷（workflow 无顶层 permissions、actions 未钉 SHA、无 concurrency） | `.github/workflows/build.yml:20` 顶层 `contents: read` + concurrency（**tag 不取消**）+ 10 处 `uses` 全钉 SHA | `workflow-parse-test` W5（九条静态门禁） |
+| 发布条2 | 确认缺陷 = §E.2 案例（注释声称产线校验 glibc，实际 CI 零调用） | `release/scripts/ci-core.sh` 新增 `[3.5/5]` 条件步（ELF 判定 + **无对象时如实留痕**），删除 build.yml 里虚构步骤名 | `glibc-gate-test`（§E.2 跨平台静态断言，正反例） |
+| 发布条3 | 确认缺陷（发布子包 README 违 RC-1「按全量最高版本选版」） | README 措辞改为真实通道链；4 处「取全量最高」失实注释按条 7 改判归正 | `release-channel-test` + 文档 |
+| 发布条4 | 契约改判（兜底④可把正式版顶替成我们的 BETA） | `distribution/release.js` `isOurBetaRelease` 在 ④ 排除 `-BETA.`；契约 §3 ④/⑤ 同步改判并标注壳仓跟进项 | `release-channel-test`（④ 块重写：含 `-RC.n` 不误伤、第三方不适用） |
+| UI 条5 | 确认缺陷（后端有拒因仍回 200 → 前端弹「已保存」） | `api/domains/dist.js:75` 有拒因即 400 + `ok:false`；`ui/services/supervisor/client.ts` `failureFromResult` 单源判 2xx 里的假成功，`run()` 消费 | `round8-fixes-test` J-l + `client.test.ts`（vitest） |
+| UI 条6 | 确认缺陷（NaN 游标永久停摆、setInterval 无退避、桥不校验来源） | `ui/services/supervisor/polling.ts`：`safeSeq` 写入前归一化、自排 setTimeout 退避（BASE 2s、`2^(failStreak-1)`、封顶 30s、健康成功清零）、`epoch` 断在途轮次；`kernelUpdateBridge.ts` 补 `ev.source === window.parent`（origin 白名单不可用：壳主帧是 Tauri 自定义协议） | `round8-fixes-test` J-m、`kernel-update-single-writer-test` SW-8、`polling.test.ts`；README/ui FRAMEWORK.md 两处失实描述归正 |
+
+### H-6 跨域立项收口（§E.1 / §E.2 / §E.4 + B-25 残留）
+
+| # | 裁决 | 修复锚点 | 测试/门禁 |
+|---|---|---|---|
+| §E.1 | 确认缺陷，且**规模远大于原述**（原述「至少 4 处」；实测迁移前 `src/` 下 **28 个文件**自带 tmp+rename，其中 **25 个用固定 `file + '.tmp'` 名**，只有 8 个含 pid） | `platform/util/fs.js` `writeAtomic` 单源：tmp = `fp + '.tmp.' + pid + '.' + Date.now()`、mode 默认 0600、rename 后二次 chmod、失败 truncate 后**抛出**；**26 个文件**迁移。显式豁免 3 处（单源自身、`token/persist.js` 轮转追加、`os/file-protect.js` 私有写），豁免项仍要求 tmp 名含 pid | `round8-fixes-test` **J-n**（8 条：旁路扫描 / 豁免集合相等 / 覆盖面 >=25 / 代表点 / 反向 LEGACY 样例）+ `frp-resilience-test` R5-d…d4 |
+| §E.2 | 制度化为规则（不改运行时行为） | ACCEPTANCE-STANDARD **§7** + 四个静态门禁（glibc / token-contract / no-console-window / exec-bounded）头注各登记编号化「覆盖缺口」清单 | `round8-fixes-test` **J-o**（缺口块存在 + 无块/空壳标题反向例） |
+| §E.4 | 确认缺陷 + **抓出真实错账**（账本 model 键来自请求体，`obj['__proto__'] = {...}` 走 [[Prototype]] setter → 桶从聚合视图与落盘中静默消失，后续键查找走原型链；不污染全局 Object.prototype，但错账不报错） | `platform/util/input.js` 单源四把尺子（`argvViolation`/`pkgNameViolation`/`unitNameViolation`/`ledgerKey`）；`install.js`/`os/service.js` 改取同名导出（调用点字面形态不变）；`router/store/usage.js` `_modelKey` → `ledgerKey`（违规键折进 `(other)`） | `round8-fixes-test` **J-p**（唯一定义处扫描 + 对象同一性 + mkdtemp 造第二把尺子反向例 + 14 行行为表）、`router-test`（B19 后 6b2 含原型未改写与 `naive['__proto__']` 破坏真实性反向）、`npm-resolution-test` C-f（字面判据拆「调用点问闸 + 单源存在」两条） |
+| B-25 残留 | §G-6-1 挂账收口（`cat > "$f"` 先截断后等数据 → 空 stdin 落 0 字节并把 status 置 active） | `release/scripts/cred.sh` put 分支：先 `umask 077` 读到唯一临时文件 → 校验非空（含纯空白）→ 才写穿目标；失败/空输入都在动目标之前退出，原文件与 index 不变。备份仍为**尽力安全网**（warn 不硬闸） | 本机 `bash -n` 通过；行为级由 CI 覆盖（见 H-8 第 5 条） |
+
+### H-7 本批 CI 取证与待裁决项
+
+1. **`241446d` 是本批能合入的前提**：runs `35471888496` / `35472954250` / `35474631569` / `35478336653` 四连红的**全链唯一 FAIL** 都是 `round8-fixes-test.js:351` 的「C-8 manual+元数据地址 → mode 未被改」。它是真回归（别名 vs 副本），不是假红。
+2. **链位序教训（登记为纪律）**：`round8-fixes-test` 在 `scripts.test` 第 58/129 位，`&&` 链在此中断 → **第 4 批 B/C/D 三组并入 59–129 位入链文件的断言此前一次都没被 CI 执行过**（D-8、ML-2/ML-3、SC-1…3 等）。一条早退红的代价不是 1 个用例，而是 71 个文件的覆盖面。
+3. **D-10 windows tmpdir `~` 风险 —— run `35483224735` 已坐实**（原为挂账，见 H-7-6）：`npm test` 是一条 `&&` 链，run `35480363198` 各 job 都在链首红处中断（windows 停在 #28、其余停在 #31），所以 #46 的 D-10 行为块当时一次都没执行；修掉那两条红后链推进，windows 的 D-10 四条即全红，回显直说拒绝原因：`commandTemplate 替换后含禁用字符 … C:\<runner 账号短名>\AppData\Local\Temp\p1f-…\npm-inflight-hang.js`。**教训登记**：挂账的风险项要按「下一个 run 见分晓」排进裁决，不要因为「日志里没有它的 FAIL」就当已证伪。
+4. **E-1 迁移的连带改判**：`provider-gateway-gate-test` PG-7 与 `npm-resolution-test` C-f 都曾因「判据钉住旧实现字面量」而在搬家后**静默抓空**——已改为「调用点问闸 + 单源存在 + 反向样本命中」三段式，并把「搬家即空转」写进两个门禁的缺口清单。
+5. **run `35480363198`（HEAD `06162f8`）四平台 + test job 全红的唯一红因取证**（各 job 只有一条 FAIL，属**平台分裂**而非同一缺陷）：
+   - `test/daemon-lifecycle-test.js` D-12 反向例（test job + ubuntu + 两个 macos）：断言「锁不存在 → 取锁失败」。定性为**产品对、断言错**——`identity.js` 用 `fs.openSync(p,'wx')`，父目录存在而锁不存在时**首次创建必成功**（同文件 :151 正例早已断言），该期望与自家正例互斥。修法：反向例改指真正的失败路径「父目录缺失 → ENOENT ≠ EEXIST → 判 false 且不建锁、不补目录」，并按 §G-6-9 逐例拆分 + 判据回显（null 路径、失败不建锁、失败不建目录、释放不存在锁 no-op 四条）。
+   - `test/adopt-token-reclaim-test.js` D-11「落盘权限 0600」（windows 独有，实测 `666`）：定性为**夹具缺平台门控**——Windows 的 `chmod` 只切换只读位，POSIX mode 语义不成立，产品侧 `writeAtomic` 的显式 `chmodSync(0o600)` 在 POSIX 上仍正确。修法按既有先例（`round13-discipline-gaps-test` ③、`install-id-test` ID-3b、`frp-resilience-test` R5-b）：POSIX 做真实行为断言，win32 打显式 `SKIP` 行，不静默变绿。
+   - **纪律提取**：凡「权限位 / mode」断言必须平台自感知；凡「反向例」必须在写完后确认它与同文件正例不互斥——本机只读代码推不出来，CI 是唯一裁判。
+6. **run `35483224735`（HEAD `4e83355`）的第二轮红因取证**（链推进到 #63 后新暴露三处；D-11/D-12 两条已按 5 修好不再复现）：
+   - `router-circuit-breaker-test` **D-1b**（四平台 + test job 同点红）：判据 `endInflight(acc, prov)` 全文计数期望 3，实得 4。定性为**判据自命中**——第 4 处是 `function endInflight(acc, prov) {` 这行**声明**（forward.js:36），产品侧三处结束点（finishOK / finishAborted / 非流式体）从未变多。修法：计数前先摘掉声明，并回显「调用 N 处 / 声明 M 处」两个判据值，使「声明与调用同形」这一类干扰今后不可能静默。
+   - 同文件 **D-3 反向**（同上四平台）：夹具 `restartInstance() { restarts++; }` / `markInstanceNetFail() { netFails++; }` 对 **const 数组**自增 → 抛 TypeError → 被产品侧 `try {} catch {}` 吞掉 → 计数恒 0。定性为**夹具恒假、判据没有牙**（断言的是 `restarts === 1`，而 state() 取的是 `.length`，两侧都拿不到真值），产品逻辑本身正确（forward.js:139-141 的超时分支确实存在）。修法：改 push（同文件 :112 既有范式），并在注释里留下「为何原先恒 0」。**教训**：桩件的累加器要么写 `arr.push(x)` 要么写 `let n = 0; n++`，混用即恒假；且**产品侧的 try/catch 会吞掉夹具异常**，所以「PASS 数符合预期」不构成证据，必须看回显值。
+   - `uninstall-timeout-behavior-test` **D-10**（windows 独有，四条同红）：见本节前第 3 条 —— 夹具把临时脚本路径塞进 `commandTemplate`，被 B11 的 fail-closed 字符闸拒（win runner tmpdir 为 8.3 短名含 `~`）。修法：假 npm 改复用仓库内夹具 `test/fake-npm.js` 的新增 `FAKE_MODE=hang` 模式，pid 文件路径经 `FAKE_PID_FILE` 环境变量传入，argv 只留仓库内路径（POSIX 纯路径、win 盘符绝对路径均由 `WIN_DRIVE_ABS_RE` 豁免，本机以 `argvViolation()` 逐例验证：新路径 PASS / 旧 tmp 路径 REJECT）。**产品不改**：B11 的「宁误杀不漏放」是有意裁决，改判属放宽 fail-closed 闸门，需单独立项。
+   - **顺带修掉的 Windows 产品缺陷（同一取证带出）**：`distribution/install.js` 的在途 npm 中止原本是 `process.kill(-pid)` + `child.kill` 两段兜底 —— Windows 无进程组语义，负 pid 必抛、只杀得到 `npm.cmd` 那层壳，真正写 `node_modules`/全局前缀的 node 孙进程照旧存活（正是 D-10 要消灭的对象）。现改调平台层 `os/process.killTree(pid,'SIGKILL',cb,{ownGroup:true})`（B13 已给它 `taskkill /T /F`），并保留 `child.kill` 作同步兜底；新增结构闸：`install.js` 源码（剥注释）必须含 `procOS.killTree(child.pid` 且**不得**再有 `process.kill(-`。
+7. **run `35483861183`（HEAD `74ba817`）—— 五个 job 只剩一条红，且是我自己带出的**：`round8-fixes-test` J-i 的对照例
+   `FAIL 对照：dist 的 npm 安装早已用 detached + -pid ← 是`（链位 #58）。定性为**改判连带**：H-7-6 把 `install.js`
+   的负 pid 收口到平台层 `killTree` 后，这条拿 dist 当「既有正确做法」样本的对照判据失去了第二个从句（它钉的正是被删掉的那行字面量）——
+   **产品无缺陷、对照样本失效**。修法：拆成两条独立判据并回显判据值（「dist 自成进程组（detached）」/「dist 的杀树走
+   `platform/os/process.killTree` 单源」），「不得再自写负 pid」的反向职责由 D-10 结构闸承担。
+   **纪律（登记为改判必查项）**：跨文件**对照例**的价值就是「那个模块没变」；动任何被当作样本的模块，必须同批改完
+   以它为锚的对照判据，否则假红会伪装成「新改动有罪」并再吃掉一个四平台 run。
+8. **⚠ 预防性修复（静态推演）→ 已被 run `35487214678` 证伪，见 §H-7-15**：`platform-layer-portability-test` X-6 的「icacls 不可用 → mode=none」
+   两例，前提只在**非 win32 宿主**成立（推演依据：真 Windows 的 `icacls.exe` 在 System32，`CreateProcess` 清空 PATH 也会命中系统目录），
+   在 windows job 必红（链位 #102，本批此前从未执行到）。已改宿主自感知：POSIX 宿主补一条前提例（防判据空转）后照旧验 `none`，
+   win32 宿主显式 SKIP 并改验「icacls 可用 → 绝不谎报 none」；缺失路径目标不再硬编码 `/tmp`。此项属**盲区预防**，
+   不构成证据——下一 run 才是裁决。
+   **裁决结果（2026-09-20）**：推演的那半边**错了**。windows job 里 `hasIcacls()` 实测 `false`（清空 PATH 的夹具形态下 `icacls` 未被解析到），
+   于是「win32 宿主必有 icacls」这一**前提**不成立，我据此立的 win32 分支判据反过来判红。当时留的 SKIP 文案
+   （「win32 宿主 System32 必有 icacls」）本身就是会造成错误引导的文档，已随 §H-7-15 一并删除。
+9. **run `35484641560`（HEAD `70c25a7`）—— 链推进到 #63，五个 job 同点红（平台无关，故是一次干净的定性）**：
+   `FAIL C-3 行为：4 位令牌 patch main → 拒且未再落盘（written 仍 1） ← {"weak":{"ok":false,"error":"远程访问令牌（remoteToken）至少 8 位"},"written":2}`。
+   回显本身就把责任分清：**产品判得对**（弱令牌 `ok:false` + 精确错误），**夹具的账算错**——`written` 是同一夹具的
+   绝对计数，而 C-3 之前那句 `① 行为：关闭 frp 不被闸拦` 走的正是合法写路径（`off.ok===true`），到 C-3 时已落盘 2 次；
+   断言把「前面成功了几次」和「这次不该写」混为一个常量期望。修法（`round13-router-relay-gaps-test.js`）：
+   ① `off` 补一条「关闭 frp 属合法写」正例，让这次落盘显式入账；② C-3 改**相对**断言（调用前后 `written.length` 不变），
+   并按 §G-6-9 拆成「写入口即拒」与「被拒后未再多落一次盘」两条、各自回显。
+   **纪律**：同一夹具里的绝对计数断言，等价于把「此前所有用例的写入次数」隐式钉进判据——新增/调整任何一条前置用例都会
+   误伤它。计数类判据一律写成**相对增量**（before/after 回显），只有夹具首条才允许 `=== 0/1`。
+10. **静态确证的第 4 条平台分裂红（本机以纯函数探针复现，不必等 CI）**：`platform-layer-portability-test` X-9 条 4
+    （链位 #102）原判据 `r1.bin === plan.bin`，但产品 `launchIsolated` 的上报形态**按分支不同**：single 报 `plan.label`、
+    chain 才报 `c.bin`（`browser.js:148` vs `:157`）。探针三端同跑：linux `expected=firefox` 实报 `firefox`（PASS），
+    darwin `expected=open` 实报 `Google Chrome`（**FAIL**），win32 `expected=explorer.exe` 实报 `explorer`（**FAIL**）——
+    即该例在两个 macOS job + windows job 必红，纯属「判据把 linux 的巧合当普适」。且它只注入了 `binAvailable`、
+    未注入 spawn，意味着 darwin/win32 宿主上**会在 CI 机器里真起一次浏览器**（正是该文件头注声称要避免的事）。
+    修法：① 产品侧给 `launchIsolated` 加 `opts.spawn` 测试缝（缺省仍为 `_spawnDetached`），并把 chain 分支的
+    spawn+error+exit+unref 序列收进同一函数（`c.watch ? onExit : undefined` 保持原语义，删掉一份重复实现）；
+    ② 判据改断言「**被真 spawn 的**是哪个 bin」+「返回值与计划一致（single 报 label / chain 报 bin）」，并补两条反向：
+    预检不过 / 非法 URL 时 spawn 计数**不再增长**（把「不 spawn 必死的 bin」从注释变成可判事实）。
+    与 §H-7-8 的区别要讲清：X-6 是**推演**（未执行），X-9 是**已复现**——探针只调用纯规划函数与注入替身，
+    未跑测试套件，仍守 §0 的本机执行上限。
+11. **run `35485246398`（HEAD `605876a`）—— 链推进到 #74，这次不是判红而是崩溃**：日志里**一条 `FAIL` 都没有**，
+    test job 直接抛 `TypeError: Cannot read properties of undefined (reading 'desired')` at `app-ctor-injection-test.js:248`。
+    定性：**夹具观测了错误的对象**——D-8 块另造了一个 `const d8 = fakeRegistry()`，而它调用的 `control` 的
+    `getManagedObjects` 注入的是**上面那个 `reg`**，于是 `control.upsert()` 写进 `reg`、`d8` 恒空，
+    `d8.get('d8').desired` 解引用 undefined 崩掉整份文件（#75–#129 又全数未执行）。
+    同文件的 `d8b` 块是**正确写法**（为它单造 ctlBoot 并把 `getManagedObjects` 指向 `d8b`），两处对照即见根因。
+    修法：① `const d8 = reg`（与被测对象的注入源同一引用）；② 判据取值一律经 `ent(id)` 落地后再读，
+    未登记只判红不抛，并补一条「首登确实落到 control 的注册表」前提例——把「接线是否成立」本身变成可判事实；
+    ③ 顺带按 §G-6-9 把 `d8b` 块里两条二合一判据拆开（name 刷新 / desired 不被顺手改写 / router 与 lan 的 config 驱动各一条）。
+    **纪律（比 §H-7-9 更一般）**：崩溃的代价高于判红——判红只吃掉一条断言，崩溃吃掉**整份文件 + 其后所有文件**的覆盖面。
+    夹具里任何 `x.get(k).field` 形态的直接解引用都必须在写之前问一句「这个 key 是谁放进去的、放的对象是不是我正在读的对象」。
+    本机为何没发现：只读源码看不出注入图的同一性（`reg` 与 `d8` 是两个 Map 这件事需要跑起来才暴露），这正是运行时裁判只能由 CI 承担的原因。
+12. **run `35485774896`（HEAD `05e2286`）—— 链推进到 #77，五个 job 同点红（平台无关）**：
+    `FAIL C-3 backoffGate 达阈值窗口内 → waitMs=59000 ← {"waitMs":56000}`。回显把责任分清：**产品算得对**
+    （`core.js:210-221` 的 `waitMs = max(0, lockMs - (now - firstAt))`，输入 `firstAt=1000, now=5000` 即已耗 4000ms、剩余 56000ms），
+    **夹具的算术错**——期望值 `59000` 是把 `now=5000` 当成了「已耗时长」（`60000-1000`），而形参语义是**时刻**不是时长。
+    修法：① 该例期望改 `56000`；② 补一条 `elapsed=0`（`now === firstAt`）的配对例，期望整锁时长 `60000`——
+    这一条把「剩余窗口」与「已耗时长」彻底分开，两者再被混用必红其一；③ 用例标签显式标注已耗时（「达阈值窗口内（已耗 4000ms）」），
+    回显附带输入 JSON，使重跑时不必翻源码即可复核。
+    **纪律**：时间类判据必须显式区分**时刻**（`now` / `firstAt`）与**时长**（`now - firstAt`），夹具注释里写清哪一个；
+    并且凡是「按经过时间线性递减」的量，必配一条 elapsed=0 的锚点例——只给中间值时，把时刻当时长、把时长当时刻两种错法都能自洽。
+    本机以 `/tmp` 一次性纯函数探针（只调用 `backoffGate`，不跑测试套件）逐例验过五行全 PASS 后才提交，探针同条命令即删。
+
+13. **run `35486316867`（HEAD `e55eddd`）—— 链推进到 #97，五个 job 同点红，且红在一条「从没跑过」的门禁上**：
+    `FAIL P-9 B25 备份失败不阻断 put（|| 警告分支）  <- ok`（`test/release-spec-consistency-test.js`，链位 #97）。
+    定性：**判据的夹具段恒空**。`const putSeg = cr.slice(cr.indexOf('B25（AUDIT'), cr.indexOf('umask 077'))`
+    —— 本批 B-25 收口在 put() 里新增了 `( umask 077; mkdir -p …; cat > "$TMP_IN" )` 读取段，它的位置**在 B25 注释之前**，
+    于是 slice 首末倒置、段长实测 **0**，任何正则对空串都是 false。产品侧 cred.sh 的 `|| echo 警告` 分支一直都在（判据打偏，不是缺陷）。
+    修法：end 锚点改为**从 start 向后找**（`cr.indexOf('umask 077', b25At)`），并补一条
+    「P-9 B25 前提：段锚点成立且非空」判据（回显 `start/end/段长`）——锚点顺序一旦回退要判红带证据，
+    而不是让下游判据静默抓空；本机探针验证：新锚点段长 1461、正则命中，旧锚点段长 0。
+    **纪律**：`slice(indexOf(A), indexOf(B))` 这种「双锚点取段」的判据，B 必须在 A 之后——同一字面量（这里是 `umask 077`）
+    在文件里出现多次时，裸 `indexOf(B)` 会取到前一个，段恒空且**症状伪装成「产品丢了某段代码」**。凡取段判据都要配一条段长前提例。
+    本轮**顺带的正向证据**（登记以免被下一轮的红覆盖）：#78–#96 共 19 个文件首次在四平台被执行且全绿，
+    含 #85 frp（R5-d 单源 writeAtomic 三段判据）、#88 glibc（E-2 跨平台静态断言）、#92/#93 等。
+14. **预清阶段拆掉的两颗雷（未经 CI 执行，按 §H-7-8 的口径如实标注为「本机复现 + 静态确证」）**：
+    - `kernel-daemon-contract-test` D-9（链位 #113）：**同步读异步事实**。夹具把 listen 错误挂在 `setImmediate` 上
+      （与真实 `http.Server` 一致），而断言在**同一 tick** 里就读 `ev`/`scheduled`，且文件尾的 `process.exit()`
+      会直接掐掉待执行的 immediate → 四条用例恒空恒红。且其中两条**期望本身错了**：产品对瞬时错误（EADDRINUSE/EADDRNOTAVAIL）
+      的前 10 次快重试是**有意不留事件**（只在降级到 30s 慢重试时落 `api_error`），原判据却要求首错即 `api_error`。
+      修法：块改异步（汇总与 `process.exit` 挂到 `run().then(finish, onThrow)`，抛错只吃掉一条 FAIL 而不带走 #114–#129）、
+      每条断言前 `await drain()` 跑干 immediate 队列、`setTimeout` 桩**随取随装、取完即卸**（`arm()`/`fire()` 各自成窗口；
+      窗口外装/卸会把产品真实排程漏记，也会把夹具自己的心跳误记成「产品排了重试」——本机探针实测踩过一次 `[300]`/`[400]`）、
+      重试环改为**手动拨表跑满 10 次**，从而把「第 11 次降级 30s + 留 api_error」「慢环遇退出意图即中止」这两条
+      原本无法观测的产品行为变成可判事实（本机探针 14 条全 PASS）。
+    - `release-spec-consistency-test` 即上一条 #97 的实红。
+    **纪律（§H-7-11 的时间维度推广）**：断言「某异步动作发生了没有」之前，必须先明确**它在哪一拍发生**并显式推进事件循环；
+    改写 `global.setTimeout`/`setInterval` 的夹具必须把桩窗口压到**只包住被测调用**，且块内的用例顺序不得依赖前一条遗留的排程。
+15. **run `35487214678`（HEAD `4f7b756`）—— 五 job 剩两处红，且 #78–#103 首次全绿**：链推进到 #104，
+    test job + ubuntu + 两个 macos 同点红在 `cross-platform-architecture-gate-test` **CP-1**，windows 独红在
+    `platform-layer-portability-test` **#102 的 X-6/X-9**（共 5 条 FAIL，同源于 2 处）。逐条定性：
+    - **CP-1（真违规，第 4 批 D 组带进来的）**：`src/domains/router/providers/probe.js:157` 的
+      `sameProcessGroup` 自带 `process.platform === 'win32'` 与 `/proc/<pid>/stat` 读取——`process.platform`
+      出现在 `src/domains/**` 即架构越界（CP-1 的立项理由：平台知识只允许一个家）。**不是**门禁过严，
+      也不是夹具失效：这条门禁绿了这么久，第一次响就是它该响的形态。修法按门禁自己的指引做——
+      实现下沉到 `platform/os/pidlookup/probe.js`（与 `isAlive`/`readCmdline` 同族，那里 `process.platform` 合法），
+      经 `pidlookup/index.js` 门面导出，业务域改调 `pidlook.sameProcessGroup(...)`；逐字搬运不改判据（macOS 无
+      `/proc` 仍走 catch 返回 false，与迁移前同形）。D-6 判据随之搬家：从平台文件取本体求值（注入 `fs`/`isWindows`
+      取代原 `fs`/`process`），并新增两条反向——「业务域不再自带该实现」「门面确实导出」；原 `pid=0/null` 二合一
+      按 §G-6-9 拆成两条。本机静态复扫 `src/`（`src/platform/**` 之外）违规计数 0。
+    - **X-6（§H-7-8 的推演前提被证伪）**：win32 分支以「清空 PATH 后 System32 仍会命中 icacls」为前提立判据，
+      windows job 回显直接给否：`{"mode":"none","reason":"icacls 不可用"}`。**产品侧无已证缺陷**——真正未证的是
+      「真实 PATH 下 windows 能否解析到 `icacls`」，而它若为假，意味着生产机上 ACL 收紧静默退化成 `none`，
+      属必须看见的事。修法：① 删除该 SKIP 文案（错误引导）；② `underFake` 增 `realPath` 选项（不清 PATH）；
+      ③ 探针带回 `runDetail('icacls', ['/?'])` 的 `{ok,code,timedOut,err,stderr}` 回显；④ 三条判据并把环境事实本身
+      立成判据（可用 / 可用⇒不谎报 none / 不可用⇒如实 none），使下一 run 无论朝哪边都有牙、且回显能分根因
+      （`err` 含 ENOENT = 解析问题；`code` 非 0 = `hasIcacls` 探测方式有产品缺陷）。
+    - **X-9 条 4（夹具与产品规划不同源，windows 4 条 FAIL 同根）**：产品 `launchIsolated` 内部自己调
+      `findChromeWin()`，GitHub windows runner 装了 Chrome → 计划是 `...chrome.exe`（label `chrome`），
+      而夹具按「无 chrome」算出 `explorer.exe`，注入的 `binAvailable` 对产品真正询问的 bin 恒 false →
+      **一个进程都不起**、`ok:false`，症状与「预检闸门失效」几乎同形（连带把累计 spawn 计数钉在 1 的两条反向例一起红）。
+      修法：给 `launchIsolated` 开 `opts.chromeBin` 注入缝（缺省仍为运行期探测，行为不变），夹具与产品显式共用同一份
+      `chromeBin` 输入，并新增**前提例**：回显「产品预检所问的 bin」==「夹具认定的候选」——把不同源从「像产品缺陷」
+      变成一条指名道姓的红。本机以注入替身跑通 Chrome 在/不在两种形态（含 win32 伪造平台），四断言全对。
+    - **正向证据**：本 run 里 #78–#103（含 #97 `release-spec-consistency`、#98–#101）在**全部** job 首次被 CI 执行且全绿。
+    **纪律（固化进 ACCEPTANCE-STANDARD §10 第 4、5 条）**：凡依赖宿主环境事实的判据，该事实本身必须是一条带回显的
+    判据而不是另一条的前提；凡夹具重算被测计划，计划的全部**输入**都要与产品同源。
+16. **run `35488336734`（HEAD `d669960`）—— CP-1 转绿、X-6 挂账坐实为「可用」，三处新红全是判据/文档侧**：
+    全仓唯一红点收敛到 3 条（各平台至多 2 条，且互为同一根因的重复行）。
+    - **X-9 条 4 前提例（我上一轮刚加的那条，判据自身错）**：回显
+      `产品问=["microsoft-edge",…,"firefox","xdg-open"] 夹具规划=firefox 形态=chain`。产品 chain 分支是
+      `plan.candidates.filter(c => avail(c.bin))`——**先问全部候选再挑第一个可用的**（`browser.js:154`），
+      故 `asked9[0] === wantSpawn` 只在「可达位恰好是第一个」时成立；linux/macos 宿主必红，windows（single 形）
+      反而绿。属**产品对、判据错**，且是我自己按「产品问的第一个 == 我规划的」这一**未成立的推断**写的判据。
+      修法：同源的正确表述是**序列逐位相同** —— `asked9.join('|') === 计划 bin 序列.join('|')`，与可达位在哪一格
+      无关；single/chain 两形同一条判据成立，回显同时带「产品问 / 计划 / 可达 / 形态」四项。
+      **教训并入 §10 第 5 条的推论**：写「同源」类判据时，先明确同源的是**输入**还是**输出序列**，
+      并且断言必须覆盖被测实现的全部分支形态（本例 chain 把 filter 的副作用暴露出来，而 single 不会）。
+    - **`no-dev-path`（#110）首次被 CI 执行到，即抓出 2 个 offender**：① `test/native-dsh-binding-test.js` 的
+      三处 `<home>/.dsh/sessions` 夹具字面量（本批 D 组新引入；`dsh` 长度 ≥ 4 且不在 GENERIC，判红正确）→
+      改为 `path.join(mdir,'dsh-home','sessions')` 的宿主中性夹具路径，期望值与写入值同取一个 `CLAIM` 常量，
+      不再复制字面量；② 本仓现行文档 `AUDIT-REPORT` 自身抄录的一条 windows 日志原文含 runner 账号目录
+      （`C:` + `Users` + 短名账号段的拼接形态）→ 改写为 `C:\<runner 账号短名>\…`，事实不变。
+      本地工作区另有 `HANDOFF.md` 的 2 处 `<home>/<账号>/develop/.credentials/…`，
+      一并改为「仓库同级 `develop/.credentials/…`」的可移植表述——但**它被 `.gitignore` 的 `**/HANDOFF.md` 排除，
+      CI 端根本看不到**，故本轮 CI 的 X-2 只报了 AUDIT-REPORT 这一条（登记此事以免下批误以为「X-2 抓过 HANDOFF」）。
+      **改前已用门禁同一口径（同一 `HOME_RE` + 同一 GENERIC 集合 + 同一 `stripLineAndBlocks` 剥离 + 同一
+      SKIP 列表）在本机穷举 X-1 全部 464 个代码文件与全仓 .md，确认改后零 offender**——不靠「修一个再吃一个 run」。
+      定性：这条门禁的判据没有过严，`<home>/.dsh` 确实是我们自己写进去的机器绑定；文档那处则是**上一批**
+      遗留（本批把 #110 推进到被执行位置才第一次被看见），与 §H-7-2 的「链位序代价」同源。
+      **附带一条自我约束**：取证条目本身会**复现** offender——本轮登记时把 offender 原文逐字抄进 §H-7-16，
+      复扫立刻又抓到 2 处（含 `C:` + `Users` + 短名账号段的拼接写法，正则照样命中）。凡登记「某文件因某路径被判红」，
+      一律用占位形态描述，且**登记完就用门禁同一口径复扫全文**，不要把取证文档变成下一个 run 的红。
+    - **§H-8-9 挂账结案（正面证据）**：windows job 的 X-6 回显给出真实 PATH 下
+      `icacls可用: true`、探针 `{ok:true, code:"0", timedOut:false, err:""}`，且「可用 ⇒ `protectFile/protectDir`
+      绝不谎报 `mode=none`」成立（缺路径目标的实际失败原因是 icacls 对不存在文件的报错，不是解析不到）。
+      即：**生产机 ACL 收紧链路在 CI 环境可用**，`hasIcacls()` 的探测方式无缺陷；上一轮「清空 PATH 推演可用」
+      的结论方向对、依据错，现已换成实测事实。
+    - **链推进的正向证据**：本 run #78–#109 四平台全绿（#110 是本轮新到的执行位置），CP-1/X-9 之外的
+      X 组与 D/E/P 组断言零回退。
+17. **run `35489272772`（HEAD `36b725e`）—— 五 job 同点一条红，且是第 4 批自己带进来的架构违规（DS-G1）**：
+    上一轮的 X-1/X-2/X-9 三处全部转绿，链从 #110 推进到 **#123 `directory-structure-gate`**（即 #111–#122
+    在四平台首次全绿，含 #115 D-9 块与 #116/#121/#129 等本批新增判据）。唯一红点：
+    `FAIL DS-G1 domains 之间跨域 require = 0 ← 1 条: domains/instance/ops.js -> domains/relay/core.js`。
+    - **定性：真违规，与 CP-1 同类，且是「修重复时踩坏边界」的形态**。第 4 批 A 组（C-3）为消灭
+      「remoteToken 强度下限各写一份」的重复，把 `remoteTokenStrength` 落在 `domains/relay/core.js`，
+      然后让 `domains/instance/ops.js` 直接 `require('../relay/core')` —— **单一事实源做对了，域边界踩破了**。
+      平台无关（五 job 同点红），故一次即定性。
+    - **修法按本仓既有裁决走，不新造规则**：`DIRECTORY-STRUCTURE-DESIGN` §4 已有三例同形裁决
+      （`domains→api/identity` 的纯 IP 事实上移 `shared/ip`；instance→guardian 的纯函数上移 `shared/guardian`；
+      `semverCompare` 上移 `shared/version`）。故新建 **`src/shared/credential.js`**（L0：零 require、零 IO、
+      零平台分支、零域知识）承载 `remoteTokenStrength`，三个消费点（`relay/core`、`instance/ops`、
+      `app/domain-actions/main`）全部经它取用；`relay/core` **不再导出**第二份（不留兼容转发）。
+      跨层边随之在 `layering-and-dependency-gate` 的 `CROSS_LAYER` 登记表补两条（`domains -> shared`、
+      `app -> shared`）并写理由——该闸的口径是「登记 + 理由 + 变更可见」，不是禁止向下复用。
+    - **把这次红固化成判据**（`defects-batch-f-test` #77，四例独立 + 回显）：强度闸本体在 `shared/credential`
+      且已导出、`shared/credential` 无 `require(`（L0 出度）、`relay/core` 不再自带本体、
+      `instance` 域不再出现 `require('../relay`。只靠 DS-G1 兜底的话，下一次「为消灭重复而跨域」还会再来。
+    - **本机取证上限**（按 §0 口径如实标注）：以上修法在推送前用**只读静态复算**验证过——按 DS-G1/DS-G2
+      同一套 `edgeUnit`/require 解析逻辑重算全 `src/` 边集，得「跨域边 0 条、shared 出度 0 条」，
+      并对 `remoteTokenStrength`/`validateFrpExposure` 做纯函数取样（8 位放行、7 位 `short`、relay 不再导出）。
+      这是静态推演，**不构成裁决**；四平台结论仍以下一个 run 为准。
+18. **run `35489972031`（HEAD `931d734`）—— 第 4 批首次四平台全绿，§H-7-17 的「以下一个 run 为准」兑现**：
+    `precheck` / `test`（ubuntu + Xvfb，整条 129 文件链）/ 四个 `build`（ubuntu-22.04、windows-latest、
+    macos-14 x64、macos-latest arm64，各自经 `ci-core.sh` 跑 `npm test`）全部 `success`，`release` 按分支规则
+    `skipped`。**DS-G1 的修法（强度闸上移 `shared/credential`）由此拿到平台裁决背书**——上一轮本机复算的
+    「跨域边 0 / shared 出度 0」这次被证实，同时证明该复算只能算预拆雷、不能算结论。
+    - **本条同时是「链尾无地雷」的证据**：#123 `directory-structure-gate`、#124 `domain-structure-gate`、
+      #129 `app-this-ratchet-gate` 三个此前从未被执行到的链位首次全绿，说明新增 L0 模块没有触发任何
+      目录白名单类判据（本仓无此类判据；`DS-G2` 只约束 shared **出度** = 0，新模块零 `require` 故合规）。
+    - **推送前的门禁同一口径复扫**（纯静态，非运行时）：`no-dev-path` X-1/X-2 → 零 offender；
+      `docs-reference` DR-1 → 23 份根级 `.md` 的 `src/...` 字面量全部可解析；全仓 `grep` 复核**没有任何测试**
+      断言 `relay/core` 的导出清单含 `remoteTokenStrength`（若有，改判会在 #123 之后二次触红）。
+    - **登记尾账**：`DIRECTORY-STRUCTURE-DESIGN` §3 的 `shared/` 树状清单原只列 version/ip/guardian 三项，
+      会被后来者读成「不含该模块的白名单」，已补 `credential.js` 一行并标回来历。
+
+### H-8 残留与诚实声明
+
+1. **glibc 门禁当前无对象可检**：本仓 Linux 产物为纯 JS launcher，`ci-core.sh [3.5/5]` 走「无 ELF → 如实打印无对象可检」分支。即 §E.2 的这条**没有任何产物被实际校验过**，防的是「重新引入原生产物时的基座回归」。
+2. **§E.1 与原述偏离（实现位置与职责边界）**：原述要求「统一注入 `persist.writeAtomic`（tmp 含 pid **+ 读失败禁写内建**）」。实际单源落在 `platform/util/fs.js`（`persist.js` 反而在豁免清单），且「读失败禁写」**仍由各调用点自守**（`canPersist()` / `loadedOk`），单源不内建——helper 不该反向依赖每个调用点的健康语义。规则已按实际形态写进 ACCEPTANCE-STANDARD §8。
+3. **§E.4 只统一字符集层**：URL/SSRF 分级（`shared/ip` + `policies.isValidOrigin`）与 semver/通道语义仍留在各域，未纳入 `input.js`（边界见 ACCEPTANCE-STANDARD §9）。
+4. **审计原述错锚点（本批实测证伪/纠正）**：① §C「令牌条 1 = 4 处裸 `.tmp` 写」低估为 25 处（见 H-6）；② §C「domains 条：shell 看护不认目录 desired 轴」→ D-2 判为**不成立**；③ §E-1「至少 4 处独立实现」同样低估；④ 本批另有 4 处「取全量最高」失实注释与 1 处 build.yml 虚构步骤名归正（发布条 2/3）。
+5. **cred.sh 的行为级验证在 CI 侧覆盖有限**：`bash -n` + 静态判据是本批证据上限；空 stdin 路径的端到端（真起 `put </dev/null`）未新增用例——`release/scripts` 不在 `npm test` 链内，脚本改动历史上只经 dry-run 类 CI 步骤。此项留作后续批次的测试基建议题（与 §G-6-8「测试单独运行缺省不落沙箱」同源）。
+6. **C-3 首版断言是夹具误设**：`a7a31f4` 记录——429 出现在第 11 发而非第 10 发，且循环起点账本已被前序 cookie 放行 clear；修法为前置清零断言 + 11 发循环拆两条（§G-6-9 逐例拆分 + 判据回显）。
+7. **registry 版本**：本批**不发布**（npm 仍 0.1.5-BETA.10）。合入与发布分两步，发布另需确认。
+8. **B-11 闸门的对称性缺口（本轮取证时发现，未在本批修）**：`runNpmInstall` 只在 **commandTemplate 分支**逐项过禁用字符集；默认分支的 `argv.push('--prefix', o.prefix)` 完全不过闸（install.js:149）。因 spawn 不经 shell，实际不构成注入面，但它与 B-11「任何一环被污染都直达 spawn」的立项理由不对称——prefix 来自配置/环境（win 上含空白的安装前缀是常态）。修法有两种且语义相反（放宽=给绝对路径豁免；收紧=prefix 也过同一判据并明确要求引号语义），属裁决题不是手到活，留第 5 批立项。
+9. **~~挂账：真实 PATH 下 windows 能否解析到 `icacls`~~ —— 已由 run `35488336734` 结案（见 §H-7-16 第三条）**：
+   windows job 真实 PATH 实测 `hasIcacls()=true`、探针 `{ok:true,code:"0"}`，「可用 ⇒ 绝不谎报 `none`」成立。
+   结论：**生产机 ACL 收紧链路可用，`hasIcacls` 探测方式无缺陷**；上一轮「清空 PATH 仍可用」的推演依据作废，
+   现已由实测事实替代。仍成立的一条：**win32 宿主上「icacls 不可用 ⇒ 如实 `none`」这一臂是恒不触发的蕴含式**
+   （它的真实证据在 POSIX 宿主伪造 win32 + 清空 PATH 那一支），不要把它当作已在本机验证过的覆盖。
+10. **`no-dev-path`（#110）本轮首次被 CI 执行即抓出 2 个 offender**（X-1 是本批 D 组新引入的测试夹具，
+    X-2 是上一批遗留的文档原文），已全部清零并用门禁同一口径本机穷举复扫确认（§H-7-16）。**残留风险**：X-1 只扫 `src,test,release,bin,.github,ui/src`
+    且剥离注释，X-2 扫全部 .md 但排除 CHANGELOG 与门禁自身——注释里的示例路径、`ui/` 非 `ui/src` 的构建产物、
+    以及 CHANGELOG 的历史条目都不在执法范围内。这是**有意的宽**（注释举例不构成机器绑定），不要误读成「全仓无绑定」。
+
 ## 附录：分域审计明细索引
 
 | 域 | 范围 | 规模 | 主要文件锚点 |

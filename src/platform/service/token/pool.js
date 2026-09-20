@@ -75,15 +75,30 @@ class TokenPool {
   }
 
   /* 统一捕获（源无关） */
-  /** 主动捕捉一次（journal 源用）：按源顺序取“最新一条”URL 行的令牌，有变化则入库并广播。 */
+  /** 主动捕捉一次：按源顺序取“最新一条”URL 行的令牌，有变化则入库并广播。
+   *  批 4（令牌条 4）：stdout/文件档同步返回；journal 档**非阻塞**发射（resolve 后照常 _commit+广播），
+   *  因为同步 journalctl 在守卫生命周期 tick 里会冻结事件循环最长 5s（心跳停摆）。 */
   capture(id) {
     const src = this._sources.get(id);
     if (!src) return null;
     const hit = capture.captureOnce({ kind: src.kind, unit: src.unit, file: src.file, lines: src.lines }, { logger: this.logger });
-    if (!hit) return null;
-    // 任何源拿到令牌后，若有恢复文件则把命中原文行写入（0600、脱敏、轮转）。
-    if (src.file) this._persistLine(id, src.file, hit.line);
-    return this._commit(id, hit.token, hit.source);
+    if (hit) {
+      // 任何源拿到令牌后，若有恢复文件则把命中原文行写入（0600、脱敏、轮转）。
+      if (src.file) this._persistLine(id, src.file, hit.line);
+      return this._commit(id, hit.token, hit.source);
+    }
+    // journald（systemd 托管）：最后的回填兜底，异步发射不占调用线程。
+    if (src.unit && kinds.isCaptured(src.kind)) {
+      Promise.resolve()
+        .then(() => capture.captureJournal(src.unit, { logger: this.logger }))
+        .then((j) => {
+          if (!j) return;
+          if (src.file) this._persistLine(id, src.file, j.line);
+          this._commit(id, j.token, j.source);
+        })
+        .catch(() => { /* 回填失败无碍：下个节流周期再来 */ });
+    }
+    return null;
   }
 
   /** spawn 托管路径：推送一行 DSH stdout（不触发 journalctl，免逐行 I/O）。 */
@@ -91,8 +106,12 @@ class TokenPool {
     if (!id || !line) return null;
     let src = this._sources.get(id);
     if (!src) {
-      // 旧调用方可能未 attach 就直接喂行，按形态建一个隐式源。
-      src = { kind: inferKind(id, {}), unit: null, file: null, lines: [] };
+      // TK-3 旁路封堵（批 4）：旧实现未 attach 即按形态建隐式源，inferKind 推断失败（返回 null）
+      //   时仍会把源与令牌塞进池——绕开了 attach 那道「kind 未登记即拒」的门（幽灵令牌入池）。
+      //   隐式源只允许走与 attach 完全相同的分类闸：推断不出、或未登记，一律拒绝入池。
+      const k = inferKind(id, {});
+      if (!k || !kinds.isKnownKind(k)) return null;
+      src = { kind: k, unit: null, file: null, lines: [] };
       this._sources.set(id, src);
     }
     src.lines.push(String(line));

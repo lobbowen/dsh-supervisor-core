@@ -1,9 +1,11 @@
 'use strict';
 
-const { execFile } = require('node:child_process');
-
 // POSIX（Linux/macOS）用进程组信号 kill(-pid)；Windows 无进程组语义，单进程信号 +
 // taskkill /T 整树终止（能力等价）。
+// 条 6（批 4 C 平台）：异步 taskkill 改走 platform/util/exec 的统一有界封装
+// （裸 execFile 是 K-W2 门禁的历史盲区；windowsHide/SIGKILL/timeout 纪律收口在 exec.js）。
+
+const ex = require('../util/exec');
 
 const isWindows = process.platform === 'win32';
 
@@ -22,7 +24,7 @@ function signalProcess(pid, sig) {
  *
  *  B13（AUDIT-2026-09-19）两处语义修正：
  *   - Windows：`taskkill /T` 补 `/F` —— 无 /F 只投递 WM_CLOSE，无窗口/不处理该消息的
- *     子进程杀不掉（孤儿照旧占端口）；并加 10s execFile 超时防 taskkill 挂起。
+ *     子进程杀不掉（孤儿照旧占端口）；并加 10s 有界超时（经 exec.runAsync）防 taskkill 挂起。
  *     树语义按父子关系枚举，对外来 pid 同样安全。
  *   - POSIX：负 pid 组信号**仅限本方创建的进程组**（opts.ownGroup=true，detached 子进程
  *     必为组长）。接管实例的 pid 可能恰为无关进程组组长（如用户 shell 会话），
@@ -31,9 +33,8 @@ function signalProcess(pid, sig) {
 function killTree(pid, sig, cb, opts) {
   if (!Number.isInteger(pid) || pid <= 0) { if (cb) cb(new Error('invalid pid')); return; }
   if (isWindows) {
-    execFile('taskkill', ['/PID', String(pid), '/T', '/F'], { timeout: 10000, windowsHide: true }, (err) => {
-      if (cb) cb(err || null);
-    });
+    ex.runAsync('taskkill', ['/PID', String(pid), '/T', '/F'], { timeoutMs: 10000 })
+      .then((r) => { if (cb) cb(r.ok ? null : new Error(r.error || 'taskkill failed')); });
     return;
   }
   if (opts && opts.ownGroup === true) {

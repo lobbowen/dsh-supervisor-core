@@ -5,6 +5,7 @@
 
 const net = require('node:net');
 const spawnOS = require('../os/spawn');
+const procOS = require('../os/process');
 const execPath = require('../os/exec-path');
 const { npmBin } = require('../os/exec-path');
 const runtimeContract = require('../contract/runtime');
@@ -13,21 +14,15 @@ const { VERSION_RE } = require('../../shared/version');
 const release = require('./release');
 const registry = require('./registry');
 const policies = require('./policies');
+const input = require('../util/input');
 
-/** npm 包名字符集白名单（B11）：范围包 + 小写包名（npm 实际禁止大写，此处从严到安全字符集即可）。
- *  pkg/version 会流入 argv 与 commandTemplate 的 {pkg}/{version} 替换 —— 不进白名单就是注入面。 */
-const PKG_NAME_RE = /^(@[a-zA-Z0-9._-]+\/)?[a-zA-Z0-9._-]+$/;
-
-/** argv 项的禁用字符集（B11）：空白与全部 shell 元字符/引号/控制符。命中即拒。
- *  与 commandTemplate **替换前**的形态兼容（模板自带 {pkg}/{version}/{prefix} 花括号）。
- *  ⚠ 反斜杠例外见 WIN_DRIVE_ABS_RE：win32 盘符路径（D:\\a\\...\\fake-npm.js）是合法 argv，
- *    CI 实测旧版把 `\\` 一刀切禁用 → windows 升级链确定性判红（win32-only，linux/mac 全绿）。 */
-const BAD_ARGV_CHAR_RE = /[\s;|&<>`'"$(){}\\*?~#]/;
-
-/** 盘符绝对路径整体形态（B11 windows 例外）：仅当该项**完整匹配**此形态时豁免禁用字符集——
- *  此时 `\\` 是路径分隔符而非转义/元字符；其余禁用字符（`;`、引号、`$` 等）仍被字符类拦截，
- *  空白也仍禁（盘符路径含空格须走 commandTemplate 拆项，不得借豁免夹带）。 */
-const WIN_DRIVE_ABS_RE = /^[A-Za-z]:\\[^;|&<>`'"$*?~#\s]*$/;
+/** 字符集白名单取自 E-4 单源（platform/util/input）：pkg/version 会流入 argv 与
+ *  commandTemplate 的 {pkg}/{version} 替换 —— 不进白名单就是注入面。此处保留**同名导出**
+ *  （行为级门禁 npm-resolution 直接 inst.PKG_NAME_RE 判定），但尺子只有一把。
+ *  BAD_ARGV_CHAR_RE 的 win32 盘符例外（WIN_DRIVE_ABS_RE）同源于 input，见其注释。 */
+const PKG_NAME_RE = input.PKG_NAME_RE;
+const BAD_ARGV_CHAR_RE = input.ARGV_UNSAFE_RE;
+const WIN_DRIVE_ABS_RE = input.WIN_ABS_PATH_RE;
 
 /** npm registry 最新版（用选中镜像；失败回退候选；null 表示不可达）。 */
 async function fetchNpmLatest(state, pkg, opts) {
@@ -49,8 +44,8 @@ async function fetchNpmLatest(state, pkg, opts) {
   if (!policies.isValidOrigin(base)) return null;
   if (!PKG_NAME_RE.test(pkg)) return null;
   try {
-    // 拉包完整元数据（dist-tags + versions）；选版算法不在这里：
-    //   我们的包走 release.pickReleaseVersion，第三方包取全量最高。
+    // 拉包完整元数据（dist-tags + versions）；选版算法不在这里，一律交
+    //   release.pickReleaseVersion（isOurs 决定是否有 rollback/canary；两侧均 latest 优先）。
     const res = await fetch(base + '/' + encodeURIComponent(pkg), { signal: AbortSignal.timeout(10000) });
     if (!res.ok) return null;
     const j = await res.json();
@@ -98,11 +93,26 @@ async function fetchLatestVersion(state, pkg, channel, opts) {
   return fetchNpmLatest(state, pkg, { authoritative: o.authoritative === true });
 }
 
+/** 在途 npm 安装句柄（D-10）。装/卸/升级全部经 runNpmInstall，故本集合就是「守卫内不可见的
+ *  外部写入者」清单。子进程 detached（自成进程组），守卫退出后不会随之消亡——关停必须先中止它们。 */
+const INFLIGHT_NPM = new Set();
+
+/** 在途 npm 任务数（关停路径据此决定是否留痕/发事件）。 */
+function inflightNpmCount() { return INFLIGHT_NPM.size; }
+
+/** 中止全部在途 npm 子进程（连同其进程组），并让对应 Promise 以 ok:false,aborted:true 收口。
+ *  @returns {number} 被中止的任务数 */
+function killInflightNpm(reason) {
+  const hs = [...INFLIGHT_NPM];
+  for (const h of hs) { try { h.abort(reason); } catch { /* 已收口：不阻断关停 */ } }
+  return hs.length;
+}
+
 /** 安装执行器（统一 npm 安装）：镜像注入 / 超时 / 行日志 / 退出码 / 进程树清理。
  *
  *  @param {object} opts
  *   - pkg / version（version 必须显式）/ prefix（沙箱） / registry / timeoutMs / detached / onLine
- *  @returns Promise<{ ok, error, output }> */
+ *  @returns Promise<{ ok, error, output, aborted? }> */
 function runNpmInstall(opts) {
   const o = opts || {};
   const pkg = o.pkg || '@deepseek-ai/dsh';
@@ -157,14 +167,40 @@ function runNpmInstall(opts) {
       return resolve({ ok: false, error: e.message, output: [] });
     }
     const out = [];
+    // D-10（AUDIT-2026-09-19 第 4 批）：在途 npm 子进程必须**可被守卫主动中止**。
+    //   子进程以 detached 起（自成进程组），故守卫退出/被 8s 强杀后它会继续跑：
+    //   新守卫 boot 时旧 npm 仍在写 node_modules 与全局前缀 —— 无人等待、无人记账的
+    //   并发写入者，正是 9-13/半成品形态的复发面。关停路径经 killInflightNpm() 收口。
+    let settled = false;
+    const finish = (r) => {
+      if (settled) return;
+      settled = true;
+      INFLIGHT_NPM.delete(handle);
+      clearTimeout(timer);
+      resolve(r);
+    };
     const killTree = () => {
       if (!child || child.exitCode !== null) return;
-      try { process.kill(-child.pid, 'SIGKILL'); } catch { try { child.kill('SIGKILL'); } catch { /* 已退出 */ } }
+      // 必须走 platform/os/process 的整树终止（B13 已收口：win 用 taskkill /T /F）。
+      //   原先这里是 `process.kill(-pid)` + child.kill 的两段兜底：Windows **没有进程组语义**，
+      //   负 pid 抛错后只杀得到 npm.cmd 那一层壳，真正写 node_modules/全局前缀的 node 孙进程
+      //   照旧存活 —— 正是本条（D-10）要消灭的「无人记账的外部写入者」。
+      //   ownGroup:true —— 子进程以 detached 起，必为自身进程组组长（POSIX 组信号安全）。
+      try { procOS.killTree(child.pid, 'SIGKILL', () => {}, { ownGroup: true }); } catch { /* 尽力而为 */ }
+      try { child.kill('SIGKILL'); } catch { /* 已退出 */ }
+    };
+    const handle = {
+      pid: child.pid,
+      abort: (reason) => {
+        killTree();
+        finish({ ok: false, aborted: true, error: '安装被中止: ' + (reason || 'guard-exit'), output: out });
+      },
     };
     const timer = setTimeout(() => {
       killTree();
-      resolve({ ok: false, error: '安装超时', output: out });
+      finish({ ok: false, error: '安装超时', output: out });
     }, o.timeoutMs || 600000);
+    INFLIGHT_NPM.add(handle);
     const onLine = (buf) => {
       for (const l of String(buf).split(/\r?\n/)) {
         const t = l.trim();
@@ -175,10 +211,9 @@ function runNpmInstall(opts) {
     };
     child.stdout.on('data', onLine);
     child.stderr.on('data', onLine);
-    child.on('error', (e) => { clearTimeout(timer); resolve({ ok: false, error: e.message, output: out }); });
+    child.on('error', (e) => { finish({ ok: false, error: e.message, output: out }); });
     child.on('exit', (code) => {
-      clearTimeout(timer);
-      resolve({ ok: code === 0, error: code === 0 ? null : 'npm install 退出码 ' + code, output: out });
+      finish({ ok: code === 0, error: code === 0 ? null : 'npm install 退出码 ' + code, output: out });
     });
   });
 }
@@ -238,4 +273,7 @@ module.exports = {
   fetchLatestVersion,
   runNpmInstall,
   waitPortHealthy,
+  // D-10：在途 npm 的记账/中止出口（关停路径经 platform/distribution 门面 re-export）
+  killInflightNpm,
+  inflightNpmCount,
 };

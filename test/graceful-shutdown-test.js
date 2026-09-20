@@ -94,6 +94,33 @@ check('G-e SIGTERM/SIGINT 均走 gracefulExit',
   check('对照：router-daemon 的 shutdown 是 async 等待式', /const shutdown = async \(\) =>/.test(rod), '是');
 }
 
+// ── D-10（AUDIT-2026-09-19 第 4 批）：关停必须**中止**在途 npm，且**不等**它 ──
+//   缺陷：装/卸载经 detached 子进程（npm 可达 15min），守卫只有 8s 优雅期（本文件 G-e 的强退兜底）。
+//   原实现既不等待也不中止 → 守卫死后 npm 继续写 node_modules/全局前缀，与重启后的新守卫并发。
+//   裁决=不等待但**必须切断**（等待会把关停拖到超时，等于让壳的退出按钮失灵）。
+{
+  const { stripComments } = require('./_strip');
+  const sd = stripComments(shutdownSrc);
+  check('D-10 两条关停路径都调 abortInflightNpm',
+    (sd.match(/abortInflightNpm\(host, '/g) || []).length === 2, (sd.match(/abortInflightNpm\(host, '/g) || []).length + ' 处');
+  const iAbortAll = sd.indexOf("abortInflightNpm(host, 'session-exit')");
+  const iStopMain = sd.indexOf('host._stopMainDsh()');
+  const iAbortSh = sd.indexOf("abortInflightNpm(host, 'guard-shutdown')");
+  const iPromise = sd.indexOf('host._shutdownPromise = (async');
+  check('D-10 时序：shutdownAll 先切 npm 再停对象', iAbortAll > 0 && iAbortAll < iStopMain, 'abort@' + iAbortAll + ' stopMain@' + iStopMain);
+  check('D-10 时序：shutdown 先切 npm 再进入 stopAll 异步段', iAbortSh > 0 && iAbortSh < iPromise, 'abort@' + iAbortSh + ' promise@' + iPromise);
+  check('D-10 出口单一：经 platform/distribution 的 killInflightNpm（不在 app 层另造 kill 逻辑）',
+    /require\('\.\.\/\.\.\/platform\/distribution'\)/.test(sd) && /distribution\.killInflightNpm\(/.test(sd)
+    && !/process\.kill\(-/.test(sd), '已收口');
+  // 判据有牙：把「等待在途 npm」这种错法写进来也必须判红（本函数必须是同步切断，不能 await）
+  const fn = sd.match(/function abortInflightNpm\(host, reason\) \{[\s\S]*?\n\}/);
+  check('D-10 定位到 abortInflightNpm', !!fn, fn ? 'ok' : '未找到');
+  check('D-10 不等：abortInflightNpm 体内无 await（8s 强杀期不被拖住）',
+    !!fn && !/await\b/.test(fn[0]), fn ? (fn[0].match(/await\b/) ? '含 await' : '无') : '');
+  check('D-10 留痕：中止数>0 时 warn + 发事件',
+    !!fn && /logger\.warn/.test(fn[0]) && /shutdown_npm_aborted/.test(fn[0]), '有');
+}
+
 // ── 行为级：shutdown 的幂等与可 await ──
 //   用最小 harness：只验「返回 Promise 且重复调用同一实例」，不触真实模块。
 {
@@ -122,6 +149,10 @@ check('G-e SIGTERM/SIGINT 均走 gracefulExit',
   const fake = mkFake(false);
   const p1 = shutdown(fake);
   const p2 = shutdown(fake);
+  // D-10（AUDIT-2026-09-19 第 4 批）：关停路径先**中止**在途 npm 子进程（detached 者不死），
+  //   但无在途任务时必须完全静默（不发事件、不刷 warn，防噪音）。
+  check('D-10 行为：无在途 npm 时关停不发 shutdown_npm_aborted（空转不误报）',
+    !fake.evts.includes('shutdown_npm_aborted'), fake.evts.join(','));
   check('G-a 行为：shutdown 返回 thenable', p1 && typeof p1.then === 'function', typeof p1);
   check('G-c 行为：重复调用返回同一 Promise', p1 === p2, p1 === p2 ? '同一实例' : '不同');
   p1.then(() => {

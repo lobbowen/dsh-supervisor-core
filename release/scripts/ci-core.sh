@@ -2,7 +2,8 @@
 # 内核发布产线（CI 核心逻辑单源）—— .github/workflows/build.yml 的四平台 build 矩阵调用（test job 自跑等价步骤）。
 # 硬标准（2026-09-13）：**所有平台构建与发布必须经 GitHub CI 完成；本地不得产生发布产物。**
 # 用法: release/scripts/ci-core.sh [--publish] [--publish-only] [--all-platforms]
-#   - 无 --publish      = 只验证（verify:versions → 前端 verify → npm test → build:launcher → 子包 dry-run）
+#   - 无 --publish      = 只验证（verify:versions → 前端 verify → npm test → build:launcher
+#                         → 产物 glibc 基座门禁（Linux · 条件执行）→ 子包 dry-run）
 #   - --publish         = 验证通过后真发布**本平台**子包 → 官方 registry（**仅 CI 内**；GITHUB_ACTIONS 守卫）
 #   - --publish-only    = 只跑 [5/5] 真发布，跳过全部验证（**仅 CI 内**；A3-a：CI 拆两步后，
 #                         验证已在不带令牌的步骤跑完，本模式让 NPM_TOKEN 只存在于发布进程树；
@@ -108,6 +109,32 @@ fi
 
 echo "=== [3/5] 构建内核 launcher（build:launcher：esbuild bundle + node 启动脚本，全平台统一） ==="
 npm run build:launcher --
+
+echo "=== [3.5/5] 产物 glibc 基座门禁（仅 Linux · 条件执行） ==="
+# E-2（AUDIT-2026-09-19 第 4 批）：build.yml 的矩阵注释长期声称「构建后由 ci-core.sh 的
+#   『glibc 基座门禁（Linux）』步骤校验产物」，而本脚本**从未有该步**（grep glibc = 0 命中）——
+#   「文档化门禁 ≠ 实际执行」（审计 §E-2 同形态违规）。现在把它真正接上，并按产物形态条件执行：
+#   当前形态是纯 JS launcher（2026-09 定案：全平台弃 SEA），Linux 产物里**没有 ELF**，
+#   故本步如实打印「无对象可检」；一旦重新引入原生二进制（SEA / pkg / 任何 .node/.so/ELF），
+#   同一分支即自动执法（GLIBC_* 符号高于 2.35 就 fail），不必再改产线。
+#   根因不变：glibc 前向兼容 —— 在 24.04（2.39）基座构建的 ELF 装不到 22.04（2.35）/ Debian 12。
+if [ "$(uname -s)" = 'Linux' ]; then
+  is_elf() { [ "$(od -An -N4 -tx1 "$1" 2>/dev/null | tr -d ' \n')" = '7f454c46' ]; }
+  elf_count=0
+  while IFS= read -r -d '' f; do
+    if is_elf "$f"; then
+      elf_count=$((elf_count + 1))
+      bash ci/check-glibc.sh "$f" 2.35
+    fi
+  done < <(find dist -type f -print0 2>/dev/null || true)
+  if [ "$elf_count" = 0 ]; then
+    echo "  [glibc] dist/ 下无 ELF 产物（launcher 为纯 JS 形态）→ 本步无对象可检（如实留痕，不假装通过）"
+  else
+    echo "  [glibc] 已校验 $elf_count 个 ELF 产物 ≤ GLIBC_2.35"
+  fi
+else
+  echo "  [glibc] 非 Linux 宿主，跳过（glibc 是 Linux 专有概念）"
+fi
 
 echo "=== [4/5] 内核子包 dry-run（组装 + 打包审计，不发） ==="
 npm run publish:core -s --

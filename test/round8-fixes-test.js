@@ -29,6 +29,11 @@
 //   J-d  self-update 的版本排序用 semverCompare（非字符串）
 //   J-e  _spawn 接 'error'；无 pid 时不写身份并返回 failed
 // ═══════════════════════════════════════════════════════════════════════════
+// ⚠ 编号消歧（AUDIT-2026-09-19 §H-0）：本文件里
+//   · `E-1 / E-2 / E-4`（J-n/J-o/J-p）＝ 审计报告 **§E 跨域立项**编号；
+//   · `UI 条 5 / UI 条 6`（J-l/J-m）＝ 第 4 批 E 组的**发布/UI 六条**（原写 E-5/E-6，已改）。
+//   两套编号无关，别把「E-1 绿了」读成「发布链第 1 条被验过」。
+// ═══════════════════════════════════════════════════════════════════════════
 
 const path = require('node:path');
 const fs = require('node:fs');
@@ -288,10 +293,17 @@ const readDomain = (dir) => fs.readdirSync(path.join(ROOT, dir)).filter((f) => f
   // 反向：确认旧的「只 kill 直接子进程」写法已消失
   check('J-i 超时分支不再只用 child.kill（单进程）',
     !/try \{ child\.kill\('SIGTERM'\); \} catch \{\}/.test(pg), '已改');
-  // 对照：dist/index.js 的 npm 安装早已用同模式（证明这才是本仓的既有正确做法）
+  // 对照：dist 的 npm 安装同样自成进程组 —— 证明「整树终止」是本仓既有正确做法，不是本处新造的规矩。
+  //   ⚠ 第 4 批改判（run 35483861183 四平台 + test job 唯一红）：原第二判据钉的是 dist 里那行
+  //   自写 `process.kill(-child.pid, 'SIGKILL')`。该行已按 §H-7-6 收口到平台层 killTree
+  //   （Windows 无进程组语义，自写负 pid 只杀得到 npm.cmd 那层壳），故对照点随之换成「走平台层单源」。
+  //   反向钉住「不得再自写负 pid」的职责移交给 uninstall-timeout-behavior-test 的 D-10 结构闸。
   const dist = readDomain('src/platform/distribution');
-  check('对照：dist 的 npm 安装早已用 detached + -pid',
-    /detached: o\.detached !== false/.test(dist) && /process\.kill\(-child\.pid, 'SIGKILL'\)/.test(dist), '是');
+  const distDetached = /detached: o\.detached !== false/.test(dist);
+  const distViaPlatformKillTree = /procOS\.killTree\(child\.pid/.test(dist);
+  check('对照：dist 的 npm 安装自成进程组（detached）', distDetached, distDetached ? '是' : '否');
+  check('对照：dist 的杀树走 platform/os/process.killTree 单源',
+    distViaPlatformKillTree, distViaPlatformKillTree ? '是' : '否');
 }
 
 // ── J-j：内核写 registry.json 时必须保留壳的 v2 字段（P2 双写）──
@@ -329,6 +341,233 @@ const readDomain = (dir) => fs.readdirSync(path.join(ROOT, dir)).filter((f) => f
     after.mode === 'manual' && after.origins[0] === 'https://c.example/' && after.manualOrigin === 'https://c.example/',
     JSON.stringify({ mode: after.mode, origins: after.origins }));
   fs.rmSync(tmpR, { recursive: true, force: true });
+}
+
+// ── J-k（批 4 / C-8）：镜像源写入口 SSRF 闸 —— 私网/元数据字面量不得落盘 ──
+//   旧 setRegistryConfig 只过 isValidOrigin：http://127.0.0.1:4873 之类合法落盘，
+//   并反向豁免探测闸①层（已配置源按 hostname 放行）。现在写盘前过 registryOriginViolation。
+{
+  const { DistributionManager } = require(path.join(ROOT, 'src', 'platform', 'distribution', 'index.js'));
+  const tmpK = fs.mkdtempSync(path.join(os.tmpdir(), 'regk-'));
+  const mkDm = () => {
+    const dm = Object.create(DistributionManager.prototype);
+    dm.registryFile = path.join(tmpK, 'no-such', 'registry.json'); // 不存在：load/save 走无操作分支
+    dm.logger = { warn() {}, info() {}, debug() {} };
+    dm.registryConfig = { mode: 'auto', origins: ['https://registry.npmjs.org'], manualOrigin: 'https://registry.npmjs.org' };
+    return dm;
+  };
+  // manual 切换 + 私网手动源：**同步校验段零改动**（内存配置与磁盘都不动）。
+  //   异步段会经 registryInfo 回读实况（可能按既有选源逻辑复测），所以本例只断言同步段。
+  //   原缺陷：rc 曾是 state.registryConfig 的别名，mode 在校验前就被写进内存 → 拒后
+  //   UI 显示 manual 而磁盘仍是 auto，且下次自动重测按 manual 走旧手动源。
+  {
+    const dm = mkDm();
+    dm.setRegistryConfig({ mode: 'manual', manualOrigin: 'http://169.254.169.254' });
+    check('C-8 manual+元数据地址 → registryConfig.mode 未被改（同步拒）',
+      dm.registryConfig.mode === 'auto', JSON.stringify({ mode: dm.registryConfig.mode }));
+    check('C-8 manual+回环 dev 镜像 → manualOrigin 未被落盘（同步拒）',
+      dm.registryConfig.manualOrigin === 'https://registry.npmjs.org', JSON.stringify({ mo: dm.registryConfig.manualOrigin }));
+  }
+  // 候选列表：私网项被逐条剔除（同步段），公网项保留
+  {
+    const dm = mkDm();
+    dm.setRegistryConfig({ origins: ['https://pub.example', 'http://127.0.0.1:4873', 'http://10.0.0.7:4873'] });
+    check('C-8 候选中回环/私网字面量被剔除',
+      JSON.stringify(dm.registryConfig.origins) === JSON.stringify(['https://pub.example']),
+      JSON.stringify(dm.registryConfig.origins));
+  }
+  fs.rmSync(tmpK, { recursive: true, force: true });
+}
+
+// ── J-l（批 4 / UI 条 5）：写端点的「200 假成功」必须归真，且前端有统一判据 ──
+//   setRegistryConfig 的拒因放在返回值的 error 字段（不带 ok 键）。旧 dist.js 一律
+//   `send(200, { ok: true, ...r })` → 被 SSRF 闸拒绝的镜像源仍回 200，而 UI 的 http()
+//   只在 !res.ok（状态码）时抛错 → 照样弹「已保存」。
+//   UI 条 5 两半：后端有拒因即 400 + ok:false；前端 run() 按返回值判失败（判据单源在 client 层）。
+{
+  const codeOnly = (s) => s.split('\n')
+    .filter((l) => { const t = l.trim(); return !t.startsWith('//') && !t.startsWith('*'); }).join('\n');
+  // 判据：处理段把 setRegistryConfig 的结果无条件 200，且全段没有 4xx 分支
+  const unconditionalOk = (seg) => /send\(200, \{ ok: true, \.\.\.r \}\)/.test(seg) && !/400/.test(seg);
+  const dist = codeOnly(read('src/api/domains/dist.js'));
+  const seg = (dist.match(/pathname === '\/dist\/registry\/set'[\s\S]*?\n {4}\}/) || [''])[0];
+  check('UI 条 5 定位到 /dist/registry/set 处理段', seg.length > 20, seg ? seg.slice(0, 46).replace(/\s+/g, ' ') : '未找到');
+  check('UI 条 5 set 段按拒因回 400（r.error 参与状态码）',
+    /400/.test(seg) && /r\.error/.test(seg), (seg.match(/[^\n]*\? 400 : 200[^\n]*/) || ['无 400/200 分支'])[0].trim());
+  check('UI 条 5 set 段不再无条件 send(200)', !unconditionalOk(seg), '当前形态未命中判据');
+  check('UI 条 5 反向非空转：旧「无条件 200」写法能被识别',
+    unconditionalOk("if (pathname === '/dist/registry/set') {\n      Promise.resolve(sup.dist.setRegistryConfig(j)).then((r) => send(200, { ok: true, ...r }));\n    }"),
+    '判据命中旧写法');
+  const uiHook = read('ui/src/features/supervisor/useSupervisorAction.ts');
+  check('UI 条 5 run() 按返回值判失败（消费统一判据）',
+    /failureFromResult\(await fn\(\)\)/.test(uiHook), (uiHook.match(/const rejected = failureFromResult[^\n]*/) || ['未调用'])[0].trim());
+  const uiClient = read('ui/src/services/supervisor/client.ts');
+  check('UI 条 5 判据单源在 client 层并已导出',
+    /export function failureFromResult/.test(uiClient) && /r\.ok !== false/.test(uiClient), 'ok');
+}
+
+// ── J-m（批 4 / UI 条 6）：面板轮询中心的游标与心跳节奏 ──
+//   ① 事件游标唯一写点是 Math.max(snap.eventsSeq, r.seq)：后端 r.seq 非数值时 NaN 会
+//      永久污染（Math.max(NaN, x) 恒 NaN → 下一轮拼出 after=NaN 再也拉不到事件）。
+//   ② 心跳必须是「跑完一轮再按连续失败次数自排」的退避链，不能是固定 setInterval：
+//      守卫离线时固定 2s 节奏 = 每 2s 白打 8 个请求，慢网下还会轮次堆叠。
+//   ⚠ 判据一律走 codeOnly：注释里复述旧缺陷（NaN / setInterval）不该算命中。
+{
+  const codeOnly = (s) => s.split('\n')
+    .filter((l) => { const t = l.trim(); return !t.startsWith('//') && !t.startsWith('*') && !t.startsWith('/*'); }).join('\n');
+  const polling = codeOnly(read('ui/src/services/supervisor/polling.ts'));
+  const echo = (re, miss) => (polling.match(re) || [miss])[0].trim();
+  check('UI 条 6 游标写入前过数值归一化 safeSeq', /safeSeq\(r\.seq/.test(polling), echo(/eventsSeq: Math\.max.*/, '无游标写入点'));
+  check('UI 条 6 反向非空转：未归一化的旧游标写法能被识别',
+    !/safeSeq\(r\.seq/.test(codeOnly('        eventsSeq: Math.max(snap.eventsSeq, r.seq),')), '旧写法不含 safeSeq');
+  check('UI 条 6 心跳改为自排 setTimeout（不再 setInterval）',
+    !/setInterval/.test(polling) && /setTimeout\(\(\) => \{ void heartbeat\(\); \}/.test(polling),
+    echo(/[^\n]*heartbeat\(\); \}[^\n]*/, '未自排'));
+  check('UI 条 6 退避间隔随连续失败翻倍并封顶',
+    /Math\.min\(MAX_TICK_MS, BASE_TICK_MS \* 2 \*\* \(failStreak - 1\)\)/.test(polling),
+    echo(/return Math\.min\([^\n]*/, '无翻倍曲线'));
+  check('UI 条 6 基准间隔仍为 2s（退避只改失败侧，不改健康节奏）',
+    /const BASE_TICK_MS = 2000;/.test(polling), echo(/const BASE_TICK_MS.*/, '无基准常量'));
+  check('UI 条 6 健康成功即清零连败计数', /failStreak = online \? 0 : failStreak \+ 1;/.test(polling),
+    echo(/failStreak = online.*/, '无复位'));
+  check('UI 条 6 stop()/复位都递增 epoch，在途轮次不得再排下一轮',
+    (polling.match(/epoch \+= 1;/g) || []).length === 2, 'epoch += 1 出现 ' + (polling.match(/epoch \+= 1;/g) || []).length + ' 次');
+}
+
+// ── J-n（批 4 / E-1）：状态落盘的原子写必须**单源**，且不得用可预测的固定 .tmp 名 ──
+//   缺陷机理：全仓 31 处「tmp + rename」各自实现，其中 26 处拼的是**固定** `file + '.tmp'`。
+//   升级重叠期新旧两个守卫进程同时写同一份状态 → 两者写的是同一个临时文件 → rename 出去的
+//   是两次序列化字节的**交错混合体**（既不是新版也不是旧版）；另有实现未带 mode，令牌/URL 落 0644。
+//   收敛：platform/util/fs 的 writeAtomic（tmp 名含 pid+毫秒、默认 0600、rename 后收口、失败抛错）。
+//   豁免（保留自有实现，但 tmp 名同样含 pid）：token/persist.js（返回 {ok} 契约，TK-G3 口径）、
+//   os/file-protect.js（Windows icacls 与 rename 交错，无法套统一 helper）。
+{
+  const walk = (d) => fs.readdirSync(d, { withFileTypes: true }).flatMap((e) =>
+    e.isDirectory() ? walk(path.join(d, e.name)) : (e.name.endsWith('.js') ? [path.join(d, e.name)] : []));
+  const codeOf = (f) => fs.readFileSync(f, 'utf8').split('\n').filter((l) => {
+    const t = l.trim(); return !t.startsWith('//') && !t.startsWith('*') && !t.startsWith('/*');
+  }).join('\n');
+  const relOf = (f) => path.relative(ROOT, f).split(path.sep).join('/');
+  const srcFiles = walk(path.join(ROOT, 'src'));
+  // 判据：代码行里出现**裸** `'.tmp'` 字面量，且该行没有任何唯一化因子（pid / 毫秒 / UUID / 模板插值）
+  const fixedTmpLines = (src) => src.split('\n').filter((l) => /['"`]\.tmp['"`]/.test(l)
+    && !/process\.pid|Date\.now|randomUUID|\$\{/.test(l));
+  const offenders = srcFiles.filter((f) => fixedTmpLines(codeOf(f)).length > 0).map(relOf);
+  check('E-1 src/ 下无「固定 .tmp 名」旁路（唯一 tmp 名 = 单源不变量）',
+    offenders.length === 0, offenders.join(',') || '无');
+  const LEGACY = "  const tmp = file + '.tmp';\n  fs.writeFileSync(tmp, data);\n  fs.renameSync(tmp, file);";
+  check('E-1 反向非空转：旧的固定 .tmp 写法必须被同一判据命中',
+    fixedTmpLines(LEGACY).length === 1, '命中 ' + fixedTmpLines(LEGACY).length + ' 行');
+  const helper = codeOf(path.join(ROOT, 'src', 'platform', 'util', 'fs.js'));
+  check('E-1 单源实现：tmp 名含 pid+毫秒，rename 前不暴露半个目标文件',
+    /\.tmp\.'\s*\+\s*process\.pid\s*\+\s*'\.'\s*\+\s*Date\.now\(\)/.test(helper) && /renameSync\(tmp, fp\)/.test(helper), 'ok');
+  check('E-1 单源实现：mode 默认 0600 并在 rename 后二次收口（部分平台 rename 重写权限位）',
+    /:\s*0o600/.test(helper) && (helper.match(/chmodSync\(\w+, mode\)/g) || []).length === 2, 'chmod 次数=2');
+  const selfWriters = srcFiles.filter((f) => /renameSync\(\s*\w*[Tt]mp\w*\b/.test(codeOf(f))).map(relOf);
+  const EXEMPT = ['src/platform/util/fs.js', 'src/platform/service/token/persist.js', 'src/platform/os/file-protect.js'];
+  check('E-1 自带 tmp+rename 的文件只能落在显式豁免清单内（新增旁路必须先进清单并被审）',
+    selfWriters.slice().sort().join(',') === EXEMPT.slice().sort().join(','), selfWriters.join(','));
+  const uniqOk = (f) => /process\.pid/.test(codeOf(f));
+  check('E-1 豁免项也必须 tmp 名含 pid（豁免只豁免「用哪个 helper」，不豁免唯一性）',
+    EXEMPT.every(uniqOk), EXEMPT.filter((f) => !uniqOk(path.join(ROOT, f))).join(',') || '全部含 pid');
+  const users = srcFiles.filter((f) => /writeAtomic\(/.test(codeOf(f)) && !/function writeAtomic/.test(codeOf(f)));
+  check('E-1 覆盖面不缩水：经单源落盘的模块数 >= 25（迁移被逐点回退会在这里红）',
+    users.length >= 25, '当前 ' + users.length + ' 个模块');
+  check('E-1 代表调用点确在单源路径上（令牌/凭据/用量三类明文）',
+    users.some((f) => relOf(f) === 'src/domains/relay/frp.js')
+    && users.some((f) => relOf(f) === 'src/app/main/signals.js')
+    && users.some((f) => relOf(f) === 'src/domains/router/store/usage.js'),
+    ['relay/frp.js', 'app/main/signals.js', 'router/store/usage.js'].filter((k) => !users.some((f) => relOf(f).endsWith(k))).join(',') || 'ok');
+}
+
+// ── J-o（批 4 / E-2）：静态门禁必须显式登记自己的覆盖缺口（制度化防复发）──
+//   审计 §E-2 的病灶不是判据写错，而是**门禁的名字比判据大**：文件叫 xxx-gate-test，
+//   读者把绿当成「xxx 已被验证」，于是这道「看起来存在的防线」阻止了下一次检查
+//   （glibc 声称产线校验、CI 零调用；TK-G4 白名单放行；K-W2 只匹配 spawn(；发布包 README 违 RC-1）。
+//   规则落在 ACCEPTANCE-STANDARD.md §7，本节是其执法点：缺口块必须存在、在头部、且是可核对的逐条清单。
+{
+  const MARKER = '覆盖缺口（E-2 制度化登记';
+  const GAP_GATES = [
+    'test/glibc-gate-test.js',
+    'test/token-contract-gate-test.js',
+    'test/no-console-window-gate-test.js',
+    'test/exec-bounded-gate-test.js',
+  ];
+  // 判据：头部注释区里出现标记，且其后连续注释块内至少 3 条编号项（防空壳标题）。
+  const gapBlock = (src) => {
+    const at = src.indexOf(MARKER);
+    if (at < 0) return null;
+    const head = src.slice(0, src.indexOf('\nconst ', at) < 0 ? src.length : src.indexOf('\nconst ', at));
+    const lines = head.split('\n').filter((l) => /^\s*(\/\/|\*)\s/.test(l));
+    return { items: lines.filter((l) => /^\s*(\/\/|\*)\s+\d+\./.test(l)).length, at };
+  };
+  for (const rel of GAP_GATES) {
+    const b = gapBlock(read(rel));
+    check('E-2 ' + rel + ' 头部有可核对的覆盖缺口清单（>=3 条编号项）',
+      !!b && b.items >= 3, b ? b.items + ' 条' : '无缺口块');
+  }
+  check('E-2 执法清单非空转：无缺口块的门禁必须被判出',
+    gapBlock('// 门禁\n// 断言 A1\nconst fs = 1;\n') === null, 'hit');
+  check('E-2 执法清单非空转：有标记但只有空壳标题（0 条编号项）同样被判出',
+    (() => { const b = gapBlock('// ## ' + MARKER + '）\n// 随便写点说明\nconst fs = 1;\n'); return !!b && b.items < 3; })(),
+    'hit');
+  const std = read('ACCEPTANCE-STANDARD.md');
+  check('E-2 规则本体在 ACCEPTANCE-STANDARD §7 且指向本执法点',
+    /## 7\.[^\n]*覆盖缺口/.test(std) && /round8-fixes-test\.js[^\n]*J-o|J-o/.test(std), 'ok');
+}
+
+// ── J-p（批 4 / E-4）：外部输入的字符集白名单必须单源，且真的拦住注入 ──
+//   审计 §E-4：version / unit 名 / URL / model 名 / commandTemplate「各自散防」——
+//   病灶不是某一份写错，而是**新增入口时无处可抄**，于是每个新调用点都要重新赌一次校验。
+//   现：platform/util/input.js 是字符集/形态判定的唯一存放处；语义级闸（SSRF、semver 比较）
+//   仍留在各域，但不得再复制字符集。判据 = 对象同一性 + 「同一字符集只有一个定义处」+ 行为表。
+{
+  const input = require(path.join(ROOT, 'src', 'platform', 'util', 'input.js'));
+  const inst = require(path.join(ROOT, 'src', 'platform', 'distribution', 'install.js'));
+  const svc = require(path.join(ROOT, 'src', 'platform', 'os', 'service.js'));
+  const walkAll = (d) => fs.readdirSync(d, { withFileTypes: true }).flatMap((e) =>
+    e.isDirectory() ? walkAll(path.join(d, e.name)) : (e.name.endsWith('.js') ? [path.join(d, e.name)] : []));
+  const relOf2 = (f) => path.relative(ROOT, f).split(path.sep).join('/');
+  const ownerOf = (re, files) => (files || walkAll(path.join(ROOT, 'src')))
+    .filter((f) => fs.readFileSync(f, 'utf8').includes(re.source)).map(relOf2);
+  const RULERS = [input.PKG_NAME_RE, input.ARGV_UNSAFE_RE, input.UNIT_NAME_RE, input.WIN_ABS_PATH_RE];
+  check('E-4 每条字符集白名单在 src/ 中只有一个定义处（就是 input.js）',
+    RULERS.every((re) => { const o = ownerOf(re); return o.length === 1 && o[0] === 'src/platform/util/input.js'; }),
+    RULERS.map((re) => ownerOf(re).join('+') || '无').join(' | '));
+  check('E-4 消费方拿到的就是同一个 RegExp 对象（无复制粘贴的第二把尺子）',
+    inst.PKG_NAME_RE === input.PKG_NAME_RE && inst.BAD_ARGV_CHAR_RE === input.ARGV_UNSAFE_RE
+    && inst.WIN_DRIVE_ABS_RE === input.WIN_ABS_PATH_RE && svc.UNIT_NAME_RE === input.UNIT_NAME_RE, 'ok');
+  // 反向（§G-6-9 非空转）：造一个「把 UNIT_NAME_RE 抄进别的文件」的样本，同一判据必须数出 2 个定义处。
+  const CLONE_DIR = fs.mkdtempSync(path.join(require('node:os').tmpdir(), 'e4-clone-'));
+  try {
+    const CLONE = path.join(CLONE_DIR, 'second-ruler.js');
+    fs.writeFileSync(CLONE, 'const CLONE_RE = /' + input.UNIT_NAME_RE.source + '/;\n');
+    const both = ownerOf(input.UNIT_NAME_RE, [CLONE].concat(walkAll(path.join(ROOT, 'src'))));
+    check('E-4 反向：抄一份字符集立刻被「唯一定义处」判据数出来（2 处）',
+      both.length === 2 && both.some((p) => p.endsWith('second-ruler.js')), both.join(','));
+  } finally {
+    try { fs.rmSync(CLONE_DIR, { recursive: true, force: true }); } catch { /* 临时目录清理尽力 */ }
+  }
+  // 行为表：逐例独立 + 判据值回显（§G-6-9）。
+  const CASES = [
+    ['argv posix 路径放行', input.argvViolation('/tmp/fake-npm.js'), null],
+    ['argv win 盘符路径放行（CI run17 误杀对象）', input.argvViolation('D:\\a\\x\\fake-npm.js'), null],
+    ['argv 盘符+命令链 拒', !!input.argvViolation('D:\\a\\x;y'), true],
+    ['argv 空白 拒', !!input.argvViolation('/tmp/a b'), true],
+    ['argv 命令替换 拒', !!input.argvViolation('$(id)'), true],
+    ['pkg 合法 scope 放行', input.pkgNameViolation('@deepseek-ai/dsh'), null],
+    ['pkg 空格 拒', !!input.pkgNameViolation('bad pkg'), true],
+    ['unit 实例名放行', input.unitNameViolation('dsh-web@inst-1757-842'), null],
+    ['unit 路径穿越 拒', !!input.unitNameViolation('../../etc/x'), true],
+    ['unit 非 service 后缀 拒', !!input.unitNameViolation('x.timer'), true],
+    ['ledger __proto__ 键折进 other', input.ledgerKey('__proto__', { unsafe: '(other)' }), '(other)'],
+    ['ledger 控制符键折进 other', input.ledgerKey('a\u0000b', { unsafe: '(other)' }), '(other)'],
+    ['ledger 正常键原样（仅超长截断）', input.ledgerKey('deepseek-chat'), 'deepseek-chat'],
+    ['ledger 空/非字符串归 empty', input.ledgerKey(null, { empty: 'unknown' }), 'unknown'],
+  ];
+  for (const [n, got, want] of CASES) {
+    check('E-4 行为 ' + n, JSON.stringify(got) === JSON.stringify(want), 'got=' + JSON.stringify(got));
+  }
 }
 
 const failed = results.filter((r) => !r);

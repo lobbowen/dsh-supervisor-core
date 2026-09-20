@@ -152,6 +152,104 @@ console.log('\n== AT-1 实盘测量（src/app，按目录）==');
   }
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
+// SC-1..SC-3 宽作用域静默 catch 棘轮（AUDIT-2026-09-19 第 4 批 D-13）
+//
+//   判据：`try { … } catch {}`（catch 完全空）**且** try 体 ≥3 行 **且** ≥2 条语句 —— 即
+//   「面过宽且无痕」：一次抛错会静默吞掉整段动作，而单表达式（`try { JSON.parse(f) } catch {}`）
+//   是惯用法、不计。
+//   修复方向（不是删 catch）：要么**窄化作用域**（把"读"和"用"分开），要么**留痕**
+//   （logger.warn + 必要时事件），让失败在日志/面板可见。见 src/app/state/store.js 的 loadState。
+//   基线更新纪律同 AT-*：只减不增；确需新增须在提交信息注明理由。
+//   基线来源：2026-09-20 D-13 本轮**实测**（判据即本文件的 countWideSilentCatch，剥注释口径）：
+//     bootstrap(1) daemons/process.js(1，reclaimOrphans 的 catch 只有注释体=行为静默)
+//     native/ops(1) native/probe(2) settings/env(1) settings/versions(2) = 8。
+//     本轮已收口：state/store.js loadState（分段+留痕）、daemons/process.js _writeIdentity（warn+事件）、
+//     audit/orphan-scan.js 两段（扫描维度失败必须可见）。
+// ═══════════════════════════════════════════════════════════════════════════
+const SC_BASELINE = 8;
+
+/** 从 openIdx 处的 '{' 找配对 '}'（跳过字符串/模板串；本判据面向源码，注释已在外部剥离）。 */
+function matchBraceFor(src, openIdx) {
+  let depth = 0, i = openIdx;
+  const LF = String.fromCharCode(10), BT = String.fromCharCode(96);
+  while (i < src.length) {
+    const c = src[i], n = src[i + 1];
+    if (c === '/' && n === '/') { while (i < src.length && src[i] !== LF) i++; continue; }
+    if (c === '/' && n === '*') { i += 2; while (i < src.length && !(src[i] === '*' && src[i + 1] === '/')) i++; i += 2; continue; }
+    if (c === "'" || c === '"' || c === BT) {
+      const q = c; i++;
+      while (i < src.length) { if (src[i] === '\\') { i += 2; continue; } if (src[i] === q) { i++; break; } i++; }
+      continue;
+    }
+    if (c === '{') depth++;
+    else if (c === '}') { depth--; if (depth === 0) return i; }
+    i++;
+  }
+  return -1;
+}
+
+/** 数一份（已剥注释的）源码里的「宽作用域静默 catch」处数。 */
+function countWideSilentCatch(src) {
+  let n = 0;
+  const re = /\btry\s*\{/g;
+  let m;
+  while ((m = re.exec(src))) {
+    const open = m.index + m[0].length - 1;
+    const close = matchBraceFor(src, open);
+    if (close < 0) break;
+    if (!/^\s*catch\s*(\([^)]*\))?\s*\{\s*\}/.test(src.slice(close + 1, close + 40))) { re.lastIndex = close; continue; }
+    const body = src.slice(open + 1, close);
+    const lines = body.split(String.fromCharCode(10)).length;
+    const stmts = (body.match(/[;}]/g) || []).length;
+    if (lines >= 3 && stmts >= 2) n++;
+    re.lastIndex = close;
+  }
+  return n;
+}
+
+/** 递归收集目录下全部 .js。 */
+function walkJs(dir, out) {
+  for (const name of fs.readdirSync(dir)) {
+    const p = path.join(dir, name);
+    if (fs.statSync(p).isDirectory()) walkJs(p, out);
+    else if (name.endsWith('.js')) out.push(p);
+  }
+  return out;
+}
+
+{
+  const files = walkJs(APP, []);
+  const hits = [];
+  for (const p of files) {
+    const n = countWideSilentCatch(stripComments(fs.readFileSync(p, 'utf8')));
+    if (n) hits.push(path.relative(ROOT, p).split(path.sep).join('/') + '(' + n + ')');
+  }
+  const total = hits.reduce((s, h) => s + Number(/\((\d+)\)$/.exec(h)[1]), 0);
+  check('SC-0 扫描面非空（src/app 源码文件数）', files.length > 40, files.length + ' 个文件');
+  check('SC-1 宽作用域静默 catch 不超基线（' + total + ' <= ' + SC_BASELINE + '）',
+    ratchetVerdict(total, SC_BASELINE) === 'ok', hits.join(', ') || '无');
+  if (total < SC_BASELINE) console.log('[SC] 提示（非判据）：当前 ' + total + ' 低于基线 ' + SC_BASELINE + '，可下调常量');
+  // SC-2 反向：判据对「宽 + 静默」确实计数，对窄/有痕形态不误报（否则 SC-1 是空转）
+  const WIDE = "function f() {\n  try {\n    a();\n    b();\n    c();\n  } catch {}\n}\n";
+  const NARROW_EXPR = "function f() {\n  try { a(); } catch {}\n}\n";
+  const NARROW_ONE = "function f() {\n  try {\n    return JSON.parse(s);\n  } catch {}\n  return null;\n}\n";
+  const LOUD = "function f() {\n  try {\n    a();\n    b();\n    c();\n  } catch (e) { log(e); }\n}\n";
+  check('SC-2 反向：宽作用域(≥3行/≥2句)+静默 判 1 处', countWideSilentCatch(WIDE) === 1,
+    '计数=' + countWideSilentCatch(WIDE));
+  check('SC-2 反向：单表达式静默（惯用法）不误报', countWideSilentCatch(NARROW_EXPR) === 0,
+    '计数=' + countWideSilentCatch(NARROW_EXPR));
+  check('SC-2 反向：跨行但仅 1 句不误报', countWideSilentCatch(NARROW_ONE) === 0,
+    '计数=' + countWideSilentCatch(NARROW_ONE));
+  check('SC-2 反向：留痕（catch 有体）不误报', countWideSilentCatch(LOUD) === 0,
+    '计数=' + countWideSilentCatch(LOUD));
+  // SC-3 真实修复的形态证据：loadState 已按「分段 + 留痕」收口（回归即判红）
+  const storeSrc = stripComments(fs.readFileSync(path.join(ROOT, 'src', 'app', 'state', 'store.js'), 'utf8'));
+  check('SC-3 loadState 读段区分 ENOENT、恢复段留痕（D-13 收口形态）',
+    /e\.code !== 'ENOENT'/.test(storeSrc) && /state restore partial/.test(storeSrc),
+    '已收口');
+}
+
 console.log('\n结果: ' + passed.length + ' passed, ' + failed.length + ' failed');
 if (failed.length) {
   console.log('\n失败（棘轮越界或自检失败）:');

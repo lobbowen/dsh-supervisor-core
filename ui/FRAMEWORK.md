@@ -44,8 +44,12 @@ src/
 
 - **服务端**：dsh-supervisor `src/api/index.js`（默认 127.0.0.1:36360，被占自动顺延并持久化 apiPort）——HTML 由 `ui-react`（发布）/ `ui/dist`（开发）解析；API 同源。
 - **单通路（同源）**：面板无论浏览器直开还是壳内 iframe，都**同源 fetch**（`BASE=""`）——壳导航的 URL 就是守卫 API 基址，故守卫零 CORS 边界不变。前端**不**检测 Tauri、**不**经 `api_proxy` IPC。
-- **前端轮询**：`polling.ts` 每 2s 并行拉运行态 + 增量事件（after=seq），写入不可变快照并广播；
+- **前端轮询**：`polling.ts` 并行拉运行态 + 增量事件（after=seq），写入不可变快照并广播；一轮跑完再自排下一轮
+  —— 链路健康 2s，连续失败按 2s→4s→8s… 退避（封顶 30s，UI 条 6）；
   页面经 `useSupervisorData()` 订阅渲染；写操作经 `supervisorApi.*` → `store.refresh()` 立即同步。
+- **写操作的成败判定（UI 条 5）**：`http()` 只看 HTTP 状态码，**200 里的 `{ ok:false }` 属于数据**（如镜像探活不通）。
+  故统一动作 hook `useSupervisorAction.run()` 会用 `failureFromResult()` 复核返回值：被判失败的写操作
+  不弹成功 toast、不刷新快照、返回 `false` 给调用方（如访问密钥落本机存储依赖该返回值）。
 - **UI 文案**：硬编码中文（单一语言产品）。设计令牌定义浅/深主题，暗色经 `next-themes` 跟随系统切换。
 
 ## 3. 令牌与规范要点（详见 src/framework/theme/tokens.css）

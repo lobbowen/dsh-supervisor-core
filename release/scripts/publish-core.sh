@@ -145,14 +145,18 @@ DSH lifecycle guard core — Node launcher 形态（esbuild bundle + node 启动
 npm i -g $PKG_NAME
 # 测试版（BETA）
 npm i -g $PKG_NAME@beta
-# 显式指定版本（推荐：与桌面壳的安装语义一致，避免依赖标签状态）
+# 显式指定版本（**仅排障/人工分发**；日常升级不要绕过标签）
 npm i -g $PKG_NAME@<version>
 
 dsh-supervisor self-check   # guardVersion / node / platform 三段自检
 \`\`\`
 
-> 本包由桌面壳（Dsh Supervisor GUI）自动安装与升级：壳按 registry 的**全量最高版本**选版，
-> 并显式安装 \`$PKG_NAME@<version>\`，不依赖 dist-tag。手工安装仅供排障。
+> 本包由桌面壳（Dsh Supervisor GUI）与内核自身按**发布通道契约**自动安装与升级：
+> 选版一律走 \`rollback → canary → dist-tags.latest → versions 最高兜底 → 明确失败\`
+> （**latest 优先**，绝不「取 registry 全量最高」——那会绕过通道控制；我们的包在兜底步
+> 还排除 \`-BETA.\` 测试版）。选定版本后按 \`$PKG_NAME@<version>\` 显式安装。
+> 算法单源见内核仓 RELEASE-CHANNEL-CONTRACT.md §3 + \`pickReleaseVersion\`。
+> 手工安装仅供排障。
 EOF
 echo "== 子包已组装: $STAGE/"
 ls -lh "$STAGE/bin/" | tail -1

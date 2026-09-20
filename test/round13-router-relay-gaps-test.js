@@ -101,14 +101,27 @@ console.log('== ① frp 令牌闸两条路径同规 ==');
   const bad = actions.patchDshMain({ frpEnabled: true, frpRemotePort: 7001 });
   check('① 行为：无令牌开 frp → 被拒（ok:false）', bad && bad.ok === false, JSON.stringify(bad));
   check('① 行为：被拒时**未落盘**（不产生半改状态）', written.length === 0, String(written.length));
-  const badPort = actions.patchDshMain({ remoteToken: 'tok', frpEnabled: true, frpRemotePort: 99999 });
+  const badPort = actions.patchDshMain({ remoteToken: 'remote-tok-0123', frpEnabled: true, frpRemotePort: 99999 });
   check('① 行为：令牌已设但端口非法 → 被拒', badPort && badPort.ok === false, JSON.stringify(badPort));
-  const good = actions.patchDshMain({ remoteToken: 'tok', frpEnabled: true, frpRemotePort: 7001 });
+  const good = actions.patchDshMain({ remoteToken: 'remote-tok-0123', frpEnabled: true, frpRemotePort: 7001 });
   check('① 行为：令牌+合法端口 → 通过', good && good.ok === true, JSON.stringify(good));
   check('① 行为：通过时**确实落盘一次**', written.length === 1, String(written.length));
   // 关闭 frp 不应被闸拦（关是安全方向）
+  const wBeforeOff = written.length;
   const off = actions.patchDshMain({ frpEnabled: false });
   check('① 行为：关闭 frp 不被闸拦', off && off.ok === true, JSON.stringify(off));
+  check('① 行为：关闭 frp 属于合法写（正常落盘一次）',
+    written.length === wBeforeOff + 1, 'before=' + wBeforeOff + ' after=' + written.length);
+  // C-3（批 4）：弱令牌在**写入口**即拒（与暴露闸同规；此前仅 '非空白' 一票闸）
+  //   ⚠ 勘误（第 4 批 run 35484641560：五个 job 同点红、与平台无关）：原断言写死
+  //   `written.length === 1`，漏算了**上一条 off 是一次合法落盘**（走到这里已写 2 次）。
+  //   回显 `{"weak":{"ok":false,...至少 8 位},"written":2}` 证明产品判得对，是夹具的账算错。
+  //   改为相对断言（被拒前后写次数不变）：既保住「拒且未落盘」的牙，也不再钉死前面用例的条数。
+  const wBefore = written.length;
+  const weak = actions.patchDshMain({ remoteToken: 'tok', frpEnabled: true, frpRemotePort: 7001 });
+  check('C-3 行为：4 位令牌 patch main → 写入口即拒（ok:false）', weak && weak.ok === false, JSON.stringify(weak));
+  check('C-3 行为：被拒后未再多落一次盘（写次数不变）',
+    written.length === wBefore, 'before=' + wBefore + ' after=' + written.length);
 }
 
 // ── ② relay 门卫令牌必须可热换 ──
@@ -140,18 +153,25 @@ console.log('== ② relay 门卫令牌热换 ==');
   // 行为：真实 createOps 断言「只改令牌」一条链走通
   const { createOps } = require(path.join(ROOT, 'src', 'domains', 'instance', 'ops.js'));
   const seen = [];
-  const it2 = { id: 'i1', name: 'n', port: 29051, guardian: true, remoteEnabled: true, remoteToken: 'A' };
+  const it2 = { id: 'i1', name: 'n', port: 29051, guardian: true, remoteEnabled: true, remoteToken: 'tok-a-01234567' };
   const ops2 = createOps({
     store: { instances: [it2], save() {} },
     logger: { warn() {} },
     events: { append(t) { seen.push(t); } },
     hooks: { onRemoteChange(i) { seen.push('sync:' + i.remoteToken); } },
   });
-  ops2.updateInstance('i1', { remoteToken: 'B' });
-  check('② 行为：只换令牌（开关不变）即触发 onRemoteChange 且钩子读得到新值', seen.includes('sync:B'), seen.join(','));
+  // C-3（批 4）：弱令牌写入口即拒，且**不改任何字段**（半改状态防线）
+  {
+    const before = it2.guardian;
+    const r = ops2.updateInstance('i1', { guardian: false, remoteToken: 'B' });
+    check('C-3 行为：updateInstance 拒 1 位令牌（ok:false）且同补丁其它字段未被改',
+      r.ok === false && it2.remoteToken === 'tok-a-01234567' && it2.guardian === before, JSON.stringify(r));
+  }
+  ops2.updateInstance('i1', { remoteToken: 'tok-b-01234567' });
+  check('② 行为：只换令牌（开关不变）即触发 onRemoteChange 且钩子读得到新值', seen.includes('sync:tok-b-01234567'), seen.join(','));
   check('② 行为：变更留痕 inst_remote_token_changed 事件', seen.includes('inst_remote_token_changed'), seen.join(','));
   seen.length = 0;
-  ops2.updateInstance('i1', { remoteToken: 'B' });
+  ops2.updateInstance('i1', { remoteToken: 'tok-b-01234567' });
   check('② 行为：同值幂等写不再触发钩子/事件（防空转刷屏）',
     !seen.some((x) => x === 'inst_remote_token_changed' || String(x).startsWith('sync:')), seen.join(','));
   ops2.updateInstance('i1', { remoteToken: '' });
@@ -203,6 +223,111 @@ console.log('== ④ 重启真正停进程 ==');
     /inst\._restartAt = 0;/.test(px), '有');
 }
 
-const failed = results.filter((r) => !r);
-console.log('\n结果: ' + (results.length - failed.length) + ' passed, ' + failed.length + ' failed');
-process.exit(failed.length ? 1 : 0);
+// ── D-5（AUDIT-2026-09-19 第4批 D）：relay HTML 注入的全量缓冲必须有上限 ──
+//   原实现 `chunks.push(c)` 无上限，且 buildForwardHeaders 强制 accept-encoding: identity
+//   ⇒ 单个被代理文档按真实字节无界进内存。上限语义：**超限放弃注入并按流透传**，
+//   绝不截断（半份 HTML 会把浏览器打穿），也不静默降级（必须 warn）。
+console.log('== D-5 relay HTML 注入缓冲上限 ==');
+const asyncResults = [];
+const acheck = (n, c, x) => {
+  asyncResults.push(!!c);
+  console.log((c ? 'PASS' : 'FAIL') + ' ' + n + (x !== undefined && x !== '' ? '  <- ' + x : ''));
+};
+{
+  const rp = read('src/domains/relay/proxy.js');
+  const code = strip(rp);
+  check('D-5 注入分支不再无上限 push（存在字节累计 + 阈值比较）',
+    /total \+= c\.length/.test(code) && /total <= HTML_INJECT_MAX_BYTES/.test(code), 'ok');
+  check('D-5 上限常量有显式数值（不是 Infinity/漏省）',
+    /const HTML_INJECT_MAX_BYTES = \d+ \* 1024 \* 1024;/.test(code), 'ok');
+  check('D-5 超限降级必须留痕（warn）且不得截断输出',
+    /超上限|放弃 polyfill/.test(code) && !/chunks\.slice\(0,\s*\d/.test(code), 'ok');
+  check('D-5 handleUpstream 作为测试缝导出（回归不依赖真服务）',
+    /module\.exports = \{[^}]*handleUpstream[^}]*\}/.test(code), 'ok');
+}
+
+const { PassThrough } = require('node:stream');
+const relayProxy = require(path.join(ROOT, 'src', 'domains', 'relay', 'proxy.js'));
+const runUpstream = (headers, chunks, chunkMs) => new Promise((resolve) => {
+  const ur = new PassThrough();
+  ur.headers = headers || {};
+  ur.statusCode = 200;
+  const sent = [], warns = [];
+  let endAt = 0;
+  const res = {
+    headers: null,
+    writeHead(c, h) { this.code = c; this.headers = h || {}; },
+    write(b) { sent.push(Buffer.from(b)); return true; },
+    end(b) { if (b != null) sent.push(Buffer.from(b)); endAt = sent.length; finish(); },
+    once() {}, on() {},
+  };
+  const logger = { warn: (m) => warns.push(String(m)) };
+  // 第 4 参是 onStatus（传 null）；响应头走 ur.headers（PassThrough 自定义属性）
+  relayProxy.handleUpstream(ur, res, '/index.html', null, logger);
+  const finish = () => resolve({ body: Buffer.concat(sent).toString('utf8'), res, warns, endAt });
+  (async () => {
+    for (const c of chunks) { ur.write(Buffer.from(c)); await new Promise((r) => setTimeout(r, chunkMs || 0)); }
+    ur.end();
+  })();
+});
+
+(async () => {
+  {
+    const head = '<html><head><title>t</title></head><body>hi</body></html>';
+    const r = await runUpstream({ 'content-type': 'text/html' }, [head]);
+    const polyfills = (r.body.match(/<script/g) || []).length;
+    acheck('D-5 小文档：polyfill 仍注入（上限改造没把注入改没）',
+      r.body.includes('</head>') && r.body.indexOf('<script') < r.body.indexOf('</head>') && r.body.endsWith('hi</body></html>'),
+      'scriptTag=' + polyfills);
+    acheck('D-5 小文档：不触发降级告警', r.warns.length === 0, 'warns=' + r.warns.length);
+  }
+  {
+    const CAP = relayProxy.HTML_INJECT_MAX_BYTES;
+    const marker = 'x'.repeat(1024);
+    const big = '<html><head>' + marker.repeat(Math.ceil(CAP / 1024) + 4) + '</head><body>tail</body></html>';
+    // 分两块 + 块间延时：越限发生在第二块，其后才是自然 end（贴近真实慢上游）
+    const r = await runUpstream({ 'content-type': 'text/html' },
+      [big.slice(0, 4096), big.slice(4096)], 2);
+    acheck('D-5 超限：按声明长度透传不截断不重复（总字节 == 上游总字节）',
+      Buffer.byteLength(r.body) === Buffer.byteLength(big),
+      'got=' + Buffer.byteLength(r.body) + ' want=' + Buffer.byteLength(big));
+    acheck('D-5 超限：放弃注入（head 后不再插 script）',
+      r.body.indexOf('<script') < 0, 'scriptIdx=' + r.body.indexOf('<script'));
+    acheck('D-5 超限：降级有 warn 留痕', r.warns.length >= 1, JSON.stringify(r.warns.map((w) => w.slice(0, 60))));
+    acheck('D-5 超限：透传后响应自然结束（不挂在未 end 的 chunked 上）',
+      r.body.startsWith('<html><head>') && r.body.endsWith('</body></html>'), 'len=' + r.body.length);
+  }
+  {
+    // 单块即越限 + end 抢先到达：后挂的 pipeWithHold 监听器永不触发 ⇒ 必须自收口
+    const CAP = relayProxy.HTML_INJECT_MAX_BYTES;
+    const huge = '<html><head>' + 'y'.repeat(CAP + 10) + '</head><body>z</body></html>';
+    const r = await runUpstream({ 'content-type': 'text/html' }, [huge], 0);
+    acheck('D-5 越限单块：res 仍被结束（readableEnded 自收口分支可达）',
+      Buffer.byteLength(r.body) === Buffer.byteLength(huge) && r.endAt > 0,
+      'got=' + Buffer.byteLength(r.body) + '/' + Buffer.byteLength(huge) + ' endAt=' + r.endAt);
+  }
+  {
+    // 多块 + 中途越限 + 后续仍有大量块：三段字节都要按序到达（当前块自转写 + 余下由 pipeWithHold 接管）
+    const CAP = relayProxy.HTML_INJECT_MAX_BYTES;
+    const one = 'z'.repeat(1000);
+    const doc = '<html><head>' + one.repeat(Math.ceil(CAP / 1000) + 8) + '</head><body>end</body></html>';
+    const r = await runUpstream({ 'content-type': 'text/html' },
+      [doc.slice(0, 1000), doc.slice(1000, 250000), doc.slice(250000)], 1);
+    acheck('D-5 中途越限：三段字节按序完整（无丢块、无重复头）',
+      Buffer.byteLength(r.body) === Buffer.byteLength(doc)
+        && r.body.startsWith('<html><head>') && r.body.endsWith('</head><body>end</body></html>')
+        && (r.body.match(/<html>/g) || []).length === 1,
+      'got=' + Buffer.byteLength(r.body) + '/' + Buffer.byteLength(doc));
+  }
+  {
+    // 反向对照：阈值必须有限且量级合理（缺陷形态是无上限 push）
+    const CAP = relayProxy.HTML_INJECT_MAX_BYTES;
+    acheck('D-5 阈值量级合理（>=1MB，远大于壳文档但有限）',
+      Number.isFinite(CAP) && CAP >= 1024 * 1024 && CAP <= 16 * 1024 * 1024, 'CAP=' + CAP);
+  }
+
+  const failed = results.concat(asyncResults).filter((r) => !r);
+  const total = results.length + asyncResults.length;
+  console.log('\n结果: ' + (total - failed.length) + ' passed, ' + failed.length + ' failed');
+  process.exit(failed.length ? 1 : 0);
+})();

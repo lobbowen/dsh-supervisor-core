@@ -110,6 +110,28 @@ const check = (n, c, x) => { results.push(!!c); console.log((c ? 'PASS' : 'FAIL'
     const ledR = new UsageLedger({ file: path.join(TMP, 'usage-r.json'), writeDelayMs: 0, maxModelKeys: 100 });
     for (const m of ['a', 'b', 'c', 'd', 'e', 'f']) ledR.recordUsage(mkEntry(m));
     check('B19 反向：宽上限下 6 个 model 各自建桶', Object.keys(ledR.totals.byModel).length === 6 && !ledR.totals.byModel['(other)'], JSON.stringify(Object.keys(ledR.totals.byModel)));
+    // 6b2 E-4（批 4）：model 名是**客户端 body 可控**的对象键。旧 _modelKey 只做截断，
+    //   `model:"__proto__"` 会让 byModel 的 [[Prototype]] 被赋值 → 桶从聚合视图/落盘里消失，
+    //   且后续任意键的属性查找走原型链（静默错账）。现：违规键折进 (other)，计数不丢。
+    const ledP = new UsageLedger({ file: path.join(TMP, 'usage-p.json'), writeDelayMs: 0, maxModelKeys: 100 });
+    ledP.recordUsage(mkEntry('__proto__'));
+    ledP.recordUsage(mkEntry('constructor'));
+    ledP.recordUsage(mkEntry('a\u0000b'));
+    ledP.recordUsage(mkEntry('real-model'));
+    const byP = ledP.totals.byModel;
+    check('E-4 危险对象键不重定向 byModel 的原型（旧形态的真实破坏面）',
+      Object.getPrototypeOf(byP) === Object.prototype, 'proto=' + (Object.getPrototypeOf(byP) === Object.prototype ? 'Object.prototype' : '被改写'));
+    check('E-4 违规 model 折进 (other) 且计数不丢（3 违规 + 1 正常 = 4）',
+      byP['(other)'] && byP['(other)'].requests === 3 && byP['real-model'] && byP['real-model'].requests === 1 && ledP.totals.requests === 4,
+      JSON.stringify({ other: byP['(other)'] && byP['(other)'].requests, keys: Object.keys(byP) }));
+    check('E-4 落盘里也不出现危险键', (() => {
+      const raw = fs.readFileSync(path.join(TMP, 'usage-p.json'), 'utf8');
+      return !/"__proto__"|"constructor"/.test(raw);
+    })(), 'clean');
+    // 反向（防空转）：证明「直接拿外部值当键」确实会造成上述破坏（判据守的是真缺陷）
+    const naive = {}; naive['__proto__'] = { requests: 5 };
+    check('E-4 反向：旧形态（裸 byModel[key]=…）确实改写原型',
+      Object.getPrototypeOf(naive) !== Object.prototype && naive.requests === 5, '原型已被改写=判据非空转');
     // 6c 节流落盘：writeDelayMs 很大 → recordUsage 不同步落盘；flush() 才落。
     const fThrottle = path.join(TMP, 'usage-throttle.json');
     try { fs.rmSync(fThrottle, { force: true }); } catch {}

@@ -7,6 +7,9 @@
 // 方法名/{ methods }/逐字体保留，装配路径不变；process-tree-kill-test 的两条形态钉子同批改为**按符号名**。
 const pidlook = require('../../platform/os/pidlookup');
 const platform = require('../../platform/os/index');
+const { writeAtomic } = require('../../platform/util/fs');
+const fs = require('node:fs');
+const path = require('node:path');
 
 /** SIGKILL 之后的复核窗口（ms）：信号投递与内核回收需要时间，
  *  在同一拍断言 isAlive 会把「正在死」误判成「杀不掉」（假失败）。
@@ -22,6 +25,8 @@ function depsOf(host) {
       events() { return host.events; },
       logger() { return host.logger; },
       // 兄弟方法经 host 上的既有安装转发（等价于原经 this 的调用）。
+      mainOwnerFile() { return host._mainOwnerFile(); },
+      readMainOwner() { return host._readMainOwner(); },
       signalChild(child, sig) { return host._signalChild(child, sig); },
       killTree(child, sig) { return host._killTree(child, sig); },
       readKillTimer() { return host._killTimer; },
@@ -38,10 +43,58 @@ function depsOf(host) {
 
 module.exports = {
   methods: {
+  /** 主 DSH 的**归属凭据**文件（D-11，AUDIT-2026-09-19 第 4 批）：与 lan/router daemon 的
+   *  `*-daemon.identity.json` 同范式、同址（stateFile 所在目录）。此前接管只凭 cmdline 子串
+   *  相似（`_isManagedProcess`），于是**两个守卫会认领同一个 DSH**——彼此 stop/kill 对方刚
+   *  接管的进程（审计原述「疑似双管家互杀」）。 */
+  _mainOwnerFile() {
+    const d = depsOf(this);
+    try { return path.join(path.dirname(d.config().stateFile), 'dsh-main.owner.json'); } catch { return null; }
+  },
+
+  /** 读归属凭据；缺失/损坏一律 null（**绝不**因读失败而接管或否决——判定回落 cmdline）。 */
+  _readMainOwner() {
+    const d = depsOf(this);
+    try {
+      const p = d.mainOwnerFile();
+      if (!p) return null;
+      const j = JSON.parse(fs.readFileSync(p, 'utf8'));
+      return (j && typeof j === 'object' && j.dshPid) ? j : null;
+    } catch { return null; }
+  },
+
+  /** 落归属凭据：声明「pid=<dshPid> 的主 DSH 由本守卫（guardPid）负责」。
+   *  spawn 与 adopt 两条取得所有权的路线都要写。落盘走 E-1 原子写单源（platform/util/fs 的
+   *  writeAtomic：tmp 名含 pid+时间戳，多实例并发不互相覆盖，rename 原子替换）+ 0600
+   *  ——与 daemon 身份文件同法。 */
+  _writeMainOwner(dshPid, port) {
+    const d = depsOf(this);
+    try {
+      const p = d.mainOwnerFile();
+      if (!p || !dshPid) return;
+      writeAtomic(p, JSON.stringify({
+        guardPid: process.pid, dshPid, port: port || null, startedAt: Date.now(),
+      }), { mode: 0o600 });
+    } catch (e) {
+      d.logger() && d.logger().warn && d.logger().warn('writeMainOwner: ' + ((e && e.message) || e));
+    }
+  },
+
   /** 校验 pid 进程是否属于本守卫管理：cmdline 含配置的启动 bin，或符合 DSH 特征（兼容外部手动起的标准 DSH）。
-   *  精确匹配避免"路径碰巧含 dsh 就误接管"与"安装路径不含 dsh 就漏接管"。 */
+   *  精确匹配避免"路径碰巧含 dsh 就误接管"与"安装路径不含 dsh 就漏接管"。
+   *
+   *  D-11：先看**归属凭据**——但凭据只做**否决**（别的守卫活着且明确拥有这个 pid 时不接管），
+   *  不单独放行：放行权威仍是 cmdline 特征。理由——陈旧凭据（pid 已被内核复用）若可单独放行，
+   *  会把无关进程接管进来，那是比原缺陷更糟的失败方向。 */
   _isManagedProcess(pid) {
     const d = depsOf(this);
+    const own = d.readMainOwner();
+    if (own && own.dshPid === pid && own.guardPid && own.guardPid !== process.pid
+        && pidlook.isAlive && pidlook.isAlive(own.guardPid)) {
+      d.logger() && d.logger().warn && d.logger().warn(
+        'refuse adopt pid=' + pid + '：归属凭据指向另一存活守卫 pid=' + own.guardPid + '（不双管家互杀）');
+      return false;
+    }
     const cmd = pidlook.readCmdline(pid);
     if (!cmd) return false;
     const bin = d.config().command && d.config().command[1];

@@ -78,7 +78,9 @@ function handleOpen(ctx) {
   return bootstrapDshCookie('127.0.0.1', it.port, tok).then((cookie) => {
     if (!cookie) return deny(400, '令牌换取失败');
     res.writeHead(303, {
-      'Set-Cookie': cookie + '; Path=/; HttpOnly',
+      // C-6（批 4）：SameSite=Strict——cookie 跨端口共享是本设计意图（回环同源，
+      // 端口不参与 site 判定），但必须杜绝跨站导航/子资源携带（旧值缺省=Lax）。
+      'Set-Cookie': cookie + '; Path=/; HttpOnly; SameSite=Strict',
       'Location': 'http://127.0.0.1:' + it.port + '/',
     });
     res.end();

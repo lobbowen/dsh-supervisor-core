@@ -118,8 +118,15 @@ check("C-e 非 Windows 返回 'npx'", npxBin({ platform: 'linux' }) === 'npx', n
   const dist = fs.readdirSync(distDir).filter((f) => f.endsWith('.js')).sort().map((f) => fs.readFileSync(path.join(distDir, f), 'utf8')).join(String.fromCharCode(10));
   check('C-f 默认 npm argv 带 --ignore-scripts（安装期不执行包内生命周期脚本）',
     /'--no-fund'\];[\s\S]{0,400}?push\('--ignore-scripts'\)/.test(dist), '有');
-  check('C-f pkg 走字符集白名单 PKG_NAME_RE',
-    /const PKG_NAME_RE = \//.test(dist) && /PKG_NAME_RE\.test\(pkg\)/.test(dist), '有');
+  // E-4（批 4）：字符集白名单搬家到 platform/util/input 单源，本域只保留同名导出。
+  //   旧判据钉「install.js 里有 `const PKG_NAME_RE = /…/` 字面量」——搬家后会静默 FAIL，
+  //   而它真正要守的是「pkg 进 argv 前过白名单」。现判据 = 调用点问闸 + 尺子只有一把。
+  const INPUT_JS = path.join(ROOT, 'src', 'platform', 'util', 'input.js');
+  check('C-f pkg 走字符集白名单 PKG_NAME_RE（调用点仍问闸）',
+    /PKG_NAME_RE\.test\(pkg\)/.test(dist), '有');
+  check('C-f 白名单取自 E-4 单源且本域不再自带字面量（防第二把尺子）',
+    /const PKG_NAME_RE = input\.PKG_NAME_RE;/.test(dist) && !/const PKG_NAME_RE = \//.test(dist)
+      && /const PKG_NAME_RE = \//.test(fs.readFileSync(INPUT_JS, 'utf8')), '单源=input.js');
   check('C-f version 走严格 semver（复用 VERSION_RE，不复制第二份）',
     /VERSION_RE\.test\(String\(o\.version\)\)/.test(dist), '有');
   check('C-f commandTemplate 替换后逐项过禁用字符集',

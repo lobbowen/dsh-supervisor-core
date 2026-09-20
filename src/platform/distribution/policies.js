@@ -3,6 +3,9 @@
 // 分发域的纯策略（无 IO）：镜像合法性、契约/配置合并、探测规格展开、选源决策。
 // 全部为具名纯函数，入参显式，可独立 require 单测。
 
+// C-8（批 4）：SSRF 主机分级复用 shared/ip 的同一份判定，不在本层重写第二份。
+const { isPrivateHostLiteral } = require('../../shared/ip');
+
 /** 最小兜底镜像源——仅契约缺失/损坏时使用（完整目录与探测规格归壳，由壳经
  *  `<产品状态根>/supervisor/registry.json` 的 catalog 投放）。内核只保证契约不可用时也能跑
  *  （不变量 C2），故保留 2 条覆盖两种基本情形：能上网（官方）+ 中国网络（npmmirror）。
@@ -38,6 +41,24 @@ function isValidOrigin(origin) {
   return u.pathname === '' || u.pathname === '/' || u.pathname === '//';
 }
 
+/** 写入口镜像源闸（C-8，批 4）：镜像源是**唯一能进内核 fetch 与 npm 下载链**的外部地址，
+ *  配置它等同于授予「守卫替你发请求」的能力，故写盘侧必须与探测端点（api/domains/dist.js
+ *  的 probeTargetError）同规——纯 origin 合法性 + 主机字面量非私网。
+ *  旧 setRegistryConfig 只过 isValidOrigin，`http://169.254.169.254` / `http://127.0.0.1:4873`
+ *  这类字面量能直接落盘并**反向豁免**探测闸第①层（已配置源按 hostname 放行），把守卫变成
+ *  内网/元数据探针与投毒下载源。
+ *  已知残留（如实登记 AUDIT §H）：域名形态的 DNS-rebinding（写入时公网解析、连接时私网）
+ *  与 HTTP 重定向已由 redirect:'manual' 封堵一半；连接时 IP 固定需自定义 resolver，暂不实现。
+ *  @returns {string|null} 错误文案；null=放行 */
+function registryOriginViolation(origin) {
+  const o = normalizeOrigin(origin);
+  if (!isValidOrigin(o)) return '镜像源必须是 http(s) 纯 origin（无路径/查询/凭证）: ' + o;
+  let u;
+  try { u = new URL(o); } catch { return '镜像源无法解析: ' + o; }
+  if (isPrivateHostLiteral(u.hostname)) return '镜像源主机不得为回环/私网/链路本地/保留段字面量: ' + o;
+  return null;
+}
+
 /** 生效的候选 registry 列表：配置优先，空则回退兜底。 */
 function effectiveOrigins(registryConfig, defaultRegistries) {
   const o = (registryConfig && registryConfig.origins) || [];
@@ -61,10 +82,12 @@ function rebuildRegistryConfig(doc, contract, defaultRegistries) {
 
 /** 展开单个镜像的探测目标。契约 probe.kind='package-metadata' 时用与壳完全一致的
  *  真实包元数据 URL，无契约则退化为 `/-/ping` 兜底。实测两种方法延迟差 6.7 倍，
- *  故两侧必须用同一规格，否则会出现「面板显示一个源、实际下载用另一个」。 */
+ *  故两侧必须用同一规格，否则会出现「面板显示一个源、实际下载用另一个」。
+ *  条 5（批 4 C）：platformTag 为 null/空（宿主不可产标或不在发布矩阵，调用方 probeRegistry
+ *  已判定）时同样退化 ping —— 缺守卫会把字面量 `undefined` 拼进 pathTemplate 恒 404。 */
 function resolveProbe(origin, spec, platformTag) {
   const base = normalizeOrigin(origin);
-  if (spec && spec.kind === 'package-metadata' && spec.pathTemplate) {
+  if (spec && spec.kind === 'package-metadata' && spec.pathTemplate && platformTag) {
     return {
       url: base + '/' + spec.pathTemplate.replace('{platform}', platformTag),
       kind: spec.kind,
@@ -91,6 +114,7 @@ module.exports = {
   FALLBACK_REGISTRIES,
   normalizeOrigin,
   isValidOrigin,
+  registryOriginViolation,
   effectiveOrigins,
   rebuildRegistryConfig,
   resolveProbe,

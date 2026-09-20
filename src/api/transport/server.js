@@ -11,8 +11,8 @@ const { API_DOMAINS } = require('../router-table');
 const { collectBody } = require('./body');
 const { serveStatic } = require('../static');
 const { identify } = require('../identity');
-// 安全判定（Host/Origin 闸、访问密钥）——唯一实现在 ../security.js。
-const { originAllowed, requestHasAccessKey } = require('../security');
+// 安全判定（Host/Origin 闸、访问密钥、壳源）——唯一实现在 ../security.js。
+const { originAllowed, requestHasAccessKey, isShellOrigin } = require('../security');
 
 /** 请求级失败的统一兜底：只应答一次（头已发则仅断开），并记录一条错误事件。
  *  绝不把异常抛给进程层（对比：bin 的 uncaughtException 策略是 3 次自杀重启）。 */
@@ -37,17 +37,16 @@ function safeFail(res, err, where) {
  */
 function createServer(sup) {
   return http.createServer((req, res) => {
-    // 本地壳源（Tauri asset 页 tauri:// / *.tauri.localhost）CORS 白名单：
-    // 壳内 supervisor.html 与 API 不同源但同机，放行其直连。
-    // 其他 Origin 维持零 CORS（防外部网页读取）。
+    // 本地壳源 CORS 白名单（C-7，批 4）：判定与 CSRF 深化层（api/security.js 的
+    // isShellOrigin）共用同一事实源。旧版此处自带更宽字面量（`*.tauri.localhost` 通配），
+    // 造成 CORS 集合 ⊋ CSRF 集合的分裂：通配子源能读到响应却驱动不了写请求。
+    // 收敛后仅 tauri://localhost 与 tauri.localhost（http/https）放行，其余零 CORS。
     const shellOrigin = (() => {
       const o = req.headers.origin;
       if (!o) return null;
       try {
         const u = new URL(o);
-        const host = u.hostname.toLowerCase();
-        if (u.protocol === 'tauri:' && host === 'localhost') return o;
-        if ((u.protocol === 'http:' || u.protocol === 'https:') && (host === 'tauri.localhost' || host.endsWith('.tauri.localhost'))) return o;
+        return isShellOrigin(u.protocol, u.hostname) ? o : null;
       } catch {}
       return null;
     })();

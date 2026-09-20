@@ -1,8 +1,29 @@
 'use strict';
 
 const platform = require('../../platform/os/index');
+const distribution = require('../../platform/distribution');
 
 // app/session/shutdown.js —— 关停编排：停被管对象、会话置 stopped、回执（绝不自行停止守卫）。
+
+/** D-10（AUDIT-2026-09-19 第 4 批）：关停**不等**在途 npm（装/卸载可达分钟级，守卫只有 8s
+ *  优雅期，见 bin/dsh-supervisor 强杀兜底），但**必须中止**它 —— 子进程 detached 自成进程组，
+ *  不中止就会在守卫死后继续写 node_modules/全局前缀，与新守卫的写入并发（半成品/9-13 同族）。
+ *  中止后对应 install()/uninstall() 以 ok:false,aborted:true 收口；面板据 warn+事件知悉。
+ *  @returns {number} 被中止的任务数 */
+function abortInflightNpm(host, reason) {
+    let n = 0;
+    try {
+      n = distribution.killInflightNpm(reason);
+    } catch (e) {
+      host.logger && host.logger.warn && host.logger.warn('shutdown abortInflightNpm: ' + ((e && e.message) || e));
+      return 0;
+    }
+    if (n > 0) {
+      host.logger && host.logger.warn && host.logger.warn('[shutdown] 中止在途 npm 任务 ' + n + ' 个（' + reason + '）：本次安装/卸载未完成，可在守卫恢复后重新发起');
+      host.events && host.events.append('shutdown_npm_aborted', { count: n, reason });
+    }
+    return n;
+}
 
 
 
@@ -26,6 +47,8 @@ function shutdown(host) {
     if (host._heartbeatTimer) clearInterval(host._heartbeatTimer);
     if (host._killTimer) clearTimeout(host._killTimer);
     if (host._adoptKillTimer) clearTimeout(host._adoptKillTimer);
+    // D-10：先切断「守卫死后仍在写盘的 npm 子进程」，再进入停对象流程。
+    abortInflightNpm(host, 'guard-shutdown');
     if (host._initialCheckTimer) clearTimeout(host._initialCheckTimer);
     if (host._upgradeTimer) clearInterval(host._upgradeTimer);
     if (host._shellWatchdogTimer) clearInterval(host._shellWatchdogTimer);
@@ -83,6 +106,9 @@ async function shutdownAll(host) {
     if (host._adoptKillTimer) { clearTimeout(host._adoptKillTimer); host._adoptKillTimer = null; }
     host.logger.info('[session] 退出流程开始：停止全部被管对象…');
     host.events && host.events.append('shutdown_all', {});
+    // D-10：在途 npm 不等（优雅期只有 8s），但必须中止其 detached 子进程，
+    //   否则守卫死后它继续写 node_modules/全局前缀，与重启后的新守卫并发。
+    abortInflightNpm(host, 'session-exit');
     // 1) 停 DSH 主实例（本守卫是被管对象的所有者，契约 §2）
     host._stopMainDsh();
     // 2) 停全部沙箱（按实际单元名——glob 不经 shell 不展开）

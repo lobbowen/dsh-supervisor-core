@@ -8,6 +8,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const matrix = require('../contract/matrix');
 const registryContract = require('../contract/registry');
+const { writeAtomic } = require('../util/fs');
 const policies = require('./policies');
 
 /** 壳投放契约的重载 TTL（ms）：壳会在运行中重写 registry.json，内核必须能看到。 */
@@ -75,7 +76,6 @@ function saveRegistryConfig(state) {
 /** 读回原文档（保留壳字段与未来新增字段），只覆盖内核拥有的三键，原子写回。 */
 function writeRegistryDoc(state) {
   const f = state.registryFile;
-  const tmp = f + '.tmp';
   let doc = {};
   try {
     const raw = fs.readFileSync(f, 'utf8');
@@ -86,14 +86,23 @@ function writeRegistryDoc(state) {
   doc.mode = rc.mode;
   doc.origins = rc.origins;
   doc.manualOrigin = rc.manualOrigin;
-  fs.writeFileSync(tmp, JSON.stringify(doc, null, 2) + '\n', { mode: 0o600 });
-  fs.renameSync(tmp, f);
+  writeAtomic(f, JSON.stringify(doc, null, 2) + '\n', { mode: 0o600 });
 }
 
-/** 探测单个 registry 的可达性 + 延迟。探测 URL 由契约决定（与壳同规格）。 */
+/** 探测单个 registry 的可达性 + 延迟。探测 URL 由契约决定（与壳同规格）。
+ *  条 5（AUDIT-2026-09-19 第4批 C）：package-metadata 探测要按平台展开 `{platform}` 标签，
+ *  而 platformTag() 对不可用宿主（freebsd 等）会同步抛 —— 旧实现让抛错穿透
+ *  selectRegistry 的 Promise.all，违不变量 C2「契约不可用绝不阻断选源」；
+ *  可产标但不在发布矩阵（linux-arm64/win32-arm64）时契约探测的包根本不存在 → 恒 404
+ *  全员不可达。两面同修：探不到可信标签就退化为 ping 规格（tag=null 交 resolveProbe 守卫）。
+ *  注意：platformTag() 本体一字不动 —— 其抛错文案是被 arch-validation/P-6 钉死的对外契约。 */
 async function probeRegistry(state, origin) {
   const spec = (state.contract && state.contract.ok && state.contract.probe) || null;
-  const target = policies.resolveProbe(origin, spec, platformTag());
+  let tag = null;
+  try {
+    if (matrix.isSupported()) tag = platformTag();
+  } catch { tag = null; }
+  const target = policies.resolveProbe(origin, spec, tag);
   const start = Date.now();
   try {
     // redirect:'manual' + 显式「非 2xx 即失败」—— 本函数是 SSRF 闭环的另一半：
@@ -208,18 +217,43 @@ async function registryInfo(state) {
   };
 }
 
-/** 保存全局镜像源配置（mode/手动源/候选），并立即重测。 */
+/** 保存全局镜像源配置（mode/手动源/候选），并立即重测。
+ *  C-8（批 4）写入口闸：manualOrigin 与每条候选 origins 都要过 policies.registryOriginViolation
+ *  （与探测端点同规的 SSRF 闸）——过不了的字面量一律不落盘，逐条原因经 error/errors 字段回传
+ *  （不静默丢弃）。auto 模式下不预校验 manualOrigin（它此刻不参与选源），改为在 manual 分支闸。
+ *  早退零改动（C-8 补严）：rc 是 registryConfig 的**副本**，只有全部校验通过才回写 state ——
+ *  直接在原对象上先落 mode 再校验，会让「切 manual + 私网源」被拒后内存里仍留着 mode=manual
+ *  （磁盘却没写），UI 与实然分叉，且下一次自动重测按 manual 走旧手动源。 */
 async function setRegistryConfig(state, cfg) {
-  const rc = state.registryConfig || {};
+  const rc = { ...(state.registryConfig || {}) };
   let rejected = [];
   if (cfg && typeof cfg === 'object') {
     if (cfg.mode === 'manual' || cfg.mode === 'auto') rc.mode = cfg.mode;
-    if (typeof cfg.manualOrigin === 'string') rc.manualOrigin = cfg.manualOrigin.trim();
+    if (typeof cfg.manualOrigin === 'string') {
+      const mo = cfg.manualOrigin.trim();
+      // 仅「切到 manual 且要落手动源」时强校验；清空（''）沿用旧语义放行（选源侧自会回退）。
+      if (mo && rc.mode === 'manual') {
+        const v = policies.registryOriginViolation(mo);
+        if (v) {
+          const info = await registryInfo(state); // 不改配置，回当前实况 + 拒因
+          info.error = v;
+          return info;
+        }
+      }
+      rc.manualOrigin = mo;
+    }
     if (Array.isArray(cfg.origins)) {
       const raw = cfg.origins.map((x) => String(x).trim());
-      const list = raw.filter((x) => policies.isValidOrigin(x));
       // 非法项不得静默丢弃：用户改了自己的镜像源却不知道哪条被丢。收集后在下方经日志与返回值暴露。
-      rejected = raw.filter((x) => x && !policies.isValidOrigin(x));
+      // C-8：拒因含两类（格式非法 / SSRF 主机字面量违规），逐条记入 reasons 统一回传。
+      const reasons = new Map();
+      const list = raw.filter((x) => {
+        if (!x) return false;
+        const v = policies.registryOriginViolation(x);
+        if (v) { reasons.set(x, v); return false; }
+        return true;
+      });
+      rejected = raw.filter((x) => x && reasons.has(x));
       if (list.length) rc.origins = list; // 全部非法时保留既有 origins（不写成空）
     }
   }

@@ -1,14 +1,42 @@
 'use strict';
 
 // 局域网反向代理 server 本体：在 0.0.0.0:<wanPort> 监听，把 LAN 流量转发到 127.0.0.1:<dshPort>，
-// 做回环呈现 + HTML polyfill 注入 + 断线保持，并暴露 setToken/setDshToken/hasToken/status 热更新面。
+// 做回环呈现 + HTML polyfill 注入（注入有全量缓冲上限，超限按流透传，D-5）+ 断线保持，
+// 并暴露 setToken/setDshToken/hasToken/status 热更新面。
 // 硬边界：DSH 本体保持只监听 127.0.0.1，不改动其源码/配置/插件；把 Origin/Referer 改写为回环权威，
 // 使 DSH 信任围栏视为本机流量，访问控制（令牌/来源闸）留在反代层；session.js 换 dsh-auth-* 注入 HTTP/WS。
 
 const http = require('node:http');
-const { isTrustedSource, tokenGateDecision, POLYFILL_SCRIPT } = require('./core');
+const crypto = require('node:crypto');
+const { isTrustedSource, tokenGateDecision, backoffGate, upstreamPath, POLYFILL_SCRIPT } = require('./core');
 const { createSession } = require('./session');
 const { createTunnelHandler } = require('./tunnel');
+
+/** HTML polyfill 注入的全量缓冲上限（D-5）：超上限放弃注入按流透传，绝不无界缓冲。
+ *  取 2MB：DSH 壳文档远小于此；上限只兜异常上游，同时把并发最坏情形钉在可算的内存量级。 */
+const HTML_INJECT_MAX_BYTES = 2 * 1024 * 1024;
+
+/** 门卫令牌失败退避账本（C-3，批 4）：按来源 IP 计失败，窗口内超阈值即拒（429）。
+ *  仅内存、进程重启即清空；判定纯函数在 core.backoffGate，本层只管计时与账本。 */
+function createGateLedger() {
+  const map = new Map();
+  return {
+    waitMsFor(ip) {
+      const e = map.get(ip);
+      if (!e) return null;
+      const w = backoffGate({ failCount: e.n, firstAt: e.first, now: Date.now() });
+      if (w.waitMs === null && Date.now() - e.first >= 60000 && e.n >= 10) map.delete(ip);
+      return w.waitMs;
+    },
+    recordFailure(ip) {
+      const now = Date.now();
+      const e = map.get(ip);
+      if (!e || now - e.first >= 60000) map.set(ip, { n: 1, first: now });
+      else e.n += 1;
+    },
+    clear(ip) { map.delete(ip); },
+  };
+}
 
 /** 流式转发 + 断线保持。
  *
@@ -70,18 +98,43 @@ function handleUpstream(ur, res, clientReqPath, onStatus, logger) {
   }
   res.writeHead(ur.statusCode || 502, h);
   if (!isHtml) { pipeWithHold(ur, res, clientReqPath, logger); return; }
+  // D-5（AUDIT-2026-09-19 第4批）：polyfill 注入需全量缓冲整份文档，原实现 chunks 无上限
+  //   ⇒ 单个被代理页面可无界吃内存（identity 强制未压缩，体积即真实字节）。
+  //   超上限**不截断**（截断会给浏览器半份 HTML）：改为放弃注入、按原始流继续透传，降级留痕。
   const chunks = [];
-  let done = false;
-  ur.on('data', (c) => chunks.push(c));
+  let total = 0, passed = false, done = false;
+  const log = (msg) => { if (logger && logger.warn) { try { logger.warn('[relay] ' + msg); } catch {} } };
+  // 超限切透传：吐出已缓冲部分并挂 pipeWithHold 接管后续 end/error/close。
+  //   越限的**当前块**不能指望 pipeWithHold 写出——本次 data 分发早已开始，后挂监听器收不到它；
+  //   ur.end 已抢先到达（单块即越限）时后挂监听器也永不触发 ⇒ 两处都要显式收口，
+  //   否则浏览器永久挂在未结束的 chunked 响应上。
+  const switchToPassThrough = () => {
+    passed = true;
+    let acc = Buffer.concat(chunks);
+    chunks.length = 0;
+    if (acc.length) res.write(acc);
+    acc = null;
+    pipeWithHold(ur, res, clientReqPath, logger);
+    if (ur.readableEnded) { try { res.end(); } catch {} }
+  };
+  ur.on('data', (c) => {
+    if (passed) return;
+    total += c.length;
+    if (total <= HTML_INJECT_MAX_BYTES) { chunks.push(c); return; }
+    log('HTML 超上限 ' + HTML_INJECT_MAX_BYTES + 'B（已收 ' + total + 'B），放弃 polyfill 注入按流透传 ' + (clientReqPath || ''));
+    const selfForward = !ur.readableEnded;
+    switchToPassThrough();
+    if (selfForward) res.write(c);
+  });
   ur.on('end', () => {
-    if (done) return;
+    if (done || passed) return;
     done = true;
     let body = Buffer.concat(chunks).toString('utf8');
     if (body.includes('</head>')) body = body.replace('</head>', POLYFILL_SCRIPT + '</head>');
     res.end(body);
   });
   ur.on('error', () => {
-    if (done) return;
+    if (done || passed) return;
     done = true;
     try { res.end(); } catch {}
   });
@@ -104,6 +157,9 @@ function createRelay(targetHost, targetPort, opts) {
   let token = o.token || '';
   const logger = o.logger || null;
   const authority = targetHost + ':' + targetPort;
+  // 门卫会话盐（批 4，令牌条 5）：每进程随机，dsh_lan_token cookie 只存派生值（sha256(salt|token)），
+  //   门卫令牌原文永不上会话通道；重启/换令牌即全部会话失效（重凭 ?token= 进入）。
+  const gateSalt = crypto.randomBytes(16).toString('hex');
 
   const session = createSession({
     targetHost,
@@ -115,25 +171,38 @@ function createRelay(targetHost, targetPort, opts) {
     dshToken: o.dshToken,
   });
 
+  const gateLedger = createGateLedger();
+
   const server = http.createServer((req, res) => {
     // 来源闸：公网来源一律拒绝 —— 与 config.js 声称的「RFC1918 白名单」一致。
     if (!isTrustedSource(req)) {
       res.writeHead(403, { 'Content-Type': 'text/plain; charset=utf-8' });
       return res.end('仅允许局域网（RFC1918）或本机访问');
     }
-    const gate = tokenGateDecision(req, token);
+    const peerIp = (req.socket && req.socket.remoteAddress) || '?';
+    const gate = tokenGateDecision(req, token, gateSalt);
     if (!gate.ok) {
+      // C-3（批 4）：凭据失败退避——同 IP 60s 窗口内 ≥10 次失败即 429（Retry-After），
+      //   封堵门卫令牌的公网侧无限速爆破（frp 通道把公网访客呈现为回环/私网来源）。
+      const waitMs = gateLedger.waitMsFor(peerIp);
+      if (waitMs !== null) {
+        res.writeHead(429, { 'Content-Type': 'text/plain; charset=utf-8', 'Cache-Control': 'no-store', 'Retry-After': String(Math.max(1, Math.ceil(waitMs / 1000))) });
+        return res.end('尝试过于频繁，请稍后再试');
+      }
       if (gate.redirect !== undefined) {
-        // 首次凭 URL 令牌进入：种 HttpOnly Cookie 后跳到干净路径。
-        res.writeHead(302, { Location: gate.redirect, 'Set-Cookie': gate.cookie });
+        // 首次凭 URL 令牌进入：种 HttpOnly Cookie 后跳到干净路径（C-4：no-store 防凭证响应被缓存）。
+        res.writeHead(302, { Location: gate.redirect, 'Set-Cookie': gate.cookie, 'Cache-Control': 'no-store' });
         return res.end();
       }
-      res.writeHead(401, { 'Content-Type': 'text/plain; charset=utf-8' });
+      gateLedger.recordFailure(peerIp);
+      res.writeHead(401, { 'Content-Type': 'text/plain; charset=utf-8', 'Cache-Control': 'no-store' });
       return res.end('需要访问令牌：在 URL 后附加 ?token=<remoteToken>（只需一次，之后凭 Cookie 访问）');
     }
+    gateLedger.clear(peerIp);
+    const fwdPath = upstreamPath(req.url);
     session.mergedCookieHeaders(req.headers).then((cookie) => {
       const upstream = http.request(
-        { hostname: targetHost, port: targetPort, path: req.url, method: req.method, headers: buildForwardHeaders(req, authority, cookie) },
+        { hostname: targetHost, port: targetPort, path: fwdPath, method: req.method, headers: buildForwardHeaders(req, authority, cookie) },
         (ur) => handleUpstream(ur, res, req.url, (status) => {
           // 会话自愈：上游 401/403 时清 cookie，下次请求重换。
           if (status === 401 || status === 403) session.invalidate(status);
@@ -147,7 +216,7 @@ function createRelay(targetHost, targetPort, opts) {
     }).catch(() => {
       // 换取 cookie 意外异常：仍按客户端原 cookie 转发（旧版 DSH 可用），绝不吞请求。
       const upstream = http.request(
-        { hostname: targetHost, port: targetPort, path: req.url, method: req.method, headers: buildForwardHeaders(req, authority, req.headers.cookie) },
+        { hostname: targetHost, port: targetPort, path: fwdPath, method: req.method, headers: buildForwardHeaders(req, authority, req.headers.cookie) },
         (ur) => handleUpstream(ur, res, req.url, null, logger)
       );
       upstream.on('error', () => {
@@ -164,6 +233,9 @@ function createRelay(targetHost, targetPort, opts) {
     targetHost,
     targetPort,
     getToken: () => token,
+    getGateSalt: () => gateSalt,
+    gateWaitMs: (ip) => gateLedger.waitMsFor(ip),
+    onGateFailure: (ip) => gateLedger.recordFailure(ip),
   }));
 
   // 初始令牌：池中已有即换取（尽早拿到 cookie，避免首个请求等待）。
@@ -184,4 +256,5 @@ function createRelay(targetHost, targetPort, opts) {
   return server;
 }
 
-module.exports = { createRelay };
+// handleUpstream/HTML_INJECT_MAX_BYTES 为 D-5 测试缝（回归直接注入假上游，不启真服务/真端口）。
+module.exports = { createRelay, handleUpstream, HTML_INJECT_MAX_BYTES };

@@ -8,6 +8,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const exec = require('../util/exec');
+const input = require('../util/input');
 
 /** 平台不具备该能力时抛出（调用方据此给出明确提示，而非 catch 后误报「启动失败/端口冲突」）。 */
 class CapabilityError extends Error {
@@ -31,14 +32,10 @@ function run(cmd, args, opts) {
  *  其它 `*.service`、把删除指向任意路径（fail-open）。
  *  判据（fail-closed）：1..128 字符，仅允许 systemd 单元名安全集（字母数字 + `:` `-` `_` `.` `@`），
  *  必须带 `.service` 后缀或无任何后缀（内核两种来路都覆盖：裸名与具名）。 */
-const UNIT_NAME_RE = /^[A-Za-z0-9:@._-]{1,128}$/;
-function unitNameViolation(unit) {
-  const s = String(unit == null ? '' : unit);
-  if (!UNIT_NAME_RE.test(s)) return '非法单元名（字符集/长度白名单不通过）: ' + s.slice(0, 80);
-  const dot = s.indexOf('.');
-  if (dot >= 0 && !/\.service$/.test(s)) return '单元名后缀不受支持（仅允许 .service 或无后缀）: ' + s.slice(0, 80);
-  return null;
-}
+const UNIT_NAME_RE = input.UNIT_NAME_RE;
+// 判定体即 E-4 单源的 input.unitNameViolation（保留本模块同名导出：exec-return-contract A4b
+// 按 svcMod.unitNameViolation 做行为级判定，且各 Provider 在调用前就地问闸）。
+function unitNameViolation(unit) { return input.unitNameViolation(unit); }
 
 const systemd = {
   kind: 'systemd',

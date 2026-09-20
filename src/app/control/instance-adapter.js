@@ -55,7 +55,9 @@ module.exports = {
       return { ok: running, error: running ? null : '沙箱实例未运行' };
     },
     /** 目录项 <- 实例域状态对齐（heartbeat 监督拍后调用）：实例已删 -> 注销（防死登记）；
-     *  实例存在 -> desired/guardian/name/ownership 经 _managedSandboxSpec 申报，phase 落目录唯一词表。 */
+     *  实例存在 -> name/guardian/ownership 经 _managedSandboxSpec 申报，phase 落目录唯一词表。
+     *  ⚠ **desired 不同步**（D-8/铁律 1）：观测推导的应然写回目录会让「崩溃进 BACKOFF」被
+     *    误判成「用户想停它」。意图只由 entry 的 start()/stop() 与动作路径改。 */
     _syncSandboxRegistryEntry(entry) {
       const d = depsOf(this);
       if (!entry || !d.managedObjects() || !d.instances()) return;
@@ -65,7 +67,7 @@ module.exports = {
         d.control().unregister(entry.id); // 实例已不存在：目录注销（heartbeat 不再空转）
         return;
       }
-      try { d.control().upsert(d.control().sandboxSpec(inst)); } catch (e) { d.logger() && d.logger().warn && d.logger().warn('sandbox upsert: ' + ((e && e.message) || e)); }
+      try { d.control().upsert(d.control().sandboxSpec(inst), { keepDesired: true }); } catch (e) { d.logger() && d.logger().warn && d.logger().warn('sandbox upsert: ' + ((e && e.message) || e)); }
       const map = { STOPPED: 'stopped', INSTALLING: 'installing', STARTING: 'starting', RUNNING: 'running', BACKOFF: 'backoff', FAILED: 'failed' };
       const ph = map[(inst.state && inst.state.phase) || 'STOPPED'] || 'stopped';
       try {

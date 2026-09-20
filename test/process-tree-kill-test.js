@@ -53,8 +53,10 @@ const pc = require(path.join(ROOT, 'src', 'platform', 'os', 'process.js'));
 
 // ── G-a：平台层实现 ──
 check('G-a 平台层导出 killTree', typeof pc.killTree === 'function', typeof pc.killTree);
-check('G-a killTree 的 Windows 分支用 taskkill /T /F（整树+强制，B13）',
-  /execFile\('taskkill', \['\/PID', String\(pid\), '\/T', '\/F'\]/.test(processSrc), '有');
+// 条 6（批 4 C 平台）：异步 taskkill 收编进统一有界封装（裸 execFile 是 K-W2 盲区）。
+// 钉子随实现形态更新：/T /F 语义（B13）不变，只是入口从 execFile 换成 exec.runAsync。
+check('G-a killTree 的 Windows 分支用 taskkill /T /F（整树+强制，B13；经统一封装，条 6）',
+  /ex\.runAsync\('taskkill', \['\/PID', String\(pid\), '\/T', '\/F'\]/.test(processSrc), '有');
 // B13（AUDIT-2026-09-19）：POSIX 组信号必须显式声明 ownGroup——接管（外来）pid 不得 kill(-pid)
 check('B13 POSIX 组信号仅限 ownGroup（外来 pid 退化单进程）',
   /opts && opts\.ownGroup === true/.test(processSrc), '有');

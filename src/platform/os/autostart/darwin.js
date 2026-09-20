@@ -9,6 +9,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
 const ex = require('../../util/exec');
+const { writeAtomic } = require('../../util/fs');
 const { shellDir } = require('../../service/state-root');
 
 const GUARD_LABEL = 'com.dsh.supervisor';
@@ -116,9 +117,7 @@ function setGuiAutostart(on, deps) {
                  error: '未定位到桌面壳可执行文件，无法配置自启：' + gui };
       }
       fs.mkdirSync(path.dirname(file), { recursive: true });
-      const atmp = file + '.tmp';
-      fs.writeFileSync(atmp, macGuiPlist(gui));
-      fs.renameSync(atmp, file);
+      writeAtomic(file, macGuiPlist(gui), { mode: 0o644 });
       macSetEnabled(GUI_LABEL, true);
       const loaded = macLoaded(GUI_LABEL) || macBootstrap(file);
       return { ok: true, platform: 'darwin', enabled: true, via: 'launchagent',

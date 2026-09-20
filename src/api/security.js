@@ -58,10 +58,16 @@ function isLocalOrLanHost(h) {
   return isPrivateIpv4(bare);
 }
 
-/** 壳（Tauri webview）的来源：唯一被接受的非 HTTP 来源。 */
+/** 壳（Tauri webview）的来源：唯一被接受的非回环来源 —— **CORS 与 CSRF 共用的单一事实源**
+ *  （C-7 批 4：旧实现 transport/server.js 自带一份更宽的字面量判定（含 `*.tauri.localhost`
+ *  通配 + https），出现「读得到、写不进 + 通配面额外暴露」的集合分裂。现两路都只认：
+ *  `tauri://localhost`（POSIX asset 协议）与 `http(s)://tauri.localhost`（Windows asset 主机），
+ *  不再接受任何子域通配。 */
 function isShellOrigin(protocol, hostname) {
-  if (protocol !== 'tauri:') return false;
-  return hostname === 'localhost' || /(^|\.)tauri\.localhost$/.test(hostname);
+  const h = String(hostname || '').toLowerCase();
+  if (protocol === 'tauri:') return h === 'localhost' || /(^|\.)tauri\.localhost$/.test(h);
+  if (protocol === 'http:' || protocol === 'https:') return h === 'tauri.localhost';
+  return false;
 }
 
 /** 主机名归一（小写 + 去 IPv6 方括号），用于 Host/Origin 主机一致性比较。 */
@@ -71,12 +77,15 @@ function normalizeHostname(h) {
 }
 
 function originAllowed(req, apiPort) {
-  // 闸 1：Host 头（防 DNS-rebinding）
+  // 闸 1：Host 头（防 DNS-rebinding）—— C4 批4：fail-closed。
   //   浏览器会把 URL 里的域名放进 Host；若它不是回环名，
   //   说明请求来自「被解析到 127.0.0.1 的外部域名」，拒绝。
+  //   旧实现 `if (host)` 让缺 Host 的请求整块跳过（与闸 2 的「无 Origin 放行」组合后
+  //   两闸同时归零）。HTTP/1.1 起 Host 必发；缺失即非规范客户端，直接拒。
   const host = req.headers.host;
+  if (!host) return false;
   let hostname = '';
-  if (host) {
+  {
     // Host 形如 `127.0.0.1:36360` / `[::1]:36360` / `evil.com`
     const m = /^(\[[^\]]+\]|[^:]+)(?::\d+)?$/.exec(String(host).trim());
     hostname = m ? m[1] : String(host).trim();
@@ -84,6 +93,10 @@ function originAllowed(req, apiPort) {
   }
 
   // 闸 2：Origin（哪些页面能驱动本 API）
+  //   C-2 裁决（批 4，登记 §H）：现代浏览器对 **POST（含 form 提交）一律发 Origin**，
+  //   缺 Origin 只可能来自非浏览器客户端——「无 Origin 写请求」不构成浏览器 CSRF 面。
+  //   组合归零风险已由闸 1 fail-closed（缺 Host 即拒）封堵；本行语义保持并测试钉死
+  //   （defects-batch-f K6-b / lan-access-boundary E-a,E-b / core-test:146）。
   const o = req.headers.origin;
   if (!o) return true; // curl / CLI / 同源 GET 无 Origin
   try {

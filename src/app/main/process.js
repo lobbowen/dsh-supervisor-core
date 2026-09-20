@@ -32,6 +32,8 @@ function depsOf(host) {
       // 兄弟方法经 host 上的既有安装转发（等价于原经 this 的调用）。
       spawnCommand: () => host.spawnCommand(),
       beginRestart: (reason, opts) => host._beginRestart(reason, opts),
+      // D-11：取得所有权的两条路线（spawn / adopt）都要落归属凭据（实现在 main/signals.js）。
+      writeMainOwner: (pid, port) => host._writeMainOwner(pid, port),
     };
     for (const n of HELPERS) d['m' + n] = (...a) => host['_m' + n](...a);
     DEPS.set(host, d);
@@ -146,6 +148,8 @@ module.exports = {
       }
     });
     d.events().append('spawned', { pid: child.pid });
+    // D-11：本守卫 spawn 的实例即归本守卫负责，先落凭据再写状态（后续 adopt 判定要读它）。
+    d.writeMainOwner(child.pid, d.config().targetPort);
     d.state().write();
   },
 
@@ -227,6 +231,9 @@ module.exports = {
     }
     d.events().append('adopted', { pid: d.mAdoptPid() });
     d.logger().info('adopted existing instance pid=' + d.mAdoptPid());
+    // D-11：接管即认领——不写凭据的话，另一个守卫只凭 cmdline 相似会把同一个 DSH 再接管一次
+    //   （两守卫互相 stop/kill 对方的实例）。
+    d.writeMainOwner(d.mAdoptPid(), d.config().targetPort);
     // 接管既有实例：统一令牌服务从已登记源（journald / stdout 行缓冲）取最新令牌并下发
     d.tokenService().scheduleCapture('main');
     d.state().write();

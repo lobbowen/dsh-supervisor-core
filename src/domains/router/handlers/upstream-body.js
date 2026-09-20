@@ -11,15 +11,24 @@
  *  300s 远大于正常非流式响应时长，仅作「发完头后不再有进展」的兜底，不影响正常大响应。 */
 const NONSTREAM_BODY_MAX_MS = 300000;
 
-/** 有界读上游响应体（字节 + 时间上限；超时带部分内容 resolve，不悬挂调用方）。 */
+/** 有界读上游响应体（字节 + 时间上限；超时带部分内容 resolve，不悬挂调用方）。
+ *  C-5 同源修正（批 4）：Buffer 累积 + 一次性 utf8 解码（旧 `text += c` 逐块 toString
+ *  会拆坏跨块多字节字符，且上限按字符数而非字节数计）。 */
 function readUpstreamBody(ur, maxBytes, timeoutMs) {
   return new Promise((resolve) => {
-    let text = '';
+    const chunks = [];
+    let n = 0;
     let done = false;
-    const finish = () => { if (done) return; done = true; if (timer) clearTimeout(timer); resolve(text); };
+    const finish = () => {
+      if (done) return;
+      done = true;
+      if (timer) clearTimeout(timer);
+      resolve(Buffer.concat(chunks).toString('utf8'));
+    };
     const timer = setTimeout(() => { try { ur.destroy(); } catch {} finish(); }, timeoutMs || 15000);
     if (timer.unref) timer.unref();
-    ur.on('data', (c) => { if (text.length < (maxBytes || 65536)) text += c; });
+    const cap = maxBytes || 65536;
+    ur.on('data', (c) => { if (n < cap) { chunks.push(c); n += c.length; } });
     ur.on('end', finish);
     ur.on('error', finish);
     ur.on('close', finish);

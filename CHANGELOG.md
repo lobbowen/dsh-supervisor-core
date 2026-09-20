@@ -6,6 +6,100 @@
 
 ## [未发布]
 
+### 健壮性与制度化收口（AUDIT-2026-09-19 第 4 批：C 类 P2 全量 + §E.1/§E.2/§E.4 立项，裁决登记见 AUDIT-REPORT §H）
+
+- **原子写单源（§E-1）**：状态落盘从「各点自拼 `file + '.tmp'` 再 rename」收敛到
+  `platform/util/fs` 的 `writeAtomic`（tmp 名含 pid+毫秒、mode 默认 0600、rename 后二次收口、
+  失败 truncate 后抛出）。迁移前 `src/` 下 28 个文件自带该形态、25 个用**固定** tmp 名——升级重叠期
+  新旧守卫写同一个临时文件，rename 出的是两次序列化字节的交错混合体；26 个调用点迁移 + 3 处显式豁免。
+- **外部输入字符集单源（§E-4）**：新增 `platform/util/input.js`（包名 / argv 项 / systemd 单元名 /
+  聚合账本键四把尺子），`install.js`、`os/service.js` 改取同名导出。顺带修真实缺陷：用量账本的
+  model 键来自请求体，`__proto__` 走原型 setter 会让该桶从聚合视图与落盘里**静默消失**（错账不报错）。
+- **静态门禁登记自己的覆盖缺口（§E-2）**：ACCEPTANCE-STANDARD 新增 §7（缺口登记纪律）+ §8/§9
+  （原子写单源、输入字符集单源两条硬规则），四个门禁文件头注登记编号化缺口清单，执法点 J-o。
+- **API/安全（C-1…C-9）**：Host 闸缺头即拒；remoteToken 强度闸（<8 拒）前置到写入口 + 门卫凭据
+  per-IP 退避（429 + Retry-After，HTTP 与 WS 升级同闸）；转发上游剥离 `token=` 凭据 + 凭证响应
+  `no-store`；body 改 Buffer 累积（跨块多字节不损坏、上限按字节）；`/open` Cookie 加 `SameSite=Strict`；
+  壳来源判定收敛 `isShellOrigin`（删 `*.tauri.localhost` 通配）；registry 写入口 SSRF 私网字面量拦截；
+  监听错误按可重试性分类（`EACCES` → 明确 `api_offline`，绝不静默下线）。
+- **令牌域**：跨进程轮转改「原子 rename 抢占备份槽」；未 attach 的隐式源必须过与 attach 同一 kind 闸；
+  journal 采集改异步（心跳不再被冻结 5s）；`dsh_lan_token` 改存加盐派生值，令牌原文只容一次性 `?token=`
+  出示（重启/换令牌即会话全失效）。
+- **平台层**：日志与事件写放大治理（记账 + 节流，轮转即时落 meta）；`reclaimByCmdMark` 空参双闸
+  fail-closed；可执行判定补 X_OK（0644 半截安装不再判「已安装」）；浏览器降级链改 spawn 前预检
+  （ENOENT 是异步事件，旧递归返回值被丢弃）；镜像探测加宿主支持闸 + platformTag 空值守卫；
+  异步 exec 面收编进 `runAsync/runOutAsync`（Windows 不再弹黑框，K-W2 判据扩到六词形）；
+  第三方包选版改判 latest 优先（旧「全量最高」会装到他人杂 tag）。
+- **生命周期（D-1…D-13）**：在途计数幂等收口（不再恒判「不可停」）；上游失败先停实例再清 pid；
+  代理实例日志接平台层轮转（首建 0600，内含启动令牌）；polyfill 缓冲加上限；孤儿判定改同进程组；
+  生命周期视图写权 SSOT + 只减不增棘轮；`keepDesired` 阻断「实然覆盖权威 desired」两条路径；
+  修重装抹掉 dataPaths 认领（卸载清理曾静默失效）；关停切断在途 npm；main 接管需归属凭据
+  （凭据只做否决，不封死恢复）；管理锁改 `wx` 原子取锁 + 持有者存活检测；宽作用域静默 catch 收口 + 棘轮。
+- **发布链 + 面板**：workflow 顶层最小权限 + 同 ref 串行 + `uses` 全钉 SHA；glibc 基座门禁从「注释里
+  存在」变成产线 `[3.5/5]` 条件步（无 ELF 时如实留痕）；发布子包 README 违 RC-1 措辞归正；选版兜底
+  排除我们的 `-BETA.`（正式版不被测试版顶替）；写端点有拒因即 400（前端 `failureFromResult` 单源判
+  2xx 里的 `ok:false`，不再弹假成功）；轮询改自排退避链 + 游标归一化（NaN 不再永久停摆）+
+  `epoch` 断在途轮次；内核更新桥补面板侧来源校验。
+- **凭据脚本（B-25 残留收口）**：`cred.sh put` 空 stdin 一律 fail-closed —— 先读唯一临时文件、
+  校验非空才写穿目标，不再落 0 字节并把 status 置 active。
+- **CI 裁决补录（八轮红 + 一次崩溃，第九轮四平台全绿；取证见 §H-7-5/6/9/11/12/13/14/15/16/17/18）**：在途 npm 的中止改走平台层整树终止
+  （Windows 无进程组语义，旧 `process.kill(-pid)` 只杀得到 `npm.cmd` 壳，孙进程照旧写盘）；
+  测试夹具侧修十一处「判据/夹具自身失效」——D-12 反向例期望倒置、D-11 权限位缺 win32 门控、
+  D-1b 把函数声明数成调用点、D-3 桩件对 const 数组自增（被产品 try/catch 吞掉后恒判 0）、
+  C-3 用绝对落盘计数当判据（漏算前一条合法写；改相对增量 + 逐例回显）、
+  C-3 backoffGate 把形参**时刻** `now` 当成**已耗时长**（产品剩余 56000ms 算得对；期望翻正 +
+  补 elapsed=0 锚点例，使「时刻当时长」与「时长当时刻」两种错法再不能同时自洽）、
+  P-9 B25 的「双锚点取段」首末倒置（`umask 077` 在 put() 里出现两次，B 锚取到前一个 ⇒ 段恒空、
+  判据伪装成「产品丢了 || 警告分支」；改从 start 向后找 + 补段长前提例）、
+  D-8 观测了另一个注册表实例（`control` 写 `reg`、判据读 `d8` → 直接 TypeError 吃掉整份文件；
+  改同一引用 + 取值经兜底访问器，未接线判红而非崩溃）、
+  X-6 拿**推演出的宿主环境事实**（「清空 PATH 仍会命中 System32 的 icacls」）当判据前提（windows job 证伪；
+  现把该事实本身立成带回显的判据、`underFake` 增 `realPath` 选项，并删掉那句已写进 SKIP 文案的错误引导）、
+  X-9 条 4 的夹具与产品**规划不同源**（产品内部自己 `findChromeWin()`，win runner 装了 Chrome ⇒
+  注入的 `binAvailable` 对产品真正询问的 bin 恒 false ⇒「一个进程都不起」伪装成产品缺陷；
+  现 `launchIsolated` 开 `opts.chromeBin` 注入缝、夹具与产品共用同一份输入，并补「产品所问 == 夹具所认」前提例）、
+  X-9 条 4 的**前提例自身只验了一条分支**（chain 分支的产品先对**全部**候选做预检再挑首个可用者，
+  故「产品问的第一个 == 夹具规划的可达者」在 linux/macos 必红、windows 的 single 反而绿——run `35488336734`
+  回显给出全部 7 个询问；改断言**询问序列与计划序列逐位相同**，single/chain 两形同一条判据成立）。
+- **机器绑定清零（`no-dev-path` #110 首次被 CI 执行到即抓红，取证见 §H-7-16）**：① 本批 D 组写进
+  `native-dsh-binding-test` 的 `/home/.dsh/sessions` 夹具字面量（3 处）改为宿主中性的 `CLAIM` 常量
+  （期望值与写入值同源，不再复制字面量）；② 审计报告里逐字抄录的 windows 日志原文含 runner 账号目录，
+  改写为占位形态（事实与判据不变）。改前按**门禁同一口径**（同 `HOME_RE`、同 GENERIC 集合、同剥离器、同
+  SKIP 列表）在本机穷举 464 个代码文件与全仓 `.md`，确认零 offender——不吃「修一个再红一个」的 run。
+- **ACL 收紧挂账结案（§H-8-9 → 实测）**：windows job 真实 PATH 下 `hasIcacls()=true`、`icacls /?` 探针
+  `{ok:true, code:"0"}`，「可用 ⇒ `protectFile/protectDir` 绝不谎报 `mode=none`」成立；上一轮靠推演立的前提
+  换成实测事实，同时如实登记 win32 那一支「不可用 ⇒ 如实 none」是恒不触发的蕴含式（其证据在 POSIX 宿主伪造
+  win32 + 清空 PATH 那一支）。
+- **架构越界收口（DS-G1：为消灭重复而跨域，第 4 批 A 组自己带进来的）**：C-3 把远程令牌强度下限
+  `remoteTokenStrength` 落在 `domains/relay/core.js`，再让 `domains/instance/ops.js` 直接 require 兄弟域——
+  **单一事实源做对了、域边界踩破了**（五 job 同点红，平台无关一次即定性）。修法走本仓既有裁决而非新造规则：
+  纯判定上移新建的 L0 `src/shared/credential.js`（零 require/IO/平台分支/域知识），relay 与 instance 两域 +
+  app 写入口三个消费点同源取用，`relay/core` 不再导出第二份（不留兼容转发）；`backoffGate` 因带 relay 域知识
+  留在原域。两条跨层边按「登记 + 理由」补进 `layering-and-dependency-gate` 的 `CROSS_LAYER`，裁决记进
+  DIRECTORY-STRUCTURE-DESIGN §4.4.1 与 DEVELOPMENT-TRACK 登记表。并把这次红固化成四例判据（本体在 shared、
+  shared 出度 0、relay 不再自带本体、instance 不再出现跨域 require）——只靠 DS-G1 兜底的话下次还会再来。
+- **架构越界收口（CP-1 首次判红即真违规）**：第 4 批 D 组在 `domains/router/providers/probe.js` 自带的
+  `sameProcessGroup` 含 `process.platform === 'win32'` 与 `/proc/<pid>/stat` 读取——平台知识的家只有一处。
+  实现下沉 `platform/os/pidlookup`（与 `isAlive`/`readCmdline` 同族）并经门面导出，业务域改调
+  `pidlook.sameProcessGroup(...)`；逐字搬运不改判（macOS 无 `/proc` 仍返回 false，与迁移前同形）。
+  D-6 判据随搬家重写：平台文件取本体求值（注入 `fs`/`isWindows`）+ 两条反向（业务域不留副本、门面必须导出）。
+- **链推进的正向证据**：run `35489972031`（head `931d734`）**四平台全绿** —— #1–#129 整条链在 ubuntu 的
+  `test` job（`xvfb-run -a npm test`）与四个 `build` job 各自的 `ci-core.sh`（含 `npm test`）里全部走通，
+  第 4 批首次拿到可合入的平台裁决；上一轮 DS-G1 的修法（强度闸上移 `shared/credential`）由这次全绿证实，
+  而**不是**由本机的静态复算证实——本机跑不到运行时裁判，复算只能用来预拆雷（见 §H-7-17 的诚实边界）。
+  run `35489272772` 把链推到 #123 —— **#111–#122 在四平台首次全绿**（含本批新并入的
+  #115 D-9 块与 #116/#121/#129 的门禁判据），上一轮的 X-1/X-2/X-9 三处全部转绿。
+  同一 run 的其余正向证据：run `35487214678` 把链推到 #104 —— test job 与 ubuntu + 两个 macos 在
+  #78–#103 全绿（26 个此前从未被 CI 执行的门禁文件，含 frp 单源写盘三段判据、glibc E-2 静态断言），
+  windows 因 #102 断链而覆盖到 #78–#101；链位 #113 的 API 重绑异步夹具在预清阶段以本机探针复现「同步读异步事实」
+  并改写成可观测的重试环（跑满 10 次快重试 → 降级 30s + 留痕 → 退出意图即中止），未消耗额外 run。
+- **浏览器隔离打开的测试缝与判据（§H-7-10）**：`launchIsolated` 的 chain 分支并入 `_spawnDetached`
+  单一路径并新增 `opts.spawn` 注入点；X-9 条 4 原判据把「linux 下 single/chain 恰好同形」当普适，
+  在 darwin/win32 宿主必红（产品 single 报 label、chain 报 bin），且会在 CI 机器真起浏览器；
+  现按分支断言实际被 spawn 的 bin 与上报值，并反向验「预检不过 / 非法 URL 时一个进程都不起」。
+- 测试全部并入既有文件（零新增入链测试，`package.json#scripts.test` 链长 7899/8000 不破）；
+  新增断言均带反向防挂机 fixture；运行时裁决一律走 CI 四平台矩阵。
+
 ### 安全与生命周期（AUDIT-2026-09-19 第 3 批：B-1…B-28 + N2/B-21 + E-3，裁决登记见 AUDIT-REPORT §G）
 
 - **令牌/面板域（B-1…B-8）**：remoteToken 热换触发 `onRemoteChange` + reconcile 漂移兜底；

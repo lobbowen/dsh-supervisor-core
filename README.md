@@ -24,7 +24,7 @@ DeepSeek Harness 生命周期监管工具：独立于 Harness 运行的系统级
 | [ARCHITECTURE-ACCEPTANCE.md](ARCHITECTURE-ACCEPTANCE.md) | **终验收报告** | **三轮架构归一化改造的终验收记录**：全部门禁严格模式结果 + 物理结构终态（最大单文件 298 / 门面 ≤150 / 原型挂载 0 / 内核零依赖）+ DF-1..DF-9 逐条达成 + 全量回归（125 条，唯一失败为既存环境项）+ 最根部拆解清单。**数字均为实跑结果** |
 | [EXECUTION-CONTRACT.md](EXECUTION-CONTRACT.md) | 执行契约（并行施工接口冻结书） | **域结构改造的执行契约**：DF-1..DF-7 判据 + 硬约束（禁 daemon / 公共导出面冻结 / 禁新跨层边）+ 冻结的内部接口契约（router 域逐文件导出面与依赖）+ 迁移纪律 + 子代理派生授权。所有执行子代理必须逐条遵守；权威依据仍是 `DOMAIN-STRUCTURE-DESIGN.md`（SSOT）与 `design-notes/*.md` |
 | [PROVIDER-GATEWAY-ARCHITECTURE.md](PROVIDER-GATEWAY-ARCHITECTURE.md) | **规范（唯一事实源）** | **供应商网关（原智能路由）架构唯一事实源**：正名与定位（不做跨供应商路由）、两类供应商本质不对称、四层职责、**有进程侧深度设计**（实例四态 / 热备池 maxHot·maxWarm / 双预算切换 / 预热规范化）、能力契约与 ctl 白名单（A1–A7 + B1–B7 决策记录）。由 `test/provider-gateway-gate-test.js` 机器校验（PG-1..PG-8）|
-| [GUARD-DOMAIN-MODEL.md](GUARD-DOMAIN-MODEL.md) | **规范（唯一事实源）** | **守护域模型唯一事实源**：两域（域 A 用户意图 / 域 B 基础设施）+ 铁律 G-1..G-6；基础设施保活无守护计数（`guardian_action` 事件已随其唯一生产者 `_guardianEvent` 删除）。由 `test/guard-domain-model-gate-test.js` 机器校验（GD-1..GD-5） |
+| [GUARD-DOMAIN-MODEL.md](GUARD-DOMAIN-MODEL.md) | **规范（唯一事实源）** | **守护域模型唯一事实源**：两域（域 A 用户意图 / 域 B 基础设施）+ 铁律 G-1..G-6；§6 应然写权（目录四铁律 M-1..M-4、`desired` 唯一写口与 `keepDesired` 例外、生命周期视图直写违例基线）；基础设施保活无守护计数（`guardian_action` 事件已随其唯一生产者 `_guardianEvent` 删除）。由 `test/guard-domain-model-gate-test.js` 机器校验（GD-1..GD-5 + ML-2/ML-3 ratchet）、`test/app-ctor-injection-test.js`（ML-1）|
 | [NATIVE-DSH-TAKEOVER-CONTRACT.md](NATIVE-DSH-TAKEOVER-CONTRACT.md) | 规范（契约） | 原生 DSH 接管契约（N1–N5）：检测→绑定→单管线接管；配套 `test/native-dsh-binding-test.js` |
 | [PLATFORM-CAPABILITY-MATRIX.md](PLATFORM-CAPABILITY-MATRIX.md) | 规范（能力矩阵） | 跨平台能力矩阵（14 项 × 3 平台）+ 证据 + 缺口；配套 `test/platform-capability-audit-test.js` |
 | [RELEASE-AND-UPDATE-MECHANISM.md](RELEASE-AND-UPDATE-MECHANISM.md) | 论证（原理） | 发布与更新机制**为何这样设计**（流程见 RELEASE-STANDARD） |
@@ -32,7 +32,7 @@ DeepSeek Harness 生命周期监管工具：独立于 Harness 运行的系统级
 | [ARCHITECTURE-PLAN-session-lifecycle.md](ARCHITECTURE-PLAN-session-lifecycle.md) | 计划（历史） | 会话生命周期重构的根因级计划（已完成） |
 | [INCIDENT-2026-09-13-credential-overwrite.md](INCIDENT-2026-09-13-credential-overwrite.md) | 事故复盘 | 凭据被覆盖事故：时间线 / 根因四层 / 加固与重放验证 |
 | [INCIDENT-2026-09-18-exit-manager-relaunch.md](INCIDENT-2026-09-18-exit-manager-relaunch.md) | 事故复盘 | 退出管家后桌面壳被自动重新拉起：壳 /End 计划任务 + 内核看护门未持久化；修复与残留清单 |
-| [AUDIT-REPORT-2026-09-19.md](AUDIT-REPORT-2026-09-19.md) | 审计报告 | 全仓静态代码审计：P0×4（A1 读失败覆盖×3 / A2 frpc 校验降级 / A3 发布通道 / A4 win32 cmd 注入）+ P1×22 + 分批修复计划；第 1 批 A1/A2/A4 与第 2 批 A3（CI 令牌收敛 + rollback 下限 RC-7）已随本版修复（P0 清零）；第 3 批 B-1…B-28 + N2/B-21 + E-3 的逐条裁决与修复锚点登记于 §G（含 B-22(c) 失实结论与残留声明） |
+| [AUDIT-REPORT-2026-09-19.md](AUDIT-REPORT-2026-09-19.md) | 审计报告 | 全仓静态代码审计：P0×4（A1 读失败覆盖×3 / A2 frpc 校验降级 / A3 发布通道 / A4 win32 cmd 注入）+ P1×22 + 分批修复计划；第 1 批 A1/A2/A4 与第 2 批 A3（CI 令牌收敛 + rollback 下限 RC-7）已随本版修复（P0 清零）；第 3 批 B-1…B-28 + N2/B-21 + E-3 的逐条裁决与修复锚点登记于 §G（含 B-22(c) 失实结论与残留声明）；第 4 批 C 类 P2 全量（C-1…C-9 / 令牌 2…5 / 平台 1…7 / D-1…D-13 / 发布条 1…4 + UI 条 5…6）与 §E.1/§E.2/§E.4 立项收口登记于 **§H**（含 H-0 三套 `E-*` 编号消歧、H-7 链位序取证、H-8 诚实缺口） |
 | [CHANGELOG.md](CHANGELOG.md) | 记录 | 版本变更 |
 
 > **文档可信度不变量**（2026-09-11 确立）：能力声明必须由**可执行断言**支撑；
@@ -266,10 +266,15 @@ POST /shutdown               已由 POST /session/stop 取代（保留供旧版�
 
 ## 前端架构（状态中心 + 单向数据流）
 
-- **数据流**：HTTP API（后端）──refresh* 拉取──▶ 前端状态中心 Store（单一数据源）──render* 只读──▶ DOM。
-  后端是唯一事实源；前端不持有各自独立的状态副本，各页面（概览/实例/远程控制/智能路由）读到同一份状态快照，
-  后端动作（如停止 DSH 联动停止远程代理）随快照自动联动，不存在「某页状态断链」。
-- **统一同步**：2s 主循环 unifiedTick 全量同步（状态/实例/远程控制/中转），页面可见时立即同步，写操作后即时全量刷新。
+- **数据流**：守卫 HTTP API（同源）── 轮询拉取 ──▶ 单源快照 `SupervisorSnapshot` ── 只读渲染 ──▶ React 页面
+  （`useSupervisorData()` = `useSyncExternalStore` 订阅）。后端是唯一事实源；页面不持有各自独立的状态副本，
+  概览/实例/远程控制/智能路由读同一份快照，因此不存在「某页状态断链」。
+  ⚠ 前端快照**不**承担后端联动：远程控制/中转的实际生效由守卫与 daemon 侧的落盘状态收敛决定
+  （见 `design-notes/relay.md`），不要按「页面刷新即联动」理解。
+- **细节权威**：`ui/FRAMEWORK.md`（目录、数据流、令牌规范）。
+- **统一同步**：单源快照中心 `ui/src/services/supervisor/polling.ts` 一轮跑完再自排下一轮——
+  链路健康时 2s 一拍，连续失败按 2s→4s→8s… 退避（封顶 30s，UI 条 6）；写操作后 `store.refresh()` 立即同步。
+  （老 UI 的 `unifiedTick` 主循环与「页面可见时立即同步」已随 React 迁移移除，勿再按该模型理解面板。）
 - **联动语义**：远程控制开关 = 实例运行中 ∧ remoteEnabled ∧ relay 实际监听；实例未运行时开关禁用并明示「实例未运行」。
 
 ## 故障排查
@@ -282,6 +287,9 @@ POST /shutdown               已由 POST /session/stop 取代（保留供旧版�
   崩溃后自动拉起需开启「进程守护」开关（面板按钮，默认关）。
 
 ## 验证
+
+> ⚠ **执行位置**：`npm test` **只由 CI 跑**（推送后的四平台矩阵是唯一运行时裁判）；本机不得执行测试套件，
+> 本机的绿/红都不构成任何交付证据——见 `ACCEPTANCE-STANDARD.md`（验收唯一事实源）。下面说的是这条链**测什么**。
 
 `npm test` 使用 mock 目标跑通设计文档 §12 的全部用例及安全边界（Host/Origin 校验、控制结果透传、日志轮转、端口占用不硬抢、守卫崩溃幂等、接管实例可停止、升级先停后装与回滚），**不触碰真实 DSH 与真实 npm**。
 
