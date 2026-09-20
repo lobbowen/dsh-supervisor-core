@@ -468,6 +468,19 @@
       同一套 `edgeUnit`/require 解析逻辑重算全 `src/` 边集，得「跨域边 0 条、shared 出度 0 条」，
       并对 `remoteTokenStrength`/`validateFrpExposure` 做纯函数取样（8 位放行、7 位 `short`、relay 不再导出）。
       这是静态推演，**不构成裁决**；四平台结论仍以下一个 run 为准。
+18. **run `35489972031`（HEAD `931d734`）—— 第 4 批首次四平台全绿，§H-7-17 的「以下一个 run 为准」兑现**：
+    `precheck` / `test`（ubuntu + Xvfb，整条 129 文件链）/ 四个 `build`（ubuntu-22.04、windows-latest、
+    macos-14 x64、macos-latest arm64，各自经 `ci-core.sh` 跑 `npm test`）全部 `success`，`release` 按分支规则
+    `skipped`。**DS-G1 的修法（强度闸上移 `shared/credential`）由此拿到平台裁决背书**——上一轮本机复算的
+    「跨域边 0 / shared 出度 0」这次被证实，同时证明该复算只能算预拆雷、不能算结论。
+    - **本条同时是「链尾无地雷」的证据**：#123 `directory-structure-gate`、#124 `domain-structure-gate`、
+      #129 `app-this-ratchet-gate` 三个此前从未被执行到的链位首次全绿，说明新增 L0 模块没有触发任何
+      目录白名单类判据（本仓无此类判据；`DS-G2` 只约束 shared **出度** = 0，新模块零 `require` 故合规）。
+    - **推送前的门禁同一口径复扫**（纯静态，非运行时）：`no-dev-path` X-1/X-2 → 零 offender；
+      `docs-reference` DR-1 → 23 份根级 `.md` 的 `src/...` 字面量全部可解析；全仓 `grep` 复核**没有任何测试**
+      断言 `relay/core` 的导出清单含 `remoteTokenStrength`（若有，改判会在 #123 之后二次触红）。
+    - **登记尾账**：`DIRECTORY-STRUCTURE-DESIGN` §3 的 `shared/` 树状清单原只列 version/ip/guardian 三项，
+      会被后来者读成「不含该模块的白名单」，已补 `credential.js` 一行并标回来历。
 
 ### H-8 残留与诚实声明
 
