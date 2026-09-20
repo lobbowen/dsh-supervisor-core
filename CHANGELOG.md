@@ -6,6 +6,16 @@
 
 ## [未发布]
 
+### 门禁纠正：跨仓判据不得钉死已废弃的账号名（迁仓残留）
+
+- **缺陷**：`test/no-cross-repo-test.js` 的 X-2 判据写死 `repository: wasi7mglns/dsh-supervisor-launcher`。
+  两仓已迁到 `lobbowen` 账号，于是内核 workflow 若去 checkout 现壳仓（同一失效形态）会被放过，
+  门禁静默空转 —— 而它锁的正是「壳仓一次提交即可翻转内核 CI 结论」那个故障。
+  判据改为只认仓库名（owner 任意），X-5 反向夹具同时投喂新旧 owner 并断言内核仓自身不误报。
+- **文档纠错**：`CREDENTIALS-STANDARD.md` §5 的凭据现状表改以规范库 `index.json` 实测条目为准
+  （SSH 部署密钥通道标注为已废弃）；`DEVELOPMENT-TRACK.md` §7 如实登记两仓**当前无分支保护**
+  （实测 404），原表格标注为旧账号仓配置、待定案后恢复。详见 `AUDIT-REPORT-2026-09-19.md` §K。
+
 ### 工具链可见性（内核侧）：npm 的版本走完「契约 / 状态 / 面板」整条链
 
 - **缺陷（与壳侧「装了 npm 却看不见 npm」同根因的另一半）**：内核把同一份 npm 事实各自解析四处

@@ -252,7 +252,15 @@ DSH 与 AI 运行时**都在** `/tmp` 用 `dsh-*` / `dsh-spill-*` / `dsh-subproc
 
 本机只能做 `node --check` 等只读自校（**测试一律由 CI 裁决**），「没推送就跑 CI」是常见疏漏。故在 GitHub 侧加了**服务端兜底**。
 
-### 内核仓 `advgyxqamf/dsh-supervisor-core` · `master` 分支保护
+> **兜底当前不在（2026-09-20 实测）**：仓库已迁到账号 `lobbowen`，而
+> `GET /repos/lobbowen/dsh-supervisor-core/branches/master/protection` 与
+> `GET /repos/lobbowen/dsh-supervisor-launcher/branches/main/protection` **均返回 404 Branch not protected**。
+> 下表描述的是旧账号仓（`advgyxqamf` / `wasi7mglns`，两仓仍在且可读）上的历史配置，
+> 迁移时没有被带到新仓，因此**现阶段唯一的合并约束是本地纪律 + PR 上的 CI 状态**，服务端不设卡。
+> 恢复保护属共享状态变更（会同时限制直推与管理员），需单独定案后再执行；
+> 定案前不要按本节表格假定「合不进去」这一保证仍然存在。
+
+### 内核仓 `master` 分支保护（旧账号仓配置，待在新仓恢复）
 
 | 设置 | 值 | 作用 |
 |---|---|---|
@@ -317,11 +325,11 @@ required 只设 `precheck` 与 `test` 两个**无条件** job；`build` 不设�
 
 ### 壳仓
 
-壳仓属**另一账号**（`wasi7mglns`）。**2026-09-13 已设置分支保护**（required checks =
-`version` + 4 条 `build (...)`，strict + enforce_admins）。
-
-两仓保护配置见 `CREDENTIALS-STANDARD.md` 与本节；壳仓的 required 语境**内嵌矩阵参数**，
-改平台矩阵时必须同步更新保护配置（否则旧语境永不出现 → 所有 PR 阻塞）。
+壳仓现属同一账号 `lobbowen`（历史：`wasi7mglns`，与本仓曾属不同账号）。**2026-09-13 曾在旧账号仓
+设置分支保护**（required checks = `version` + 4 条 `build (...)`，strict + enforce_admins）；
+迁到 `lobbowen/dsh-supervisor-launcher` 后同样未恢复，实测 `main` 返回 404 Branch not protected
+（见 §7 开头）。壳仓的 required 语境**内嵌矩阵参数**，改平台矩阵时必须同步更新保护配置
+（否则旧语境永不出现 → 所有 PR 阻塞）—— 这也是恢复保护前要先核对 `build.yml` 矩阵的原因。
 
 已完成的准备工作（本仓已推）：
 

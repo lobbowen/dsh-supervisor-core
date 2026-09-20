@@ -6,8 +6,9 @@
 //
 // ## 解决的问题（真实故障）
 //
-//   两仓按**账号与仓库**隔离：内核 advgyxqamf/dsh-supervisor-core（闭源 npm 产物），
-//   壳 wasi7mglns/dsh-supervisor-launcher（公开）。运行时二者只经
+//   两仓按**仓库**隔离（历史：曾在不同账号下，现均为 lobbowen）：
+//   内核 lobbowen/dsh-supervisor-core（闭源 npm 产物），
+//   壳 lobbowen/dsh-supervisor-launcher（公开）。运行时二者只经
 //   「壳下载**已发布**内核包 / 内核读壳写的 identity.json、registry.json」交互，
 //   **不存在任何源码级跨仓依赖**。
 //
@@ -19,7 +20,7 @@
 // ## 锁定的不变量
 //
 //   X-1 本仓代码/脚本/workflow 不得引用壳仓源码耦合标识
-//   X-2 workflow 不得 checkout 壳仓（repository: wasi7mglns/dsh-supervisor-launcher）
+//   X-2 workflow 不得 checkout 壳仓（repository: <owner>/dsh-supervisor-launcher）
 //   X-3 test/_shell-repo.js 不得复活
 //   X-4 package.json#scripts.test 自包含（不含壳仓耦合门禁，且含本门禁）
 //   X-5 反向：判据能识别伪造违规（门禁非空转），且不误报文档中的仓库名
@@ -40,6 +41,10 @@ const COUPLING = [
   ['shellRepoPath', '壳仓路径解析函数'],
   ['shellRepoHelper', '壳仓路径解析助手'],
 ];
+
+// 壳仓 checkout 判据只认「owner 任意 + 壳仓名」：把 owner 钉死会在迁仓后静默失效
+// （新账号下的壳仓 checkout 会被直接放过）。
+const SHELL_CHECKOUT_RE = /repository:\s*[\w.-]+\/dsh-supervisor-launcher/;
 
 const CODE_DIRS = ['src', 'test', 'release', 'bin', '.github'];
 const CODE_EXT = new Set(['.js', '.cjs', '.mjs', '.sh', '.yml', '.yaml', '.json']);
@@ -85,7 +90,7 @@ console.log('== X-2 workflow 不检出壳仓 ==');
     const src = fs.readFileSync(path.join(wfDir, f), 'utf8');
     // 只看可执行内容：剥离整行注释，避免说明文字自匹配（本仓既有纪律）
     const code = src.split(String.fromCharCode(10)).filter((l) => !/^\s*#/.test(l)).join(String.fromCharCode(10));
-    if (/repository:\s*wasi7mglns\/dsh-supervisor-launcher/.test(code)) bad.push(f + ' checkout 壳仓');
+    if (SHELL_CHECKOUT_RE.test(code)) bad.push(f + ' checkout 壳仓');
     if (/path:\s*shell-repo/.test(code)) bad.push(f + ' path: shell-repo');
   }
   check('X-2 workflow 不检出壳仓（无 repository/path: shell-repo）',
@@ -118,15 +123,18 @@ console.log('== X-5 反向（判据有效性）==');
     COUPLING.some(([tok]) => probe.includes(tok)), 'hit');
 
   // 文档中的仓库名是合法的，不得因「含 dsh-supervisor-launcher」而误报
-  const docLine = '壳源码位于公开仓库 `wasi7mglns/dsh-supervisor-launcher`（MIT）。';
+  const docLine = '壳源码位于公开仓库 `lobbowen/dsh-supervisor-launcher`（MIT）。';
   check('X-5 反向：文档中的仓库名不误报',
     !COUPLING.some(([tok]) => docLine.includes(tok)), 'ok');
 
-  // 伪造 workflow checkout -> 必须被识别
-  const wfProbe = '      - uses: actions/checkout@v4\n        with:\n          repository: wasi7mglns/dsh-supervisor-launcher\n          path: shell-repo\n';
-  const wfCode = wfProbe.split('\n').filter((l) => !/^\s*#/.test(l)).join('\n');
-  check('X-5 反向：判据能识别壳仓 checkout',
-    /repository:\s*wasi7mglns\/dsh-supervisor-launcher/.test(wfCode) && /path:\s*shell-repo/.test(wfCode), 'hit');
+  // 伪造 workflow checkout -> 必须被识别（新旧账号名都要抓到：判据不依赖 owner）
+  const wfProbeOld = '      - uses: actions/checkout@v4\n        with:\n          repository: wasi7mglns/dsh-supervisor-launcher\n          path: shell-repo\n';
+  const wfProbeNew = '      - uses: actions/checkout@v4\n        with:\n          repository: lobbowen/dsh-supervisor-launcher\n          path: shell-repo\n';
+  const stripComments = (s) => s.split('\n').filter((l) => !/^\s*#/.test(l)).join('\n');
+  check('X-5 反向：判据能识别壳仓 checkout（旧账号名）',
+    SHELL_CHECKOUT_RE.test(stripComments(wfProbeOld)) && /path:\s*shell-repo/.test(wfProbeOld), 'hit');
+  check('X-5 反向：判据能识别壳仓 checkout（迁仓后的账号名）',
+    SHELL_CHECKOUT_RE.test(stripComments(wfProbeNew)), 'hit');
 }
 
 const failed = results.filter((r) => !r);
