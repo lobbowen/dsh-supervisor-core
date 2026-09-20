@@ -54,7 +54,7 @@ verify:versions → build-ui（ui-react/ 为测试与产物依赖）→ npm test
 ```
 
 > ⚠ **`build-ui` 不可跳过**：`npm test` 中的面板响应头断言与 launcher 携带的 UI 均依赖
-> `ui-react/`（gitignored 构建产物）。直接跑 `npm test` 会得到 503「UI not built」。
+> `ui-react/`（gitignored 构建产物）。链上缺这一步，CI 的 `npm test` 会得到 503「UI not built」。
 
 ## release job 与 need_build
 

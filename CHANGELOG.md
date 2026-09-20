@@ -6,6 +6,45 @@
 
 ## [未发布]
 
+### 第 3d 轮：把「已完成」写成待办、把「已删除」写成风险面
+
+三份文档里的现状陈述与当前代码对不上，读的人会按它们重复施工或防一个不存在的敌人：
+
+- `DOMAIN-STRUCTURE-DESIGN.md` 仍以命令式写着三条「设计中发现，须修」缺陷（写权闸三处各查一半、
+  用量读写散在 `forward-core.js`、流式成功路径不补做延后重启），并挂着改造前的行号锚点。
+  三条**都已落地**：写权收敛为 `src/domains/router/store.js` 的唯一闸 `canPersist()`，
+  用量读写进同一 store，延后重启由 `model/inflight.js` 发 `flushRestartPending` effect、
+  `handlers/forward.js` 统一派发。改写为事实 + 按当前实现重取锚点，并修正
+  `providers/base.js` 的抽象占位段区间。
+- `INCIDENT-2026-09-13-credential-overwrite.md` §6 把 `release-core.sh --publish` 列为「尚未过同类审计」的
+  破坏性操作 —— 该脚本**已删除**。改为现役真实面：只有 `publish-core.sh --publish` 不可逆
+  （npm 同版本不可重发，须 `GITHUB_ACTIONS=true`），`bump.sh --core` 只改 `package.json` 一处；
+  两者的放行条件由 `release-auth-test`（R7-b）与 `all-platforms-test`（T2-b / T2-b2）断言，
+  写路径本身未过「读失败不得覆盖」加固 —— 这是残余风险的本来大小，不夸大也不缩小。
+  同节 `cred.sh` 行原写「`put` 是唯一写路径」：漏了 `backup`，它不改库却把整份明文令牌复制到指定目录。
+- `CROSS-PLATFORM-BUILD-AND-UPDATE.md` §一 仍以现在时写着「当前公开发布的 deb 只能装 Ubuntu 24.04+」，
+  §八 把 L1 的缓解写成待办。实测：壳 CI 的 Linux 基座自 2026-09-11 起已钉 `ubuntu-22.04` +
+  `glibc_max: "2.35"`，打包后由壳仓 `ci/check-glibc.sh` 拦截，deb + rpm 双形态在产线
+  （Linux arm64 runner 仍停用，未产线）；G1/G2 已收口，**G3 仍开** —— 自更新签名私钥至今未配置，
+  「可自更新」只对非签名路径成立。§二 的发行版实测表标注为改造前的证据并保留（判据来源）。
+- `README.md` 索引表：`HANDOFF.md` 一行链的是**不入库**的会话过程物（`.gitignore` 有 `**/HANDOFF.md`，
+  故干净检出与 CI 都看不到该文件），而该行还写着「新会话接手先读此文件」——照着做会打开一个不存在的文件。
+  删该行：本机交接物按 `.gitignore` 既定约定本就只在本地存在，不该出现在入库索引里当必读项。
+  同表 `ARCHITECTURE-ACCEPTANCE.md` 行仍以现在时宣称「终验收记录 / 全部门禁严格模式结果 /
+  物理结构终态最大单文件 298 / DF-1..DF-9 逐条达成」，四条全与 3b 修正后的该文件正文矛盾
+  （实测最大单文件 324、`>300` 有 3 处、DF-2 不满足、两道结构门禁整体 report-only 且 CI 未设严格开关）。
+  改为标注复算口径、且不承载放行结论。
+- `release/runbooks/publish-and-verify.md`：`build-ui` 缺失的后果写成「直接跑 `npm test` 会得到 503」，
+  在本机禁跑测试的硬标准下这是对不存在的动作下判据。改为「链上缺这一步 → **CI 的** `npm test` 得到 503」。
+- 同表的 `RELEASE-CHANNEL-CONTRACT.md` 行抄着「RC-1..6」，而正文在 A3-b 修复后已有 **RC-7**
+  （rollback 防降级下限）—— 索引抄编号必然再漂移，故改为指向正文 §3「关键不变量」表并声明不抄条数。
+  （`DG-1..DG-16` / `R1..R12` / `TK-1..8` / 能力矩阵 14 项 × 3 平台等其余索引计数已逐条复核为实。）
+
+另核三条无需改动的：`RELEASE-CHANNEL-CONTRACT.md` §5.4 说 `@dsh-sup/canary-allowlist` 尚未发布 ——
+registry 实测 404，说法成立；`release/README.md` 与两份标准文档里所有 `docs/*.md` 引用都带「壳仓」限定词，
+不是本仓断链；壳仓 `DESIGN-BOUNDARY.md` / `DESIGN-COMPLETE.md` 引用的 `shared/version-vectors.json`
+与 `shell-release/version-vectors.json` 两仓实测均存在。
+
 ### 第 3c 轮：一条「已排除」测试的假理由，以及它其实没在任何人手里跑过
 
 `test/native-test.js`（原生 DSH 卸载全量清理）长期挂在 `test/test-chain-completeness-test.js` 的排除表里，
