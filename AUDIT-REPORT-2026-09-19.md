@@ -1000,6 +1000,11 @@ if REMOTE_SPEC="$(npm view "$PKG_NAME@$VER" --json … 2>/dev/null | tr -d '\r')
 缺口如实登记：该判据是**源码形态**门禁，不执行 `publish-core.sh`；真正的裁决只来自 CI 的 tag 发布轮
 （非 tag 构建走 dry-run，不进这段分支）。故本条的产线证据 = 移动后的 tag 那一轮四平台发布步全绿。
 
+**已兑现的证据**：PR #19 六 job 全绿后 squash 合入（`87be552`），tag `v0.1.5-BETA.11` 前移到该提交重推，
+run 35532356277 全绿（precheck + test + 四平台 build + release 皆 success）；registry 终验四平台
+`0.1.5-BETA.11` 齐备、`beta` 全指本版、四条 publish 溯源证明均可查。
+darwin-arm64 首查 E404 属 §RELEASE-STANDARD 5 已登记的传播延迟，重试即齐。
+
 ## 附录：分域审计明细索引
 
 | 域 | 范围 | 规模 | 主要文件锚点 |

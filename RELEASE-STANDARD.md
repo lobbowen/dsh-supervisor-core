@@ -155,10 +155,14 @@
 | npm 四平台齐备 | `npm view @dsh-sup/dsh-core-<platform>@<ver> version` ×4 | 四者皆等于目标版本 |
 | dist-tag | `npm view @dsh-sup/dsh-core-linux-x64 dist-tags` | `beta` → 新版本 |
 | GitHub Release | `gh release view v<ver>` 或 API | 4 个附件 |
+| 供应链溯源 | `GET https://registry.npmjs.org/-/npm/v1/attestations/@dsh-sup/dsh-core-<platform>@<ver>` | 200 且含 `specs/publish` 证明 |
 | CI 结论 | tag run 全绿 | precheck + test + 四平台 build + release |
 | 凭据仍有效 | `bash release/scripts/cred.sh verify` | 全部 OK |
 
-> **执行位置**：前三行的 registry / Release 查询需要**能访问公网 registry 与 GitHub API 的环境**，
+> **溯源证明只能单独查**：包级 packument 与 `npm view` 的输出里**没有** `attestations` 字段
+> （2026-09-21 实测），必须走上表的「供应链溯源」行。
+
+> **执行位置**：前四行的 registry / Release / 溯源查询需要**能访问公网 registry 与 GitHub API 的环境**，
 > 且本机既无 `gh` 也无 `curl`（`npm` 走内网代理亦不可达，见 `AUDIT-REPORT-2026-09-19.md` §G-6-5）。
 > 因此这套 S8 由**发布操作者所在环境**执行，或用 node `fetch` 查 API
 > （令牌经 `cred.sh path github-pat` 取路径后从文件读，不上 argv）；**不要**把「本机查不到」当成发布失败。

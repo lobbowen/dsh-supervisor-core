@@ -116,8 +116,9 @@ dsh-supervisor-gui --service-plan --service-apply # 实际建立服务定义
 - [x] **测试端口纪律**：安全段 28000-28999 + 门禁（防落 OS 动态端口范围）
 - [x] **工作流解析行尾归一化**：修复 Windows CRLF 导致的 CI 假失败 + 门禁
 - [x] **npm 认证大小写修复**：`NPM_CONFIG_USERCONFIG` 与 `npm_config_userconfig` 双写
-- [x] 已发布（registry dist-tag `beta`）：`@dsh-sup/dsh-core-*@0.1.5-BETA.10`（`latest` 仍在 `0.1.5-BETA.7`，
-      正式版由用户决定何时切）
+- [x] 已发布（registry dist-tag `beta`）：**现值以 `npm view @dsh-sup/dsh-core-linux-x64 dist-tags` 为准**，
+      本行只记最后一次出厂实测：`@dsh-sup/dsh-core-*@0.1.5-BETA.11` 四平台齐、溯源证明四条均可查
+      （`latest` 仍在 `0.1.5-BETA.7`，正式版由用户决定何时切）
 - [x] **`v0.1.4-BETA.1` 的 Windows CRLF 假失败**：修复后经 0.1.5-BETA.x 多次四平台矩阵验证，已消失
 - [x] **旧账号善后（用户侧）**：`wasi7mglns` / `advgyxqamf` 两仓已停更，其上的 SSH 公钥与 PAT
       随账号弃用一并失效，**无需再逐项清理**（2026-09-20 校准）
