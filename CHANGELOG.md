@@ -6,7 +6,38 @@
 
 ## [未发布]
 
+### 第 3g 轮：三个长文件的注释按纪律重写（2026-09-21）
+
+用户定案：行数不是判据，逻辑干净才是；而眼下撑长度的正是「把注释写成了过程记录」。本轮只动注释，
+除下方一处显式声明的依赖清理外**代码逐字节不变**（用 `test/_strip.js` 的剥注释结果与改前比对，
+三文件均 IDENTICAL-CODE）。
+
+判据与逐文件结论（先判断逻辑该不该拆，再动注释）：
+
+| 文件 | 行 | 注释行 | 逻辑判断 |
+|---|---|---|---|
+| `src/domains/router/handlers/forward.js` | 324 -> 317 | 31 -> 24 | 单一职责（上游 IO + 重试循环 + 透传收口），重试循环长但线性，不拆 |
+| `src/app/control/registry.js` | 308 -> 288 | 83 -> 63 | 目录 CRUD + 持久化，调度已归 `heartbeat.js`，视图/查询/变更各一组，不拆 |
+| `src/app/main/process.js` | 302 -> 297 | 44 -> 39 | 一个方法 = 一次生命周期迁移（spawn/adopt/observe/restart/stop），不拆 |
+
+删掉的是三类，留下的都是「为什么」：
+
+- 批次与审计编号：`D-1`、`P2-2 配套`、`P3-E #7`、`P3-F #5`、`B2 归一`、`G-1`、`R3`、`D12`、`K3-d`、
+  `DF-2/DF-3`、`M-1..M-4`、`阶段六 B-2`、`阶段 2` —— 门禁（CS-2）本来也不认这些，属纪律外残留。
+- 「原先是 X，现已改成 Y」的历史叙事：`forward.js` 里那处已删除的死调用整段、`registry.js` 的
+  「回退现已删除」、`process.js` 的「原实现会让异常逃出本方法」，改写为只陈述当前约束与后果。
+- 拆文件路线图：`registry.js` 两段「已拆到 managed-object.js / heartbeat.js（registry <=400）」——
+  行数上限不是拆分理由，且导出面与 require 行本身就说明了归属。
+- 重复表述：`process.js` 头注与 deps 内注释两次写「等价于原经 this 的调用」、令牌脱敏两次写
+  「journald 不留明文」；各留一处。
+
+同批的一处代码清理：`forward-core.js` 组装 `createForwarder` 时传了 `canPersist`，而 `handlers/forward.js`
+从不读它（它属于 `UsageLedger` 的写权闸）。头注的 deps 清单一直把它列在本层依赖里，属错误引导 ——
+删掉这个透传，清单同步更正。`PG-7`（用量落盘必须过 `canPersist()`）的判据读的是 `store/usage.js` 的
+代码形态，不受影响。
+
 ### 第 3f 轮：签名链路的现状从「从未配过」纠正为「曾在产线、现被冻结」
+
 
 壳仓取证（2026-09-21，逐条解码 npm 线上清单）推翻了本仓四处口径 —— 它们全部来自
 「`lobbowen` 两仓 secrets 里没有 `TAURI_SIGNING_*`」+「壳仓 `/releases` 为 0 条」这两个真事实，

@@ -24,7 +24,7 @@ function createForwardCore(deps) {
   });
   const inflight = createInflight();
   const forwarder = createForwarder({
-    log: d.log, logger: d.logger, readBody: parse.readBody, canPersist: d.canPersist,
+    log: d.log, logger: d.logger, readBody: parse.readBody,
     parse, usage, inflight, switcher: d.switcher, events: d.events,
     getPricing: d.getPricing, agents: d.agents, maskKey,
   });
