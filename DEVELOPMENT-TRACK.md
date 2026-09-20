@@ -252,35 +252,39 @@ DSH 与 AI 运行时**都在** `/tmp` 用 `dsh-*` / `dsh-spill-*` / `dsh-subproc
 
 ---
 
-## 7. CI 强制（服务器端兜底，2026-09-13 启用）
+## 7. CI 强制（服务器端兜底，2026-09-13 首设 → 迁仓丢失 → 2026-09-21 在两仓主干恢复）
 
 本机只能做 `node --check` 等只读自校（**测试一律由 CI 裁决**），「没推送就跑 CI」是常见疏漏。故在 GitHub 侧加了**服务端兜底**。
 
-> **兜底当前不在（2026-09-20 实测）**：仓库已迁到账号 `lobbowen`，而
-> `GET /repos/lobbowen/dsh-supervisor-core/branches/master/protection` 与
-> `GET /repos/lobbowen/dsh-supervisor-launcher/branches/main/protection` **均返回 404 Branch not protected**。
-> 下表描述的是旧账号仓（`advgyxqamf` / `wasi7mglns`，两仓仍在且可读）上的历史配置，
-> 迁移时没有被带到新仓，因此**现阶段唯一的合并约束是本地纪律 + PR 上的 CI 状态**，服务端不设卡。
-> 恢复保护属共享状态变更（会同时限制直推与管理员），需单独定案后再执行；
-> 定案前不要按本节表格假定「合不进去」这一保证仍然存在。
+> **现况（2026-09-21 `PUT` 后 `GET` 读回）**：`lobbowen/dsh-supervisor-core@master` 与
+> `lobbowen/dsh-supervisor-launcher@main` **均已设保护**。迁仓时旧账号（`advgyxqamf` / `wasi7mglns`）
+> 的服务端配置确实没跟过来（2026-09-20 实测两仓 `404 Branch not protected`），
+> 那段窗口的合并约束只有本地纪律 —— 现已由服务端拦下。
 
-### 内核仓 `master` 分支保护（旧账号仓配置，待在新仓恢复）
+### 内核仓 `master` 分支保护（读回值）
 
 | 设置 | 值 | 作用 |
 |---|---|---|
-| Required status checks | `precheck`、`test` | 这两个 check 未通过，**PR 合不进去** |
+| Required status checks | `precheck`、`test` + 4 条 `build (...)`（见本节末「服务器端字段的精确值」）| 任一条非绿，**PR 合不进去** |
 | Strict（Require branches to be up to date）| 开启 | 合并前分支必须与 master 同步，强制在新基线上重跑 |
 | Enforce for administrators | 开启 | **管理员也不能绕过** |
+| Required pull request reviews | 必须走 PR，**审批数 0** | 关掉直推通道，但不要求第二人点头 |
 | Required conversation resolution | 开启 | 未解决的评审意见阻止合并 |
 | Allow force push / deletions | 关闭 | 防历史被改写 |
 
-### 为什么只设 `precheck` 与 `test`，不设 `build` 矩阵
+### 为什么 required 现在是「precheck + test + 4×build」，而不只是两个 job
 
-`build`（4 平台）自 2026-09-14 起**每次 push / PR 都跑**（不受 `need_build` 门控，仅其中的 `--publish` 步骤受门控；
-见 `RELEASE-STANDARD.md` §4 与 `test/release-spec-consistency-test.js` 的 P-8）。
-仍是**条件 job** 的只有 `release`（tag `v*` 且 `need_build`）。
-required checks 只设 `precheck` 与 `test`（合并门禁）；`build` 只作构建验证，不设为 required ——
-条件 job 若设为 required，GitHub 会等一个**永远不会出现的状态**，所有 PR **永久合不进去**。
+判据只有一条：**required 必须且只能是「每次 PR 事件必然出现的 job」**。
+
+- 2026-09-13 首设时 `build` 受 `need_build` 门控（是条件 job），所以只能设 `precheck` + `test`；
+  把永不出现的状态设为 required，GitHub 会一直等 → **所有 PR 永久合不进去**。
+- 2026-09-14 起 `build`（4 平台）**每次 push / PR 都跑**（不受 `need_build` 门控，仅其中的
+  `--publish` 步骤受门控；见 `RELEASE-STANDARD.md` §4 与 `test/release-spec-consistency-test.js` 的 P-8），
+  当年排除它的理由随之消失。条件 job 若设为 required，GitHub 会等一个**永远不会出现的状态**，所有 PR **永久合不进去**。
+- 仍是**条件 job** 的只有 `release`（tag `v*` 且 `need_build`）—— 它在 PR 事件上 `skipped`，
+  **永不可设为 required**。
+- 收益：「四平台全由 CI 产出」从文档口径变成服务端放行条件；成本：任一平台因环境原因不绿，
+  合并就阻塞 —— 对本产线这正是想要的行为（重跑 job 即可，不需要绕过保护）。
 
 ### 实测结论（修正我先前的判断）
 
@@ -307,12 +311,12 @@ git push origin HEAD:refs/heads/feat/xxx
 #    （作业环境无 gh / curl；`gh pr create` 只在装有 gh 的机器上可用。
 #     推送非 master 分支本身不触发 CI，必须开 PR 或由 workflow_dispatch 触发。）
 
-# 3) CI 的 precheck 与 test 全绿后合并，再同步本地主干
+# 3) CI 的 required checks 全绿、且分支与主干同步后合并（服务端强制），再同步本地主干
 git switch master && git pull --ff-only
 ```
 
-> 第 3 步是**纪律**，不是服务端强制：见本节开头「兜底当前不在」的实测。
-> required checks 恢复之前，GitHub 不会拦下带红点的合并。
+> 第 3 步**已由服务端拦下**（2026-09-21 起）：带红点或未 rebase 的 PR 合不进去，管理员同样不行。
+> 保护被误改/删除时，本节末「服务器端字段的精确值」就是重设依据。
 
 > **发布标签不受影响**：`v*` tag 推送走 tag 通道，分支保护只管分支。
 > 故发布流程（打 tag → 触发 release）保持不变。
@@ -323,46 +327,40 @@ git switch master && git pull --ff-only
 |---|---|
 | 管理员可直推（其余人仍受门禁）| `enforce_admins: false` |
 | 完全回到无保护 | `DELETE .../branches/master/protection` |
-| 维持**当前实测状态**（无服务端保护，靠 PR + CI 状态纪律）| 不发任何 protection API 调用 |
-| 回到本节表格描述的强度（**设计默认**，最强）| 按上方「恢复保护时要写入的字段」写入 |
-
-### 为什么只设 precheck 与 test（重申）
-
-只有 `release` 是条件 job（`need_build == 'true'` 才跑，版本已全部发布时 `skipped`）；
-`build`（4 平台）**每次 push / PR 都跑**（见 `RELEASE-STANDARD.md` §4）。
-required 只设 `precheck` 与 `test` 两个**无条件** job；`build` 不设为 required。
+| 只卡 `precheck` + `test`，四平台构建退回「跑了但不拦」| `required_status_checks.contexts` 删掉 4 条 `build (...)` |
+| 维持**本节描述的强度**（当前生效）| 按下方「服务器端字段的精确值」原样 `PUT` |
 
 ### 壳仓
 
-壳仓现属同一账号 `lobbowen`（历史：`wasi7mglns`，与本仓曾属不同账号）。**2026-09-13 曾在旧账号仓
-设置分支保护**（required checks = `version` + 4 条 `build (...)`，strict + enforce_admins）；
-迁到 `lobbowen/dsh-supervisor-launcher` 后同样未恢复，实测 `main` 返回 404 Branch not protected
-（见 §7 开头）。壳仓的 required 语境**内嵌矩阵参数**，改平台矩阵时必须同步更新保护配置
-（否则旧语境永不出现 → 所有 PR 阻塞）—— 这也是恢复保护前要先核对 `build.yml` 矩阵的原因。
+壳仓现属同一账号 `lobbowen`（历史：`wasi7mglns`，与本仓曾属不同账号），`main` 的保护已于
+2026-09-21 与本仓同批写入并读回：required = `version` + 4 条 `build (...)`，
+其余字段与下表逐字相同。壳仓 `publish` job 在 PR 事件上 `skipped`，故**不在** contexts 里。
 
-已完成的准备工作（本仓已推）：
+设置前的两项前置（均已在产线）：
 
 - **补 `pull_request` 触发器**（壳仓 `fd0287c`）：壳仓 CI 此前只由 `push: tags/main` 触发，
   **PR 完全不跑 CI**；若不补而直接设 required，GitHub 会等一个**永不出现的状态** → 所有 PR 永久阻塞。
-- 其 `build` 是**无条件 4 平台矩阵**（每次必跑）→ **可以且应该**设为 required（与内核仓相反）。
-- 完整 required 配置、精确 contexts、可直接执行的 API 调用与**矩阵变更陷阱**：
-  见壳仓 `docs/RELEASE-AND-BUILD-DECISION.md` 的「把 CI 设为合并门禁」附录。
+- 其 `build` 是**无条件 4 平台矩阵**（每次必跑）→ 与内核仓同样设为 required。
 
 > ⚠ 陷阱：壳仓 required context **内嵌矩阵参数**（如 `build (ubuntu-22.04, linux-x64, deb,rpm, 2.35)`），
-> 增删平台或改 arch 组合后旧语境变为「预期但永不出现」→ 所有 PR 合不进去。改矩阵时必须同步更新保护配置。
+> 增删平台或改 arch/组合后旧语境变为「预期但永不出现」→ 所有 PR 合不进去。
+> **改 `build.yml` 矩阵（含内核仓）的同一个提交里必须同步更新 contexts**；
+> 两仓 contexts 的逐字现值见下表与壳仓 `docs/RELEASE-AND-BUILD-DECISION.md` 的对应附录。
 
-### 恢复保护时要写入的字段（内核仓 `master`；**当前一项都没生效**）
+### 服务器端字段的精确值（内核仓 `master`，2026-09-21 `PUT` 后读回）
 
 | 项 | 值 |
 |---|---|
-| required_status_checks.contexts | `["precheck","test"]` |
+| required_status_checks.contexts | `["precheck","test","build (ubuntu-22.04, linux-x64)","build (windows-latest, win-x64)","build (macos-latest, darwin-arm64)","build (macos-14, darwin-x64, x64)"]` |
 | required_status_checks.strict | `true` |
+| required_pull_request_reviews | 存在，`required_approving_review_count: 0` |
 | enforce_admins | `true` |
 | required_conversation_resolution | `true` |
 | allow_force_pushes / allow_deletions | `false` |
 
-> 这是**待执行的目标配置**（与上方「旧账号仓配置」表同义，一份给人读、一份给 API 调用用），
-> 不是现状。写入属仓库管理员决策：会同时限制直推与管理员，须单独定案。
+> contexts 必须与 **PR 事件上 job 的显示名逐字一致**（矩阵 job 名由 `build (<os>, <arch>…)` 拼出，
+> 与 `strategy.matrix` 条目一一对应）；改名即改语境，写错一个字符 = 该 PR 永久阻塞。
+> 本表与上方「内核仓 `master` 分支保护（读回值）」同义：一份给人读，一份给 API 调用照抄。
 
 ---
 
