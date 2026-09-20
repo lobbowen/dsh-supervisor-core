@@ -207,8 +207,18 @@ if (spec) {
   check('P-9 B24 缺要素/不一致均 fail-closed', /-z "\$REMOTE_SHA"[\s\S]{0,200}exit 1/.test(pc) && /\$REMOTE_SHA" != "\$LOCAL_SHA1"[\s\S]{0,300}exit 1/.test(pc), 'ok');
   check('P-9 B24 反向：旧「体积不一致仅警告」形态判缺', !pc.includes('请人工确认后再决定是否升版本重发'), 'ok');
   // B25：备份降级为尽力安全网（warn 继续），确认项仍硬闸
-  const putSeg = cr.slice(cr.indexOf('B25（AUDIT'), cr.indexOf('umask 077'));
-  check('P-9 B25 备份失败不阻断 put（|| 警告分支）', /\( cp -p "\$f" "\$BK" && chmod 600 "\$BK" \)[\s\S]{0,40}\|\| echo/.test(putSeg), 'ok');
+  //   ⚠ 段锚点必须**向后**找：`umask 077` 在 put() 里出现两次（TMP_IN 读取段的 `( umask 077; mkdir… )`
+  //   与导出段的独立 `umask 077`），前者位置在 B25 注释**之前**，裸 indexOf 会让 slice 首末倒置、
+  //   段恒空 ⇒ 判据恒红（CI run 35486316867 链位 #97 实测）。故 end 从 start 起找，并补一条
+  //   「段非空」前提例——锚点顺序一旦回退要判红带证据，而不是让下游判据静默抓空。
+  const b25At = cr.indexOf('B25（AUDIT');
+  const b25EndRaw = b25At < 0 ? -1 : cr.indexOf('umask 077', b25At);
+  const putSeg = b25At < 0 ? '' : cr.slice(b25At, b25EndRaw < 0 ? cr.length : b25EndRaw);
+  check('P-9 B25 前提：段锚点成立且非空（防 slice 首末倒置把判据掏空）',
+    putSeg.length > 80, 'start=' + b25At + ' end=' + b25EndRaw + ' 段长=' + putSeg.length);
+  check('P-9 B25 备份失败不阻断 put（|| 警告分支）',
+    /\( cp -p "\$f" "\$BK" && chmod 600 "\$BK" \)[\s\S]{0,40}\|\| echo/.test(putSeg),
+    /\( cp -p "\$f" "\$BK" && chmod 600 "\$BK" \)[\s\S]{0,40}\|\| echo/.test(putSeg) ? '有 || 警告分支' : '段内未找到（段长=' + putSeg.length + '）');
   check('P-9 B25 反向：旧硬闸形态（cp&&chmod 独立成句）可识别', /^\s*cp -p "\$f" .* && chmod .* "\$f"\.bak/m.test('  cp -p "$f" "$f.bak-x" && chmod 600 "$f".bak-* 2>/dev/null'), 'ok');
   // 尾账：CANON_STORE 规范库根 = develop/.credentials（2026-09-19 用户定稿；禁机器绝对路径）
   check('P-9 CANON_STORE 指向 REAL_HOME/develop/.credentials',
