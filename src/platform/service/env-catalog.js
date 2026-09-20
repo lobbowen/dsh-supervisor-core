@@ -8,23 +8,28 @@ const runtime = require('../contract/runtime');
 
 const ex = require('../util/exec');
 
-/** 探测某二进制版本；不可执行返回 null（经统一执行器）。 */
-function whichVersion(bin) {
+/** 探测某二进制版本；不可执行返回 null（经统一执行器）。
+ *  args 是启动形态的另一半：契约把 npm 表达成「node + 包内 npm-cli.js」时，只跑程序读到的是
+ *  node 的版本号却会被念成 npm 的版本 —— 面板据此谎报就绪。 */
+function whichVersion(bin, args) {
   // 经统一执行器（默认有界；失败返回 null）。
-  const v = ex.runOut(bin, ['--version'], { timeoutMs: 3000 });
+  const v = ex.runOut(bin, (Array.isArray(args) ? args : []).concat(['--version']), { timeoutMs: 3000 });
   return v ? (v.trim() || null) : null;
 }
 
 // 版本探测结果缓存（TTL 10s）：envStatus 的 probe + summary 会在单次 API 调用内重复探测 3+ 次，
 // 每次都是同步 execFileSync（node/npm/git），既占进程/磁盘又阻塞事件循环。
+// 键必须带上 args：同一程序配不同前缀参数是两个不同的被探测物。
 const _verCache = new Map();
 const CACHE_TTL = 10000;
-function cachedWhichVersion(bin) {
-  const hit = _verCache.get(bin);
+function cachedWhichVersion(bin, args) {
+  const a = Array.isArray(args) ? args : [];
+  const key = bin + '\u0000' + a.join('\u0000');
+  const hit = _verCache.get(key);
   const now = Date.now();
   if (hit && now - hit.at < CACHE_TTL) return hit.v;
-  const v = whichVersion(bin);
-  _verCache.set(bin, { at: now, v });
+  const v = whichVersion(bin, a);
+  _verCache.set(key, { at: now, v });
   if (_verCache.size > 16) { // 有界：清最旧
     let oldest = null;
     for (const [k, e] of _verCache) if (!oldest || e.at < oldest.at) oldest = { k, at: e.at };
@@ -80,18 +85,13 @@ function probeNode() {
   return { version: 'v' + ver, min, meets: verAtLeast(ver, min) };
 }
 
-/** npm 探测：契约优先（壳投放的解析结果 = 单一事实源），退回 PATH。旧实现用裸 npm，Windows 上
- *  npm 实际是 npm.cmd 且 Node 的 spawn 不做 PATHEXT 解析，明明装了也误报 missing。 */
+/** npm 探测：只经统一启动形态解析口（契约优先，缺席退回 os/exec-path 的 PATHEXT 解析）。
+ *  旧实现在契约不可用时退回**裸 'npm'** —— 那正是 npm-resolution 门禁禁止的形态：Windows 上
+ *  npm 实际是 npm.cmd，Node 不做 PATHEXT 解析，明明装了也误报 missing（面板与实机各说一套）。
+ *  契约在场但指向的文件跑不通时同样如实报 missing：静默退回 PATH 会把「壳投错了」洗成「就绪」。 */
 function probeNpm() {
-  try {
-    const c = runtime.read();
-    if (c && c.npmPath) {
-      const args = Array.isArray(c.npmArgs) ? c.npmArgs : [];
-      const v = ex.runOut(c.npmPath, [...args, '--version'], { timeoutMs: 3000 });
-      if (v && v.trim()) return v.trim();
-    }
-  } catch {}
-  return cachedWhichVersion('npm');
+  const l = runtime.npmLauncher();
+  return cachedWhichVersion(l.program, l.args);
 }
 
 /** 系统环境条目（Node/npm 为 DSH 与反代更新的执行器；git 可选）。 */

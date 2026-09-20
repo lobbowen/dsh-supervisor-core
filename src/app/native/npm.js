@@ -1,24 +1,35 @@
 'use strict';
 
 // 域：原生 DSH（app/native）—— npm 调用（IO：exec / spawn 经 platform 统一封装）。
-// npm 可执行经 host._npmBin 构造期注入。
+// npm 的启动形态经 host._npmBin/_npmBinArgs 构造期注入，未注入时统一取运行期契约。
 
-const execPath = require('../../platform/os/exec-path');
 const ex = require('../../platform/util/exec');
+const runtimeContract = require('../../platform/contract/runtime');
 
-/** npm 可执行：优先注入值（测试），否则跨平台解析（Windows 用 npm.cmd）。
- *  经模块对象调用而非解构：解构是值绑定，无法被测试替换。 */
-function npmExe(host) { return (host && host._npmBin) || execPath.npmBin(); }
-
-/** 注入的前置参数（仅测试；生产恒为空）：以 node 执行包内 JS 时使用。 */
-function npmExeArgs(host) {
-  return (host && Array.isArray(host._npmBinArgs)) ? host._npmBinArgs.slice() : [];
+/**
+ * npm 启动形态 `{ program, args }`（成对取值，绝不拆用）。
+ *
+ * 为什么成对：契约可能是「node + 包内 npm-cli.js」，只取 program 会把它降级成裸跑 node；
+ *   反之只取 args 会把参数塞给别的解释器。旧实现这里 program 走 ambient PATH、args 恒空，
+ *   于是 GUI 环境（PATH 里没有 nvm/fnm 的 npm）下「装 DSH / 卸载 / 探测 root」全失败，
+ *   而同一时刻分发层用的是契约解析结果 —— 两个答案、一个事实。
+ * 为什么注入即接管整对：测试注入 fake npm 时通常是「node 跑一段假脚本」，
+ *   此时继承契约的前缀参数会让假解释器去跑真 npm-cli.js（真实副作用）。
+ */
+function npmLaunch(host) {
+  const h = host || {};
+  if (h._npmBin) {
+    return { program: h._npmBin, args: Array.isArray(h._npmBinArgs) ? h._npmBinArgs.slice() : [] };
+  }
+  const l = runtimeContract.npmLauncher();
+  return { program: l.program, args: l.args };
 }
 
 /** 优先注入值（测试）。 */
 function resolveNpmRoot(host) {
   if (host.npmRoot) return host.npmRoot;
-  const r = ex.runOut(npmExe(host), npmExeArgs(host).concat(['root', '-g']));
+  const l = npmLaunch(host);
+  const r = ex.runOut(l.program, l.args.concat(['root', '-g']));
   return r ? r.trim() : null;
 }
 
@@ -26,7 +37,8 @@ function checkEnvironment(host) {
   const errors = [];
   const nv = ex.runOut('node', ['--version']);
   if (!nv || !nv.trim()) errors.push('node 未安装或不可执行');
-  const npmv = ex.runOut(npmExe(host), npmExeArgs(host).concat(['--version']));
+  const l = npmLaunch(host);
+  const npmv = ex.runOut(l.program, l.args.concat(['--version']));
   if (!npmv || !npmv.trim()) errors.push('npm 未安装或不可执行');
   return { ok: errors.length === 0, errors, npmRoot: resolveNpmRoot(host) };
 }
@@ -63,4 +75,4 @@ function runInstall(host, version, registry) {
   });
 }
 
-module.exports = { npmExe, npmExeArgs, resolveNpmRoot, checkEnvironment, latestVersion, selectRegistry, runInstall };
+module.exports = { npmLaunch, resolveNpmRoot, checkEnvironment, latestVersion, selectRegistry, runInstall };

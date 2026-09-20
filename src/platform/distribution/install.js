@@ -7,7 +7,6 @@ const net = require('node:net');
 const spawnOS = require('../os/spawn');
 const procOS = require('../os/process');
 const execPath = require('../os/exec-path');
-const { npmBin } = require('../os/exec-path');
 const runtimeContract = require('../contract/runtime');
 const service = require('../os/service').current();
 const { VERSION_RE } = require('../../shared/version');
@@ -123,16 +122,20 @@ function runNpmInstall(opts) {
   if (!VERSION_RE.test(String(o.version))) return Promise.resolve({ ok: false, error: 'runNpmInstall: 非法版本号（须为严格 semver）: ' + String(o.version).slice(0, 80), output: [] });
   // 唯一安装执行器：commandTemplate 支持完整替换命令（测试/特殊环境注入 fake-npm 等）。
   let argv;
-  // 经统一解析（Windows 下为 npm.cmd），不得硬编码裸 'npm'（会 ENOENT）。
-  let bin = runtimeContract.npmBin(npmBin);
+  // 经统一解析口拿**启动形态**（程序 + 前缀参数成对）：Windows 下是 npm.cmd，官方分发包只带
+  // 包内 JS 时是 `node <npm-cli.js>`。只取程序会把后者降级成裸跑 node（ENOENT 之外的第二种含糊失败）。
+  const launcher = runtimeContract.npmLauncher();
+  let bin = launcher.program;
   if (Array.isArray(o.commandTemplate) && o.commandTemplate.length) {
     argv = o.commandTemplate.map((s) => String(s).replace(/{pkg}/g, pkg).replace(/{version}/g, o.version).replace(/{prefix}/g, o.prefix || ''));
     // 模板首项通常就是逻辑名 'npm'，同样需要跨平台解析；仅在首项恰为逻辑名时解析。
-    bin = (argv[0] === 'npm') ? runtimeContract.npmBin(npmBin) : argv[0];
-    argv = argv.slice(1);
+    const fromTemplate = argv[0] !== 'npm';
+    bin = fromTemplate ? argv[0] : launcher.program;
+    // 契约前缀参数只属于契约程序；模板自带解释器（如 node /tmp/fake.js）时不得前插。
+    argv = (fromTemplate ? [] : launcher.args).concat(argv.slice(1));
     // argv[0] 的非 'npm' 分支**不再进 spawn 解析器**（历史缺陷：argv[0]='evil' 原样
-    // 交给 PATH 解析执行）。逻辑名 'npm' 走统一 npmBin()（两平台语义一致）；其余项过禁用字符集。
-    if (bin === 'npm' && npmBin() === 'npm' && !execPath.resolveExecutable('npm')) {
+    // 交给 PATH 解析执行）。逻辑名 'npm' 走统一解析口（两平台语义一致）；其余项过禁用字符集。
+    if (!fromTemplate && launcher.source === 'path' && bin === 'npm' && !execPath.resolveExecutable('npm')) {
       return Promise.resolve({ ok: false, error: 'runNpmInstall: 未找到可执行的 npm（commandTemplate[0]="npm" 解析失败）', output: [] });
     }
     for (const a of argv) {
@@ -142,7 +145,7 @@ function runNpmInstall(opts) {
       }
     }
   } else {
-    argv = ['install', '-g', '--no-audit', '--no-fund'];
+    argv = [...launcher.args, 'install', '-g', '--no-audit', '--no-fund'];
     // 安装期不执行包内 pre/post 脚本 ——  registry 内容（含镜像被投毒场景）不再能在
     // 本机以守卫权限跑任意生命周期脚本。
     argv.push('--ignore-scripts');
