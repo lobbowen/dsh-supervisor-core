@@ -128,14 +128,23 @@ const upstream = http.createServer((q, s) => {
   check('B2 反代类型/appId', pp.kind === 'proxy' && pp.proxyAppId === 'test-dry-run', pp.kind + '/' + pp.proxyAppId);
   const actR = await svc.activateProvider(rB.id);
   check('B2b 激活反代供应商（独立端点端口分配）', actR.ok === true && pp.activated === true && !!pp.apiPort, JSON.stringify({ ok: actR.ok, activated: pp.activated, apiPort: pp.apiPort }));
-  // 轮询等待注册落终态：原固定 8s sleep 在负载下会骑到 waitHealthy（6 次 x1.5s ~9s）
-  // 的边界上 -> B3/B5 偶发假失败；改为带上限的 deadline 轮询。
-  await (async () => { const t0 = Date.now(); while (Date.now() - t0 < 20000) { const a = pp.accounts.find((x) => x.key === 'proxy-key-1'); if (a && a.status !== 'registering') return; await new Promise((r) => setTimeout(r, 200)); } })();
+  // 轮询等待注册落终态。`registering -> ready` 由实例被拉起的时刻驱动，产品侧不承诺时限
+  // （缓存未命中时 _ensurePkgCached 自身预算就有 120s），故 deadline 只作失控守卫；
+  // 固定 sleep 会在负载下骑到 waitHealthy 边界上造成 B3/B5 偶发假失败。回显耗时以便分辨「慢」与「卡死」。
+  const wB = { t0: Date.now(), polls: 0 };
+  for (;;) {
+    wB.polls++;
+    const a = pp.accounts.find((x) => x.key === 'proxy-key-1');
+    if (a && a.status !== 'registering') break;
+    if (Date.now() - wB.t0 >= 60000) break;
+    await new Promise((r) => setTimeout(r, 250));
+  }
   const pacc = pp.accounts.find((a) => a.key === 'proxy-key-1');
-  check('B3 反代账号注册完成', pacc && pacc.status === 'ready', JSON.stringify(pacc && pacc.status));
+  const wBe = '耗时=' + (Date.now() - wB.t0) + 'ms 轮询=' + wB.polls + ' 状态=' + JSON.stringify(pacc && pacc.status);
+  check('B3 反代账号注册完成', pacc && pacc.status === 'ready', wBe);
   const pinst = pp.instances[0];
   check('B4 一账号一实例', pp.instances.length === 1, 'len=' + pp.instances.length);
-  check('B5 实例真实启动且有端口', pinst && pinst.pid && pinst.port, JSON.stringify({ pid: pinst && pinst.pid, port: pinst && pinst.port }));
+  check('B5 实例真实启动且有端口', pinst && pinst.pid && pinst.port, wBe + ' ' + JSON.stringify({ pid: pinst && pinst.pid, port: pinst && pinst.port }));
 
   const health = await req(pinst.port, 'GET', '/health');
   check('B6 实例探活端点', health.code === 200 && health.body.includes('ok'), health.code + ' ' + health.body.slice(0, 40));
