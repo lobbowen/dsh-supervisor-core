@@ -16,8 +16,11 @@
 > **这三条现在的状态（G1/G2 已收口，G3 仍开）**：
 > G1 —— 壳 CI 的 Linux 基座已钉 `ubuntu-22.04` + `glibc_max: "2.35"`，并由壳仓 `ci/check-glibc.sh`
 > 在打包后拦截「只能在新发行版上跑」的退化；G2 —— Linux 出 deb + rpm 两种形态，架构按矩阵分列
-> （Linux arm64 runner 当时被注释停用，未产线）；G3 —— 四平台构建与产物装配已在产线，
-> 但**自更新签名私钥至今未配置**，所以「可自更新」只对非签名路径成立（见壳仓 `docs/UPDATER-SIGNING-KEY.md`）。
+> （Linux arm64 runner 当时被注释停用，未产线）；G3 —— 四平台构建与产物装配已在产线，签名链路**曾产线工作、现已断供**：
+> 已发布的 `@dsh-sup/shell-*@1.0.1…1.1.11` 四平台产物全部由 key id `96DE3EF26F389F70` 签名且更新清单在线可取，
+> 但**私钥只在旧账号仓的 CI 里配置过**，迁仓后 `lobbowen` 两仓无该 secret、本机也没有副本，
+> 所以现在**签不出任何存量客户端会接受的新产物**（壳更新通道冻结在 1.1.11）。内核自更新走 npm + registry 完整性，
+> 不经 minisign，不受影响（详见壳仓 `docs/UPDATER-SIGNING-KEY.md` §〇）。
 > 下面 §二 的发行版实测表是**改造前**的证据（当时的产物确实只能装 24.04+），保留它是为了留下判据来源。
 
 | # | 缺口 | 后果 |
@@ -360,7 +363,7 @@ $ bash ci/check-glibc.sh <binary> 2.35
 | **W1** | 缺 WebView2 运行时 | 启动失败 | `downloadBootstrapper` 自动安装；提供离线包选项 |
 | **W2** | 无代码签名 | SmartScreen 告警，转化率低 | 代码签名证书（D6 定案） |
 | **W3** | MSI 需管理员 | 无法 per-user 自更新 | **主推 NSIS per-user**；MSI 仅作备选 |
-| **C1** | minisign 私钥丢失 | 已发布用户永久无法更新 | 异地多份 + 双人托管 + 发布前演练恢复 |
+| **C1** | minisign 私钥丢失 | 已发布用户永久无法更新 | 异地多份 + 双人托管 + 发布前演练恢复。**2026-09-21 复核：已成真** —— 当年只做了本机单点备份，副本随 09-19 事故丢失，新仓也没有该 secret；已发布的 `shell@1.0.1…1.1.11` 签名仍在线（见 §一 G3、壳仓 `docs/UPDATER-SIGNING-KEY.md` §〇），**找回旧私钥前签不出存量客户端会接受的壳更新**。内核自更新不经 minisign，不受此项影响 |
 
 ---
 
@@ -369,7 +372,7 @@ $ bash ci/check-glibc.sh <binary> 2.35
 | # | 缺陷 | 修正 |
 |---|---|---|
 | **F1** | Linux 构建基座过新（glibc 2.39）—— **已实测确证**（产物无法在 Ubuntu 22.04 加载） | ✅ **已修**：壳仓 CI 基座改 `ubuntu-22.04` + 门禁断言 `glibc_max=2.35`；`ci/check-glibc.sh` 单源导出到壳仓 |
-| **F2** | 壳仓 CI 缺 `createUpdaterArtifacts` | ✅ **产线语义已修（2026-09-20）**：配置里内置了 pubkey 时 Tauri 见「有公钥无私钥」直接失败，且未配置的 secret 会展开成空串被 CLI 当成非法私钥——所以缺密钥分支必须**同时** `unset TAURI_SIGNING_*` 并用 `--config` 把 `bundle.createUpdaterArtifacts` 关掉，`.sig` 的强校验只在 tag 构建生效（壳门禁 C-f/C-g 锁定）。**密钥本身仍缺失**：tag 发布按设计被 workflow 拦下，见壳仓 `docs/UPDATER-SIGNING-KEY.md` §〇 |
+| **F2** | 壳仓 CI 缺 `createUpdaterArtifacts` | ✅ **产线语义已修（2026-09-20）**：配置里内置了 pubkey 时 Tauri 见「有公钥无私钥」直接失败，且未配置的 secret 会展开成空串被 CLI 当成非法私钥——所以缺密钥分支必须**同时** `unset TAURI_SIGNING_*` 并用 `--config` 把 `bundle.createUpdaterArtifacts` 关掉，`.sig` 的强校验只在 tag 构建生效（壳门禁 C-f/C-g 锁定）。**新仓没有该 secret**：tag 发布按设计被 workflow 拦下（旧账号仓曾配置过它，≤1.1.11 的签名产物至今仍在线，见壳仓 `docs/UPDATER-SIGNING-KEY.md` §〇）|
 | **F3** | 无 macOS 签名/公证 | ⏸ **暂缓**（用户定案 2026-09-11：暂无证书）。不阻塞构建与手动安装（有拦截提示，用户可手动放行）；自动更新链路由 minisign 保障完整性，与此无关 |
 | **F4** | 无 Windows 代码签名；MSI 需管理员 | ⏸ **暂缓**（同上，无证书）。CI 已改主推 NSIS per-user（免提权）；无签名时 SmartScreen 会提示，用户可继续 |
 | **F5** | CI 触发口径 | ✅ **已按硬标准定稿（两仓一致）**：`push`（各自主干 + `v*` tag）+ `pull_request` + `workflow_dispatch`。曾短暂收为「仅 tag 触发」以省构建，但那使 PR 完全不跑 CI、无法把 `build` 设为 required，故 2026-09-13 起恢复**每次 push / PR 都跑完整矩阵**（省额度的正解是公开仓，不是砍触发） |
@@ -382,7 +385,7 @@ $ bash ci/check-glibc.sh <binary> 2.35
 
 | # | 项 | 说明 |
 |---|---|---|
-| **V1** | Tauri 是否为 **deb/rpm** 生成 `.sig` | **仍未验**：两仓从未配过签名私钥，也就没有任何一份 `.sig` 可证。只有在**配好密钥的 tag 构建**上顺带验一次，禁止用本地构建替代（本机不得构建）|
+| **V1** | Tauri 是否为 **deb/rpm** 生成 `.sig` | **deb 已确证**（不必等 tag 构建重验）：线上清单 `@dsh-sup/shell-release@1.1.11` 的 `linux-x86_64` 条目 URL 与签名 trusted comment 都是 `dsh-supervisor_1.1.11_amd64.deb`，即 Tauri 确实为 deb 产出并使用了 `.sig`。**rpm 未进更新清单**：清单每平台只有一个槽位，Linux 放的是 deb —— 壳同时产 deb + rpm，但**用 rpm 装上的客户端在现清单下拿到的更新包是 deb**。这一条待壳侧定案（「未验」不等于「没问题」，此处是缺口不是疑问）|
 | ~~V2~~ | ~~`ubuntu-22.04` 上能否顺利构建~~ | **已由 CI 确证**：`ubuntu-22.04` job 在壳仓 main 上反复全绿（含 glibc 2.35 门禁与打包）。~~原「本机 24.04 基座 cargo build --release 成功」~~ —— 那既不能证明 22.04 基座，也违反「一律 CI 构建/测试」，不作为依据保留 |
 | ~~V3~~ | ~~Linux arm64 是否有用户需求~~ | **未纳入矩阵**（Linux 只有 x64）。纳入新平台属矩阵变更：两仓主干保护已于 2026-09-21 恢复，required contexts 逐字内嵌矩阵参数，**改矩阵必须同批改 contexts**，否则旧语境永不出现 → 所有 PR 阻塞（现值见 `DEVELOPMENT-TRACK.md` §7、壳仓 `docs/RELEASE-AND-BUILD-DECISION.md`）|
 | ~~V4~~ | ~~Windows arm64 是否纳入~~ | **未纳入矩阵**（Windows 只有 x64，bundles `nsis,msi`），变更约束同上 |
