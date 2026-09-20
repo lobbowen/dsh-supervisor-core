@@ -288,7 +288,7 @@
 ### H-7 本批 CI 取证与待裁决项
 
 1. **`241446d` 是本批能合入的前提**：runs `35471888496` / `35472954250` / `35474631569` / `35478336653` 四连红的**全链唯一 FAIL** 都是 `round8-fixes-test.js:351` 的「C-8 manual+元数据地址 → mode 未被改」。它是真回归（别名 vs 副本），不是假红。
-2. **链位序教训（登记为纪律）**：`round8-fixes-test` 在 `scripts.test` 第 57/129 位，`&&` 链在此中断 → **第 4 批 B/C/D 三组并入 58–128 位入链文件的断言此前一次都没被 CI 执行过**（D-8、ML-2/ML-3、SC-1…3 等）。一条早退红的代价不是 1 个用例，而是 72 个文件的覆盖面。
+2. **链位序教训（登记为纪律）**：`round8-fixes-test` 在 `scripts.test` 第 58/129 位，`&&` 链在此中断 → **第 4 批 B/C/D 三组并入 59–129 位入链文件的断言此前一次都没被 CI 执行过**（D-8、ML-2/ML-3、SC-1…3 等）。一条早退红的代价不是 1 个用例，而是 71 个文件的覆盖面。
 3. **D-10 windows tmpdir `~` 风险 —— run `35483224735` 已坐实**（原为挂账，见 H-7-6）：`npm test` 是一条 `&&` 链，run `35480363198` 各 job 都在链首红处中断（windows 停在 #28、其余停在 #31），所以 #46 的 D-10 行为块当时一次都没执行；修掉那两条红后链推进，windows 的 D-10 四条即全红，回显直说拒绝原因：`commandTemplate 替换后含禁用字符 … C:\Users\RUNNER~1\AppData\Local\Temp\p1f-…\npm-inflight-hang.js`。**教训登记**：挂账的风险项要按「下一个 run 见分晓」排进裁决，不要因为「日志里没有它的 FAIL」就当已证伪。
 4. **E-1 迁移的连带改判**：`provider-gateway-gate-test` PG-7 与 `npm-resolution-test` C-f 都曾因「判据钉住旧实现字面量」而在搬家后**静默抓空**——已改为「调用点问闸 + 单源存在 + 反向样本命中」三段式，并把「搬家即空转」写进两个门禁的缺口清单。
 5. **run `35480363198`（HEAD `06162f8`）四平台 + test job 全红的唯一红因取证**（各 job 只有一条 FAIL，属**平台分裂**而非同一缺陷）：
@@ -301,7 +301,7 @@
    - `uninstall-timeout-behavior-test` **D-10**（windows 独有，四条同红）：见本节前第 3 条 —— 夹具把临时脚本路径塞进 `commandTemplate`，被 B11 的 fail-closed 字符闸拒（win runner tmpdir 为 8.3 短名含 `~`）。修法：假 npm 改复用仓库内夹具 `test/fake-npm.js` 的新增 `FAKE_MODE=hang` 模式，pid 文件路径经 `FAKE_PID_FILE` 环境变量传入，argv 只留仓库内路径（POSIX 纯路径、win 盘符绝对路径均由 `WIN_DRIVE_ABS_RE` 豁免，本机以 `argvViolation()` 逐例验证：新路径 PASS / 旧 tmp 路径 REJECT）。**产品不改**：B11 的「宁误杀不漏放」是有意裁决，改判属放宽 fail-closed 闸门，需单独立项。
    - **顺带修掉的 Windows 产品缺陷（同一取证带出）**：`distribution/install.js` 的在途 npm 中止原本是 `process.kill(-pid)` + `child.kill` 两段兜底 —— Windows 无进程组语义，负 pid 必抛、只杀得到 `npm.cmd` 那层壳，真正写 `node_modules`/全局前缀的 node 孙进程照旧存活（正是 D-10 要消灭的对象）。现改调平台层 `os/process.killTree(pid,'SIGKILL',cb,{ownGroup:true})`（B13 已给它 `taskkill /T /F`），并保留 `child.kill` 作同步兜底；新增结构闸：`install.js` 源码（剥注释）必须含 `procOS.killTree(child.pid` 且**不得**再有 `process.kill(-`。
 7. **run `35483861183`（HEAD `74ba817`）—— 五个 job 只剩一条红，且是我自己带出的**：`round8-fixes-test` J-i 的对照例
-   `FAIL 对照：dist 的 npm 安装早已用 detached + -pid ← 是`（链位 #57）。定性为**改判连带**：H-7-6 把 `install.js`
+   `FAIL 对照：dist 的 npm 安装早已用 detached + -pid ← 是`（链位 #58）。定性为**改判连带**：H-7-6 把 `install.js`
    的负 pid 收口到平台层 `killTree` 后，这条拿 dist 当「既有正确做法」样本的对照判据失去了第二个从句（它钉的正是被删掉的那行字面量）——
    **产品无缺陷、对照样本失效**。修法：拆成两条独立判据并回显判据值（「dist 自成进程组（detached）」/「dist 的杀树走
    `platform/os/process.killTree` 单源」），「不得再自写负 pid」的反向职责由 D-10 结构闸承担。
@@ -312,6 +312,27 @@
    在 windows job 必红（链位 #102，本批此前从未执行到）。已改宿主自感知：POSIX 宿主补一条前提例（防判据空转）后照旧验 `none`，
    win32 宿主显式 SKIP 并改验「icacls 可用 → 绝不谎报 none」；缺失路径目标不再硬编码 `/tmp`。此项属**盲区预防**，
    不构成证据——下一 run 才是裁决。
+9. **run `35484641560`（HEAD `70c25a7`）—— 链推进到 #63，五个 job 同点红（平台无关，故是一次干净的定性）**：
+   `FAIL C-3 行为：4 位令牌 patch main → 拒且未再落盘（written 仍 1） ← {"weak":{"ok":false,"error":"远程访问令牌（remoteToken）至少 8 位"},"written":2}`。
+   回显本身就把责任分清：**产品判得对**（弱令牌 `ok:false` + 精确错误），**夹具的账算错**——`written` 是同一夹具的
+   绝对计数，而 C-3 之前那句 `① 行为：关闭 frp 不被闸拦` 走的正是合法写路径（`off.ok===true`），到 C-3 时已落盘 2 次；
+   断言把「前面成功了几次」和「这次不该写」混为一个常量期望。修法（`round13-router-relay-gaps-test.js`）：
+   ① `off` 补一条「关闭 frp 属合法写」正例，让这次落盘显式入账；② C-3 改**相对**断言（调用前后 `written.length` 不变），
+   并按 §G-6-9 拆成「写入口即拒」与「被拒后未再多落一次盘」两条、各自回显。
+   **纪律**：同一夹具里的绝对计数断言，等价于把「此前所有用例的写入次数」隐式钉进判据——新增/调整任何一条前置用例都会
+   误伤它。计数类判据一律写成**相对增量**（before/after 回显），只有夹具首条才允许 `=== 0/1`。
+10. **静态确证的第 4 条平台分裂红（本机以纯函数探针复现，不必等 CI）**：`platform-layer-portability-test` X-9 条 4
+    （链位 #102）原判据 `r1.bin === plan.bin`，但产品 `launchIsolated` 的上报形态**按分支不同**：single 报 `plan.label`、
+    chain 才报 `c.bin`（`browser.js:148` vs `:157`）。探针三端同跑：linux `expected=firefox` 实报 `firefox`（PASS），
+    darwin `expected=open` 实报 `Google Chrome`（**FAIL**），win32 `expected=explorer.exe` 实报 `explorer`（**FAIL**）——
+    即该例在两个 macOS job + windows job 必红，纯属「判据把 linux 的巧合当普适」。且它只注入了 `binAvailable`、
+    未注入 spawn，意味着 darwin/win32 宿主上**会在 CI 机器里真起一次浏览器**（正是该文件头注声称要避免的事）。
+    修法：① 产品侧给 `launchIsolated` 加 `opts.spawn` 测试缝（缺省仍为 `_spawnDetached`），并把 chain 分支的
+    spawn+error+exit+unref 序列收进同一函数（`c.watch ? onExit : undefined` 保持原语义，删掉一份重复实现）；
+    ② 判据改断言「**被真 spawn 的**是哪个 bin」+「返回值与计划一致（single 报 label / chain 报 bin）」，并补两条反向：
+    预检不过时 `spawned` 长度为 0（让「不 spawn 必死的 bin」从注释变成可判事实）、非法 URL 时同样不起进程。
+    与 §H-7-8 的区别要讲清：X-6 是**推演**（未执行），X-9 是**已复现**——探针只调用纯规划函数与注入替身，
+    未跑测试套件，仍守 §0 的本机执行上限。
 
 ### H-8 残留与诚实声明
 

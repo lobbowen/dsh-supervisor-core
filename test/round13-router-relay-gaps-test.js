@@ -107,12 +107,21 @@ console.log('== ① frp 令牌闸两条路径同规 ==');
   check('① 行为：令牌+合法端口 → 通过', good && good.ok === true, JSON.stringify(good));
   check('① 行为：通过时**确实落盘一次**', written.length === 1, String(written.length));
   // 关闭 frp 不应被闸拦（关是安全方向）
+  const wBeforeOff = written.length;
   const off = actions.patchDshMain({ frpEnabled: false });
   check('① 行为：关闭 frp 不被闸拦', off && off.ok === true, JSON.stringify(off));
+  check('① 行为：关闭 frp 属于合法写（正常落盘一次）',
+    written.length === wBeforeOff + 1, 'before=' + wBeforeOff + ' after=' + written.length);
   // C-3（批 4）：弱令牌在**写入口**即拒（与暴露闸同规；此前仅 '非空白' 一票闸）
+  //   ⚠ 勘误（第 4 批 run 35484641560：五个 job 同点红、与平台无关）：原断言写死
+  //   `written.length === 1`，漏算了**上一条 off 是一次合法落盘**（走到这里已写 2 次）。
+  //   回显 `{"weak":{"ok":false,...至少 8 位},"written":2}` 证明产品判得对，是夹具的账算错。
+  //   改为相对断言（被拒前后写次数不变）：既保住「拒且未落盘」的牙，也不再钉死前面用例的条数。
+  const wBefore = written.length;
   const weak = actions.patchDshMain({ remoteToken: 'tok', frpEnabled: true, frpRemotePort: 7001 });
-  check('C-3 行为：4 位令牌 patch main → 拒且未再落盘（written 仍 1）',
-    weak && weak.ok === false && written.length === 1, JSON.stringify({ weak, written: written.length }));
+  check('C-3 行为：4 位令牌 patch main → 写入口即拒（ok:false）', weak && weak.ok === false, JSON.stringify(weak));
+  check('C-3 行为：被拒后未再多落一次盘（写次数不变）',
+    written.length === wBefore, 'before=' + wBefore + ' after=' + written.length);
 }
 
 // ── ② relay 门卫令牌必须可热换 ──

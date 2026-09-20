@@ -392,20 +392,33 @@ const TMP = fs.mkdtempSync(path.join(os.tmpdir(), 'platport-'));
   check('X-9 条3 裸名候选保留交 execFile 的 PATH 解析（预检不扩大）',
     /candidates = \['ss',/.test(ssSrc), 'ok');
 
-  // 条 4：launchIsolated spawn 前预检（经 opts.binAvailable 注入，宿主无关）
+  // 条 4：launchIsolated spawn 前预检（binAvailable + spawn **双**注入 → 宿主无关、零真实进程）
+  //   ⚠ 第 4 批改判（静态推演得出，见 §H-7-10）：原写法只注入 binAvailable，且判据是
+  //   `r1.bin === plan.bin`。但产品的上报形态按分支不同 —— single 报 **plan.label**
+  //   （darwin='Google Chrome'、win32='explorer'/'chrome'），chain 才报 c.bin。
+  //   所以 linux 恰好相等，**darwin 与 win32 宿主必红**；且未注入 spawn 时还会在 CI 机器上
+  //   真起一次浏览器。现改注入 spawn 缝，断言「被真 spawn 的是哪个 bin」+「返回值与计划一致」。
   const u9 = 'http://127.0.0.1:28999/x';
   const plan9 = br.isolatedPlan(process.platform, u9, { profileDir: '/P', antiArgs: ['--a'] });
-  const expected = plan9.kind === 'single' ? plan9.bin
-    : (process.platform === 'win32' ? plan9.bin : plan9.candidates[5].bin); // linux chain → firefox
-  const r1 = br.launchIsolated(u9, { antiArgs: ['--a'], binAvailable: (b) => b === expected });
-  check('X-9 条4 chain：首个可达候选被选中并如实上报',
-    r1.ok === true && r1.bin === expected, JSON.stringify(r1));
-  const r2 = br.launchIsolated(u9, { antiArgs: ['--a'], binAvailable: () => false });
+  const pick = plan9.kind === 'single' ? plan9 : plan9.candidates[5]; // 本例的可达候选只有一个
+  const wantSpawn = pick.bin;
+  const wantReport = plan9.kind === 'single' ? plan9.label : pick.bin;
+  const spawned9 = [];
+  const fakeSpawn = (bin) => { spawned9.push(bin); return { on() {}, unref() {} }; };
+  const r1 = br.launchIsolated(u9, { antiArgs: ['--a'], binAvailable: (b) => b === wantSpawn, spawn: fakeSpawn });
+  check('X-9 条4 首个可达候选真的被 spawn（宿主无关，三端同形）',
+    spawned9.length === 1 && spawned9[0] === wantSpawn, JSON.stringify(spawned9) + ' want=' + wantSpawn);
+  check('X-9 条4 返回值如实上报（single 报 label / chain 报 bin，皆取自计划）',
+    r1.ok === true && r1.bin === wantReport && r1.isolated === pick.isolated,
+    JSON.stringify(r1) + ' want=' + wantReport + '/' + pick.isolated);
+  const r2 = br.launchIsolated(u9, { antiArgs: ['--a'], binAvailable: () => false, spawn: fakeSpawn });
   check('X-9 条4 全候选不可达 → ok:false/bin:null（旧实现先返回 ok:true/死 bin，error 异步才到）',
     r2.ok === false && r2.bin === null, JSON.stringify(r2));
-  const r3 = br.launchIsolated('file:///c:/x', { binAvailable: () => true });
+  check('X-9 条4 反向：预检不过时**一个进程都不起**（"不 spawn 必死的 bin" 不再只是注释）',
+    spawned9.length === 1, '累计 spawn ' + spawned9.length + ' 次');
+  const r3 = br.launchIsolated('file:///c:/x', { binAvailable: () => true, spawn: fakeSpawn });
   check('X-9 条4 反向：非法 URL 依旧直接拒（预检不绕过 A4 闸门）',
-    r3.ok === false, JSON.stringify(r3));
+    r3.ok === false && spawned9.length === 1, JSON.stringify(r3));
   const brSrc = fs.readFileSync(path.join(ROOT, 'src', 'platform', 'os', 'browser.js'), 'utf8');
   check('X-9 条4 预检分形态：绝对路径判执行位、裸名走 PATH 解析',
     /if \(bin\.includes\('\/'\) \|\| bin\.includes\('\\\\'\) \|\| \/\^\[A-Za-z\]:\[\\\\\/\]\/\.test\(bin\)\) return isExecutableFile\(bin\);/.test(brSrc)

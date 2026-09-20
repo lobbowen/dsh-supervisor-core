@@ -122,8 +122,9 @@ function binAvailable(bin) {
 /**
  * 以隔离 profile + 无痕打开浏览器（OAuth 反指纹登录用）。
  * @param {{profileDir?:string, antiArgs?:string[], antiEnv?:object, sysEnv?:object,
- *          onExit?:Function, binAvailable?:Function}} [o]
- *        binAvailable 可注入（条 4：行为测试不依赖宿主装了什么浏览器）
+ *          onExit?:Function, binAvailable?:Function, spawn?:Function}} [o]
+ *        binAvailable 可注入（条 4：行为测试不依赖宿主装了什么浏览器）；
+ *        spawn 亦可注入（同条：否则 darwin/win32 宿主上本用例会在 CI 机器里真起浏览器）
  * @returns {{ok:boolean, bin:string|null, isolated:boolean}} bin=null 表示全部候选失败
  */
 function launchIsolated(url, o) {
@@ -135,6 +136,7 @@ function launchIsolated(url, o) {
   const sysEnv = opts.sysEnv || process.env;
   const onExit = opts.onExit;
   const avail = typeof opts.binAvailable === 'function' ? opts.binAvailable : binAvailable;
+  const spawnWith = typeof opts.spawn === 'function' ? opts.spawn : _spawnDetached;
   try {
     const chromeBin = process.platform === 'win32' ? findChromeWin() : null;
     const plan = isolatedPlan(process.platform, url, { profileDir, antiArgs, chromeBin });
@@ -142,19 +144,16 @@ function launchIsolated(url, o) {
       // 条 4：single 分支同预检——不可用即如实 ok:false，不 spawn 必死的 bin
       if (!avail(plan.bin)) return { ok: false, bin: null, isolated: false };
       const env = (plan.envKind ? plan.envKind === 'anti' : plan.bin === 'open') ? antiEnv : sysEnv;
-      const p = _spawnDetached(plan.bin, plan.args, env, onExit);
+      const p = spawnWith(plan.bin, plan.args, env, onExit);
       return { ok: !!p, bin: p ? plan.label : null, isolated: plan.isolated };
     }
     // 条 4：chain 分支按预检过滤后再逐个尝试；error 事件只静默吞（结果已在 spawn 前定）。
     const cands = plan.candidates.filter((c) => avail(c.bin));
     for (const c of cands) {
       const env = c.envKind === 'anti' ? antiEnv : sysEnv;
-      let child;
-      try { child = spawnOS.detachedIgnored(c.bin, c.args, { env: env || sysEnv }); }
-      catch { continue; }
-      child.on('error', () => {});
-      if (c.watch && typeof onExit === 'function') child.on('exit', () => { try { onExit(); } catch {} });
-      child.unref();
+      // watch=false 的候选（系统兜底）不接 onExit —— 与原实现同语义，交给 _spawnDetached 判定。
+      const p = spawnWith(c.bin, c.args, env, c.watch ? onExit : undefined);
+      if (!p) continue;
       return { ok: true, bin: c.bin, isolated: c.isolated };
     }
     return { ok: false, bin: null, isolated: false };
