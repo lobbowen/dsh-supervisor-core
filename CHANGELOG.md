@@ -6,6 +6,24 @@
 
 ## [未发布]
 
+### 第 3c 轮：一条「已排除」测试的假理由，以及它其实没在任何人手里跑过
+
+`test/native-test.js`（原生 DSH 卸载全量清理）长期挂在 `test/test-chain-completeness-test.js` 的排除表里，
+理由写的是「**需真实原生卸载环境**（npmBin 注入型行为测试），按需经 `npm run test:native-uninstall`」。
+两处都不成立：
+
+- 夹具其实**离线** —— 它用临时 `npmRoot` 搭 npm 全局布局，不碰宿主环境；而且它没有注入 `npmBin`。
+  同一提交 `ab071f5` 自己的注释就记着它「10 断言，能通过」，与它写下的排除理由互相打脸。
+- 「按需运行」在这条硬标准下**没有落点**：CI 的四平台矩阵里没有这一步（`.github/workflows/build.yml` 全文
+  不引用该脚本），本机又被 `ACCEPTANCE-STANDARD.md` §0 禁止执行任何测试 —— 所以它不是「按需可取证的通道」，
+  而是**当前不在任何环境运行、不产生验收证据**的测试。真实障碍另有两条并已如实登记：
+  `src/app/native/ops.js` 的 `uninstall()` 会真起 `npm uninstall -g --prefix` 子进程，
+  夹具又用 `fs.symlinkSync` 造 bin 链接（Windows 建符号链接需特权或开发者模式，夹具未按平台分支）。
+
+排除表改为「为什么不能入链 + 那现在是谁在跑它」两问齐备；`README.md` §验证、`package.json#_uninstallTests`、
+`test/native-test.js` 头注同步改写，并写明入链前提（走 `npmBin` 注入口塞假 npm + bin 夹具按平台分支）。
+本批只纠正说法，**不**把该脚本并入 `npm test` 链（入链需先做上述夹具改造，属独立批次）。
+
 ### 第 3b 轮：结构判定假象 + 单平台构建旁路 + 一次性证据当现状
 
 - **结构门禁的「全部满足」是假的**：`ARCHITECTURE-ACCEPTANCE.md` §二 写「终态 257 文件 / 最大 300 行 /

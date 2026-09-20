@@ -43,8 +43,12 @@ const check = (n, c, x) => {
  *   加入本表必须有正当理由（如需外部服务 / 属操作型工具而非回归门禁）；
  *    否则就是"门禁静默不跑"，正是本文件要消灭的缺陷。 */
 const EXCLUDED = {
-  // 需要真实系统服务/交互环境，不适合默认回归（各有独立 npm script 供按需运行）
-  'test/native-test.js': '需真实原生卸载环境（npmBin 注入型行为测试），按需经 npm run test:native-uninstall',
+  // 排除表必须同时回答两件事：**为什么不能入链**、**那现在是谁在跑它**。
+  //   只写前一件就会把「没人跑」伪装成「刻意不跑」。
+  'test/native-test.js': '未入链的真实原因：夹具虽用临时 npmRoot（不碰宿主），但 ops.uninstall 会'
+    + '真起 npm 子进程，且用 fs.symlinkSync 造 bin 链接 —— Windows 建符号链接需特权或开发者模式，'
+    + '夹具没有按平台分支。当前 CI 不跑它、本机又禁止执行任何测试，因此它**不产生任何验收证据**；'
+    + '入链前提：注入假 npm（走 npmBin 注入口）+ bin 夹具按平台分支。',
 };
 
 function chainFiles() {
