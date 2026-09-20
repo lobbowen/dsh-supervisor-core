@@ -75,7 +75,8 @@ src/
 ├── shared/                     【L0 纯函数】零依赖、零 IO
 │   ├── version.js              semverCompare + VERSION_RE   ← domains/dist/index.js:36-116
 │   ├── ip.js                   isLoopbackAddress/isPrivateIpv4/normalizeRemoteAddress ← api/identity.js
-│   └── guardian.js             shouldGuard/bumpCrashWindow/instanceRestartDecision ← guard/guardian/
+│   ├── guardian.js             shouldGuard/bumpCrashWindow/instanceRestartDecision ← guard/guardian/
+│   └── credential.js           remoteTokenStrength（远程访问令牌强度下限）← domains/relay/core.js（第 4 批 DS-G1 上移，见 §4.4.1）
 │
 ├── platform/                   【L0 平台事实】
 │   ├── util/        无状态纯转换
