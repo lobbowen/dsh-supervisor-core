@@ -240,16 +240,24 @@ const TMP = fs.mkdtempSync(path.join(os.tmpdir(), 'credgate-'));
   const r10w = runCredIn(d1, ['backup', 'X:\\ephemeral\\supervisor\\instances\\inst-9\\bak'], '');
   check('D-10 反斜杠路径同样被拒（闸与分隔符无关）', r10w.code !== 0,
     'exit=' + r10w.code + ' msg=' + r10w.out.trim().slice(-40));
+  // 真机凭据文件名无扩展名；按 *.pat 通配的备份会「报成功而一份凭据都没带走」。
+  const noextBak = path.join(d1, 'git-credentials');
+  fs.writeFileSync(noextBak, 'https://x-access-token:dummy-not-a-real-token@github.com');
+  fs.chmodSync(noextBak, 0o600);
   const okBak = path.join(TMP, 'persist-bak');
   const r10c = runCredIn(d1, ['backup', okBak], '');
   const outs = r10c.code === 0 ? fs.readdirSync(okBak) : [];
   const sub = outs.length ? path.join(okBak, outs[0]) : null;
   check('D-10 合法目标 -> 产出带时间戳的副本目录', outs.length === 1 && /^dsh-credentials-\d{14}$/.test(outs[0]), outs.join(','));
-  check('D-10 副本含清单与库内 *.pat',
-    !!sub && fs.existsSync(path.join(sub, 'index.json')) && fs.existsSync(path.join(sub, 'kernel-test.pat')),
+  check('D-10 副本含清单与库内每个凭据文件（含无扩展名者，且内容一致）',
+    !!sub && fs.existsSync(path.join(sub, 'index.json'))
+    && fs.existsSync(path.join(sub, 'kernel-test.pat'))
+    && fs.existsSync(path.join(sub, 'git-credentials'))
+    && fs.readFileSync(path.join(sub, 'git-credentials'), 'utf8') === 'https://x-access-token:dummy-not-a-real-token@github.com',
     sub ? fs.readdirSync(sub).join(',') : '无产出');
   check('D-10 副本目录 0700、副本文件 0600（POSIX）/ Windows 跳过',
-    !IS_POSIX || (sub && modeOf(sub) === '700' && modeOf(path.join(sub, 'kernel-test.pat')) === '600'),
+    !IS_POSIX || (sub && modeOf(sub) === '700' && modeOf(path.join(sub, 'kernel-test.pat')) === '600'
+      && modeOf(path.join(sub, 'git-credentials')) === '600'),
     IS_POSIX && sub ? modeOf(sub) + '/' + modeOf(path.join(sub, 'kernel-test.pat')) : 'Windows 无 POSIX 权限位');
   check('D-10 备份提示含明文风险，且不回显任何令牌值',
     /明文令牌/.test(r10c.out) && !/dummy-not-a-real-token/.test(r10c.out), r10c.out.trim().slice(0, 60));
@@ -316,7 +324,7 @@ const TMP = fs.mkdtempSync(path.join(os.tmpdir(), 'credgate-'));
   const j16 = JSON.parse(fs.readFileSync(f16.idxPath, 'utf8'));
   j16.entries[0].kind = 'npm-token';
   j16.entries[0].file = path.join(REAL_HOME, 'elsewhere', 'npm-token');
-  fs.writeFileSync(j16.idxPath, JSON.stringify(j16, null, 2));
+  fs.writeFileSync(f16.idxPath, JSON.stringify(j16, null, 2));
   const r16 = runCred(d16, ['doctor']);
   check('D-16 非 github-pat kind 的条目指向库外 -> doctor 判红（旧 kind 过滤恒放过）',
     r16.code !== 0 && /FAIL/.test(r16.out) && /elsewhere/.test(r16.out), 'exit=' + r16.code);

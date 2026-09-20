@@ -839,6 +839,16 @@ L-1 ~ L-4 是行为修复（`release/scripts/cred.sh`、`release/scripts/configu
 `test/credential-hygiene-test.js` D-14 ~ D-17 + R-4），L-5 是文档纠正，均**不含发布动作**。
 真机凭据值未被改写：只补清单元数据、只读地跑 doctor/verify。运行期结论按常规由 CI 裁决。
 
+### L-8 首轮 CI 红点（PR #10）与判据加固
+
+`test` job 与四个 `build` job 同时红在同一处：D-16 夹具里把清单路径写成 `j16.idxPath`
+（解析后的 JSON 对象，`undefined`），`fs.writeFileSync` 抛 `ERR_INVALID_ARG_TYPE`。
+本机不得跑测试套件，这类笔误只能由 CI 抓 —— 这正是「运行期结论只由 CI 裁决」的用途。
+
+顺带把 D-10 的备份判据加固：旧断言只要求副本里有 `kernel-test.pat`，对 L-2 那条
+「无扩展名凭据没被拷走」完全不敏感。现在夹具先在库内放一份无扩展名的 `git-credentials`，
+断言副本目录里**它也在、内容一致、权限 0600** —— 否则同一种缺陷下次仍会报成功。
+
 ## 附录：分域审计明细索引
 
 | 域 | 范围 | 规模 | 主要文件锚点 |
