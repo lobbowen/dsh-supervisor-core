@@ -6,11 +6,20 @@
 
 ## [未发布]
 
+- Linux 支持面与壳更新通道的实测口径（与壳仓同批）：**Linux 只认 Ubuntu + `.deb` 一种形态** ——
+  矩阵此前 `deb,rpm` 一起产，而更新清单每平台只有一个槽位（放 deb），等于产出一个更新通道覆盖不到的形态；
+  现从产线源头停掉，`CROSS-PLATFORM-BUILD-AND-UPDATE.md` §十 V1/N2b 与 `RELEASE-AND-UPDATE-MECHANISM.md`
+  的 D4/N2 按「不再产 rpm」收口（是定案，不是待议）。
+- `D5` / `V5` / `K13` 三条把「拿得到清单」与「拿得到安装包」分开重述：`endpoints` 的回退只覆盖取清单那一次
+  请求，插件下载阶段不会自己换源，所以「unpkg + jsdelivr 两条端点」从来不等于「两条下载源」
+  （jsdelivr 按扩展名屏蔽 `.exe`）。壳侧现在按逐源实测的候选源换源取安装包，未审计的第三方中转不进默认表；
+  逐源状态与全部排除理由在壳仓 `docs/SHELL-UPDATE-CHANNEL-VERIFICATION.md` §九。
+
 - 文档风险表的「缓解」列去假象（`AUDIT-REPORT-2026-09-19.md` §O）：`RELEASE-AND-UPDATE-MECHANISM.md`
   的 K1 / K13 原把**设想**写成**已具备**（私钥异地多份托管与恢复演练、多 CDN 回退 + 内核本地缓存），
   三者实际都不存在。1.2.0 出厂后的端点复测给出硬证据：jsdelivr 对 `.exe` 一律 403（`1.1.11` 同样复现）
   ⇒ Windows 只有 unpkg 单条 CDN；`CHANGELOG` 与 `CROSS-PLATFORM-BUILD-AND-UPDATE.md` §十 V5 登记该缺口。
-  只改表述，不动 `endpoints`、不加镜像。
+  本条只改表述，不动 `endpoints`；该缺口由同批壳侧改动按实测候选源收口（见本节上一条）。
 
 ## [0.1.5-BETA.11]（2026-09-21）
 
