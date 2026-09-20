@@ -12,7 +12,9 @@
 //   CI 机器上没有开发机那份凭据库：直接断言它存在，就是把环境事实当成产品事实
 //   （与 platform-layer-portability-test 同一条纪律）。
 //   因此本文件分三段：
-//   D 组用临时夹具库测规则本身（任意宿主可跑）；
+//   D 组用临时夹具库测规则本身（任意宿主可跑）：doctor/list/path/get 之外，
+//     put 与 backup 走行为级判定（空输入 fail-closed、真机根双确认、覆盖前备份、
+//     拒绝 ephemeral 目标），断言的是子进程退出码与落盘结果，不是脚本文本。
 //   R 组真机审计（库存在才做，缺失显式 SKIP）；S 组仓库本地不变量（任何宿主成立）。
 //
 // ## 标准（见 CREDENTIALS-STANDARD.md 与库内 index.json 的 rules）
@@ -63,10 +65,24 @@ const modeOf = (p) => { try { return (fs.statSync(p).mode & 0o777).toString(8).p
 
 // 用给定库根跑 cred.sh，返回 {code, out}
 function runCred(dir, args) {
+  return runCredIn(dir, args, '', null);
+}
+
+// put/backup 的行为级探针：stdin 经 execFileSync 的 input 显式喂入（空串=真空输入）。
+//   先抹平宿主的确认位再叠加 envExtra —— 否则 CI/开发机若残留 DSH_CRED_ALLOW_OVERWRITE
+//   或 DSH_CRED_BACKUP_DIR，「应被拒绝」的负例会因为环境而非因为代码变绿。
+//   所有写入都落在 TMP 内（DSH_CRED_DIR 由调用方给夹具库根）。
+function runCredIn(dir, args, input, envExtra) {
+  const base = {
+    DSH_CRED_DIR: dir,
+    DSH_CRED_ALLOW_OVERWRITE: '',
+    DSH_CRED_FORCE: '',
+    DSH_CRED_BACKUP_DIR: '',
+  };
   try {
     const out = execFileSync('bash', [CRED_SH].concat(args), {
-      encoding: 'utf8', timeout: 60000,
-      env: Object.assign({}, process.env, { DSH_CRED_DIR: dir }),
+      encoding: 'utf8', timeout: 60000, input: input == null ? '' : input,
+      env: Object.assign({}, process.env, base, envExtra || {}),
     });
     return { code: 0, out: String(out) };
   } catch (e) {
@@ -169,6 +185,73 @@ const TMP = fs.mkdtempSync(path.join(os.tmpdir(), 'credgate-'));
   check('D-6 put 后该条目 status 变为 active',
     JSON.parse(fs.readFileSync(path.join(d6, 'index.json'), 'utf8')).entries[0].status === 'active', 'ok');
   check('D-6 put 后 doctor 通过（缺项已消）', runCred(d6, ['doctor']).code === 0, 'ok');
+
+  // -- D-7 空输入 fail-closed：旧形态 `cat > "$f"` 先截断再等数据，空 stdin 就写出 0 字节 --
+  const d7 = path.join(TMP, 'put-empty');
+  const f7 = fixture(d7, { kernelMissing: true });
+  fs.writeFileSync(f7.kf, 'OLD-VALUE');
+  const r7 = runCredIn(d7, ['put', 'kernel'], '');
+  check('D-7 空 stdin 的 put 被拒（非零退出）', r7.code !== 0, 'exit=' + r7.code);
+  check('D-7 拒绝原因指向空输入', /stdin 为空/.test(r7.out), r7.out.trim().slice(0, 70));
+  check('D-7 目标文件未被截断（原值仍在）', fs.readFileSync(f7.kf, 'utf8') === 'OLD-VALUE', fs.readFileSync(f7.kf, 'utf8'));
+  check('D-7 被拒的 put 不改清单状态',
+    JSON.parse(fs.readFileSync(f7.idxPath, 'utf8')).entries[0].status === 'missing', '仍 missing');
+  check('D-7 不留 .tmp 中间产物（校验发生在动目标之前）',
+    fs.readdirSync(d7).filter((x) => x.indexOf('.tmp.') >= 0).length === 0, fs.readdirSync(d7).join(','));
+  check('D-7 不留 .bak 残留（备份在校验之后）',
+    fs.readdirSync(d7).filter((x) => x.indexOf('.bak-') >= 0).length === 0, fs.readdirSync(d7).join(','));
+
+  // -- D-8 只有空白的输入同样拒（`printf '\n'` 是误敲，不是凭据）--
+  const r8 = runCredIn(d7, ['put', 'kernel'], '\n  \t \n');
+  check('D-8 全空白 stdin 被拒', r8.code !== 0 && /stdin 为空/.test(r8.out), 'exit=' + r8.code);
+  check('D-8 全空白被拒后原值仍在', fs.readFileSync(f7.kf, 'utf8') === 'OLD-VALUE', 'ok');
+
+  // -- D-9 覆盖前备份的等价性：名字、内容、权限 --
+  //   （真机库两层确认闸已由 destructive-op-safety-test W-1..W-4 覆盖，此处不重复；
+  //    D-6/D-7 已管「写成功」与「空输入被拒」，这里只补备份这一条安全网。）
+  const d9 = path.join(TMP, 'put-backup');
+  const f9 = fixture(d9);
+  fs.writeFileSync(f9.kf, 'OLD-VALUE');
+  const r9ok = runCredIn(d9, ['put', 'kernel'], 'NEW-VALUE');
+  check('D-9 覆盖写入成功且目标为新值', r9ok.code === 0 && fs.readFileSync(f9.kf, 'utf8') === 'NEW-VALUE',
+    'exit=' + r9ok.code + ' 现值=' + fs.readFileSync(f9.kf, 'utf8'));
+  const baks9 = fs.readdirSync(d9).filter((x) => x.indexOf('.bak-') >= 0);
+  check('D-9 只留一个备份（每次覆盖一份）', baks9.length === 1, baks9.join(',') || '(无备份)');
+  check('D-9 备份名 = <文件>.bak-<14 位时间戳>',
+    baks9.length === 1 && /^kernel-test[.]pat[.]bak-\d{14}$/.test(baks9[0]), baks9[0] || '');
+  check('D-9 备份内容 = 覆盖前的旧值', baks9.length === 1
+    && fs.readFileSync(path.join(d9, baks9[0]), 'utf8') === 'OLD-VALUE', baks9[0] || '');
+  check('D-9 备份权限 0600（POSIX）/ Windows 跳过', !IS_POSIX || (baks9.length === 1
+    && modeOf(path.join(d9, baks9[0])) === '600'),
+    baks9[0] ? String(modeOf(path.join(d9, baks9[0]))) : '');
+
+  // -- D-10 backup：目标必须显式且不得是 ephemeral 实例子目录 --
+  const r10a = runCredIn(d1, ['backup'], '');
+  check('D-10 不给目标目录 -> 拒绝且不用默认值', r10a.code !== 0 && /用法/.test(r10a.out), 'exit=' + r10a.code);
+  const inInst = path.join(TMP, 'inst-root', 'supervisor', 'instances', 'inst-1', 'bak');
+  const r10b = runCredIn(d1, ['backup', inInst], '');
+  check('D-10 目标在实例目录内 -> 拒绝（ephemeral 无意义）',
+    r10b.code !== 0 && /实例目录/.test(r10b.out), 'exit=' + r10b.code);
+  check('D-10 拒绝时不创建目标目录', !fs.existsSync(inInst), 'ok');
+  const okBak = path.join(TMP, 'persist-bak');
+  const r10c = runCredIn(d1, ['backup', okBak], '');
+  const outs = r10c.code === 0 ? fs.readdirSync(okBak) : [];
+  const sub = outs.length ? path.join(okBak, outs[0]) : null;
+  check('D-10 合法目标 -> 产出带时间戳的副本目录', outs.length === 1 && /^dsh-credentials-\d{14}$/.test(outs[0]), outs.join(','));
+  check('D-10 副本含清单与库内 *.pat',
+    !!sub && fs.existsSync(path.join(sub, 'index.json')) && fs.existsSync(path.join(sub, 'kernel-test.pat')),
+    sub ? fs.readdirSync(sub).join(',') : '无产出');
+  check('D-10 副本目录 0700、副本文件 0600（POSIX）/ Windows 跳过',
+    !IS_POSIX || (sub && modeOf(sub) === '700' && modeOf(path.join(sub, 'kernel-test.pat')) === '600'),
+    IS_POSIX && sub ? modeOf(sub) + '/' + modeOf(path.join(sub, 'kernel-test.pat')) : 'Windows 无 POSIX 权限位');
+  check('D-10 备份提示含明文风险，且不回显任何令牌值',
+    /明文令牌/.test(r10c.out) && !/dummy-not-a-real-token/.test(r10c.out), r10c.out.trim().slice(0, 60));
+
+  // -- D-11 入口分发的两条尾账 --
+  const r11 = runCredIn(d1, ['frobnicate'], '');
+  check('D-11 未知子命令 -> 非零退出且打印用法', r11.code === 1 && /用法/.test(r11.out), 'exit=' + r11.code);
+  const r12 = runCredIn(d1, ['put', 'nope'], 'x');
+  check('D-12 put 未知条目 -> 拒绝且不落任何文件', r12.code !== 0 && /未知条目/.test(r12.out), 'exit=' + r12.code);
 }
 
 // -- S 组：仓库本地不变量（任何宿主都成立）--
