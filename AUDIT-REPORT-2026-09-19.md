@@ -706,6 +706,59 @@ node/npm 拆成两个松字段（成功路径只写 node）；内核侧把 npm �
   `fix/*` 分支上，故该 PR 的 diff 含 15 个提交（其中 14 个属已发布内容，`git diff 6274ae8 v1.1.11` 为空 → 内容零丢失）。
   **推进 main 属仓库治理决定，未经确认不合入**；本批同样不发版（不推 tag、不动 npm 包）。
 
+## K. 迁仓残留与签名密钥现状（2026-09-20 顺藤摸出的三条，全部有实测证据）
+
+### K-0 触发点
+
+追壳 PR 的签名失败时，需要确认「签名密钥到底配在哪」。顺带核对两仓的 GitHub 侧配置，
+发现账号迁移（`advgyxqamf` / `wasi7mglns` 到 `lobbowen`）留下三处**只写在文档里、服务端并不成立**的状态。
+取证方式：REST `GET /repos/{o}/{r}/actions/secrets`、`.../branches/{b}/protection`、`GET /repos/{o}/{r}`
+（PAT 从规范库读，本机不落任何令牌值）。
+
+### K-1 服务端兜底（分支保护）随迁仓丢失 P1
+
+| 实测 | 结果 |
+|---|---|
+| `lobbowen/dsh-supervisor-core` · `master` protection | 404 Branch not protected |
+| `lobbowen/dsh-supervisor-launcher` · `main` protection | 404 Branch not protected |
+| 旧仓 `advgyxqamf/dsh-supervisor-core`、`wasi7mglns/dsh-supervisor-launcher` | 均 200，仍可公开访问，最后 push 停在 2026-09-18 |
+
+`DEVELOPMENT-TRACK.md` §7 把「required checks = precheck/test，strict + enforce_admins」写成现行保证，
+新仓上并不成立：现阶段合入约束只剩本地纪律与 PR 上的 CI 状态。
+**未擅自恢复**：分支保护会同时限制直推与管理员，属共享状态变更，需单独定案；
+文档已改为「下表是旧账号仓配置，待在新仓恢复」。旧仓是公开且停更的副本，容易被误当现仓，文档已点名。
+
+### K-2 门禁把 owner 钉死导致空转 P2
+
+`test/no-cross-repo-test.js` 的 X-2 判据写死 `repository:\s*wasi7mglns/dsh-supervisor-launcher`。
+迁仓后，内核 workflow 若去 checkout `lobbowen/dsh-supervisor-launcher`（同一失效形态）会被直接放过，
+门禁静默失效；而它锁的正是当初「壳仓一次提交即可翻转内核 CI 结论」那个故障。
+修：判据改为 `/repository:\s*[\w.-]+\/dsh-supervisor-launcher/`（只认仓库名，不认 owner），
+X-5 反向夹具同时投喂新旧两个 owner，且断言内核仓自身不被误报。
+
+### K-3 凭据与签名的现状描述与实测不符 P2
+
+- `CREDENTIALS-STANDARD.md` §5 仍列 `advgyxqamf` / `wasi7mglns` 的 PAT 与「SSH 部署密钥 active」；
+  SSH 通道在 2026-09-19 事故后未重建。现表改为以 `index.json` 实测条目为准
+  （`github-pat` 两仓共用、`git-credentials` 为唯一推送通道、`npm-token` 为 Granular + bypass 2FA）。
+- 壳 `docs/UPDATER-SIGNING-KEY.md` 把 CI 报错
+  `failed to decode secret key: incorrect updater private key password`
+  归因成「密钥加密了但 password 漏填，空字符串亦可」。**错误引导**：本次该报错发生在
+  **完全没有配置该 secret** 时（两仓 secrets 只有 `NPM_TOKEN`），空串被导出后被 CLI 当非法私钥解码
+  （`Missing comment in secret key`）。文档已纠正，并如实登记：本机 `~/.tauri/` 不存在、
+  全盘无 `*.key`、壳从未产出 `.sig` 也从未有 GitHub Release；公钥指纹 `d5ffd60103af390a`
+  可由 `tauri.conf.json` 内 pubkey 字符串（无换行）复核，私钥指纹已不可核。
+- 产线语义缺陷（壳 PR #1 内修）：`build.yml` 注释承诺「未配密钥不阻断」却不实现，叠加组装器
+  对缺 `.sig` 无条件 `exit 1` 与验收步骤无条件跑，导致**任何无密钥构建四平台必红**。
+  现：空变量在缺失分支内 `unset`；`--require-sig` 仅 tag 传入（发布侧强校验不放宽）；
+  验签验收加步骤级 tag `if:`；build job 仍无 job 级 `if:`（不违反壳门禁 C-c/C-d）。
+  新增门禁 C-f/C-g/C-h 锁定这三处语义并配旧形态反向夹具。
+
+### K-4 裁决登记
+
+签名密钥是否重建（以及是否沿用旧公钥）属发布决策：minisign 公钥已内置于历史客户端，换新密钥对
+旧客户端无效，只能靠用户手动重装过渡，故**不在本次修复内擅自生成或上传新密钥**。
+内核 registry 仍 `0.1.5-BETA.10`，壳不发 tag、不动 npm 包。
 ## 附录：分域审计明细索引
 
 | 域 | 范围 | 规模 | 主要文件锚点 |

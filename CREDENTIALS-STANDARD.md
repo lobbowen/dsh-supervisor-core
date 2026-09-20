@@ -90,17 +90,19 @@ echo -n TOKEN | bash release/scripts/cred.sh put 名   # 写入并置 active
 
 ---
 
-## 5. 现状（cred.sh list）
+## 5. 现状（以规范库 `index.json` 与两仓 secret 实测为准）
 
-| 名称 | 类型 | 账号 | 状态 |
+| ref | 类型 | 账号 | 状态 |
 |---|---|---|---|
-| `kernel` | GitHub PAT | `advgyxqamf` | **active** |
-| `shell` | GitHub PAT | `wasi7mglns` | active |
-| `push-kernel` | SSH 部署密钥 | `advgyxqamf` | active |
-| `push-shell` | SSH 部署密钥 | `wasi7mglns` | active |
-| `npm` | npm automation | `lob.bowen` | external（CI 用 repo secret）|
+| `github-pat` | GitHub Fine-grained PAT | `lobbowen` | active；两仓共用（`lobbowen/dsh-supervisor-core`、`lobbowen/dsh-supervisor-launcher`），用途 = push（HTTPS）+ REST（查 CI / 设 secret / 分支保护）|
+| `git-credentials` | git credential store | `lobbowen` | active；`git credential.helper store --file` 指向该文件，是**唯一**推送通道 |
+| `npm-token` | npm Granular Access Token（须带 bypass 2FA）| `lob.bowen` | active，`rotateBy` 2026-12-18；作用域 `@dsh-sup`；同一值以 repo secret `NPM_TOKEN` 存在于两仓 |
+| （壳自更新签名）| minisign 私钥 `TAURI_SIGNING_PRIVATE_KEY(_PASSWORD)` | - | **缺失**：2026-09-20 实测两仓 Actions secrets 只有 `NPM_TOKEN`，本机亦无密钥文件。壳的非 tag 构建已改为不因此变红，tag 发布仍由 workflow 主动拦下；恢复/重建流程见壳仓 `docs/UPDATER-SIGNING-KEY.md` |
 
-> 壳仓令牌已于后续会话补发并验证为 active（`cred.sh verify shell` 应为 OK）。
+> **已废弃，不要再去找**：SSH 部署密钥通道（历史上的 `push-kernel` / `push-shell`，账号
+> `advgyxqamf` / `wasi7mglns`）。2026-09-19 同机事故后该通道未重建，推送一律走 HTTPS +
+> `git-credentials`，API 走 `github-pat`。npm 发布令牌须 Granular + bypass 2FA：
+> Classic Automation 令牌被 npm 2026-09 新政拒发（BETA.10 首发实测 E403 后更换）。
 
 ---
 
