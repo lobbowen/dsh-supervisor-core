@@ -280,14 +280,20 @@ const readDomain = (dir) => fs.readdirSync(path.join(ROOT, dir)).filter((f) => f
 //   原实现只 child.kill() 直接子进程 -> pnpm 的孙进程成孤儿，占 profile/store 锁。
 {
   const pg = readDomain('src/domains/plugin');
+  // 反向判据要剥注释：本域留下的解释性注释本身就含 `process.kill(-pid` 字样。
+  const pgCode = require('./_strip').stripComments(pg);
   // （SSOT NO-CONSOLE-WINDOW-STANDARD W1）：插件 CLI 的 spawn 已收口到
   //   platform/os/spawn.js 的 piped({detached:true}) —— windowsHide 由封装固定，不再出现在调用点。
   //   本断言的**意图不变**（插件 CLI 必须自成进程组），故改为断言「经统一封装 + 显式 detached:true」。
   check('J-i 插件 CLI spawn 用 detached（自成进程组）',
     /spawn\.piped\(argv0, \[\.\.\.argvPrefix, \.\.\.cliArgs, \.\.\.args\], \{ env, detached: true \}\)/.test(pg),
     '已改');
-  check('J-i 超时经 killTree（POSIX 杀进程组 -pid）',
-    /process\.kill\(-child\.pid, sig\)/.test(pg), '有');
+  check('J-i 超时经平台层整树终止（procOS.killTree + ownGroup）',
+    /require\('\.\.\/\.\.\/platform\/os\/process'\)/.test(pgCode) && /procOS\.killTree\(child\.pid, sig, \(\) => \{\}, \{ ownGroup: true \}\)/.test(pgCode), '已收口单源');
+  // 反向（本条原判据曾钉住 `process.kill(-child.pid, sig)`，等于把禁令要除的形态锁进测试）：
+  //   域内自写负 pid 在 Windows 上只杀得到 .cmd 那层壳，故一律不得再出现。判据走剥注释代码。
+  check('J-i 反向：插件域不再自写 process.kill(-pid) 组信号',
+    !/process\.kill\(-/.test(pgCode), '已移除');
   check('J-i 保留 SIGTERM → SIGKILL 升级',
     /killTree\('SIGTERM'\)/.test(pg) && /killTree\('SIGKILL'\)/.test(pg), '有');
   // 反向：确认旧的「只 kill 直接子进程」写法已消失
