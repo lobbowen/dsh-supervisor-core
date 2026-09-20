@@ -299,13 +299,19 @@ POST /shutdown               已由 POST /session/stop 取代（保留供旧版�
 
 `npm test` 使用 mock 目标跑通设计文档 §12 的全部用例及安全边界（Host/Origin 校验、控制结果透传、日志轮转、端口占用不硬抢、守卫崩溃幂等、接管实例可停止、升级先停后装与回滚），**不触碰真实 DSH 与真实 npm**。
 
-> **卸载类测试现状（2026-09-13 起，与 2026-08-31 政策原文已有出入，以此为准）**：
-> 当前仅 `test/native-test.js`（原生 DSH 卸载全量清理）仍在 `npm test` 链外 —— 见
-> `test/test-chain-completeness-test.js` 的显式排除表（理由：需真实原生卸载环境），
-> 经 `npm run test:native-uninstall` 按需运行。原政策同时排除的 `test/api-contract-test.js`
-> （含 `POST /native/uninstall` 契约断言）与 `test/plugin-change-restart-test.js`（含插件卸载场景）
-> 已**重新入链**（2026-09-13 `ab071f5`：二者此前从未在 CI 执行）；它们仍各有独立 npm script
-> （`test:api-contract` / `test:plugin-change-restart`）供单独调用。
+> **卸载类测试现状**：链内覆盖安装/卸载的行为面 —— `test/uninstall-timeout-behavior-test.js`（注入会挂起的假 npm）、
+> `test/api-contract-test.js`（含 `POST /native/uninstall` 契约断言）、`test/plugin-change-restart-test.js`（含插件卸载场景）；
+> 后两者曾长期被排除、2026-09-13（`ab071f5`）重新入链，它们仍各有独立 npm script 供 CI 单独调用。
+>
+> **唯一在链外的是 `test/native-test.js`**（原生 DSH 卸载全量清理）。它的排除理由此前登记为
+> 「需真实原生卸载环境」，**这句话是错的**：夹具用的是临时 `npmRoot`，不碰宿主环境；同一提交 `ab071f5`
+> 自己的注释还记着它「10 断言，能通过」。真实障碍有两条（现登记在 `test/test-chain-completeness-test.js` 排除表）：
+> `ops.uninstall` 会真起 `npm` 子进程，且夹具用 `fs.symlinkSync` 造 bin 链接 —— Windows 建符号链接需特权或开发者模式，
+> 夹具没有按平台分支。
+>
+> 因此 **`npm run test:native-uninstall` 不是一条可随时取证的通道**：本仓硬标准禁止本机执行任何测试
+> （`ACCEPTANCE-STANDARD.md` §0），CI 也不跑它。该文件当前**不在任何环境运行、不产生验收证据**，
+> 最后一次有记录的执行是 2026-09-13 在 Linux 上。入链前提：改走 `npmBin` 注入口塞假 npm，并把 bin 夹具按平台分支。
 >
 > ⚠ **补充（2026-09-12，P1-F 事故后定规）**：需要验证卸载逻辑的行为时，
 > **必须经构造期依赖注入**（`new NativeManager({ npmBin: <假可执行> })`），

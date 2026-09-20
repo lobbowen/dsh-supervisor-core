@@ -22,7 +22,7 @@
     "publish:core": "bash release/scripts/publish-core.sh",
     "build:launcher:all": "bash release/scripts/build-launcher.sh --all-platforms"
   },
-  "_uninstallTests": "卸载类测试政策（2026-09-13 更新）：native-test.js（原生 DSH 卸载全量清理）需真实原生卸载环境，未进入 npm test 自动链（排除表见 test/test-chain-completeness-test.js）；api-contract-test.js 与 plugin-change-restart-test.js 已在链中（不再排除）。按 ACCEPTANCE-STANDARD，所有测试（含上述独立脚本）一律不得在本机执行，验收只由 CI 裁决。",
+  "_uninstallTests": "卸载类测试政策：native-test.js（原生 DSH 卸载全量清理）未进 npm test 自动链，理由与入链前提登记在 test/test-chain-completeness-test.js 的排除表（真起 npm 子进程 + symlink 夹具无平台分支）；链内的卸载行为面由 uninstall-timeout-behavior-test.js（npmBin 注入）与 api-contract-test.js、plugin-change-restart-test.js 承担。按 ACCEPTANCE-STANDARD，所有测试（含 test:native-uninstall 等独立脚本）一律不得在本机执行、CI 也不跑该脚本，所以它当前不产生验收证据。",
   "engines": {
     "node": ">=18"
   },
