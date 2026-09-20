@@ -330,9 +330,21 @@
     修法：① 产品侧给 `launchIsolated` 加 `opts.spawn` 测试缝（缺省仍为 `_spawnDetached`），并把 chain 分支的
     spawn+error+exit+unref 序列收进同一函数（`c.watch ? onExit : undefined` 保持原语义，删掉一份重复实现）；
     ② 判据改断言「**被真 spawn 的**是哪个 bin」+「返回值与计划一致（single 报 label / chain 报 bin）」，并补两条反向：
-    预检不过时 `spawned` 长度为 0（让「不 spawn 必死的 bin」从注释变成可判事实）、非法 URL 时同样不起进程。
+    预检不过 / 非法 URL 时 spawn 计数**不再增长**（把「不 spawn 必死的 bin」从注释变成可判事实）。
     与 §H-7-8 的区别要讲清：X-6 是**推演**（未执行），X-9 是**已复现**——探针只调用纯规划函数与注入替身，
     未跑测试套件，仍守 §0 的本机执行上限。
+11. **run `35485246398`（HEAD `605876a`）—— 链推进到 #74，这次不是判红而是崩溃**：日志里**一条 `FAIL` 都没有**，
+    test job 直接抛 `TypeError: Cannot read properties of undefined (reading 'desired')` at `app-ctor-injection-test.js:248`。
+    定性：**夹具观测了错误的对象**——D-8 块另造了一个 `const d8 = fakeRegistry()`，而它调用的 `control` 的
+    `getManagedObjects` 注入的是**上面那个 `reg`**，于是 `control.upsert()` 写进 `reg`、`d8` 恒空，
+    `d8.get('d8').desired` 解引用 undefined 崩掉整份文件（#75–#129 又全数未执行）。
+    同文件的 `d8b` 块是**正确写法**（为它单造 ctlBoot 并把 `getManagedObjects` 指向 `d8b`），两处对照即见根因。
+    修法：① `const d8 = reg`（与被测对象的注入源同一引用）；② 判据取值一律经 `ent(id)` 落地后再读，
+    未登记只判红不抛，并补一条「首登确实落到 control 的注册表」前提例——把「接线是否成立」本身变成可判事实；
+    ③ 顺带按 §G-6-9 把 `d8b` 块里两条二合一判据拆开（name 刷新 / desired 不被顺手改写 / router 与 lan 的 config 驱动各一条）。
+    **纪律（比 §H-7-9 更一般）**：崩溃的代价高于判红——判红只吃掉一条断言，崩溃吃掉**整份文件 + 其后所有文件**的覆盖面。
+    夹具里任何 `x.get(k).field` 形态的直接解引用都必须在写之前问一句「这个 key 是谁放进去的、放的对象是不是我正在读的对象」。
+    本机为何没发现：只读源码看不出注入图的同一性（`reg` 与 `d8` 是两个 Map 这件事需要跑起来才暴露），这正是运行时裁判只能由 CI 承担的原因。
 
 ### H-8 残留与诚实声明
 
