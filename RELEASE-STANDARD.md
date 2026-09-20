@@ -58,7 +58,7 @@
 | 阶段 | 名称 | 命令 | 必须绿 | 失败怎么办 |
 |---|---|---|---|---|
 | S0 | 凭据就绪 | `bash release/scripts/cred.sh doctor` | ✅ | 补发/轮换令牌（见凭据标准）|
-| S1 | 版本提升 | `bash release/scripts/bump.sh --core <ver>` | ✅ | 只允许递增 |
+| S1 | 版本提升 | `bash release/scripts/bump.sh --core <ver>`（写 `package.json` 与 lock 两处 version）| ✅ | 只允许递增 |
 | S2 | 版本一致性预检 | `npm run verify:versions` | ✅ | 修派生处 |
 | S3 | 前端产物 | `bash release/scripts/build-ui.sh` | ✅ | 修 UI 构建 |
 | S4 | 全量回归（**由 CI 执行**）| `xvfb-run -a npm test`（本机不得执行）| ✅ | 修缺陷（含注入验证）|
