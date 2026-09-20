@@ -74,11 +74,15 @@ const matrix = require('../../platform/contract/matrix');
 const os = matrix.osTag();              // 'win' | 'darwin' | 'linux'
 const tag = matrix.npmTag();            // 'linux-x64' 等
 const frp = matrix.frpTag();            // 第三方命名 'windows_amd64'
-if (matrix.supportsProcessGroup()) { /* POSIX 进程组 */ }
 ```
 
 能力查询用 `platform/os/index.js` 的 `capabilities()` / `capabilityProfile()`；
 **不要**自己写 `process.platform` 分支。
+
+整树终止（杀子进程连同其孙进程）走 `platform/os/process.js` 的 `killTree(pid, sig, cb, { ownGroup })`
+单源：POSIX 发进程组信号（仅当本方 detached 拉起、`ownGroup: true`），Windows 经 `taskkill /T /F`。
+业务域**不得**自写 `process.kill(-pid)`——Windows 无进程组语义、必抛，且只杀得到壳进程。
+`matrix.supportsProcessGroup()` 只回答「本平台有无组语义」，不是整树终止的入口，勿拿它自己拼分支。
 
 ### 第 3 步：新增跨层依赖 -> 登记
 

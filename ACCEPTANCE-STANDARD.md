@@ -155,14 +155,19 @@ tmp+rename，其中 **25 个用固定 `file + '.tmp'` 名**。固定名不是风
 
 ## 9. 外部输入的字符集白名单只有一个源（E-4，2026-09-20 立项）
 
-**规则**：包名、argv 项、systemd 单元名、聚合账本键的**字符集/形态**判定，一律取自
+**规则**：包名、argv 项、systemd 单元名、聚合账本键、安装前缀的**字符集/形态**判定，一律取自
 `require('platform/util/input')`（`argvViolation` / `pkgNameViolation` /
-`unitNameViolation` / `ledgerKey`）。不得在别处复制同形正则——执法点 J-p 按「同一条尺子在
+`unitNameViolation` / `ledgerKey` / `prefixViolation`）。不得在别处复制同形正则——执法点 J-p 按「同一条尺子在
 `src/` 只有一个定义处 + 消费方拿到同一个 RegExp 对象」判，抄一份立刻红。
 
 **边界**：语义级校验**不进** input.js，留在各自领域（SSRF 的 `isPrivateHostLiteral`、
 semver 比较与通道选择、`isValidOrigin` 的 URL 结构闸）。本条只统一「这串字符能不能进
-argv / 单元名 / 对象键」这一层，避免把安全语义稀释成通用正则库。
+argv / 单元名 / 对象键 / 路径参数」这一层，避免把安全语义稀释成通用正则库。
+
+**尺子按值的形态分把，不按调用点分把**：`prefixViolation` 判的是**路径**，故用绝对形态 +
+控制符 + 前导 `-` 三段判据，**不复用** `argvViolation` 的字符集（Windows 真实前缀普遍含
+反斜杠与空白，复用会误杀合法路径）。
+新增入口时先问「这个值的形态属于哪一类」，再挑对应尺子，不要就地自写正则。
 
 ## 10. 判据自身有五条失效形态，写判据时必须先排掉（第 4 批 CI 取证，2026-09-20）
 

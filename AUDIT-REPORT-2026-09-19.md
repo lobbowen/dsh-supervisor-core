@@ -495,10 +495,14 @@
 2. **§E.1 与原述偏离（实现位置与职责边界）**：原述要求「统一注入 `persist.writeAtomic`（tmp 含 pid **+ 读失败禁写内建**）」。实际单源落在 `platform/util/fs.js`（`persist.js` 反而在豁免清单），且「读失败禁写」**仍由各调用点自守**（`canPersist()` / `loadedOk`），单源不内建——helper 不该反向依赖每个调用点的健康语义。规则已按实际形态写进 ACCEPTANCE-STANDARD §8。
 3. **§E.4 只统一字符集层**：URL/SSRF 分级（`shared/ip` + `policies.isValidOrigin`）与 semver/通道语义仍留在各域，未纳入 `input.js`（边界见 ACCEPTANCE-STANDARD §9）。
 4. **审计原述错锚点（本批实测证伪/纠正）**：① §C「令牌条 1 = 4 处裸 `.tmp` 写」低估为 25 处（见 H-6）；② §C「domains 条：shell 看护不认目录 desired 轴」→ D-2 判为**不成立**；③ §E-1「至少 4 处独立实现」同样低估；④ 本批另有 4 处「取全量最高」失实注释与 1 处 build.yml 虚构步骤名归正（发布条 2/3）。
-5. **cred.sh 的行为级验证在 CI 侧覆盖有限**：`bash -n` + 静态判据是本批证据上限；空 stdin 路径的端到端（真起 `put </dev/null`）未新增用例——`release/scripts` 不在 `npm test` 链内，脚本改动历史上只经 dry-run 类 CI 步骤。此项留作后续批次的测试基建议题（与 §G-6-8「测试单独运行缺省不落沙箱」同源）。
+5. **~~cred.sh 的行为级验证在 CI 侧覆盖有限~~ —— 已由第 5 批结案（见 §I-3）**：
+   `test/credential-hygiene-test.js`（在 `npm test` 链内）现对 `put` / `backup` 做子进程行为级断言
+   （D-7 ~ D-13：空/全空白 stdin、覆盖前备份等价、备份目标拒 ephemeral、未知子命令与未知条目、清单含值）。
+   留档：本条的原始顾虑「`release/scripts` 不在链内」仍然成立——链是通过**测试文件调脚本**接入的，不是脚本自跑。
 6. **C-3 首版断言是夹具误设**：`a7a31f4` 记录——429 出现在第 11 发而非第 10 发，且循环起点账本已被前序 cookie 放行 clear；修法为前置清零断言 + 11 发循环拆两条（§G-6-9 逐例拆分 + 判据回显）。
 7. **registry 版本**：本批**不发布**（npm 仍 0.1.5-BETA.10）。合入与发布分两步，发布另需确认。
-8. **B-11 闸门的对称性缺口（本轮取证时发现，未在本批修）**：`runNpmInstall` 只在 **commandTemplate 分支**逐项过禁用字符集；默认分支的 `argv.push('--prefix', o.prefix)` 完全不过闸（install.js:149）。因 spawn 不经 shell，实际不构成注入面，但它与 B-11「任何一环被污染都直达 spawn」的立项理由不对称——prefix 来自配置/环境（win 上含空白的安装前缀是常态）。修法有两种且语义相反（放宽=给绝对路径豁免；收紧=prefix 也过同一判据并明确要求引号语义），属裁决题不是手到活，留第 5 批立项。
+8. **~~B-11 闸门的对称性缺口~~ —— 已由第 5 批结案（见 §I-1）**：默认分支的 `--prefix` 值现过 `input.prefixViolation`
+   （路径形态尺：控制符 / 前导 `-` / 非绝对形态 / 超长），既非「放宽」也非「套用 argv 字符集」，是第三种解法。
 9. **~~挂账：真实 PATH 下 windows 能否解析到 `icacls`~~ —— 已由 run `35488336734` 结案（见 §H-7-16 第三条）**：
    windows job 真实 PATH 实测 `hasIcacls()=true`、探针 `{ok:true,code:"0"}`，「可用 ⇒ 绝不谎报 `none`」成立。
    结论：**生产机 ACL 收紧链路可用，`hasIcacls` 探测方式无缺陷**；上一轮「清空 PATH 仍可用」的推演依据作废，
@@ -508,6 +512,73 @@
     X-2 是上一批遗留的文档原文），已全部清零并用门禁同一口径本机穷举复扫确认（§H-7-16）。**残留风险**：X-1 只扫 `src,test,release,bin,.github,ui/src`
     且剥离注释，X-2 扫全部 .md 但排除 CHANGELOG 与门禁自身——注释里的示例路径、`ui/` 非 `ui/src` 的构建产物、
     以及 CHANGELOG 的历史条目都不在执法范围内。这是**有意的宽**（注释举例不构成机器绑定），不要误读成「全仓无绑定」。
+
+## I. 第 5 批裁决与修复登记（注释纪律 + §H-8-5/§H-8-8 结案）
+
+### I-1 B-11 对称性缺口：`--prefix` 过路径形态尺（结案 §H-8-8）
+
+| 项 | 内容 |
+|---|---|
+| 缺陷 | `runNpmInstall` 默认分支把 `o.prefix` 原样 push 进 spawn argv，而同分支的 pkg/version 逐项过闸——同一风险面两套标准 |
+| 修法 | 新增 `input.prefixViolation()`（第五把尺）：拦控制符、前导 `-`（会被 npm 当成下一个选项 = 选项注入）、非绝对形态（落到进程 CWD）、超长；`install.js` 在 `push('--prefix')` **之前**判定并 fail-closed 返回 `{ok:false}` |
+| 为什么不复用 `argvViolation` | 那条尺子禁空白与反斜杠，而 Windows 真实前缀普遍含二者（8.3 短名段带 `~`、`Program Files` 带空白）。套用即误杀合法安装路径——同一字符集在第 4 批的 Windows job 上已误杀过 `fake-npm.js` |
+| 判据 | `test/npm-resolution-test.js` C-g：结构闸（过闸调用必须在 push 之前）+ 单源（`install.js` 不得自写 `prefixViolation`）+ 7 正例 / 10 负例逐例断言 + 4096 边界 + 异步行为 5 例（合法 win/posix 前缀用坏 registry 反证「已经过前缀闸」） |
+
+### I-2 插件域整树终止收口平台层（附：判据钉住被禁形态）
+
+| 项 | 内容 |
+|---|---|
+| 缺陷 | `domains/plugin/cli.js` 超时自写 `process.kill(-child.pid, sig)`。Windows 无进程组语义：负 pid 必抛，即使命中也只杀得到 `.cmd` 那层壳，pnpm 孙进程成孤儿——与 §H-7 在 `install.js` 上取证的同一产品缺陷的第二处 |
+| 修法 | 改调 `platform/os/process.killTree(pid, sig, cb, { ownGroup: true })`（Windows 经 `taskkill /T /F`，两平台语义等价）；detached 子进程必为本组组长，故 `ownGroup` 成立 |
+| 判据同批改 | `round8-fixes-test` J-i 原**要求** `process.kill(-child.pid, sig)` 存在于源码——收口后这条判据会把正确实现判红（第 4 批同类失效：判据钉住旧实现）。现改为「经 `procOS.killTree(child.pid, sig, () => {}, { ownGroup: true })`」+ 反向「插件域不得再出现 `process.kill(-`」 |
+
+### I-3 cred.sh 行为级断言（结案 §H-8-5）
+
+`test/credential-hygiene-test.js`（链内，未新增文件）补 D-7 ~ D-13：空/全空白 stdin 的 `put` 必须 fail-closed
+（非零退出、原值未截断、清单未变、不留 `.tmp`/`.bak`）；覆盖写只留一份 `<文件>.bak-<14 位时间戳>` 且内容 = 旧值；
+`backup` 拒无目标与实例目录内目标、合法目标产 0700/0600 副本且不回显令牌值；未知子命令与未知条目；清单写入令牌值 → `doctor` 判红。
+`runCredIn` 显式清空宿主侧 `DSH_CRED_ALLOW_OVERWRITE` / `DSH_CRED_FORCE` / `DSH_CRED_BACKUP_DIR`，
+防「负例因宿主环境变绿」。真机覆盖保护的模拟已在 `destructive-op-safety-test` W-1 ~ W-4，未重复。
+
+### I-4 注释纪律（CS 组）
+
+| 项 | 内容 |
+|---|---|
+| 规则 | 注释只写「为何这样写」与不可见约束，不写修复过程（批次号 / run 号 / 日期 / 章节号 / 裁决史）；字符白名单 = ASCII 可打印 + 汉字假名 + 中文标点 + 全角 + `‘’“”–—…`，图标与制表符（含 `→ ⚠ § ├──`）一律禁，映射写 ASCII（`->`、`<=`） |
+| 执法 | `test/comment-pin-gate-test.js` CS-1（字符白名单，硬失败）+ CS-2（过程叙事标记，硬失败）；规则正文在 DEVELOPMENT-TRACK 注释纪律节 |
+| 存量清理 | src/ + test/ + release/ + ui/ + .github/ 注释全量改写 |
+| 不误伤代码的证据 | 对清理提交做「剥注释后逐字节比对」探针：167 个 js/ts 文件 **code drift = 0**，即改动全在注释内 |
+| 清理引入的次生错误（本批自查纠正） | ① `docs-reference-gate-test.js` 两处注释把树连接符写成 `+--/+--`（代码实际匹配 `├──/└──`）——注释描述失真，改为文字描述；② 一批 `（Linux → 条件执行）` 之类符号映射留下的读感问题按行复核 |
+
+### I-5 顺手抓出的既有缺陷：darwin 真实 home 解析把 `\s` 写成 `s`
+
+`credential-hygiene-test.js` 与 `destructive-op-safety-test.js` 的 `realHome()` 用
+`.trim().split(/s+/).pop()`（缺反斜杠，按字面 `s` 切）解析 `dscl` 输出，
+macOS 上拿到的是**裸账号名**而不是绝对 home 目录。后果只在 macOS 成立：`REAL_STORE` 变相对路径 ->
+`持久化-3` 判红，或 R 组因路径不存在而静默 SKIP（门禁在该规则本应守护的平台上空转）。
+现改 `/\s+/`，与 `cred.sh`/`_npm-auth.sh` 里 `awk '{print $2}'` 的口径一致。
+
+### I-6 文档纠错（会造成错误引导的表述）
+
+| 文件 | 原表述 | 纠正 |
+|---|---|---|
+| DEVELOPMENT-TRACK 第 2 步 / release/README 铁律二 | 把 `matrix.supportsProcessGroup()` 当作「POSIX 进程组」的推荐入口 | 该能力只回答「本平台有无组语义」；整树终止的唯一入口是 `platform/os/process.killTree`，示例改用 `capabilityProfile().processTreeKill` |
+| ACCEPTANCE-STANDARD §9 | 四把尺（包名 / argv / 单元名 / 账本键） | 补第五把 `prefixViolation`，并写明「尺子按值的形态分把，不按调用点分把」 |
+| CREDENTIALS-STANDARD §1、§6 | 门禁标签写成 C-1 ~ C-9、并固化「18 断言」；§6 自己也声明不固化条数（自相矛盾） | 表头按脚本内真实标签重写（D / S / R / 持久化 / 反向），条数改为「以脚本输出为准」；§1 铁律的门禁列同步改为可 grep 的判据名 |
+
+### I-7 design-notes 与实现的偏差（登记，不改原文）
+
+`design-notes/plugin.md` 与 `design-notes/_p2-ws1b-domains-plugin-instance.md` 仍描述 `cli.js`
+使用 `matrix.supportsProcessGroup()`、J-i 钉 `process.kill(-child.pid, sig)`。
+design-notes 是**带日期的过程记录**（非现行规范、不在 DR-1 扫描面），按「历史记录不改写」保留原文，以 §I-2 为准。
+
+### I-8 本批证据上限与未做项
+
+1. 本批全部改动只经**静态**验证：`node --check`、`bash -n`、纯函数探针（前缀 19 例逐例）、
+   CS/CP 门禁扫描、剥注释逐字节比对、照 `cred.sh` 与 `install.js` 源码逐字对出的消息子串与退出码。
+   运行时裁决权在 CI 四平台矩阵；若 CI 与静态推演冲突，以 CI 为准并回改判据。
+2. `release/scripts/*.sh` 仍不自跑于链内（由测试文件调起），Linux-only 的 `doctor` 分支在 macOS/Windows 走 SKIP 臂。
+3. **本批不发布**：registry 仍 0.1.5-BETA.10；第 3/4/5 批的修复不在任何已发布产物内。合入与发布分两步，发布另需确认。
 
 ## 附录：分域审计明细索引
 

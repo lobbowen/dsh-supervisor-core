@@ -83,7 +83,8 @@
 | 取平台事实（platform/arch/osTag）| `src/platform/contract/matrix.js` 的 `current()` / `osTag()` |
 | 取 npm / 产物标签 | `src/platform/contract/matrix.js` 的 `npmTag()` |
 | 取 FRP 官方产物标签 | `src/platform/contract/matrix.js` 的 `frpTag()` |
-| 判断平台能力（如进程组语义）| `src/platform/contract/matrix.js` 的 `supportsProcessGroup()`，或 `platform/os/index.js` 的 `capabilities()` |
+| 判断平台能力（如整树终止有无）| `src/platform/os/index.js` 的 `capabilities()` / `capabilityProfile().processTreeKill` |
+| 终止子进程整树 | `src/platform/os/process.js` 的 `killTree(pid, sig, cb, { ownGroup })`（唯一入口）|
 | 需要平台专属行为 | `src/platform/os/*` 的 Provider（`service` / `desktop` / `pidlookup` …）|
 
 **为什么**（本仓付出过的代价）：os/arch→标签 这一事实曾散落 **5 份**
@@ -106,7 +107,8 @@ if (process.platform !== 'win32') { /* POSIX 进程组 */ }
 ```js
 const matrix = require('../../platform/contract/matrix');
 const os = matrix.osTag();
-if (matrix.supportsProcessGroup()) { /* POSIX 进程组 */ }
+const procOS = require('../../platform/os/process');
+procOS.killTree(pid, 'SIGKILL', cb, { ownGroup: true });   // 整树终止，两平台语义等价
 ```
 
 ### 铁律三：新增平台支持 = 固定四步（不得跳步）

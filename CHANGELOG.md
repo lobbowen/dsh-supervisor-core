@@ -6,6 +6,30 @@
 
 ## [未发布]
 
+### 注释纪律 + 三处收口（AUDIT-2026-09-19 第 5 批，裁决登记见 AUDIT-REPORT §I）
+
+- **注释纪律门禁（CS 组）**：注释只写「为何」与不可见约束，不写修复过程；字符白名单 = ASCII 可打印
+  + 汉字假名 + 中文标点 + 全角 + 排版引号，图标与制表符（`→ ⚠ § ├──` 等）一律禁，映射写 ASCII。
+  执法点 `test/comment-pin-gate-test.js` CS-1（字符白名单）/ CS-2（过程叙事标记：批次号、run 号、
+  日期、章节号、裁决史），规则正文入 DEVELOPMENT-TRACK 注释纪律节。全仓注释按此重写；
+  「剥注释后逐字节比对」探针证明 167 个 js/ts 文件的**可执行代码零改动**。
+- **`--prefix` 过闸（§H-8-8 结案）**：`runNpmInstall` 默认分支的安装前缀此前原样进 argv。
+  新增第五把尺子 `input.prefixViolation`（拦控制符 / 前导 `-` 的选项注入 / 非绝对形态 / 超长），
+  刻意**不复用** argv 字符集——Windows 真实前缀普遍含反斜杠与空白。判据 `npm-resolution` C-g。
+- **插件域整树终止收口平台层**：`domains/plugin/cli.js` 超时不再自写 `process.kill(-pid)`
+  （Windows 无组语义、只杀得到 `.cmd` 壳，pnpm 孙进程成孤儿），改调 `platform/os/process.killTree`。
+  同批改掉 `round8-fixes-test` J-i 里「要求源码含负 pid」的判据——它会把正确实现判红。
+- **cred.sh 行为级断言（§H-8-5 结案）**：链内 `credential-hygiene-test` 补 D-7 ~ D-13（空/全空白
+  stdin fail-closed、覆盖前备份等价、`backup` 拒 ephemeral 目标、未知子命令与未知条目、清单含值），
+  并清空宿主确认类环境变量，防负例因环境变绿。未新增链内测试文件。
+- **修出的既有缺陷（darwin 专属）**：两个凭据门禁的 `realHome()` 把 `/\s+/` 写成 `/s+/`，
+  macOS 上真实 home 解析成裸账号名而非绝对路径 -> `REAL_STORE` 变相对路径，
+  `持久化-3` 判红或 R 组静默 SKIP（门禁在其本应守护的平台上空转）。
+- **文档纠错**：DEVELOPMENT-TRACK 与 release/README 曾把 `matrix.supportsProcessGroup()` 当作
+  进程组操作入口（照着写就会自组负 pid 信号），改指 `platform/os/process.killTree`；
+  ACCEPTANCE-STANDARD §9 补第五把尺子；CREDENTIALS-STANDARD 的门禁标签由虚构的 C-1~C-9 改为
+  脚本内真实可 grep 的 D / S / R / 持久化 标签，并删掉与自身「不固化条数」声明矛盾的「18 断言」。
+
 ### 健壮性与制度化收口（AUDIT-2026-09-19 第 4 批：C 类 P2 全量 + §E.1/§E.2/§E.4 立项，裁决登记见 AUDIT-REPORT §H）
 
 - **原子写单源（§E-1）**：状态落盘从「各点自拼 `file + '.tmp'` 再 rename」收敛到
