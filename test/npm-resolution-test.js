@@ -22,6 +22,10 @@
 //   C-b  解析结果是**绝对路径或带扩展名**（Windows）—— 不能是裸 'npm'
 //   C-c  源码里不得再出现裸 npm 调用（runOut('npm')/spawn('npm')/bin='npm'）
 //   C-d  模板路径（commandTemplate 首项为 'npm'）同样被解析
+//   C-e  npx 与 npm 同构（Windows 上是 npx.cmd）
+//   C-f  安装执行器入参白名单：pkg/version/argv 项/registry origin 在 spawn 前全部过闸
+//   C-g  --prefix 与模板分支对称：前缀过路径形态尺（绝对 + 无控制符 + 不以 - 开头），
+//        且不得因该尺误杀 Windows 真实前缀（含空白、含反斜杠、8.3 短名）
 // ---------------------------------------------------------------------------
 
 const path = require('node:path');
@@ -195,6 +199,67 @@ check("C-e 非 Windows 返回 'npx'", npxBin({ platform: 'linux' }) === 'npx', n
     check('C-f 豁免判据 ' + JSON.stringify(s) + ' 应' + (want ? '拒' : '放行'), got === want,
       'BAD=' + inst.BAD_ARGV_CHAR_RE.test(s) + ' WIN=' + inst.WIN_DRIVE_ABS_RE.test(s) + ' gate=' + got);
   }
+}
+
+// -- C-g：--prefix 与 commandTemplate 分支的闸门对称性（安装前缀走路径形态尺）--
+{
+  const INPUT = require(path.join(ROOT, 'src', 'platform', 'util', 'input.js'));
+  const INPUT_SRC = path.join(ROOT, 'src', 'platform', 'util', 'input.js');
+  const distDir = path.join(ROOT, 'src', 'platform', 'distribution');
+  const installSrc = fs.readFileSync(path.join(distDir, 'install.js'), 'utf8');
+
+  check('C-g 默认分支的 prefix 在 push --prefix 前过 prefixViolation',
+    installSrc.indexOf('input.prefixViolation(o.prefix)') >= 0
+      && installSrc.indexOf('input.prefixViolation(o.prefix)') < installSrc.indexOf("push('--prefix'"), '有');
+  // 尺子单源：install.js 不得自带第二份前缀判定。
+  check('C-g 前缀尺子取自 input 单源（install.js 内不再写第二份形态正则）',
+    !/function prefixViolation/.test(installSrc) && /function prefixViolation/.test(fs.readFileSync(INPUT_SRC, 'utf8')), '单源=input.js');
+
+  // 纯函数正反例（跨平台形态，与宿主无关 —— 这正是不用 path.isAbsolute 的理由）。
+  const OK_CASES = [
+    '/tmp/dsh-prefix', '/home/u/.dsh/instances/inst-1/install',
+    'C:\\Users\\RUNNER~1\\.dsh\\install',        // win 8.3 短名：不得被误杀
+    'C:\\Program Files\\dsh',                    // win 含空白：合法
+    'D:/a/dsh/prefix', '/tmp/中 文 目 录',
+    '\\\\fileserver\\share\\dsh',                // UNC
+  ];
+  for (const p of OK_CASES) {
+    const got = INPUT.prefixViolation(p);
+    check('C-g 放行绝对路径 ' + JSON.stringify(p), got === null, String(got));
+  }
+  const BAD_CASES = [
+    ['', '空的安装前缀'], ['   ', '空的安装前缀'],
+    ['--foreground-scripts', '以 - 开头'],         // 选项注入：会被 npm 当成下一个选项
+    ['-c', '以 - 开头'],
+    ['rel/dir', '绝对路径'], ['./x', '绝对路径'], ['../escape', '绝对路径'], ['~/.dsh', '绝对路径'],
+    ['/tmp/a\nb', '控制符'], ['/tmp/a\u0000b', '控制符'],
+  ];
+  for (const [p, want] of BAD_CASES) {
+    const got = INPUT.prefixViolation(p) || '';
+    check('C-g 拒绝 ' + JSON.stringify(p) + '（' + want + '）', got.includes(want), got || '(放行)');
+  }
+  check('C-g 拒绝超长前缀（4096 上限）',
+    INPUT.prefixViolation('/' + 'a'.repeat(5000)).includes('超长'), String(INPUT.prefixViolation('/' + 'a'.repeat(5000)).slice(0, 20)));
+
+  // 行为面：非法前缀在 spawn 之前被拒；合法前缀不得被前缀闸拦。
+  //   探针：配一个必然更晚触发的非法 registry —— 错误正文落在 registry 上即证明前缀已放行。
+  const inst2 = require(path.join(distDir, 'install.js'));
+  _asyncGates.push(async () => {
+    const rs = await Promise.all([
+      inst2.runNpmInstall({ pkg: '@a/b', version: '1.2.3', prefix: '--unsafe-cache' }),
+      inst2.runNpmInstall({ pkg: '@a/b', version: '1.2.3', prefix: 'relative/dir' }),
+      inst2.runNpmInstall({ pkg: '@a/b', version: '1.2.3', prefix: '/tmp/a\u0000b' }),
+      inst2.runNpmInstall({ pkg: '@a/b', version: '1.2.3', prefix: 'C:\\Program Files\\dsh', registry: 'file:///tmp/evil' }),
+      inst2.runNpmInstall({ pkg: '@a/b', version: '1.2.3', prefix: '/tmp/a b', registry: 'file:///tmp/evil' }),
+    ]);
+    check('C-g 行为：prefix 以 - 开头 → 拒且不 spawn', !rs[0].ok && /以 - 开头/.test(rs[0].error), rs[0].error);
+    check('C-g 行为：prefix 相对路径 → 拒', !rs[1].ok && /绝对路径/.test(rs[1].error), rs[1].error);
+    check('C-g 行为：prefix 含 NUL → 拒', !rs[2].ok && /控制符/.test(rs[2].error), rs[2].error);
+    check('C-g 行为：win 含空白前缀不被误杀（拦下的是 registry 闸）',
+      !rs[3].ok && /registry origin/.test(rs[3].error) && !/安装前缀/.test(rs[3].error), rs[3].error);
+    check('C-g 行为：posix 含空白前缀不被误杀（拦下的是 registry 闸）',
+      !rs[4].ok && /registry origin/.test(rs[4].error) && !/安装前缀/.test(rs[4].error), rs[4].error);
+  });
 }
 
 // -- 反向：解析结果确实可执行（本机验证，非 Windows 分支）--

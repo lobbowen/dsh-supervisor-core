@@ -146,7 +146,13 @@ function runNpmInstall(opts) {
     // 安装期不执行包内 pre/post 脚本 ——  registry 内容（含镜像被投毒场景）不再能在
     // 本机以守卫权限跑任意生命周期脚本。
     argv.push('--ignore-scripts');
-    if (o.prefix) argv.push('--prefix', o.prefix);
+    // prefix 与 pkg/version 同源（配置/沙箱目录）、同样直达 spawn，故同样过闸；
+    // 过的是路径形态尺而非 argv 字符集尺，理由见 input.prefixViolation。
+    if (o.prefix) {
+      const pv = input.prefixViolation(o.prefix);
+      if (pv) return Promise.resolve({ ok: false, error: 'runNpmInstall: ' + pv, output: [] });
+      argv.push('--prefix', String(o.prefix));
+    }
     argv.push(pkg + '@' + o.version);
   }
   // 契约 PATH 注入（nodeBinDir 首位）：内核自身执行的 npm 也必须能找到 node。
