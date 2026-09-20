@@ -142,7 +142,7 @@ function srcRootedBlocks(md) {
   const all = fencedBlocks(md).concat(indentedBlocks(md));
   return all.filter((b) => b.some((l) => l.trim() === 'src/'));
 }
-/** 从树块行取路径 token：连接符（+--/+--）后的首个名字，且须形如目录（/ 结尾）或带扩展名文件。 */
+/** 从树块行取路径 token：树连接符之后的首个名字，且须形如目录（/ 结尾）或带扩展名文件。 */
 function treeTokensOf(blockLines) {
   const out = [];
   for (const line of blockLines) {
@@ -181,7 +181,7 @@ function treeTokenResolves(token) {
 // -- DR-3（report-only）：src/ 目录树的「裸名」漂移 --
 // 目录树用裸名（无 src/ 前缀），DR-1 的 src/... 字面量覆盖不到 -> 已两轮人工漂移。
 // 口径：只扫描**含独立 src/ 根行**的代码块（即具体 src 目录树）；模板树（如 domains/<domain>/）
-//   与非 src 树（release 产物、API 端点列表）不参与，否则必然误报。连接符（+--/+--）后的首个
+//   与非 src 树（release 产物、API 端点列表）不参与，否则必然误报。树连接符之后的首个
 //   路径 token：裸名按 basename 在 src/ 下检索（宽松，同名多目录不误报）；dir/name 要求该相对路径存在。
 // 诚实边界：裸名是**上下文相对**的（同名可能属于多个目录，基准目录不可静态确定，P3-B 已登记）。
 //   故本判据只报告、不计入退出码；转硬需先实测 0 误报（当前 tree 实测 0，但依托「只扫 src 根块」的收窄口径）。

@@ -41,7 +41,7 @@ function realHome() {
   try {
     const u = os.userInfo().username;
     if (process.platform === 'darwin') {
-      const h = execFileSync('dscl', ['.', '-read', '/Users/' + u, 'NFSHomeDirectory'], { encoding: 'utf8' }).trim().split(/s+/).pop();
+      const h = execFileSync('dscl', ['.', '-read', '/Users/' + u, 'NFSHomeDirectory'], { encoding: 'utf8' }).trim().split(/\s+/).pop();
       if (h && fs.existsSync(h)) return h;
     } else {
       const h = execFileSync('getent', ['passwd', u], { encoding: 'utf8' }).trim().split(':')[5];

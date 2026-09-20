@@ -14,7 +14,7 @@
 //   因此本文件分三段：
 //   D 组用临时夹具库测规则本身（任意宿主可跑）：doctor/list/path/get 之外，
 //     put 与 backup 走行为级判定（空输入 fail-closed、真机根双确认、覆盖前备份、
-//     拒绝 ephemeral 目标），断言的是子进程退出码与落盘结果，不是脚本文本。
+//     拒绝 ephemeral 目标、清单含值判红），断言的是子进程退出码与落盘结果，不是脚本文本。
 //   R 组真机审计（库存在才做，缺失显式 SKIP）；S 组仓库本地不变量（任何宿主成立）。
 //
 // ## 标准（见 CREDENTIALS-STANDARD.md 与库内 index.json 的 rules）
@@ -37,7 +37,7 @@ function realHome() {
   try {
     const u = os.userInfo().username;
     if (process.platform === 'darwin') {
-      const h = execFileSync('dscl', ['.', '-read', '/Users/' + u, 'NFSHomeDirectory'], { encoding: 'utf8' }).trim().split(/s+/).pop();
+      const h = execFileSync('dscl', ['.', '-read', '/Users/' + u, 'NFSHomeDirectory'], { encoding: 'utf8' }).trim().split(/\s+/).pop();
       if (h && fs.existsSync(h)) return h;
     } else {
       const h = execFileSync('getent', ['passwd', u], { encoding: 'utf8' }).trim().split(':')[5];
@@ -252,6 +252,16 @@ const TMP = fs.mkdtempSync(path.join(os.tmpdir(), 'credgate-'));
   check('D-11 未知子命令 -> 非零退出且打印用法', r11.code === 1 && /用法/.test(r11.out), 'exit=' + r11.code);
   const r12 = runCredIn(d1, ['put', 'nope'], 'x');
   check('D-12 put 未知条目 -> 拒绝且不落任何文件', r12.code !== 0 && /未知条目/.test(r12.out), 'exit=' + r12.code);
+
+  // -- D-13 清单只存引用：写入令牌值必须被 doctor 抓出（夹具在 tmp，不进 S-1 的仓库扫描面）--
+  const d13 = path.join(TMP, 'leaky-index');
+  const f13 = fixture(d13);
+  const j13 = JSON.parse(fs.readFileSync(f13.idxPath, 'utf8'));
+  j13.entries[0].value = 'github_pat_' + 'A'.repeat(30);
+  fs.writeFileSync(f13.idxPath, JSON.stringify(j13, null, 2));
+  const r13 = runCred(d13, ['doctor']);
+  check('D-13 清单含令牌值 -> doctor 失败', r13.code !== 0, 'exit=' + r13.code);
+  check('D-13 失败信息点名「清单里出现了令牌值」', /清单里出现了令牌值/.test(r13.out), r13.out.trim().slice(-40));
 }
 
 // -- S 组：仓库本地不变量（任何宿主都成立）--
