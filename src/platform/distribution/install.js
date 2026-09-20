@@ -5,6 +5,7 @@
 
 const net = require('node:net');
 const spawnOS = require('../os/spawn');
+const procOS = require('../os/process');
 const execPath = require('../os/exec-path');
 const { npmBin } = require('../os/exec-path');
 const runtimeContract = require('../contract/runtime');
@@ -180,7 +181,13 @@ function runNpmInstall(opts) {
     };
     const killTree = () => {
       if (!child || child.exitCode !== null) return;
-      try { process.kill(-child.pid, 'SIGKILL'); } catch { try { child.kill('SIGKILL'); } catch { /* 已退出 */ } }
+      // 必须走 platform/os/process 的整树终止（B13 已收口：win 用 taskkill /T /F）。
+      //   原先这里是 `process.kill(-pid)` + child.kill 的两段兜底：Windows **没有进程组语义**，
+      //   负 pid 抛错后只杀得到 npm.cmd 那一层壳，真正写 node_modules/全局前缀的 node 孙进程
+      //   照旧存活 —— 正是本条（D-10）要消灭的「无人记账的外部写入者」。
+      //   ownGroup:true —— 子进程以 detached 起，必为自身进程组组长（POSIX 组信号安全）。
+      try { procOS.killTree(child.pid, 'SIGKILL', () => {}, { ownGroup: true }); } catch { /* 尽力而为 */ }
+      try { child.kill('SIGKILL'); } catch { /* 已退出 */ }
     };
     const handle = {
       pid: child.pid,

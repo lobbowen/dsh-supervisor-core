@@ -238,7 +238,10 @@ const acheck = (n, c, x) => { asyncChecks.push(!!c); console.log((c ? 'PASS' : '
       markUsed() {}, startInstance: async () => ({ ok: true }), _waitHealthy: async () => true,
       _switchBudgetMs: () => 50,
       stopInstance(called) { stops.push(called); called.pid = null; },
-      restartInstance() { restarts++; }, markInstanceNetFail() { netFails++; },
+      // ⚠ 夹具勘误（第 4 批 CI：run 35483224735）：原写 `restarts++` / `netFails++`，
+      //   而两者是 const 数组 → 自增抛 TypeError → 被产品侧 try/catch 吞掉 → 计数恒 0，
+      //   「超时走 restartInstance」这条**从来没有牙**。改为 push（本文件上方 stub 的既有范式）。
+      restartInstance(inst, why) { restarts.push(why || 'called'); }, markInstanceNetFail(inst) { netFails.push(inst); },
       _retryPendingStop() {}, flushRestartPending() {},
     };
     const inflight = require(path.join(ROOT, 'src', 'domains', 'router', 'model', 'inflight.js')).createInflight();
@@ -298,9 +301,15 @@ const acheck = (n, c, x) => { asyncChecks.push(!!c); console.log((c ? 'PASS' : '
       direct === 1 && viaEnd >= 5, JSON.stringify({ direct, viaEnd }));
     acheck('D-1b 反向：readableEnded 不再作为 close 收口的早退判据',
       !/if\s*\(ur\.readableEnded\)\s*return;/.test(src), '已移除');
-    acheck('D-1b 收口后 writeThrough 三处结束仍共用 endInflight(acc, prov)',
-      (src.match(/endInflight\(acc,\s*prov\)/g) || []).length === 3,
-      '共 ' + (src.match(/endInflight\(acc,\s*prov\)/g) || []).length + ' 处');
+    // ⚠ 判据勘误（第 4 批 CI：run 35483224735 四平台同点红）：原正则把
+    //   `function endInflight(acc, prov) {` 这行**声明**也数成调用（3 → 4）。
+    //   先摘掉声明再计数，否则本条永远数出一个不存在的「第四处结束点」。
+    const DECL_RE = /function endInflight\(acc,\s*prov\)\s*\{/;
+    const decls = (src.match(new RegExp(DECL_RE, 'g')) || []).length;
+    const callOnly = src.replace(DECL_RE, '');
+    const ends = (callOnly.match(/endInflight\(acc,\s*prov\)/g) || []).length;
+    acheck('D-1b 收口后 writeThrough 三处结束仍共用 endInflight(acc, prov)（只数调用点，声明先摘）',
+      ends === 3 && decls === 1, '调用 ' + ends + ' 处 / 声明 ' + decls + ' 处');
   }
 
   // D-3：非超时 net-error 必须先经 stopInstance（kill 路径可达），不得只抹 pid

@@ -289,12 +289,17 @@
 
 1. **`241446d` 是本批能合入的前提**：runs `35471888496` / `35472954250` / `35474631569` / `35478336653` 四连红的**全链唯一 FAIL** 都是 `round8-fixes-test.js:351` 的「C-8 manual+元数据地址 → mode 未被改」。它是真回归（别名 vs 副本），不是假红。
 2. **链位序教训（登记为纪律）**：`round8-fixes-test` 在 `scripts.test` 第 57/129 位，`&&` 链在此中断 → **第 4 批 B/C/D 三组并入 58–128 位入链文件的断言此前一次都没被 CI 执行过**（D-8、ML-2/ML-3、SC-1…3 等）。一条早退红的代价不是 1 个用例，而是 72 个文件的覆盖面。
-3. **⚠ D-10 windows tmpdir `~` 风险仍未裁决（本条为勘误）**：`npm test` 是一条 `&&` 链，run `35480363198` 各 job 都在链首红处**中断**——windows 停在 #28 `adopt-token-reclaim-test`（D-11 权限位）、其余三平台 + test job 停在 #31 `daemon-lifecycle-test`（D-12 反向例）。因此 #46 `uninstall-timeout-behavior-test` / #56 `graceful-shutdown-test` 的 D-10 行为块在该 run **一次都没执行**，不能据「日志里没有它的 FAIL」判绿（见 H-7-2 同族教训）。裁决推迟到修复这两条红之后的下一个 run。
+3. **D-10 windows tmpdir `~` 风险 —— run `35483224735` 已坐实**（原为挂账，见 H-7-6）：`npm test` 是一条 `&&` 链，run `35480363198` 各 job 都在链首红处中断（windows 停在 #28、其余停在 #31），所以 #46 的 D-10 行为块当时一次都没执行；修掉那两条红后链推进，windows 的 D-10 四条即全红，回显直说拒绝原因：`commandTemplate 替换后含禁用字符 … C:\Users\RUNNER~1\AppData\Local\Temp\p1f-…\npm-inflight-hang.js`。**教训登记**：挂账的风险项要按「下一个 run 见分晓」排进裁决，不要因为「日志里没有它的 FAIL」就当已证伪。
 4. **E-1 迁移的连带改判**：`provider-gateway-gate-test` PG-7 与 `npm-resolution-test` C-f 都曾因「判据钉住旧实现字面量」而在搬家后**静默抓空**——已改为「调用点问闸 + 单源存在 + 反向样本命中」三段式，并把「搬家即空转」写进两个门禁的缺口清单。
 5. **run `35480363198`（HEAD `06162f8`）四平台 + test job 全红的唯一红因取证**（各 job 只有一条 FAIL，属**平台分裂**而非同一缺陷）：
    - `test/daemon-lifecycle-test.js` D-12 反向例（test job + ubuntu + 两个 macos）：断言「锁不存在 → 取锁失败」。定性为**产品对、断言错**——`identity.js` 用 `fs.openSync(p,'wx')`，父目录存在而锁不存在时**首次创建必成功**（同文件 :151 正例早已断言），该期望与自家正例互斥。修法：反向例改指真正的失败路径「父目录缺失 → ENOENT ≠ EEXIST → 判 false 且不建锁、不补目录」，并按 §G-6-9 逐例拆分 + 判据回显（null 路径、失败不建锁、失败不建目录、释放不存在锁 no-op 四条）。
    - `test/adopt-token-reclaim-test.js` D-11「落盘权限 0600」（windows 独有，实测 `666`）：定性为**夹具缺平台门控**——Windows 的 `chmod` 只切换只读位，POSIX mode 语义不成立，产品侧 `writeAtomic` 的显式 `chmodSync(0o600)` 在 POSIX 上仍正确。修法按既有先例（`round13-discipline-gaps-test` ③、`install-id-test` ID-3b、`frp-resilience-test` R5-b）：POSIX 做真实行为断言，win32 打显式 `SKIP` 行，不静默变绿。
    - **纪律提取**：凡「权限位 / mode」断言必须平台自感知；凡「反向例」必须在写完后确认它与同文件正例不互斥——本机只读代码推不出来，CI 是唯一裁判。
+6. **run `35483224735`（HEAD `4e83355`）的第二轮红因取证**（链推进到 #63 后新暴露三处；D-11/D-12 两条已按 5 修好不再复现）：
+   - `router-circuit-breaker-test` **D-1b**（四平台 + test job 同点红）：判据 `endInflight(acc, prov)` 全文计数期望 3，实得 4。定性为**判据自命中**——第 4 处是 `function endInflight(acc, prov) {` 这行**声明**（forward.js:36），产品侧三处结束点（finishOK / finishAborted / 非流式体）从未变多。修法：计数前先摘掉声明，并回显「调用 N 处 / 声明 M 处」两个判据值，使「声明与调用同形」这一类干扰今后不可能静默。
+   - 同文件 **D-3 反向**（同上四平台）：夹具 `restartInstance() { restarts++; }` / `markInstanceNetFail() { netFails++; }` 对 **const 数组**自增 → 抛 TypeError → 被产品侧 `try {} catch {}` 吞掉 → 计数恒 0。定性为**夹具恒假、判据没有牙**（断言的是 `restarts === 1`，而 state() 取的是 `.length`，两侧都拿不到真值），产品逻辑本身正确（forward.js:139-141 的超时分支确实存在）。修法：改 push（同文件 :112 既有范式），并在注释里留下「为何原先恒 0」。**教训**：桩件的累加器要么写 `arr.push(x)` 要么写 `let n = 0; n++`，混用即恒假；且**产品侧的 try/catch 会吞掉夹具异常**，所以「PASS 数符合预期」不构成证据，必须看回显值。
+   - `uninstall-timeout-behavior-test` **D-10**（windows 独有，四条同红）：见本节前第 3 条 —— 夹具把临时脚本路径塞进 `commandTemplate`，被 B11 的 fail-closed 字符闸拒（win runner tmpdir 为 8.3 短名含 `~`）。修法：假 npm 改复用仓库内夹具 `test/fake-npm.js` 的新增 `FAKE_MODE=hang` 模式，pid 文件路径经 `FAKE_PID_FILE` 环境变量传入，argv 只留仓库内路径（POSIX 纯路径、win 盘符绝对路径均由 `WIN_DRIVE_ABS_RE` 豁免，本机以 `argvViolation()` 逐例验证：新路径 PASS / 旧 tmp 路径 REJECT）。**产品不改**：B11 的「宁误杀不漏放」是有意裁决，改判属放宽 fail-closed 闸门，需单独立项。
+   - **顺带修掉的 Windows 产品缺陷（同一取证带出）**：`distribution/install.js` 的在途 npm 中止原本是 `process.kill(-pid)` + `child.kill` 两段兜底 —— Windows 无进程组语义，负 pid 必抛、只杀得到 `npm.cmd` 那层壳，真正写 `node_modules`/全局前缀的 node 孙进程照旧存活（正是 D-10 要消灭的对象）。现改调平台层 `os/process.killTree(pid,'SIGKILL',cb,{ownGroup:true})`（B13 已给它 `taskkill /T /F`），并保留 `child.kill` 作同步兜底；新增结构闸：`install.js` 源码（剥注释）必须含 `procOS.killTree(child.pid` 且**不得**再有 `process.kill(-`。
 
 ### H-8 残留与诚实声明
 
@@ -305,6 +310,7 @@
 5. **cred.sh 的行为级验证在 CI 侧覆盖有限**：`bash -n` + 静态判据是本批证据上限；空 stdin 路径的端到端（真起 `put </dev/null`）未新增用例——`release/scripts` 不在 `npm test` 链内，脚本改动历史上只经 dry-run 类 CI 步骤。此项留作后续批次的测试基建议题（与 §G-6-8「测试单独运行缺省不落沙箱」同源）。
 6. **C-3 首版断言是夹具误设**：`a7a31f4` 记录——429 出现在第 11 发而非第 10 发，且循环起点账本已被前序 cookie 放行 clear；修法为前置清零断言 + 11 发循环拆两条（§G-6-9 逐例拆分 + 判据回显）。
 7. **registry 版本**：本批**不发布**（npm 仍 0.1.5-BETA.10）。合入与发布分两步，发布另需确认。
+8. **B-11 闸门的对称性缺口（本轮取证时发现，未在本批修）**：`runNpmInstall` 只在 **commandTemplate 分支**逐项过禁用字符集；默认分支的 `argv.push('--prefix', o.prefix)` 完全不过闸（install.js:149）。因 spawn 不经 shell，实际不构成注入面，但它与 B-11「任何一环被污染都直达 spawn」的立项理由不对称——prefix 来自配置/环境（win 上含空白的安装前缀是常态）。修法有两种且语义相反（放宽=给绝对路径豁免；收紧=prefix 也过同一判据并明确要求引号语义），属裁决题不是手到活，留第 5 批立项。
 
 ## 附录：分域审计明细索引
 

@@ -12,7 +12,8 @@
 //   （我第一版只写静态断言，注入「看门狗永不触发」后它照样全绿 —— 那是假门禁）。
 //
 // 做法：
-//   1. 造一个**永不退出**的假 npm（`#!/bin/sh` + `sleep 1000`）；
+//   1. 造一个**永不退出**的假 npm（用 node 自己当解释器跑挂起脚本；**绝不用 `#!/bin/sh`** ——
+//      Windows 无 sh 解释器会退化成立即失败，本文件下方「假 npm」段落记着这条实测教训）；
 //   2. 把 config.uninstallTimeoutMs 设为 800ms（这就是可注入的用途）；
 //   3. 调 uninstall()，断言：在远小于 sleep 时长内返回、ok=false、timedOut=true；
 //   4. 断言 `manager.uninstalling === null`（锁已释放 —— 这是缺陷的核心症状）。
@@ -123,16 +124,24 @@ const check = (n, c, x) => { results.push(!!c); console.log((c ? 'PASS' : 'FAIL'
     check('D-10 前提：无在途时计数 0 且中止返回 0（空转不误报）',
       installMod.inflightNpmCount() === 0 && installMod.killInflightNpm('probe') === 0, installMod.inflightNpmCount());
 
-    // 挂起假 npm：沿用本文件既有跨平台范式（**绝不用 #!/bin/sh**，win 无 sh 解释器会退化成立即失败）
+    // 挂起假 npm：复用仓库内夹具 test/fake-npm.js 的 hang 模式（FAKE_MODE 经 **env** 传入）。
+    //   ⚠ 绝不要把临时脚本路径放进 commandTemplate —— Windows runner 的 os.tmpdir() 是 8.3
+    //   短名（`C:\Users\RUNNER~1\…`），`~` 属 B11 禁用字符，runNpmInstall 会 fail-closed 拒掉
+    //   （run 35483224735 实测：D-10 四条同时红，回显直说「含禁用字符」）。仓库内路径只含 `\\`，
+    //   由 WIN_DRIVE_ABS_RE 豁免；pid 文件路径经 FAKE_PID_FILE 传，不进 argv。
     const pidFile = path.join(tmp, 'inflight-npm.pid');
-    const hangFile = path.join(tmp, 'npm-inflight-hang.js');
-    fs.writeFileSync(hangFile,
-      'require("fs").writeFileSync(' + JSON.stringify(pidFile) + ', String(process.pid));'
-      + 'setTimeout(function () {}, 60000);');
-    const p = installMod.runNpmInstall({
-      pkg: '@deepseek-ai/dsh', version: '9.9.9',
-      commandTemplate: [process.execPath, hangFile], timeoutMs: 60000,
-    });
+    process.env.FAKE_MODE = 'hang';
+    process.env.FAKE_PID_FILE = pidFile;
+    process.env.FAKE_HANG_MS = '60000';
+    let p;
+    try {
+      p = installMod.runNpmInstall({
+        pkg: '@deepseek-ai/dsh', version: '9.9.9',
+        commandTemplate: [process.execPath, path.join(ROOT, 'test', 'fake-npm.js'), '9.9.9'], timeoutMs: 60000,
+      });
+    } finally {
+      delete process.env.FAKE_MODE; delete process.env.FAKE_PID_FILE; delete process.env.FAKE_HANG_MS;
+    }
     check('D-10 行为：在途任务被记账（同步登记，不等子进程输出）',
       installMod.inflightNpmCount() === 1, installMod.inflightNpmCount());
     // 先等子进程把自身 pid 写出来（node 冷启约几十 ms），否则「杀进程」断言会退化成
@@ -159,6 +168,16 @@ const check = (n, c, x) => { results.push(!!c); console.log((c ? 'PASS' : 'FAIL'
       childPid === 0 || dead === true, 'pid=' + childPid + ' dead=' + dead);
     // 反向（判据有牙）：确认子进程确实活着过，否则本块的 ESRCH 无意义
     check('D-10 反向：pid 文件已写出（子进程真的启动过）', childPid > 0, 'pid=' + childPid);
+
+    // 结构闸（D-10 的 Windows 半边）：中止路径必须**复用平台层整树终止**，不得自造负 pid。
+    //   判据走 codeOnly —— 本条在产品源码里留下的解释性注释本身就含 `process.kill(-pid` 字样，
+    //   不剥注释则反向例恒红、正例恒绿，等于没有牙（§G-6-9 同形干扰）。
+    const { stripComments } = require('./_strip');
+    const codeOnly = stripComments(fs.readFileSync(path.join(ROOT, 'src', 'platform', 'distribution', 'install.js'), 'utf8'));
+    check('D-10 收口：在途 npm 的中止经 platform/os/process 的 killTree（win 有整树语义）',
+      /require\('\.\.\/os\/process'\)/.test(codeOnly) && /procOS\.killTree\(child\.pid/.test(codeOnly), '已接平台层');
+    check('D-10 反向：install.js 不再自写 process.kill(-pid) 组信号',
+      !/process\.kill\(-/.test(codeOnly), '已移除');
   }
 
   try { fs.rmSync(tmp, { recursive: true, force: true }); } catch {}
