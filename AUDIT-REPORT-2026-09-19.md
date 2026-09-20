@@ -849,6 +849,14 @@ L-1 ~ L-4 是行为修复（`release/scripts/cred.sh`、`release/scripts/configu
 「无扩展名凭据没被拷走」完全不敏感。现在夹具先在库内放一份无扩展名的 `git-credentials`，
 断言副本目录里**它也在、内容一致、权限 0600** —— 否则同一种缺陷下次仍会报成功。
 
+### L-9 第二轮裁决与合入
+
+head `2af6b59`：precheck / test / 四平台 build 全绿，release 按 PR 语义 skipped。
+PR #10 以 squash 合入 `master` = `a8d8ce8`，合入前核对 `git diff --stat master <branch>` 为空
+（排除裁决后又进提交的错位），随后删除已合并的本地与远端分支。
+
+**本批不含发布动作**：registry 仍 `0.1.5-BETA.10`，L-1 ~ L-4 的修复不在任何已发布产物内。
+
 ## 附录：分域审计明细索引
 
 | 域 | 范围 | 规模 | 主要文件锚点 |
