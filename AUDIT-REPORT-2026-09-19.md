@@ -697,6 +697,15 @@ node/npm 拆成两个松字段（成功路径只写 node）；内核侧把 npm �
 `SUPPORTED_SCHEMA`/契约键名握手锁定，但不做跨仓源码读取（`no-cross-repo` 纪律）。
 **本批不发布**：registry 仍 0.1.5-BETA.10。
 
+### J-4 裁决登记
+
+- 内核：PR #8 首轮红点即 J-1g（A5-b 抓到 `node.runtime` 恒 null），补 `read()` 的 `nodeVersion` 后
+  precheck / test / build×4 全绿，合入 master（merge `ac30865`）。不发版。
+- 壳：PR `lobbowen/dsh-supervisor-launcher#1`。base 只能取 main（壳 CI 的 `pull_request` 触发只认 main），
+  而 main 停在 `ab7abf3` = v1.1.8，v1.1.9/1.1.10/1.1.11 只存在于 tag（`a950ad6`/`b780b74`/`d37419a`）与
+  `fix/*` 分支上，故该 PR 的 diff 含 15 个提交（其中 14 个属已发布内容，`git diff 6274ae8 v1.1.11` 为空 → 内容零丢失）。
+  **推进 main 属仓库治理决定，未经确认不合入**；本批同样不发版（不推 tag、不动 npm 包）。
+
 ## 附录：分域审计明细索引
 
 | 域 | 范围 | 规模 | 主要文件锚点 |
