@@ -82,7 +82,7 @@ xdg-open http://127.0.0.1:36360/   # 浏览器直接开面板（默认端口；�
 - **产物**：`dist/launcher/dsh-supervisor-<ver>-<platform>-<arch>/`（bin + core.cjs + ui-react + version.txt），整包发布可辨识。
 - **运行时依赖**：Node.js ≥18（launcher 需目标机 node；SEA 免运行时优势已弃，换取三端可运行可发布）。
 - **版本自包含**：esbuild 编译期注入 `__DSH_VERSION__`，launcher 任意 cwd 自报正确版本；提升走 `release/scripts/bump.sh --core`（单源 = `package.json.version`）。
-- **平台命名**：npm 内核子包按平台分（`@scope/dsh-core-linux-x64` / `darwin-arm64` / `darwin-x64` / `win-x64`；`process.platform` 的 `win32` 需映射 `win`）。各平台在对应平台机器上各自构建（无交叉编译）。
+- **平台命名**：npm 内核子包按平台分（`@scope/dsh-core-linux-x64` / `darwin-arm64` / `darwin-x64` / `win-x64`；`process.platform` 的 `win32` 需映射 `win`）。四平台各由对应 runner 产出，**不做交叉编译**；唯一例外是 darwin-x64 目前在 `macos-14`（arm64 runner）上以 `DSH_ARCH_OVERRIDE=x64` 产出 —— 因为 launcher 是架构无关纯 JS，两形产物等价（切 `macos-15-intel` 需真实构建验证，见 `CROSS-PLATFORM-BUILD-AND-UPDATE.md` §三）。
 - **平台生产分工（2026-09-13 硬标准）**：**四平台全部由 GitHub CI 产出**（`build` job 的 4 runner 矩阵：ubuntu-22.04 / windows-latest / macos-latest / macos-14）；**本地不再有任何平台构建/发布路径**（`--all-platforms` 本地 exit 2，`release-core.sh` 已删除）。
 - **许可**：内核 **UNLICENSED**（闭源构建物，主 `package.json`/`LICENSE` 声明）；壳 **MIT**（`src-tauri/LICENSE`）。
 - **双仓库（壳开源引流）**：壳源码位于公开仓库 `lobbowen/dsh-supervisor-launcher`（MIT 许可）；
@@ -97,10 +97,12 @@ xdg-open http://127.0.0.1:36360/   # 浏览器直接开面板（默认端口；�
 ## 架构
 
 ```
-systemd user unit → dsh-supervisor（自研守护进程）→ dsh web（0.0.0.0:3080）
+服务定义（桌面壳建立）→ dsh-supervisor（自研守护进程）→ dsh web（0.0.0.0:3080）
+   Linux: systemd user unit（+ enable-linger）   macOS: launchd   Windows: 计划任务
 ```
 
-- **systemd**：只负责守卫进程自身的保活与登录开机自启（`enable-linger`）。
+- **服务管理器**：只负责守卫进程自身的保活与登录开机自启。**unit/plist/计划任务的定义者是桌面壳**，
+  `dsh-supervisor install` 不部署它们（`KERNEL-DAEMON-CONTRACT.md` D6：谁定义、谁拉起只能有一个）。
 - **守卫**：`spawn` 目标 → 周期探测（进程存活 + `GET /` 200）→ 按期望状态调和（controller 模式）。
 - 守卫死亡**不会**连带杀掉 DSH；守卫重启后读持久化期望状态，幂等收敛，绝不叠加双实例。
 
@@ -120,18 +122,21 @@ systemd user unit → dsh-supervisor（自研守护进程）→ dsh web（0.0.0.
 ## 安装
 
 ```bash
-# 1. 生成用户配置（~/.dsh/supervisor/config.json）并写入 systemd unit、启用自启
+# 1. 生成用户配置（<产品状态根>/supervisor/config.json）+ 命令行入口
+#    服务定义/开机自启不在此处：所有者是桌面壳（KERNEL-DAEMON-CONTRACT D6）
 dsh-supervisor install
 
-# 2. 启动守卫
-systemctl --user start dsh-supervisor
+# 2. 启动守护进程（生产环境由桌面壳或 systemd/launchd/schtasks 拉起）
+dsh-supervisor daemon
 
 # 3. 查看状态
 dsh-supervisor status
 ```
 
-> 前置：Node.js ≥ 18；systemd（user session）+ `loginctl`。
-> 安装只做"登记"，不会自动启动守卫，也不会动 DSH 自身。
+> 前置：Node.js ≥ 18。安装只做"登记"，不会自动启动守卫，也不会动 DSH 自身。
+> 产品状态根 = `DSH_SUPERVISOR_HOME` 覆盖，否则 Linux `~/.local/state/dsh-supervisor`、
+> macOS `~/Library/Application Support/dsh-supervisor`、Windows `%LOCALAPPDATA%\dsh-supervisor`
+> （单源 `src/platform/service/state-root.js`；旧位置 `~/.dsh/…` 只用于一次性迁移）。
 
 ## 常用操作
 
@@ -222,7 +227,7 @@ POST /shutdown               已由 POST /session/stop 取代（保留供旧版�
 校验 Host 必须指向本机；不返回 CORS 头（面板同源托管，其他网站读不到响应）；
 带 `Origin` 的写请求必须来自本机面板来源。CLI/curl/面板使用体验零变化。
 
-## 配置（~/.dsh/supervisor/config.json）
+## 配置（`<产品状态根>/supervisor/config.json`，状态根见上文「安装」）
 
 | 字段 | 默认 | 说明 |
 |---|---|---|
@@ -238,9 +243,9 @@ POST /shutdown               已由 POST /session/stop 取代（保留供旧版�
 | `crashWindowMs` / `crashBurst` | 600000 / 5 | 崩溃窗口与阈值 |
 | `backoff` | 30s…10m | 指数退避序列 |
 | `apiHost` / `apiPort` | 127.0.0.1 / 36360 | 本地 API（3100 等常用端口易冲突，故用高位段；被占则自动顺延并持久化） |
-| `stateFile` / `logFile` | ~/.dsh/supervisor/… | 状态文件 / 事件日志（有内置默认，缺省也能跑） |
+| `stateFile` / `logFile` | `<状态根>/supervisor/state.json` / `…/supervisor/events/guard.events.log` | 状态文件 / 事件日志（有内置默认，缺省也能跑） |
 | `eventsMaxBytes` | 5242880 | 事件日志轮转阈值（保留一代 .1 备份） |
-| `supervisorLogFile` / `dshLogFile` / `upgradeLogFile` | ~/.dsh/supervisor/… | 守卫运行日志 / DSH 输出 / 升级输出 |
+| `supervisorLogFile` / `dshLogFile` / `upgradeLogFile` | `<状态根>/supervisor/log/…` | 守卫运行日志 / DSH 输出 / 升级输出 |
 | `logLevel` | info | 守卫日志级别（debug/info/warn/error） |
 | `logMaxBytes` | 5242880 | 运行类日志统一轮转阈值 |
 | `packageName` | @deepseek-ai/dsh | 被监管的 npm 包 |

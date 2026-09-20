@@ -220,7 +220,9 @@ release/
     ├── publish-core.sh        ← 内核 npm 平台子包发布（本地 dry-run；`--publish` 仅 CI 内）
     ├── release.sh             ← 源码打包出口（tar.gz，非发布通道）
     ├── （release-core.sh 已于 2026-09-13 删除 —— 硬标准：构建/发布均经 GitHub CI）
-    ├── configure-credentials.sh ← 本机凭据安全配置（环境变量 → 0600 配置，值不入库）
+    ├── configure-credentials.sh ← 本机凭据安全配置（环境变量 -> 0600 配置，值不入库）
+    ├── cred.sh                ← 规范凭据库 CLI（list/doctor/backup/get/put/path/verify；只回显身份与路径）
+    ├── export-consumers.sh    ← 删导出前的消费者盘点（恒退出 0，只交事实，刻意不进 CI 链）
     └── verify-versions.js     ← 版本自洽校验（内核 package.json 单源）
 ```
 
@@ -367,7 +369,7 @@ API 侧可查 CI、设 secret、改分支保护；git 侧只能读写仓库。ta
 5. `$HOME/.npmrc` — 兜底（沙箱内可能存在的旧副本）
 
 > **为什么要「真实 home」**：DSH 沙箱会把 `$HOME` 指向实例数据目录
-> （`~/.dsh/supervisor/instances/<id>/data`）。若认证只看 `$HOME`，同一台机器上会出现
+> （`<产品状态根>/supervisor/instances/<id>/data`，旧前缀 `~/.dsh/supervisor/…`）。若认证只看 `$HOME`，同一台机器上会出现
 > 「A 沙箱能发版、B 沙箱报 `ENEEDAUTH`」——这是此前的真实故障（token 曾散落在某个实例 home 下）。
 > 解析器用 `getent passwd` / `dscl` / `~user` 展开定位真实 home，**不受 `$HOME` 覆盖影响**。
 

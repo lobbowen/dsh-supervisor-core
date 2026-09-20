@@ -21,7 +21,8 @@ DIR="$DIST/$PAK"
 rm -rf "$DIR"; mkdir -p "$DIR"
 # 内核资产（双仓拆分后本仓无 src-tauri；壳图标不再随内核源码包分发——内核包用 ui-react 面板）。
 for d in bin src; do [ -e "$ROOT/$d" ] && cp -r "$ROOT/$d" "$DIR/"; done
-# 清理：不再拷 ROOT/config.json（含构建机绝对路径的死双源）——守卫运行读内嵌 DEFAULT_CONFIG 或用户 ~/.dsh/supervisor/config.json
+# 清理：不再拷 ROOT/config.json（含构建机绝对路径的死双源）——守卫运行读内嵌 DEFAULT_CONFIG
+#   或用户配置 <产品状态根>/supervisor/config.json
 cp "$ROOT/package.json" "$DIR/"
 
 # 新 React UI（supervisor 控制面板）：统一构建入口 release/scripts/build-ui.sh（构建 -> ui/dist -> ui-react 镜像）。

@@ -3,7 +3,8 @@
 # 被 publish-core.sh（发布）与 configure-credentials.sh（配置/自检）共同 source。
 #
 # -- 为什么需要它（真实故障）--
-# DSH 沙箱会把 $HOME 指向实例数据目录（~/.dsh/supervisor/instances/<id>/data）。
+# DSH 沙箱会把 $HOME 指向实例数据目录（<产品状态根>/supervisor/instances/<id>/data；
+#   旧前缀为 ~/.dsh/supervisor，状态根迁移后单源见 src/platform/service/state-root.js）。
 # 于是「~/.npmrc 里有没有 token」取决于**你在哪个沙箱里跑**：同一台机器上，
 # A 实例能发版、B 实例报 ENEEDAUTH；发布脚本无法自证「为什么登录态时有时无」。
 # 且发布/配置脚本原先各自实现认证解析，行为不一致（有的读 $HOME、有的读环境变量）。

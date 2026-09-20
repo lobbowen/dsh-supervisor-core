@@ -200,13 +200,18 @@ GUI plist 的关键约束：**只表达「登录启动」**（`RunAtLoad` + `Lim
 
 ---
 
-## 七、如何运行审计
+## 七、审计跑在哪里
+
+这三份审计（`test/platform-capability-audit-test.js`、`test/capability-profile-test.js`、
+`test/cross-platform-test.js`）都在 `package.json#scripts.test` 链里，**由 CI 的 `test` job 执行**：
 
 ```bash
-node test/platform-capability-audit-test.js    # 42 项断言，任意平台可跑
-node test/capability-profile-test.js           # 能力档位纯函数（8 项）
-node test/cross-platform-test.js               # 可执行解析/文件保护/分层不变量（39 项）
+npm test        # 只在 CI 内跑；本机一律不得执行（ACCEPTANCE-STANDARD §0 硬标准）
 ```
+
+> 本节此前给出 `node test/xxx.js # 任意平台可跑` 的单跑命令 —— 那正是 `ACCEPTANCE-STANDARD.md` §0
+> 禁止的动作，且单跑绕过 `_preload.js` 的沙箱 HOME 注入，会往真实状态根写文件。故删去。
+> 断言条数也不在此维护：多数断言在循环里展开，静态数不出来，写了就是会过期的数。
 
 审计测试的六组不变量：
 

@@ -22,17 +22,20 @@
 即：**`detached: true` 本身就是「给子进程建一个自己的控制台窗口」**，而 `windowsHide: true`
 正是用来隐藏「本会创建的」那个窗口。故「detached 且未 windowsHide」= 必弹窗口，**两者必须成对出现**。
 
-**最严重的三处**（`detached:true` + 无 `windowsHide`，Windows 上必弹新控制台）：
+**立规时的三处最严重**（`detached:true` + 无 `windowsHide`，Windows 上必弹新控制台）：
 
-> 以下路径为**当前实现位置**；早期行号已随重构失效，故主进程与 daemon 两项不再钉行号，具体以 §4 门禁的实际扫描为准。
+> 下面两份清单是**取证时（2026-09-16）的现场记录**，不是当前实现位置 —— 此后 `src/` 经过整轮重构
+> （`domains/dist/`、`domains/relay/frpmgr.js`、`guard/` 三处已不存在或改名），逐条按现状核对没有意义。
+> **当前缺口以 §4 门禁 K-W2 的实际扫描为准**：它要求 `src/**` 下裸子进程调用点 = 0，
+> 且 K-W3 用旧形态反向夹具证明该判据不空转。清单保留只为说明「为什么当初要立这条铁律」。
 
 - `src/app/main/process.js` —— **主 DSH 进程**（用户看到的终端窗口就是它）；
 - `src/app/daemons/process.js`（受管进程 spawn）/ `src/app/daemons/supervise.js`（监督）—— router/lan daemon；
-- `src/domains/router/providers/proxy.js:272` —— 反代实例。
+- `src/domains/router/providers/proxy.js` —— 反代实例。
 
-其余缺 `windowsHide`：`domains/dist/index.js:522`（npm 安装）、`domains/relay/frpmgr.js:188`、
-`domains/shell/index.js:256/269`、`guard/native/manager.js:736`（npm 卸载）、
-`guard/proc/daemon-lifecycle.js:76`、`platform/os/browser.js:30/39/113`、`platform/os/notify.js:69`。
+其余当时缺 `windowsHide`：npm 安装与卸载路径（现落点 `platform/distribution/install.js`、
+`app/native/npm.js`）、`domains/relay/`（frpc 管理，现落点 `frp.js` / `frp-install.js`）、
+`domains/shell/index.js`、`platform/os/browser.js`、`platform/os/notify.js`。
 
 ---
 

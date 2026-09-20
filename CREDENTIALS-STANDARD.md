@@ -42,9 +42,13 @@
 ### 关键陷阱：`$HOME` 被重定向
 
 ```
-$HOME = <REAL_HOME>/.dsh/supervisor/instances/<id>/data      # 不是 <REAL_HOME>！
+$HOME = <产品状态根>/supervisor/instances/<id>/data      # 不是 <REAL_HOME>！
 os.homedir() 同值。
 ```
+
+> 状态根前缀随迁移变过：旧 `<REAL_HOME>/.dsh/supervisor/…`，新默认
+> Linux `<REAL_HOME>/.local/state/dsh-supervisor/supervisor/…`（`DSH_SUPERVISOR_HOME` 可覆盖，
+> 单源 `src/platform/service/state-root.js`）。上一节的事故现场按**当时**的路径记录，不改写。
 
 所以沙箱 `~/.dsh` **不等于** `<REAL_HOME>/.dsh`。
 **一切凭据路径必须写绝对路径**，禁止用 `~` —— 清单里也写明了（`homeNote`）。

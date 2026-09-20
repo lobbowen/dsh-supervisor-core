@@ -6,6 +6,38 @@
 
 ## [未发布]
 
+### 文档纠正：以现在时态写着的假现状（第 3 轮残留清扫）
+
+- **指引本机跑测试（引导性最强的一条）**：`PLATFORM-CAPABILITY-MATRIX.md` §七「如何运行审计」直接给出
+  `node test/…js # 任意平台可跑`，`RELEASE-STANDARD.md` §3 把 `ci-core.sh`（内含 `npm test` 与构建）、
+  `build:launcher`、`publish:core` 列为本机入口 —— 全部与 `ACCEPTANCE-STANDARD.md` §0/§4 正面对撞。
+  现逐条改为「仅 CI 内」，只读项（`verify:versions`、`cred.sh doctor`）保留本机可跑；
+  静态数不出的断言条数一并删除，不留会过期的数。
+- **状态根前缀漂移**：`README.md`（安装 + 配置节）、`RELEASE-AND-UPDATE-MECHANISM.md` §6 隔离证明、
+  `release/README.md`、`_npm-auth.sh` 与 `release.sh` 头注仍写 `~/.dsh/supervisor/…`，
+  而该前缀在 `src/platform/service/state-root.js` 里已只剩 `legacySupervisorDir()`（仅供一次性迁移）。
+  统一改为 `<产品状态根>/supervisor/…` 并注明单源；事故记录里的现场路径按当时形态保留。
+- **README 的安装步骤是假的**：写着 `install` 会「写入 systemd unit、启用自启」并让人
+  `systemctl --user start dsh-supervisor`，而 `bin/dsh-supervisor` 明写 install **不再**部署任何服务定义
+  （所有者是桌面壳，D6）。改为 `dsh-supervisor daemon` + 三平台服务管理器由壳建立，架构框图同步。
+- **已整体移除的机制仍被写成现行安全网**：`CROSS-PLATFORM-BUILD-AND-UPDATE.md` §七/§十一 的
+  「`attempts>2` 判坏 -> `pinnedVersions` 拉黑 -> 用缓存重装 previous」与「内核预取 + 有界回退」
+  （源码 `journal.js`：只有 pending->confirmed；`pinnedVersions` 在 `src/` 零引用），
+  真实紧急回退是 `rollback` dist-tag + RC-2/RC-7；同文 §3.2 的「三平台」「命令行 export 签名私钥」
+  「仅 tag 触发」三条同时错。
+- **与自身产线矛盾的断言**：两仓 `check-glibc.sh`「内容当前一致」（`diff` 实测不同）；
+  「不要用 `macos-14`」（本仓 darwin-x64 腿正在用它 + `DSH_ARCH_OVERRIDE`）；
+  「唯一受 `need_build` 影响的是 `release` job」（`build.yml:249` 的发布步骤同受门控）；
+  `ACCEPTANCE-STANDARD` 引用 build.yml「139-142 行」实指 precheck 版本探测段（改按位置引用）；
+  `release/README` 的「唯一可执行集」漏 `cred.sh` 与 `export-consumers.sh`；
+  S8 验证表未写执行位置（本机无 `gh`/`curl`、registry 不可达）。
+- **`NO-CONSOLE-WINDOW-STANDARD` 的「当前实现位置」清单四条里两条文件已不存在**
+  （`domains/dist/index.js`、`relay/frpmgr.js`、`guard/*`）：改为「立规时现场记录，
+  当前缺口以门禁 K-W2 扫描为准」。§1 的 14/13 计数**不改**（13 = 14 减判据自身那处，与 K-W2 同口径）。
+- **否决的假举报已登记**（`AUDIT-REPORT-2026-09-19.md` §M-6），含所称「workflow 用 `github-server-role`
+  自引用会导致静默失去 CI」—— 全仓无该字面量，举报本身不成立。
+- 取证与逐条裁决见 `AUDIT-REPORT-2026-09-19.md` §M。**本批不含发布动作**（registry 仍 0.1.5-BETA.10）。
+
 ### 凭据工具链根因修复：库 / 工具 / 门禁三方方言对齐（配套门禁此前恒绿）
 
 - **缺陷（工具侧）**：规范库 `index.json` 用 `ref` 作键、`file` 为相对形态，而 `cred.sh` 按 `name`
