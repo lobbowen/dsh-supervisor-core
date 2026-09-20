@@ -53,7 +53,7 @@ function rollbackAllowed(version, meta, o) {
 }
 
 /** 我们的测试版形态（契约 §1：`-BETA.n` → tag beta）。
- *  E-4（AUDIT-2026-09-19 第 4 批）：④ 兼容兜底不得把测试版当正式版候选。 */
+ *  发布条 4（AUDIT-2026-09-19 第 4 批）：④ 兼容兜底不得把测试版当正式版候选。 */
 function isOurBetaRelease(v) { return /-BETA\./.test(String(v)); }
 
 /** 在候选版本集合里取最高合法版本（semverCompare 判定）；空集返回 null。 */
@@ -72,7 +72,7 @@ function highestVersion(candidates, isValid) {
  *   1) dist-tags.rollback 合法且通过防降级下限核验（RC-7）→ 返回它（回退，最高优先级）
  *   2) 灰度名单内且 dist-tags.canary 合法 -> 返回它（灰度）
  *   3) dist-tags.latest 合法 -> 返回它（正式，跟随我们的发布）
- *   4) 否则 versions 中最高合法版本（兼容兜底；**排除我们的 -BETA. 测试版**，E-4）
+ *   4) 否则 versions 中最高合法版本（兼容兜底；**排除我们的 -BETA. 测试版**，发布条 4）
  *   5) 以上皆无（含排除后为空）-> null（明确失败，绝不猜，契约 RC-5）
  *
  * 第三方包（isOurs !== true）跳过 1)/2)，按 3) latest 优先 → 4) versions 最高 → 5) null
@@ -109,7 +109,7 @@ function pickReleaseVersion(meta, opts) {
     // 3) 正式：优先信 latest（RC-1），绝不「取全量最高」（BETA 的数字可能压过 RC）
     const latest = validTag(tags.latest);
     if (latest) return latest;
-    // 4) 兼容兜底：latest 缺失/非法时才回落 versions 最高；兜底**排除我们的测试版**（E-4）：
+    // 4) 兼容兜底：latest 缺失/非法时才回落 versions 最高；兜底**排除我们的测试版**（发布条 4）：
     //    镜像元数据丢掉 dist-tags 是常见而合法的缺失形态，它要恢复的事实是「最新正式版」，
     //    而不是「最新发布的任何东西」—— 让 -BETA. 进候选等于把通道控制交给镜像
     //    （不带 latest tag 的一次响应即可把全员静默升到测试版）。

@@ -1,5 +1,5 @@
 /**
- * polling.ts 单元测试：事件增量去重 + in-flight 守卫 + 游标防污染/失败退避（E-6）
+ * polling.ts 单元测试：事件增量去重 + in-flight 守卫 + 游标防污染/失败退避（UI 条 6）
  * vi.stubGlobal 注入 fetch，验证 refreshEvents 合并去重与并发守卫行为；
  * 退避与自排心跳用 vi.useFakeTimers()（断言取宽窗口，避免与微任务节奏打架）。
  */
@@ -110,12 +110,12 @@ describe("supervisorStore 事件合并", () => {
 });
 
 /**
- * E-6（AUDIT-2026-09-19 第 4 批）：游标防污染 + 心跳失败退避。
+ * UI 条 6（AUDIT-2026-09-19 第 4 批）：游标防污染 + 心跳失败退避。
  * 退避曲线本身用 refresh() 驱动（确定性、不依赖计时器）；心跳是否真的自排/停得下来
  * 用 fake timers 计数验证。两条 fake-timer 用例互为对照：健康用例证明链条确实推进，
  * 失败用例才不至于「因为压根没跑」而假通过。
  */
-describe("E-6 事件游标与心跳退避", () => {
+describe("UI 条 6 事件游标与心跳退避", () => {
   it("非法 seq 不得污染游标（NaN 会让后续 after=NaN 永久停摆）", async () => {
     const asked: Array<string | null> = [];
     vi.stubGlobal("fetch", vi.fn((url: string) => {

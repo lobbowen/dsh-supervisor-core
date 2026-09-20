@@ -72,7 +72,7 @@ function handle(ctx) {
     }
     if (req.method === 'POST' && pathname === '/dist/registry/set') {
       if (!originAllowed(req, sup.config.apiPort)) { req.resume(); return send(403, {}); }
-      // E-5（AUDIT-2026-09-19 第 4 批）：被校验闸拒绝的配置**不能**回 200。
+      // UI 条 5（AUDIT-2026-09-19 第 4 批）：被校验闸拒绝的配置**不能**回 200。
       //   setRegistryConfig 的拒因写在返回对象的 error 字段（无 ok 键），原先
       //   `send(200, { ok: true, ...r })` 把它展开成「200 + ok:true + error」，
       //   而 UI 的 http() 只在 !res.ok 时抛错 → 镜像源被 SSRF 闸拦下仍弹「已保存」，

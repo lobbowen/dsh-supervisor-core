@@ -151,14 +151,14 @@ $ bash ci/check-glibc.sh <binary> 2.35
 
 - 已用**真实产物**验证：能正确报出并拦截（当时的真实对象 = Rust 壳产物；壳已剥离至独立仓）
 - 已接入内核测试链：`test/glibc-gate-test.js`（含平台守卫，非 Linux 优雅跳过）
-- **产线调用点（E-2 于 2026-09-20 补严）**：此前本文件与 build.yml 注释都**没有**写明产线在哪一步
+- **产线调用点（§E.2 于 2026-09-20 补严）**：此前本文件与 build.yml 注释都**没有**写明产线在哪一步
   调用它，而 build.yml 注释声称的「ci-core.sh 的 glibc 基座门禁步骤」当时**并不存在**
   （文档化门禁 ≠ 实际执行）。现 `release/scripts/ci-core.sh` 的 **[3/5 之后、[4/5 之前]** 有
   一个条件执行步：Linux 宿主下遍历 `dist/` 的每个 ELF 调 `ci/check-glibc.sh ≤ 2.35`，
   无 ELF 时如实打印「无对象可检」。⚠ 当前内核形态是**纯 JS launcher（全平台弃 SEA）**，
   因此本仓**没有任何 ELF 产物被该门禁实际校验过** —— 它防的是「日后重新引入原生产物」的回归；
   Linux 侧真正生效的防线仍是**矩阵基座固定 ubuntu-22.04**（由 `test/release-auth-test.js` R6-a3 钉死）。
-  落点存在性由 `test/glibc-gate-test.js` 的 E-2 静态断言执法（跨平台计分）。
+  落点存在性由 `test/glibc-gate-test.js` 的 §E.2 静态断言执法（跨平台计分）。
 - **同步方式（2026-09-11 变更）**：`export-shell.sh` 已随双仓隔离删除，两仓不再自动同步。
   内核 `ci/check-glibc.sh` 与壳仓同名脚本现为**各自维护**（内容当前一致）；
   如需再单源化，应改用显式同步手段而非隐式导出目录。

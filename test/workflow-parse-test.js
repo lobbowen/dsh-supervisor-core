@@ -87,8 +87,8 @@ console.log('== W4 禁止裸读 .github/workflows ==');
   check('W4 无裸 fs.readFileSync 读 workflow', offenders.length === 0, offenders.join(', '));
 }
 
-// ── W5 供应链形态：顶层最小权限 + 同 ref 串行 + uses 全钉 SHA（E-1，2026-09-20）──
-console.log('== W5 workflow 供应链形态（E-1）==');
+// ── W5 供应链形态：顶层最小权限 + 同 ref 串行 + uses 全钉 SHA（发布条 1，2026-09-20）──
+console.log('== W5 workflow 供应链形态（发布条 1）==');
 {
   const wf = W.readWorkflow('build.yml');
   const lines = wf.split('\n');

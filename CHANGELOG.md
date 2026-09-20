@@ -6,6 +6,45 @@
 
 ## [未发布]
 
+### 健壮性与制度化收口（AUDIT-2026-09-19 第 4 批：C 类 P2 全量 + §E.1/§E.2/§E.4 立项，裁决登记见 AUDIT-REPORT §H）
+
+- **原子写单源（§E-1）**：状态落盘从「各点自拼 `file + '.tmp'` 再 rename」收敛到
+  `platform/util/fs` 的 `writeAtomic`（tmp 名含 pid+毫秒、mode 默认 0600、rename 后二次收口、
+  失败 truncate 后抛出）。迁移前 `src/` 下 28 个文件自带该形态、25 个用**固定** tmp 名——升级重叠期
+  新旧守卫写同一个临时文件，rename 出的是两次序列化字节的交错混合体；26 个调用点迁移 + 3 处显式豁免。
+- **外部输入字符集单源（§E-4）**：新增 `platform/util/input.js`（包名 / argv 项 / systemd 单元名 /
+  聚合账本键四把尺子），`install.js`、`os/service.js` 改取同名导出。顺带修真实缺陷：用量账本的
+  model 键来自请求体，`__proto__` 走原型 setter 会让该桶从聚合视图与落盘里**静默消失**（错账不报错）。
+- **静态门禁登记自己的覆盖缺口（§E-2）**：ACCEPTANCE-STANDARD 新增 §7（缺口登记纪律）+ §8/§9
+  （原子写单源、输入字符集单源两条硬规则），四个门禁文件头注登记编号化缺口清单，执法点 J-o。
+- **API/安全（C-1…C-9）**：Host 闸缺头即拒；remoteToken 强度闸（<8 拒）前置到写入口 + 门卫凭据
+  per-IP 退避（429 + Retry-After，HTTP 与 WS 升级同闸）；转发上游剥离 `token=` 凭据 + 凭证响应
+  `no-store`；body 改 Buffer 累积（跨块多字节不损坏、上限按字节）；`/open` Cookie 加 `SameSite=Strict`；
+  壳来源判定收敛 `isShellOrigin`（删 `*.tauri.localhost` 通配）；registry 写入口 SSRF 私网字面量拦截；
+  监听错误按可重试性分类（`EACCES` → 明确 `api_offline`，绝不静默下线）。
+- **令牌域**：跨进程轮转改「原子 rename 抢占备份槽」；未 attach 的隐式源必须过与 attach 同一 kind 闸；
+  journal 采集改异步（心跳不再被冻结 5s）；`dsh_lan_token` 改存加盐派生值，令牌原文只容一次性 `?token=`
+  出示（重启/换令牌即会话全失效）。
+- **平台层**：日志与事件写放大治理（记账 + 节流，轮转即时落 meta）；`reclaimByCmdMark` 空参双闸
+  fail-closed；可执行判定补 X_OK（0644 半截安装不再判「已安装」）；浏览器降级链改 spawn 前预检
+  （ENOENT 是异步事件，旧递归返回值被丢弃）；镜像探测加宿主支持闸 + platformTag 空值守卫；
+  异步 exec 面收编进 `runAsync/runOutAsync`（Windows 不再弹黑框，K-W2 判据扩到六词形）；
+  第三方包选版改判 latest 优先（旧「全量最高」会装到他人杂 tag）。
+- **生命周期（D-1…D-13）**：在途计数幂等收口（不再恒判「不可停」）；上游失败先停实例再清 pid；
+  代理实例日志接平台层轮转（首建 0600，内含启动令牌）；polyfill 缓冲加上限；孤儿判定改同进程组；
+  生命周期视图写权 SSOT + 只减不增棘轮；`keepDesired` 阻断「实然覆盖权威 desired」两条路径；
+  修重装抹掉 dataPaths 认领（卸载清理曾静默失效）；关停切断在途 npm；main 接管需归属凭据
+  （凭据只做否决，不封死恢复）；管理锁改 `wx` 原子取锁 + 持有者存活检测；宽作用域静默 catch 收口 + 棘轮。
+- **发布链 + 面板**：workflow 顶层最小权限 + 同 ref 串行 + `uses` 全钉 SHA；glibc 基座门禁从「注释里
+  存在」变成产线 `[3.5/5]` 条件步（无 ELF 时如实留痕）；发布子包 README 违 RC-1 措辞归正；选版兜底
+  排除我们的 `-BETA.`（正式版不被测试版顶替）；写端点有拒因即 400（前端 `failureFromResult` 单源判
+  2xx 里的 `ok:false`，不再弹假成功）；轮询改自排退避链 + 游标归一化（NaN 不再永久停摆）+
+  `epoch` 断在途轮次；内核更新桥补面板侧来源校验。
+- **凭据脚本（B-25 残留收口）**：`cred.sh put` 空 stdin 一律 fail-closed —— 先读唯一临时文件、
+  校验非空才写穿目标，不再落 0 字节并把 status 置 active。
+- 测试全部并入既有文件（零新增入链测试，`package.json#scripts.test` 链长 7899/8000 不破）；
+  新增断言均带反向防挂机 fixture；运行时裁决一律走 CI 四平台矩阵。
+
 ### 安全与生命周期（AUDIT-2026-09-19 第 3 批：B-1…B-28 + N2/B-21 + E-3，裁决登记见 AUDIT-REPORT §G）
 
 - **令牌/面板域（B-1…B-8）**：remoteToken 热换触发 `onRemoteChange` + reconcile 漂移兜底；

@@ -6,7 +6,7 @@
  * - GET 纯读；写操作方法名后缀 Post/Action 显式标注
  * - 错误统一 throw Error（含后端 error/message）
  * - ⚠ 但 http() 只看 HTTP 状态码：2xx 里的 `{ ok: false }` 属于**数据**（如探活端点的
- *   「探测不通」），不当作异常抛出。写操作的「假成功」由 failureFromResult 统一判据（E-5）。
+ *   「探测不通」），不当作异常抛出。写操作的「假成功」由 failureFromResult 统一判据（UI 条 5）。
  * - 生产同源（/…），开发跨端口用 vite proxy 转发（去掉 Origin 走回环）
  * ============================================================================
  */
@@ -112,7 +112,7 @@ async function http<T>(method: string, path: string, body?: unknown, opts?: Http
 const get = <T>(p: string, opts?: HttpOptions) => http<T>("GET", p, undefined, opts);
 const post = <T>(p: string, body?: unknown, opts?: HttpOptions) => http<T>("POST", p, body ?? {}, opts);
 
-/** 从 **2xx 响应体**里提取失败原因（E-5，AUDIT-2026-09-19 第 4 批）。
+/** 从 **2xx 响应体**里提取失败原因（UI 条 5，AUDIT-2026-09-19 第 4 批）。
  *
  *  后端有多个写端点形如 `send(200, { ok: true, ...r })`；当 r 自带 `ok: false`
  *  （如 /dist/registry/probe 的非法 origin）展开会把 ok 覆盖成 false，但 HTTP 仍是 200。

@@ -17,7 +17,7 @@ on:
   pull_request:
   workflow_dispatch: {}
 
-# ── E-1（AUDIT-2026-09-19 第 4 批）：顶层最小权限 + 同 ref 串行 + action 钉 SHA ──
+# ── 发布条 1（AUDIT-2026-09-19 第 4 批）：顶层最小权限 + 同 ref 串行 + action 钉 SHA ──
 # permissions：原文件只有 build/release 两个 job 级块，`test`/`precheck` 的 GITHUB_TOKEN 范围
 #   因此落在**仓库/组织设置**上（不写在文件里 = 随设置漂移、审查看不见）。显式收到
 #   contents: read 后，各 job 只按自己需要向上声明（build 另加 id-token: write、release 另加
@@ -176,7 +176,7 @@ jobs:
           #   使「CI 绿 = 四平台产物齐备」成为单一且可验证的事实。
           #   Linux **必须**用 ubuntu-22.04 基座（glibc 2.35）：在 24.04（glibc 2.39）构建的产物
           #   无法在 22.04 / Debian 12 运行（Rust std 对 pidfd_* 的弱引用被解析成硬性 verneed）。
-          #   防线两层（E-2 于 2026-09-20 收口，此前此处写着不存在的步骤）：
+          #   防线两层（§E.2 于 2026-09-20 收口，此前此处写着不存在的步骤）：
           #     ① runner 标签本身 —— 由 release-auth-test R6-a3 机器钉死（矩阵里必须是 ubuntu-22.04）；
           #     ② 产物 ELF 的 GLIBC_* 符号上限 —— ci-core.sh 的 [3.5/5] 步对 dist/ 下每个 ELF 调
           #        ci/check-glibc.sh ≤ 2.35。**当前形态（纯 JS launcher，无 SEA）下 Linux 产物没有

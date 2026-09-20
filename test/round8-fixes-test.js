@@ -29,6 +29,11 @@
 //   J-d  self-update 的版本排序用 semverCompare（非字符串）
 //   J-e  _spawn 接 'error'；无 pid 时不写身份并返回 failed
 // ═══════════════════════════════════════════════════════════════════════════
+// ⚠ 编号消歧（AUDIT-2026-09-19 §H-0）：本文件里
+//   · `E-1 / E-2 / E-4`（J-n/J-o/J-p）＝ 审计报告 **§E 跨域立项**编号；
+//   · `UI 条 5 / UI 条 6`（J-l/J-m）＝ 第 4 批 E 组的**发布/UI 六条**（原写 E-5/E-6，已改）。
+//   两套编号无关，别把「E-1 绿了」读成「发布链第 1 条被验过」。
+// ═══════════════════════════════════════════════════════════════════════════
 
 const path = require('node:path');
 const fs = require('node:fs');
@@ -367,11 +372,11 @@ const readDomain = (dir) => fs.readdirSync(path.join(ROOT, dir)).filter((f) => f
   fs.rmSync(tmpK, { recursive: true, force: true });
 }
 
-// ── J-l（批 4 / E-5）：写端点的「200 假成功」必须归真，且前端有统一判据 ──
+// ── J-l（批 4 / UI 条 5）：写端点的「200 假成功」必须归真，且前端有统一判据 ──
 //   setRegistryConfig 的拒因放在返回值的 error 字段（不带 ok 键）。旧 dist.js 一律
 //   `send(200, { ok: true, ...r })` → 被 SSRF 闸拒绝的镜像源仍回 200，而 UI 的 http()
 //   只在 !res.ok（状态码）时抛错 → 照样弹「已保存」。
-//   E-5 两半：后端有拒因即 400 + ok:false；前端 run() 按返回值判失败（判据单源在 client 层）。
+//   UI 条 5 两半：后端有拒因即 400 + ok:false；前端 run() 按返回值判失败（判据单源在 client 层）。
 {
   const codeOnly = (s) => s.split('\n')
     .filter((l) => { const t = l.trim(); return !t.startsWith('//') && !t.startsWith('*'); }).join('\n');
@@ -379,22 +384,22 @@ const readDomain = (dir) => fs.readdirSync(path.join(ROOT, dir)).filter((f) => f
   const unconditionalOk = (seg) => /send\(200, \{ ok: true, \.\.\.r \}\)/.test(seg) && !/400/.test(seg);
   const dist = codeOnly(read('src/api/domains/dist.js'));
   const seg = (dist.match(/pathname === '\/dist\/registry\/set'[\s\S]*?\n {4}\}/) || [''])[0];
-  check('E-5 定位到 /dist/registry/set 处理段', seg.length > 20, seg ? seg.slice(0, 46).replace(/\s+/g, ' ') : '未找到');
-  check('E-5 set 段按拒因回 400（r.error 参与状态码）',
+  check('UI 条 5 定位到 /dist/registry/set 处理段', seg.length > 20, seg ? seg.slice(0, 46).replace(/\s+/g, ' ') : '未找到');
+  check('UI 条 5 set 段按拒因回 400（r.error 参与状态码）',
     /400/.test(seg) && /r\.error/.test(seg), (seg.match(/[^\n]*\? 400 : 200[^\n]*/) || ['无 400/200 分支'])[0].trim());
-  check('E-5 set 段不再无条件 send(200)', !unconditionalOk(seg), '当前形态未命中判据');
-  check('E-5 反向非空转：旧「无条件 200」写法能被识别',
+  check('UI 条 5 set 段不再无条件 send(200)', !unconditionalOk(seg), '当前形态未命中判据');
+  check('UI 条 5 反向非空转：旧「无条件 200」写法能被识别',
     unconditionalOk("if (pathname === '/dist/registry/set') {\n      Promise.resolve(sup.dist.setRegistryConfig(j)).then((r) => send(200, { ok: true, ...r }));\n    }"),
     '判据命中旧写法');
   const uiHook = read('ui/src/features/supervisor/useSupervisorAction.ts');
-  check('E-5 run() 按返回值判失败（消费统一判据）',
+  check('UI 条 5 run() 按返回值判失败（消费统一判据）',
     /failureFromResult\(await fn\(\)\)/.test(uiHook), (uiHook.match(/const rejected = failureFromResult[^\n]*/) || ['未调用'])[0].trim());
   const uiClient = read('ui/src/services/supervisor/client.ts');
-  check('E-5 判据单源在 client 层并已导出',
+  check('UI 条 5 判据单源在 client 层并已导出',
     /export function failureFromResult/.test(uiClient) && /r\.ok !== false/.test(uiClient), 'ok');
 }
 
-// ── J-m（批 4 / E-6）：面板轮询中心的游标与心跳节奏 ──
+// ── J-m（批 4 / UI 条 6）：面板轮询中心的游标与心跳节奏 ──
 //   ① 事件游标唯一写点是 Math.max(snap.eventsSeq, r.seq)：后端 r.seq 非数值时 NaN 会
 //      永久污染（Math.max(NaN, x) 恒 NaN → 下一轮拼出 after=NaN 再也拉不到事件）。
 //   ② 心跳必须是「跑完一轮再按连续失败次数自排」的退避链，不能是固定 setInterval：
@@ -405,20 +410,20 @@ const readDomain = (dir) => fs.readdirSync(path.join(ROOT, dir)).filter((f) => f
     .filter((l) => { const t = l.trim(); return !t.startsWith('//') && !t.startsWith('*') && !t.startsWith('/*'); }).join('\n');
   const polling = codeOnly(read('ui/src/services/supervisor/polling.ts'));
   const echo = (re, miss) => (polling.match(re) || [miss])[0].trim();
-  check('E-6 游标写入前过数值归一化 safeSeq', /safeSeq\(r\.seq/.test(polling), echo(/eventsSeq: Math\.max.*/, '无游标写入点'));
-  check('E-6 反向非空转：未归一化的旧游标写法能被识别',
+  check('UI 条 6 游标写入前过数值归一化 safeSeq', /safeSeq\(r\.seq/.test(polling), echo(/eventsSeq: Math\.max.*/, '无游标写入点'));
+  check('UI 条 6 反向非空转：未归一化的旧游标写法能被识别',
     !/safeSeq\(r\.seq/.test(codeOnly('        eventsSeq: Math.max(snap.eventsSeq, r.seq),')), '旧写法不含 safeSeq');
-  check('E-6 心跳改为自排 setTimeout（不再 setInterval）',
+  check('UI 条 6 心跳改为自排 setTimeout（不再 setInterval）',
     !/setInterval/.test(polling) && /setTimeout\(\(\) => \{ void heartbeat\(\); \}/.test(polling),
     echo(/[^\n]*heartbeat\(\); \}[^\n]*/, '未自排'));
-  check('E-6 退避间隔随连续失败翻倍并封顶',
+  check('UI 条 6 退避间隔随连续失败翻倍并封顶',
     /Math\.min\(MAX_TICK_MS, BASE_TICK_MS \* 2 \*\* \(failStreak - 1\)\)/.test(polling),
     echo(/return Math\.min\([^\n]*/, '无翻倍曲线'));
-  check('E-6 基准间隔仍为 2s（退避只改失败侧，不改健康节奏）',
+  check('UI 条 6 基准间隔仍为 2s（退避只改失败侧，不改健康节奏）',
     /const BASE_TICK_MS = 2000;/.test(polling), echo(/const BASE_TICK_MS.*/, '无基准常量'));
-  check('E-6 健康成功即清零连败计数', /failStreak = online \? 0 : failStreak \+ 1;/.test(polling),
+  check('UI 条 6 健康成功即清零连败计数', /failStreak = online \? 0 : failStreak \+ 1;/.test(polling),
     echo(/failStreak = online.*/, '无复位'));
-  check('E-6 stop()/复位都递增 epoch，在途轮次不得再排下一轮',
+  check('UI 条 6 stop()/复位都递增 epoch，在途轮次不得再排下一轮',
     (polling.match(/epoch \+= 1;/g) || []).length === 2, 'epoch += 1 出现 ' + (polling.match(/epoch \+= 1;/g) || []).length + ' 次');
 }
 

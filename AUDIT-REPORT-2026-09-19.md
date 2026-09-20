@@ -194,6 +194,114 @@
 8. **违例勘误（2026-09-20，用户纠偏）**：本批提交前曾在本机多遍运行全量链与行为探针——违反的是**仓库早已生效的硬标准**（`ACCEPTANCE-STANDARD.md:11`，2026-09-17 起；`HANDOFF.md §1-1` 同款禁令；「本地测试无跨平台证据力」在本报告 A2/§D 亦有同口径表述），并非用户当日新立规则；「口径由 2026-09-20 用户定调」的初版归因失实，本条为勘误后的正确表述。副作用已收口：脱离会话的 `dry-run-proxy` 孤儿进程已回收；`/tmp` 测试产物已清理（含 2026-09-20 复查时补删的 623 个探针 `mktemp` 目录与 `dsh-test/fuzz/sigterm/upg` 系列，共 ~9MB）；本地测试还写穿了 `DSH_SUPERVISOR_HOME` 隔离、在真实 `~/.local/state/dsh-supervisor/` 落下 18 个 `proxy-instance-vm-210xx.log`+`install-id`（该目录创建于违例时段、无既有用户数据，已整目录清除，`~/.dsh` 用户数据未触碰）。成因复核：`state-root.supervisorDir()` 认 `DSH_SUPERVISOR_HOME` 覆盖，而 `npm test` 链经 `_preload.js` 注入沙箱 HOME——违例时绕过链直跑 `node test/*.js`/裸探针才落到真实 HOME（**非产品缺陷**）；衍生观察留第 4 批裁决：测试单独运行缺省不落沙箱，属「测试基建裸奔面」，可考虑 `_preload` 判据或门禁提示。仓库工作区无残留。教训固化：本机检查止于 `node --check`/`bash -n`/纯静态门禁；第 7 条三处发现的修复保留（均为 CI 会同样判红的真缺陷），但**不得**以「本地已全绿」作为任何合入依据——最终裁决只看 PR #5 的 CI 矩阵。
 9. **CI 抓出的本批回归（B-11 windows 误杀，第 8 条口径的反向验证）**：PR #5 首推后 windows build job（`ci-core.sh` 内含全量 `npm test`）的 `upgrade-test` U2/U3 **确定性判红**（runs 14–17 四连红，linux/mac/ubuntu-test 全绿）。首轮日志无错误正文 → 按第 8 条口径**未本机重跑**，而是在 U2/U3 失败分支补 `[U2-diag]/[U3-diag]` 诊断输出（`lastError`/`rolledBack`/`logTail`，run 17 抓到）→ 定位为 `runNpmInstall` 报「commandTemplate 替换后含禁用字符: `D:\a\...\test\fake-npm.js`」：B-11 的 `BAD_ARGV_CHAR_RE` 禁用集含 `\\`，把 win32 盘符绝对路径整体误杀——**修复自身引入的跨平台缺陷**，曾违例本机跑过 9 遍全绿也零证明力，与第 8 条「本机绿灯对 win 语义零证明力」互为实证。修复：`WIN_DRIVE_ABS_RE` 仅对**完整匹配** `X:\...` 形态的 argv 项豁免（夹带 `;`/引号/`$`/空白/相对形态/`D:/` 正斜杠均不豁免），正反例并入 `npm-resolution-test` C-f。首版豁免夹具自身又误设期望（`D:\a\x\y` 连续分隔符断为应拒、run 18 红后 `2c832e3` 已翻正；拆逐例时又把 `C:rel\path` 误标为放行——均为**产品对、断言错**：豁免判据是 `X:\...` 盘符绝对**形态**，不做路径规范化也不豁免 drive-relative）→ run 18/20/21 三轮同条判红。关键取证改造（`8b6dafb`）：多子句 `&&` 串一条 check 时 CI 只报条名不报子句（run 20 因此白跑一轮），拆为 11 条逐例断言 + `BAD/WIN/gate` 三值回显后，run 21 一轮即精确定位唯一错例并翻正（`48cd8e9`→`8b6dafb` 链）。过程教训×2：① 错误正文经 `/native/status` `lastError` 本已可查，是诊断断言未打印导致两轮盲等——错误透出的验收价值再次确认（同 §B-22 裁决轴）；② 断言粒度即取证粒度——**门禁类多子句断言必须逐例独立 + 判据值回显**，这是本条三轮红换来的可复用纪律。
 
+## H. 第 4 批裁决与修复登记（C 类 P2 全量 + §E.1/§E.2/§E.4 立项收口）
+
+- **分支 / 提交**：`fix/audit-batch4-c-e` —— A 组 `1647225`、B 组 `f84e2ea`、C 组 `371a737`、D 组 `58fcb58`、CI 红因 `241446d`、E 组 `06162f8`、F 组 `bfe782c`。
+- **验证口径**：与 §G 相同——本机只 `node --check` / `bash -n` / 纯静态判据探针（一次性脚本，跑完即删），运行时裁判唯一是 CI 四平台矩阵。
+- **测试并入**：断言全部并入既有入链文件，`package.json#scripts.test` 链（129 文件 / 7899 字符）**零新增、零增长**；UI 侧由 CI `[1/5] 前端门禁` 跑 vitest。
+
+### H-0 编号消歧（必读，本批踩过一次歧义）
+
+本报告与代码注释里同时存在三套 `E-*`，**互不相关**：
+
+| 写法 | 含义 | 出现处 |
+|---|---|---|
+| `§E.1 … §E.4`（代码里常简写 `E-1…E-4`） | 本报告 **E 节跨域立项**（原子写单源 / 文档化门禁 / 意图轴 / 输入字符集） | J-n·J-o·J-p、`util/fs.js`、`util/input.js`、`glibc-gate-test`、ACCEPTANCE-STANDARD §7–§9 |
+| `发布条 N` / `UI 条 N` | 第 4 批 E 组 = §C「发布/UI」六条（workflow 供应链 / glibc 落点 / README 措辞 / 兜底④ / 200 假成功 / 轮询与桥） | `build.yml:20`、`ci-core.sh [3.5/5]`、`release.js`、`dist.js`、`ui/**`、J-l·J-m |
+| `E2E-N` | `shell-watchdog-e2e-test.js` 的端到端用例序号 | 该文件与 build.yml 的失败示例注释 |
+
+历史违例：commit `06162f8` 的标题写「发布链 E-1…E-4」，与同批 F 组收口的 §E.1/§E.2/§E.4 撞名（本段即为此登记）。**处置**：把发布/UI 轴的字面标签统一改为 `发布条 N` / `UI 条 N`（2026-09-20 已全量改标，涉及 `build.yml`、`release.js`、`RELEASE-CHANNEL-CONTRACT`、`dist.js`、`ui/**`、`round8-fixes-test` J-l/J-m、`workflow-parse-test`、`release-channel-test`、`kernel-update-single-writer-test`、README、CROSS-PLATFORM），立项轴继续写 `§E.N`。
+
+### H-1 API/安全域（C-1…C-9）
+
+| # | 裁决 | 修复锚点 | 测试/门禁 |
+|---|---|---|---|
+| C-1 | 确认缺陷（缺 Host 时整块跳过 → 两闸同时归零） | `api/security.js` `originAllowed`：Host 缺失即 fail-closed 拒绝 | `defects-batch-f-test`（K6-a 含反向：合法 Host 放行） |
+| C-2 | 裁决=**保持现状并钉死**（现代浏览器对 POST 一律发 Origin；不放宽为「无 Origin 即放行」） | `api/security.js` 注释登记裁决 + 判据 | `defects-batch-f-test` |
+| C-3 | 确认缺陷（令牌无长度下限、门卫凭据可无限爆破、WS 升级旁路） | `relay/core.js` `remoteTokenStrength`（<8 拒，单一事实源）+ `backoffGate` 纯函数（计时账本由调用方持有）；`domains/instance/ops.js` 三点写入口前置校验；`relay/proxy.js` per-IP 账本（60s 窗口 ≥10 次 → 429 + Retry-After）；`relay/tunnel.js` WS 升级同闸（`gateWaitMs`） | `lan-access-boundary-test` + `round13-router-relay-gaps-test`；UI 强度提示 |
+| C-4 | 确认缺陷（门卫令牌进上游请求行 + 凭证响应可被缓存） | `relay/core.js` 转发路径剥离 `token=`；`relay/proxy.js` 401/302/429 统一 `no-store` | `relay-dshauth-test`（A 组） |
+| C-5 | 确认缺陷（`body += d` 逐块隐式解码，跨块多字节损坏；上限按字符数可撑内存） | `api/transport/body.js` 改 Buffer 累积 + end 一次性 utf8 + **按字节**计上限 | `core-test` |
+| C-6 | 确认缺陷 | `api/domains/instances.js` `/open` 303 的 Cookie 补 `SameSite=Strict`（跨端口共享是设计意图，跨站不是） | `kernel-daemon-contract-test` |
+| C-7 | 确认缺陷（两份壳来源判定，server 侧更宽含 `*.tauri.localhost` 通配） | 收敛 `api/security.js` `isShellOrigin` 为单一事实源，`transport/server.js` CORS 白名单复用 | `core-test` + `defects-batch-f-test` |
+| C-8 | 确认缺陷（`registryOriginViolation` 只过 origin 形态，可指回环/元数据地址） | `platform/distribution/policies.js` 复用 `shared/ip` 的 `isPrivateHostLiteral` 分级；`registry.js:221` 写入口闸。**CI 首抓真回归**：早退分支把 `state.registryConfig.mode` 改了（rc 是别名不是副本）→ `241446d` 改副本、只有全闸通过才回写 | `round8-fixes-test`（C-8 早退零改动，:351 段） |
+| C-9（=B-22c） | 确认缺陷（非 EADDRINUSE 错误停在静默分支） | `app/assembly/api-rebind.js:27` 按可重试性分类：`EADDRINUSE/EADDRNOTAVAIL` 进快慢重试环，`EACCES` → `api_offline` 明确下线并留痕 | `round8-fixes-test` + UI `api_offline` 文案 |
+
+### H-2 令牌域（§C 令牌条 2…5；条 1「落盘点不唯一」归 §E.1，见 H-6）
+
+| # | 裁决 | 修复锚点 | 测试/门禁 |
+|---|---|---|---|
+| 条2 | 确认缺陷（跨进程轮转竞态） | `platform/service/token/persist.js` `rotateByBackup`：改「**原子 rename 抢占**进备份槽」；rename 失败降级为复制+截断（窗口更小但**不为零**，注释如实登记） | `round13-discipline-gaps-test`（③ 组） |
+| 条3 | 确认缺陷（TK-3 旁路：未 attach 的隐式源绕过 kind 闸） | `token/pool.js` `feedLine`：隐式源必须过与 attach **同一** kind 登记闸，推断不出/未登记一律拒入池 | `token-boundary-test`（夹具改走合规分类——旧夹具实为依赖旁路） |
+| 条4 | 确认缺陷（journal 同步 exec 冻结心跳 5s） | `util/exec.js` 新增 `runOutAsync`（沿用有界纪律）；`token/capture.js` `captureOnce` 收窄为 stdout/文件两档（同步零外进程），`captureJournal` 异步发射 | `core-test` + G9 门禁（`exec-bounded-gate-test`） |
+| 条5 | 确认缺陷（门卫令牌被当会话 cookie 长期驻留） | `relay/core.js` `lanGateCookieValue`：cookie 存 `sha256(salt\|token)`（salt 每 relay 进程随机），令牌原文只容 `?token=` 一次性出示；HTTP 与 WS 两路同闸 → 重启/换令牌即会话全失效 | `relay-dshauth-test`；DSH-TOKEN-CONTRACT §1 #7 |
+
+### H-3 平台层（§C 平台条 1…7）
+
+| # | 裁决 | 修复锚点 | 测试/门禁 |
+|---|---|---|---|
+| 条1 | 确认缺陷（写放大：每行/每事件 stat + meta 全量重写） | `platform/service/log/log.js` `Rotator`：首写 stat + 字节记账（每 64 行回读真值防多写者漂移，异常即作废账本）；`log/events.js` 估算越阈才真 stat 复核，meta 每 32 seq 落盘且轮转即时落，构造期 seq 取 `max(meta, 文件末行)` | `core-test` |
+| 条2 | 确认缺陷（`reclaimByCmdMark` 空 cfg 取消过滤 → 误杀） | `platform/service/ports/probe.js:57` 入口双闸（cmdMark/configPath 任一为空即 0 回收，fail-closed） | `adopt-token-reclaim-test` |
+| 条3 | 确认缺陷（候选不判 X_OK，0644 半截安装被当「已安装」） | `platform/os/exec-path.js` `isExecutableFile`（POSIX 判 X_OK、win32 免判），`firstExecutable`/envVar/`pidlookup.ss` 绝对路径候选全部改用 | `platform-layer-portability-test`（X-9） |
+| 条4 | 确认缺陷（Node 的 spawn ENOENT 是异步事件，旧递归降级返回值被丢弃 → 首候选固化死 bin） | `platform/os/browser.js` `launchIsolated`：spawn **前**可用性预检 + chain 预过滤 + `opts.binAvailable` 注入点 | `platform-audit-fixes-test`/`core-test` |
+| 条5 | 确认缺陷（不可产标宿主同步抛穿透 `Promise.all`；`platformTag` 空值把字面量 `undefined` 拼进 URL 恒 404） | `distribution/registry.js` `probeRegistry` 加 `matrix.isSupported` 闸 + try/catch；`resolveProbe` 补 platformTag 空值守卫（`platformTag` 本体一字不动，P-6 钉） | `round13-contract-reload-test` |
+| 条6 | 确认缺陷（异步 exec 面是 K-W2 盲区，Windows 弹黑框） | `util/exec.js` `runAsync/runOutAsync` 固定 `windowsHide`；收编 `process.killTree` 的 taskkill、`pkg-cache` 的 npx 预取、`versions` 的 git fetch；K-W2 判据扩到 spawn/spawnSync/execFile/execFileSync/execSync/裸 exec 六词形 + 双豁免 | `no-console-window-gate-test`（W1 措辞同步纠偏） |
+| 条7 | 契约改判（「dist-tags ∪ versions 全量最高」把他人杂 tag 当候选） | `distribution/release.js` 第三方选版改判 **latest 优先**、兜底只看 versions；`fetchNpmLatest` 注释同步；RELEASE-CHANNEL-CONTRACT 新增第三方段落（此前契约未写明） | `release-channel-test`（RC-3 期望随改判翻正 + 反向例） |
+
+### H-4 domains + app 生命周期（D-1…D-13）
+
+| # | 裁决 | 修复锚点 | 测试/门禁 |
+|---|---|---|---|
+| D-1 | 确认缺陷（inflight 计数泄漏 → 恒判「不可停」） | `router/handlers/forward.js`：begin 之后任何跳出统一走 `endAttempt` 幂等收口 | `router-circuit-breaker-test` |
+| D-2 | **审计原述不成立**（「壳的 desired 未纳管」——MANAGED_KINDS 本就无壳条目，`_shellExitIntended()` 已单源） | 改为在 ARCHITECTURE-CONTRACT §6 划**适用边界**，并明令**禁止**为壳补登目录条目（那会造出同一意图的第二事实源 = 9-18 根因形态） | 文档 + `session-lifecycle-test` 现状断言 |
+| D-3 | 确认缺陷（上游失败只置 `pid=null` → 唯一 kill 路径恒不可达，进程残留占端口） | `router/handlers/forward.js:147`：先 `stopInstance` 再清 pid | `router-circuit-breaker-test` |
+| D-4 | 确认缺陷（代理实例日志无轮转且默认 0644，内含启动令牌 URL） | `router/providers/probe.js:86`：落盘改接平台层 `log.js` `Rotator`（2MB 轮转、首建 0600） | `router-circuit-breaker-test` |
+| D-5 | 确认缺陷（relay HTML 缓冲无界） | `relay/proxy.js:101`：polyfill 注入加全量缓冲上限，超限按流透传 | `round13-router-relay-gaps-test` |
+| D-6 | 确认缺陷（`listening !== inst.pid` 等值判据在 npx --yes 兜底形态恒不成立 → 误判孤儿） | `router/providers/probe.js:185` `monitorLifecycle`：改同进程组判定（/proc pgrp，comm 以最后 `") "` 为锚；win32 与读失败一律 false，交 HTTP 探活兜底，不静默放行外部占用） | `daemon-lifecycle-test` |
+| D-7 | 契约裁决（SSOT 落 GUARD-DOMAIN-MODEL §6.3；**不**广域扫 `src/domains`——域自治对象改自己的状态机是契约要求的形态） | ML-2/ML-3「只减不增」棘轮，基线 14 处 / 5 文件（含 `state/fields.js` 合法出口） | `guard-domain-model-gate-test` |
+| D-8 | 确认缺陷（实然回写权威 desired，违铁律 1） | `app/control/specs.js:73` `upsert(spec,{keepDesired})` **只作用 update 分支**（register 必须带 desired）；本轮收口心跳同步 + 启动对齐两条观测推导路径（后者：load() 后的 BACKOFF 快照会抹掉用户运行意图）。域 B 的 desired 来自 config 业务条件，**不加**旗标 | `app-ctor-injection-test`（假件 `fakeRegistry.update` 同步改成语义对齐：值为 undefined 的键不改写） |
+| D-9 | 确认缺陷（`_recordManifest(target, [])`：`Array.isArray([])` 为真 ⇒ 继承分支不触发，上一代 dataPaths 认领被抹成空 → 卸载清理静默失效） | 改传 `undefined` | `uninstall-timeout-behavior-test` + `native-dsh-binding-test` |
+| D-10 | 确认缺陷（守卫被 8s 强杀后 detached npm 继续写 node_modules = 并发写入者，9-13 半成品同族） | `platform/distribution` 记在途句柄 + `killInflightNpm()`；`guard-shutdown` / `session-exit` 两条关停路径在**同步段**先切断并落 aborted + warn + 事件 | `graceful-shutdown-test`（⚠ windows tmpdir 短名含 `~` 风险见 H-7） |
+| D-11 | 确认缺陷（只凭 cmdline 相似认领 → 双管家互杀） | `app/main/signals.js` `_mainOwnerFile`/`_writeMainOwner`：与 daemon 身份/锁同址落 `dsh-main.owner.json`（0600、原子写）；**凭据只做否决**（他主且 guardPid 存活才拒），他主已死/pid 不匹配一律不否决（否则一次崩溃永久封死恢复）；契约新增 N6 | `adopt-token-reclaim-test`（D-11 全链） |
+| D-12 | 确认缺陷（`writeFileSync` 覆盖=后写者静默抢锁；pid 从不回读=对已死持有者持续授权；无条件 unlink=可删别人的新锁） | `app/daemons/identity.js`：`'wx'` 原子取锁 + 持有者存活检测（ESRCH 清残留 / EPERM 视为存活）+ 释放只删自己的锁 | `daemon-lifecycle-test` |
+| D-13 | 确认缺陷（宽作用域静默 catch 无痕降级） | 收口 3 处：`state/store.js` `loadState` 拆「读/恢复」两段（首启 ENOENT 安静、恢复失败留痕）、`daemons/process.js` `_writeIdentity` warn+事件、`audit/orphan-scan` 两段扫描失败可见 | `app-this-ratchet-gate-test`（SC-1…SC-3 棘轮，基线 8 + 反向样例证明对窄/留痕形态不误报） |
+
+### H-5 发布链 + UI（发布条 1…4 / UI 条 5…6）
+
+| # | 裁决 | 修复锚点 | 测试/门禁 |
+|---|---|---|---|
+| 发布条1 | 确认缺陷（workflow 无顶层 permissions、actions 未钉 SHA、无 concurrency） | `.github/workflows/build.yml:20` 顶层 `contents: read` + concurrency（**tag 不取消**）+ 10 处 `uses` 全钉 SHA | `workflow-parse-test` W5（九条静态门禁） |
+| 发布条2 | 确认缺陷 = §E.2 案例（注释声称产线校验 glibc，实际 CI 零调用） | `release/scripts/ci-core.sh` 新增 `[3.5/5]` 条件步（ELF 判定 + **无对象时如实留痕**），删除 build.yml 里虚构步骤名 | `glibc-gate-test`（§E.2 跨平台静态断言，正反例） |
+| 发布条3 | 确认缺陷（发布子包 README 违 RC-1「按全量最高版本选版」） | README 措辞改为真实通道链；4 处「取全量最高」失实注释按条 7 改判归正 | `release-channel-test` + 文档 |
+| 发布条4 | 契约改判（兜底④可把正式版顶替成我们的 BETA） | `distribution/release.js` `isOurBetaRelease` 在 ④ 排除 `-BETA.`；契约 §3 ④/⑤ 同步改判并标注壳仓跟进项 | `release-channel-test`（④ 块重写：含 `-RC.n` 不误伤、第三方不适用） |
+| UI 条5 | 确认缺陷（后端有拒因仍回 200 → 前端弹「已保存」） | `api/domains/dist.js:75` 有拒因即 400 + `ok:false`；`ui/services/supervisor/client.ts` `failureFromResult` 单源判 2xx 里的假成功，`run()` 消费 | `round8-fixes-test` J-l + `client.test.ts`（vitest） |
+| UI 条6 | 确认缺陷（NaN 游标永久停摆、setInterval 无退避、桥不校验来源） | `ui/services/supervisor/polling.ts`：`safeSeq` 写入前归一化、自排 setTimeout 退避（BASE 2s、`2^(failStreak-1)`、封顶 30s、健康成功清零）、`epoch` 断在途轮次；`kernelUpdateBridge.ts` 补 `ev.source === window.parent`（origin 白名单不可用：壳主帧是 Tauri 自定义协议） | `round8-fixes-test` J-m、`kernel-update-single-writer-test` SW-8、`polling.test.ts`；README/ui FRAMEWORK.md 两处失实描述归正 |
+
+### H-6 跨域立项收口（§E.1 / §E.2 / §E.4 + B-25 残留）
+
+| # | 裁决 | 修复锚点 | 测试/门禁 |
+|---|---|---|---|
+| §E.1 | 确认缺陷，且**规模远大于原述**（原述「至少 4 处」；实测迁移前 `src/` 下 **28 个文件**自带 tmp+rename，其中 **25 个用固定 `file + '.tmp'` 名**，只有 8 个含 pid） | `platform/util/fs.js` `writeAtomic` 单源：tmp = `fp + '.tmp.' + pid + '.' + Date.now()`、mode 默认 0600、rename 后二次 chmod、失败 truncate 后**抛出**；**26 个文件**迁移。显式豁免 3 处（单源自身、`token/persist.js` 轮转追加、`os/file-protect.js` 私有写），豁免项仍要求 tmp 名含 pid | `round8-fixes-test` **J-n**（8 条：旁路扫描 / 豁免集合相等 / 覆盖面 >=25 / 代表点 / 反向 LEGACY 样例）+ `frp-resilience-test` R5-d…d4 |
+| §E.2 | 制度化为规则（不改运行时行为） | ACCEPTANCE-STANDARD **§7** + 四个静态门禁（glibc / token-contract / no-console-window / exec-bounded）头注各登记编号化「覆盖缺口」清单 | `round8-fixes-test` **J-o**（缺口块存在 + 无块/空壳标题反向例） |
+| §E.4 | 确认缺陷 + **抓出真实错账**（账本 model 键来自请求体，`obj['__proto__'] = {...}` 走 [[Prototype]] setter → 桶从聚合视图与落盘中静默消失，后续键查找走原型链；不污染全局 Object.prototype，但错账不报错） | `platform/util/input.js` 单源四把尺子（`argvViolation`/`pkgNameViolation`/`unitNameViolation`/`ledgerKey`）；`install.js`/`os/service.js` 改取同名导出（调用点字面形态不变）；`router/store/usage.js` `_modelKey` → `ledgerKey`（违规键折进 `(other)`） | `round8-fixes-test` **J-p**（唯一定义处扫描 + 对象同一性 + mkdtemp 造第二把尺子反向例 + 14 行行为表）、`router-test`（B19 后 6b2 含原型未改写与 `naive['__proto__']` 破坏真实性反向）、`npm-resolution-test` C-f（字面判据拆「调用点问闸 + 单源存在」两条） |
+| B-25 残留 | §G-6-1 挂账收口（`cat > "$f"` 先截断后等数据 → 空 stdin 落 0 字节并把 status 置 active） | `release/scripts/cred.sh` put 分支：先 `umask 077` 读到唯一临时文件 → 校验非空（含纯空白）→ 才写穿目标；失败/空输入都在动目标之前退出，原文件与 index 不变。备份仍为**尽力安全网**（warn 不硬闸） | 本机 `bash -n` 通过；行为级由 CI 覆盖（见 H-8 第 5 条） |
+
+### H-7 本批 CI 取证与待裁决项
+
+1. **`241446d` 是本批能合入的前提**：runs `35471888496` / `35472954250` / `35474631569` / `35478336653` 四连红的**全链唯一 FAIL** 都是 `round8-fixes-test.js:351` 的「C-8 manual+元数据地址 → mode 未被改」。它是真回归（别名 vs 副本），不是假红。
+2. **链位序教训（登记为纪律）**：`round8-fixes-test` 在 `scripts.test` 第 57/129 位，`&&` 链在此中断 → **第 4 批 B/C/D 三组并入 58–128 位入链文件的断言此前一次都没被 CI 执行过**（D-8、ML-2/ML-3、SC-1…3 等）。一条早退红的代价不是 1 个用例，而是 72 个文件的覆盖面。
+3. **⚠ 待 CI 裁决（本机严禁验证）**：D-10 的新行为块在 Windows runner 上可能因 tmpdir 短名含 `~`（`RUNNER~1`）被 B-11 的 argv 禁用字符集拒绝；红则按平台差异取证后再修（§G-6-9 同族）。
+4. **E-1 迁移的连带改判**：`provider-gateway-gate-test` PG-7 与 `npm-resolution-test` C-f 都曾因「判据钉住旧实现字面量」而在搬家后**静默抓空**——已改为「调用点问闸 + 单源存在 + 反向样本命中」三段式，并把「搬家即空转」写进两个门禁的缺口清单。
+
+### H-8 残留与诚实声明
+
+1. **glibc 门禁当前无对象可检**：本仓 Linux 产物为纯 JS launcher，`ci-core.sh [3.5/5]` 走「无 ELF → 如实打印无对象可检」分支。即 §E.2 的这条**没有任何产物被实际校验过**，防的是「重新引入原生产物时的基座回归」。
+2. **§E.1 与原述偏离（实现位置与职责边界）**：原述要求「统一注入 `persist.writeAtomic`（tmp 含 pid **+ 读失败禁写内建**）」。实际单源落在 `platform/util/fs.js`（`persist.js` 反而在豁免清单），且「读失败禁写」**仍由各调用点自守**（`canPersist()` / `loadedOk`），单源不内建——helper 不该反向依赖每个调用点的健康语义。规则已按实际形态写进 ACCEPTANCE-STANDARD §8。
+3. **§E.4 只统一字符集层**：URL/SSRF 分级（`shared/ip` + `policies.isValidOrigin`）与 semver/通道语义仍留在各域，未纳入 `input.js`（边界见 ACCEPTANCE-STANDARD §9）。
+4. **审计原述错锚点（本批实测证伪/纠正）**：① §C「令牌条 1 = 4 处裸 `.tmp` 写」低估为 25 处（见 H-6）；② §C「domains 条：shell 看护不认目录 desired 轴」→ D-2 判为**不成立**；③ §E-1「至少 4 处独立实现」同样低估；④ 本批另有 4 处「取全量最高」失实注释与 1 处 build.yml 虚构步骤名归正（发布条 2/3）。
+5. **cred.sh 的行为级验证在 CI 侧覆盖有限**：`bash -n` + 静态判据是本批证据上限；空 stdin 路径的端到端（真起 `put </dev/null`）未新增用例——`release/scripts` 不在 `npm test` 链内，脚本改动历史上只经 dry-run 类 CI 步骤。此项留作后续批次的测试基建议题（与 §G-6-8「测试单独运行缺省不落沙箱」同源）。
+6. **C-3 首版断言是夹具误设**：`a7a31f4` 记录——429 出现在第 11 发而非第 10 发，且循环起点账本已被前序 cookie 放行 clear；修法为前置清零断言 + 11 发循环拆两条（§G-6-9 逐例拆分 + 判据回显）。
+7. **registry 版本**：本批**不发布**（npm 仍 0.1.5-BETA.10）。合入与发布分两步，发布另需确认。
+
 ## 附录：分域审计明细索引
 
 | 域 | 范围 | 规模 | 主要文件锚点 |

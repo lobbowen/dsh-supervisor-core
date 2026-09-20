@@ -1,5 +1,5 @@
 /**
- * client.ts 单元测试：错误归一化 / 请求超时 / 2xx 假成功判据（E-5）
+ * client.ts 单元测试：错误归一化 / 请求超时 / 2xx 假成功判据（UI 条 5）
  * 不依赖真实后端：vi.stubGlobal 注入 fetch。
  */
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -122,12 +122,12 @@ describe("B8 访问密钥携带与 401 语义", () => {
 });
 
 /**
- * E-5（AUDIT-2026-09-19 第 4 批）：2xx 响应体里的 `{ ok: false }` 是「假成功」形态。
+ * UI 条 5（AUDIT-2026-09-19 第 4 批）：2xx 响应体里的 `{ ok: false }` 是「假成功」形态。
  * http() 只看状态码（探测类端点的 ok:false 属于数据，不是请求失败），所以判失败
  * 的责任在 failureFromResult —— 由共享动作 hook run() 消费（其接线由内核侧
- * test/round8-fixes-test.js 的 E-5 静态门禁锁定，vitest 环境为 node 无法挂载 React hook）。
+ * test/round8-fixes-test.js 的 UI 条 5 静态门禁锁定，vitest 环境为 node 无法挂载 React hook）。
  */
-describe("E-5 假成功判据 failureFromResult", () => {
+describe("UI 条 5 假成功判据 failureFromResult", () => {
   it("ok:false + error → 返回后端拒因", () => {
     expect(failureFromResult({ ok: false, error: "安全策略：仅允许公网地址" })).toBe("安全策略：仅允许公网地址");
   });

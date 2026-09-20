@@ -33,7 +33,7 @@ export function useSupervisorAction() {
     setBusy(key);
     let ok = true;
     try {
-      // E-5：后端部分写端点在 HTTP 200 里回 `{ ok: false, error }`（http() 只看状态码），
+      // UI 条 5：后端部分写端点在 HTTP 200 里回 `{ ok: false, error }`（http() 只看状态码），
       // 必须按返回值判失败，否则被拒的操作也弹成功 toast。页面自管的分支反馈（回调返回
       // undefined）不受影响。
       const rejected = failureFromResult(await fn());

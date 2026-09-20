@@ -32,7 +32,7 @@ DeepSeek Harness 生命周期监管工具：独立于 Harness 运行的系统级
 | [ARCHITECTURE-PLAN-session-lifecycle.md](ARCHITECTURE-PLAN-session-lifecycle.md) | 计划（历史） | 会话生命周期重构的根因级计划（已完成） |
 | [INCIDENT-2026-09-13-credential-overwrite.md](INCIDENT-2026-09-13-credential-overwrite.md) | 事故复盘 | 凭据被覆盖事故：时间线 / 根因四层 / 加固与重放验证 |
 | [INCIDENT-2026-09-18-exit-manager-relaunch.md](INCIDENT-2026-09-18-exit-manager-relaunch.md) | 事故复盘 | 退出管家后桌面壳被自动重新拉起：壳 /End 计划任务 + 内核看护门未持久化；修复与残留清单 |
-| [AUDIT-REPORT-2026-09-19.md](AUDIT-REPORT-2026-09-19.md) | 审计报告 | 全仓静态代码审计：P0×4（A1 读失败覆盖×3 / A2 frpc 校验降级 / A3 发布通道 / A4 win32 cmd 注入）+ P1×22 + 分批修复计划；第 1 批 A1/A2/A4 与第 2 批 A3（CI 令牌收敛 + rollback 下限 RC-7）已随本版修复（P0 清零）；第 3 批 B-1…B-28 + N2/B-21 + E-3 的逐条裁决与修复锚点登记于 §G（含 B-22(c) 失实结论与残留声明） |
+| [AUDIT-REPORT-2026-09-19.md](AUDIT-REPORT-2026-09-19.md) | 审计报告 | 全仓静态代码审计：P0×4（A1 读失败覆盖×3 / A2 frpc 校验降级 / A3 发布通道 / A4 win32 cmd 注入）+ P1×22 + 分批修复计划；第 1 批 A1/A2/A4 与第 2 批 A3（CI 令牌收敛 + rollback 下限 RC-7）已随本版修复（P0 清零）；第 3 批 B-1…B-28 + N2/B-21 + E-3 的逐条裁决与修复锚点登记于 §G（含 B-22(c) 失实结论与残留声明）；第 4 批 C 类 P2 全量（C-1…C-9 / 令牌 2…5 / 平台 1…7 / D-1…D-13 / 发布条 1…4 + UI 条 5…6）与 §E.1/§E.2/§E.4 立项收口登记于 **§H**（含 H-0 三套 `E-*` 编号消歧、H-7 链位序取证、H-8 诚实缺口） |
 | [CHANGELOG.md](CHANGELOG.md) | 记录 | 版本变更 |
 
 > **文档可信度不变量**（2026-09-11 确立）：能力声明必须由**可执行断言**支撑；
@@ -273,7 +273,7 @@ POST /shutdown               已由 POST /session/stop 取代（保留供旧版�
   （见 `design-notes/relay.md`），不要按「页面刷新即联动」理解。
 - **细节权威**：`ui/FRAMEWORK.md`（目录、数据流、令牌规范）。
 - **统一同步**：单源快照中心 `ui/src/services/supervisor/polling.ts` 一轮跑完再自排下一轮——
-  链路健康时 2s 一拍，连续失败按 2s→4s→8s… 退避（封顶 30s，E-6）；写操作后 `store.refresh()` 立即同步。
+  链路健康时 2s 一拍，连续失败按 2s→4s→8s… 退避（封顶 30s，UI 条 6）；写操作后 `store.refresh()` 立即同步。
   （老 UI 的 `unifiedTick` 主循环与「页面可见时立即同步」已随 React 迁移移除，勿再按该模型理解面板。）
 - **联动语义**：远程控制开关 = 实例运行中 ∧ remoteEnabled ∧ relay 实际监听；实例未运行时开关禁用并明示「实例未运行」。
 

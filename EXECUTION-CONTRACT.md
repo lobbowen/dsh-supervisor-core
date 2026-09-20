@@ -65,7 +65,7 @@ module.exports = { XxxStore };
 | `policies/*.js` | 纯函数具名导出 | shared 仅 |
 | `handlers/parse.js` | `{ parseRequest, extractUsage, resolveTarget, joinUpstream }`（**纯**） | — |
 | `handlers/forward.js` | `{ createForwarder(deps) }`（`deps={logger,readBody,canPersist,parse}`） | parse.js |
-| `store/usage.js` | `{ UsageLedger }`（原子写，`.tmp` 命名**唯一**） | platform/util/fs |
+| `store/usage.js` | `{ UsageLedger }`（落盘走 `platform/util/fs` 的 `writeAtomic` 单源，0600；§E.1） | platform/util/fs |
 | `model/inflight.js` | `{ createInflight() }`（纯状态，**单一 end() + 显式 effect**） | — |
 | `ops/*.js` | 具名导出（`browser/oauth/apps-registry/quotasync/admin`） | providers, policies |
 | `providers/model.js` | `{ accountModel, serializeAccount }`（纯） | — |

@@ -132,3 +132,34 @@ test/acceptance-standard-gate-test.js 机器校验）。
 - 缺口块只描述「不证明什么」；要补强某条缺口时，**先删掉对应那一行**再提交判据，
   避免判据已收紧而文档继续声称有洞（反向失实同样是违规）。
 - 新增此类门禁时若不带缺口块，J-o 直接 FAIL——要么写，要么说明为何无需（该判据是行为级）。
+
+## 8. 状态落盘的原子写只有一个源（E-1，2026-09-20 立项）
+
+**规则**：任何「写临时文件再 rename 到目标」的落盘，一律
+`require('platform/util/fs').writeAtomic(file, data, { mode })`。不得在调用点自拼
+tmp 名、不得另立第二个 helper。豁免清单（连同豁免理由）与执法点都在
+`test/round8-fixes-test.js` 的 J-n；新增豁免必须先进清单再提交。
+
+**为什么**：审计 §E-1 原述「至少 4 处独立实现」，实测迁移前 `src/` 下 **28 个文件**自带
+tmp+rename，其中 **25 个用固定 `file + '.tmp'` 名**。固定名不是风格问题：升级重叠期新旧两个
+守卫进程写的是**同一个**临时文件，rename 出来的字节是两次序列化的交错混合体（既不是新版也
+不是旧版，解析必失败）；另有实现不带 mode，令牌/URL 明文落 0644。
+
+**边界**：
+- `writeAtomic` 只负责**唯一 tmp 名 + 权限收口 + 失败不残留**。「读失败禁写」仍是各调用点的
+  职责（usage/store 的 `canPersist()`、registry 的 `loadedOk` 等），单源**不内建**该闸——
+  把它塞进 helper 需要 helper 反向依赖每个调用点的健康语义。
+- 迁移只允许替换写手段，不得顺手改 mode 之外的行为；带特殊语义的点（令牌轮转追加
+  `persist.appendByRotation`、私有写 `file-protect.writePrivate`）留在豁免清单内，
+  但仍被要求 tmp 名含 pid（豁免只豁免「用哪个 helper」，不豁免唯一性）。
+
+## 9. 外部输入的字符集白名单只有一个源（E-4，2026-09-20 立项）
+
+**规则**：包名、argv 项、systemd 单元名、聚合账本键的**字符集/形态**判定，一律取自
+`require('platform/util/input')`（`argvViolation` / `pkgNameViolation` /
+`unitNameViolation` / `ledgerKey`）。不得在别处复制同形正则——执法点 J-p 按「同一条尺子在
+`src/` 只有一个定义处 + 消费方拿到同一个 RegExp 对象」判，抄一份立刻红。
+
+**边界**：语义级校验**不进** input.js，留在各自领域（SSRF 的 `isPrivateHostLiteral`、
+semver 比较与通道选择、`isValidOrigin` 的 URL 结构闸）。本条只统一「这串字符能不能进
+argv / 单元名 / 对象键」这一层，避免把安全语义稀释成通用正则库。
