@@ -39,6 +39,8 @@ git push origin HEAD --tags   # 触发 CI 四平台构建+发布
 # 1) 本地：提升版本（单源 = package.json.version，只允许递增）
 bash release/scripts/bump.sh --core <下一版本>
 #    只允许递增：低于 package.json 当前值时脚本直接以「拒绝回退」退出。
+#    脚本同时提升 package-lock.json 的两处 version —— 门禁 P-9 B26 要求 lock 与 package.json 一致，
+#    只改前者会把这个不一致留到 CI 才暴露。
 #    本手册刻意不写具体版本号 —— 写死必然过期（此处曾写 0.1.5-BETA.1，低于当前值，照抄必被拒）。
 #    然后整理 CHANGELOG.md：[未发布] → [<下一版本>]
 

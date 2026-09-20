@@ -214,7 +214,7 @@ release/
 │       （凭据 runbook 见根目录 CREDENTIALS-STANDARD.md；桌面壳的签名密钥手册与 GUI 验收清单
 │        属壳仓资产，见壳仓 docs/UPDATER-SIGNING-KEY.md、docs/DESKTOP-ACCEPTANCE.md）
 └── scripts/                   ← 发布自动化脚本（唯一可执行集）
-    ├── bump.sh                ← 版本提升（**--core 内核单源**；壳版本提升见壳仓 scripts/bump-shell.sh）
+    ├── bump.sh                ← 版本提升（**--core 内核单源 package.json + lock 两处 version 同步**；壳版本提升见壳仓 scripts/bump-shell.sh）
     ├── build-ui.sh            ← 前端统一构建（ui/ → ui-react/ 镜像；npm test 与 launcher 携带依赖）
     ├── build-launcher.sh      ← 内核统一发布物（esbuild bundle core.cjs + node 启动脚本 + ui-react）
     │                             `--all-platforms` 仅 CI 内放行（本地 exit 2）
