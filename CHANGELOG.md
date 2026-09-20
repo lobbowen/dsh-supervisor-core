@@ -6,6 +6,12 @@
 
 ## [未发布]
 
+- 文档风险表的「缓解」列去假象（`AUDIT-REPORT-2026-09-19.md` §O）：`RELEASE-AND-UPDATE-MECHANISM.md`
+  的 K1 / K13 原把**设想**写成**已具备**（私钥异地多份托管与恢复演练、多 CDN 回退 + 内核本地缓存），
+  三者实际都不存在。1.2.0 出厂后的端点复测给出硬证据：jsdelivr 对 `.exe` 一律 403（`1.1.11` 同样复现）
+  ⇒ Windows 只有 unpkg 单条 CDN；`CHANGELOG` 与 `CROSS-PLATFORM-BUILD-AND-UPDATE.md` §十 V5 登记该缺口。
+  只改表述，不动 `endpoints`、不加镜像。
+
 ## [0.1.5-BETA.11]（2026-09-21）
 
 本版是 **AUDIT-2026-09-19 第 3/4/5 批全量落地**：B 类安全与生命周期（§G）、C 类健壮性 P2 全量 +

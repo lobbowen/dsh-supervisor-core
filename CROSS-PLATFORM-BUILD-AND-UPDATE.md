@@ -385,7 +385,8 @@ $ bash ci/check-glibc.sh <binary> 2.35
 
 | # | 项 | 说明 |
 |---|---|---|
-| **V1** | Tauri 是否为 **deb/rpm** 生成 `.sig` | **deb 已确证**（不必等 tag 构建重验）：线上清单 `@dsh-sup/shell-release@1.1.11` 的 `linux-x86_64` 条目 URL 与签名 trusted comment 都是 `dsh-supervisor_1.1.11_amd64.deb`，即 Tauri 确实为 deb 产出并使用了 `.sig`。**rpm 未进更新清单**：清单每平台只有一个槽位，Linux 放的是 deb —— 壳同时产 deb + rpm，但**用 rpm 装上的客户端在现清单下拿到的更新包是 deb**。这一条待壳侧定案（「未验」不等于「没问题」，此处是缺口不是疑问）|
+| **V1** | Tauri 是否为 **deb/rpm** 生成 `.sig` | **deb 已确证**（不必等 tag 构建重验）：线上清单 `@dsh-sup/shell-release@1.2.0` 的 `linux-x86_64` 条目 URL 与该签名 trusted comment 都是 `dsh-supervisor_1.2.0_amd64.deb`，即 Tauri 确实为 deb 产出并使用了 `.sig`（Release 附件里 rpm 也带 `.sig`，但它不在清单槽位内）。**rpm 未进更新清单**：清单每平台只有一个槽位，Linux 放的是 deb —— 壳同时产 deb + rpm，但**用 rpm 装上的客户端在现清单下拿到的更新包是 deb**。这一条待壳侧定案（「未验」不等于「没问题」，此处是缺口不是疑问）|
+| **V5** | 清单声明的**双 CDN 回退**是否对四平台成立 | **不成立，Windows 只有 unpkg 一条路**：1.2.0 出厂后分端点复测，jsdelivr 对 `.exe` 返 **403 Forbidden**（`1.1.11` 同样复现，与版本无关），而清单本身、`.deb`、`.app.tar.gz`、同包 `.sig` 在 jsdelivr 都取得到。Tauri 按 endpoints 顺序回退，主端点 unpkg 正常 ⇒ 日常更新无感，但「unpkg 挂了就换下一个」对 win 是空操作。已登记于壳仓 `CHANGELOG.md` `[1.2.0]` 缺口条目；修法（第三镜像 / 自建镜像 / 换 win 产物形态）待壳侧定案 |
 | ~~V2~~ | ~~`ubuntu-22.04` 上能否顺利构建~~ | **已由 CI 确证**：`ubuntu-22.04` job 在壳仓 main 上反复全绿（含 glibc 2.35 门禁与打包）。~~原「本机 24.04 基座 cargo build --release 成功」~~ —— 那既不能证明 22.04 基座，也违反「一律 CI 构建/测试」，不作为依据保留 |
 | ~~V3~~ | ~~Linux arm64 是否有用户需求~~ | **未纳入矩阵**（Linux 只有 x64）。纳入新平台属矩阵变更：两仓主干保护已于 2026-09-21 恢复，required contexts 逐字内嵌矩阵参数，**改矩阵必须同批改 contexts**，否则旧语境永不出现 → 所有 PR 阻塞（现值见 `DEVELOPMENT-TRACK.md` §7、壳仓 `docs/RELEASE-AND-BUILD-DECISION.md`）|
 | ~~V4~~ | ~~Windows arm64 是否纳入~~ | **未纳入矩阵**（Windows 只有 x64，bundles `nsis,msi`），变更约束同上 |

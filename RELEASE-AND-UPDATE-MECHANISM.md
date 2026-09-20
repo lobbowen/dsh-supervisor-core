@@ -17,7 +17,7 @@
 | D2 | 壳更新源 | **壳直连公网自更新**；内核**不做更新源**，只做安全网 |
 | D3 | 更新失败 | 显示选择页 **【重试】【继续】**（不静默放行，但【继续】始终可用） |
 | **D4** | **Linux 分发形态** | **废弃 AppImage，采用标准 Linux 包（deb，可选 rpm）** |
-| D5 | 通道 | npm CDN（unpkg 主 / jsdelivr 备） |
+| D5 | 通道 | npm CDN（unpkg 主 / jsdelivr 备；**备端对 Windows 无效**，见 `CROSS-PLATFORM-BUILD-AND-UPDATE.md` §十 V5） |
 | D6 | 内核更新机制 | **绝不被本方案破坏**（四条路径原样保留） |
 
 ### D4 的影响与契合度（重要）
@@ -285,9 +285,9 @@ dsh-supervisor: /usr/bin/dsh-supervisor-gui      # 当时生产就是 deb 安装
 
 | # | 风险 | 缓解 |
 |---|---|---|
-| K1 | minisign 私钥丢失 → 已发布用户**永久**无法更新 | 异地多份 + 双人托管 + **首次发布前演练恢复** |
+| K1 | minisign 私钥丢失 → 已发布用户**永久**无法更新 | 表上原写的「异地多份 + 双人托管 + 首次发布前演练恢复」**一项都没落地**；用户 2026-09-11 定案为**只做本机备份**（壳仓 `docs/UPDATER-SIGNING-KEY.md` §四）。该风险已真实发生过一次：旧钥四处不可得 → 换钥、`≤1.1.11` 存量客户端强制手动重装 |
 | K11 | Tauri 原地安装不保留旧版本 | **更新前强制备份** + 内核缓存 |
-| K13 | npm CDN（unpkg/jsdelivr）为第三方 | 多 CDN 回退 + **内核本地缓存**兜底 + 失败进选择页 |
+| K13 | npm CDN（unpkg/jsdelivr）为第三方 | 原写的「多 CDN 回退 + 内核本地缓存兜底」**两者都不成立**：jsdelivr 对 `.exe` 返 403（Windows 实际只有 unpkg 一条路，见 `CROSS-PLATFORM-BUILD-AND-UPDATE.md` §十 V5），内核本地缓存从未实现。真正在跑的缓解只有「失败进选择页」让用户重试 |
 | K14 | deb 自更新需 pkexec，用户可拒绝 | 视为正常失败路径 → 选择页【重试】【继续】 |
 | K15 | deb 新版本新增依赖 → `dpkg -i` 报未满足 | 归入失败路径并**如实显示原因**；文档说明可用 `apt install ./x.deb` 手动补依赖 |
 | K16 | 壳仓 CI 推 main 即四平台完整构建（耗时；2026-09-13 按明确要求改为 push main 也跑完整矩阵）| 公开仓 Actions 免额度；**发布**仍仅 tag 触发（`publish` job）|
