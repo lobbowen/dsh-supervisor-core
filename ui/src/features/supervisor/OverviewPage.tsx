@@ -7,7 +7,7 @@ import {
   Activity, ArrowUpRight, ExternalLink, Power, RefreshCw, Rocket,
   ShieldCheck, TerminalSquare, Trash2, TriangleAlert,
 } from "lucide-react";
-import type { NodeLtsStatus } from "../../services/supervisor";
+import type { EnvCatalogItem, NodeLtsStatus } from "../../services/supervisor";
 import { toast } from "sonner";
 import { Button } from "../../framework/ui";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "../../framework/ui/dialog";
@@ -268,37 +268,60 @@ export function OverviewPage() {
   );
 }
 
-/** 环境检测：当前 Node 版本 + 官方最新 LTS 更新提示（10 分钟轮询，静默失败降级） */
+/** 环境检测：声明式消费 /env/status 的 catalog 必填项（Node 与 npm 一律同现），
+ *  LTS 线提示仍取 /env/node-lts（那是 LTS 建议，不是工具链清单）。
+ *
+ *  旧实现只念 node-lts 的 current：环境卡对 npm 完全失明，npm 缺失时照旧只报 Node 版本号，
+ *  而仓库里早已有一份把 npm 标成 required 的声明式目录，只是没有任何消费方。 */
 function EnvDetect() {
   const [node, setNode] = useState<NodeLtsStatus | null>(null);
+  const [items, setItems] = useState<Record<string, EnvCatalogItem> | null>(null);
 
   useEffect(() => {
     let alive = true;
     const load = async () => {
-      const r = await supervisorApi.nodeLts().catch(() => null);
-      if (alive) setNode(r);
+      const [n, e] = await Promise.all([
+        supervisorApi.nodeLts().catch(() => null),
+        supervisorApi.envStatus().catch(() => null),
+      ]);
+      if (!alive) return;
+      setNode(n);
+      setItems(e?.catalog?.items ?? null);
     };
     void load();
     const iv = setInterval(load, 10 * 60 * 1000);
     return () => { alive = false; clearInterval(iv); };
   }, []);
 
-  // 无数据（加载中）或失败且无当前版本时不渲染
-  if (!node?.current) return <span className="min-w-[120px] text-xs text-muted-foreground">环境检测…</span>;
-
-  //改为消费后端**真实产出**的字段。
-  //   原实现读 latestLts / updateAvailable / ltsName —— 后端（settings-view.js::nodeLtsStatus）
-  //   从不产出这三个键（它不做远端查询），故「可更新到 vX LTS」整块是**不可达死分支**。
-  //   现用 ltsLine（偶数主版本=通常为 LTS 线）给出真实提示，suggested 作 title 明细。
+  const required = Object.entries(items ?? {}).filter(([, it]) => it.required);
+  if (!node?.current && required.length === 0) {
+    return <span className="min-w-[120px] text-xs text-muted-foreground">环境检测…</span>;
+  }
   return (
     <span className="inline-flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground">
-      <span className="whitespace-nowrap" title={node.suggested || undefined}>环境检测 · Node v{node.current}</span>
-      {node.ltsLine === false ? (
-        <span className="inline-flex items-center gap-1 whitespace-nowrap rounded-full bg-warning-background px-2 py-0.5 font-semibold text-warning">
+      <span className="whitespace-nowrap">环境检测</span>
+      {required.map(([id, it]) => {
+        const ok = it.state === "ok" || it.state === "configured";
+        return (
+          <span
+            key={id}
+            title={it.detail || undefined}
+            className={cn(
+              "inline-flex items-center gap-1 whitespace-nowrap rounded-full px-2 py-0.5",
+              ok ? "text-muted-foreground/70" : "bg-warning-background font-semibold text-warning"
+            )}
+          >
+            {!ok && <TriangleAlert className="size-3" />}
+            {it.label} {it.detail || "—"}
+          </span>
+        );
+      })}
+      {node?.ltsLine === false ? (
+        <span className="inline-flex items-center gap-1 whitespace-nowrap rounded-full bg-warning-background px-2 py-0.5 font-semibold text-warning" title={node.suggested || undefined}>
           <TriangleAlert className="size-3" />
           非 LTS 线（建议偶数主版本）
         </span>
-      ) : node.ltsLine === true ? (
+      ) : node?.ltsLine === true ? (
         <span className="hidden whitespace-nowrap text-muted-foreground/70 sm:inline">LTS 线</span>
       ) : null}
     </span>
