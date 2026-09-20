@@ -31,15 +31,15 @@ const check = (n, c, x) => {
 
 // 唯一规范登记表：领域 -> { 文件, 校验它的门禁 }
 // 不变量：**每个领域只能有一份规范**，且每份规范都必须有机器校验（U-1）。
-//：新增两个域级规范（令牌 / 无控制台窗口）—— 它们各自是本领域的唯一事实源，
+//新增两个域级规范（令牌 / 无控制台窗口）—— 它们各自是本领域的唯一事实源，
 //   分别由 token-contract-gate / no-console-window-gate 机器校验；登记在此即受本门禁保护
 //   （其它文档仍不得自称规范）。
-//：再新增「发布通道/选版」（RELEASE-CHANNEL-CONTRACT.md）—— canary/beta/rc/
+//再新增「发布通道/选版」（RELEASE-CHANNEL-CONTRACT.md）—— canary/beta/rc/
 //   latest/rollback 五通道与选版算法的唯一事实源，由 release-channel-gate 机器校验。
 //   与「发布/构建流程」（RELEASE-STANDARD.md）是**两个域**：前者管「版本如何被选择」，
 //   后者管「怎么构建与发布」，故不违反一域一规范。
 // reads: 该门禁是否**真读**规范正文（U-1b 的声明字段，必须与源码事实一致）。
-//：实测 11 个登记门禁中只有 3 个在**剥注释后**的源码里出现自己的规范名并真读它
+//实测 11 个登记门禁中只有 3 个在**剥注释后**的源码里出现自己的规范名并真读它
 //   （release-spec-consistency / layering-and-dependency / acceptance-standard）；其余 8 个
 //   只在头注里提到规范名 —— 全域硬执行会立刻红 8 个，故按「声明诚实 + 缺口可见」分区登记。
 //   reads:false 不是「已修」，而是**显式登记的债**：必须写 pending 原因，并由 U-1b 打印成清单。
@@ -47,7 +47,7 @@ const STANDARDS = {
   '发布/构建流程': { file: 'RELEASE-STANDARD.md', gate: 'test/release-spec-consistency-test.js', reads: true },
   '凭据管理': { file: 'CREDENTIALS-STANDARD.md', gate: 'test/credential-hygiene-test.js', reads: false,
     pending: '门禁校验凭据库/令牌正则/隔离等**实现不变量**，尚未读规范正文' },
-  //：本域原为「名义映射」（门禁从不提 DEVELOPMENT-TRACK）；已让 layering 门禁真读
+  //本域原为「名义映射」（门禁从不提 DEVELOPMENT-TRACK）；已让 layering 门禁真读
   //   规范 并断言「规范分层名 <-> layerOf 归类」一致（L-5），故 reads:true 属实。
   '改代码规则': { file: 'DEVELOPMENT-TRACK.md', gate: 'test/layering-and-dependency-gate-test.js', reads: true },
   '令牌管理': { file: 'DSH-TOKEN-CONTRACT.md', gate: 'test/token-contract-gate-test.js', reads: false,
@@ -62,7 +62,7 @@ const STANDARDS = {
     pending: '门禁校验网关实现不变量（PG-1..PG-8），尚未读规范正文' },
   '目录结构与分层': { file: 'DIRECTORY-STRUCTURE-DESIGN.md', gate: 'test/directory-structure-gate-test.js', reads: false,
     pending: '门禁校验目录/行数/原型混入等实现不变量，尚未读规范正文' },
-  //：DOMAIN-STRUCTURE-DESIGN.md 原先以「定版 SSOT / 唯一权威」自称，规避 U-3 的字面量检查；
+  //DOMAIN-STRUCTURE-DESIGN.md 原先以「定版 SSOT / 唯一权威」自称，规避 U-3 的字面量检查；
   //   登记入表后由本门禁（U-1/U-2）保护，U-3 同时堵住该措辞。
   '域内结构': { file: 'DOMAIN-STRUCTURE-DESIGN.md', gate: 'test/domain-structure-gate-test.js', reads: false,
     pending: '门禁校验域内分层实现不变量（DG-1..DG-16），尚未读规范正文' },

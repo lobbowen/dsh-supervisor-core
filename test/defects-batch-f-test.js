@@ -87,7 +87,7 @@ console.log('== K7 端口注册表路径（三平台一致）==');
     !/process\.env\.HOME/.test(code), 'HOME');
   check('K7 不再把 /tmp 作为兜底（状态文件会与 state.json 分裂）',
     !code.includes("'/tmp'"), '/tmp');
-  //：路径改由**产品状态根**（src/platform/service/state-root.js）给出 ——
+  //路径改由**产品状态根**（src/platform/service/state-root.js）给出 ——
   //   仍是三平台正确来源，且与 state.json 同域（不分裂）；不再各自 os.homedir()。
   //  Phase 1：ports 上游化到 platform/service/ports/ 后，其**同层**引用变为 '../state-root'
   //   （原 '.../platform/service/state-root' 的跨层写法不存在了）——判据随之放宽为"经 state-root 的 supervisorDir()"。

@@ -140,7 +140,7 @@ function createCtlServer({ target, allowMethods, logger, events } = {}) {
     req.on('error', () => { try { res.end(); } catch {} });
   });
   server.on('error', (e) => { if (logger) logger.error('[ctl] server error: ' + e.message); });
-  //：守卫(Node>=19 globalAgent keepAlive=true 连接池化)复用长连调用 ctl；
+  //守卫(Node>=19 globalAgent keepAlive=true 连接池化)复用长连调用 ctl；
   // Node http server 默认 keepAliveTimeout=5s 会回收空闲池化连接 -> 守卫下次复用已关 socket ->
   // 间歇 'socket hang up' -> routerProviders 回退守卫陈旧本地视图 -> 前端账号状态与 daemon 分裂闪烁
   //（实测 3100 /router/providers 在 daemon 真值 与 陈旧副本 间交替，Kbobt7/MxULq9 旧态复现）。

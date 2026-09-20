@@ -73,7 +73,7 @@ console.log('== T2 硬标准：本地无全平台构建/发布路径 ==');
     /--all-platforms\)/.test(pub) && /已废弃/.test(pub) && /exit 2/.test(pub), 'ok');
   check('T2-d ci-core 的 --all-platforms 一律拒绝',
     /--all-platforms\)/.test(ci) && /已废弃/.test(ci) && /exit 2/.test(ci), 'ok');
-  //：单平台真发布也必须仅 CI 内（原漏洞：只封了 --all-platforms）。
+  //单平台真发布也必须仅 CI 内（原漏洞：只封了 --all-platforms）。
   check('T2-b2 publish-core 单平台真发布也仅 CI 内（GITHUB_ACTIONS 守卫）',
     /GITHUB_ACTIONS/.test(pub), 'ok');
   check('T2-d2 ci-core 真发布也仅 CI 内（GITHUB_ACTIONS 守卫）',
@@ -183,7 +183,7 @@ console.log('== T6 纯 JS 产物前提 ==');
       check('T6-e 实测：全部平台目录 core.cjs 哈希一致', new Set(hashes).size === 1, hashes.length + ' 份，唯一哈希 ' + new Set(hashes).size);
     } else {
       console.log('SKIP T6-e（产物不足 2 个平台目录；先跑 build:launcher:all 可覆盖）');
-      //：CI 会先跑 build:launcher:all 并设 DSH_LAUNCHER_REQUIRED=1；
+      //CI 会先跑 build:launcher:all 并设 DSH_LAUNCHER_REQUIRED=1；
       // 此时产物不足即**硬失败**，不得静默跳过（否则该断言在产线上永不检查）。
       if (process.env.DSH_LAUNCHER_REQUIRED === '1') {
         check('T6-e 需要真实产物（已声明 DSH_LAUNCHER_REQUIRED=1，不得静默跳过）', false,

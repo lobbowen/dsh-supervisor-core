@@ -48,7 +48,7 @@ export function OverviewPage() {
   const events = useMemo(() => snap.events.filter((e) => !NOISE.has(e.type)), [snap.events]);
 
   async function toggleDsh() {
-    //：启停统一走 /lifecycle/dsh/start|stop（语义与旧 /start|/stop 等价，单一控制路径）
+    //启停统一走 /lifecycle/dsh/start|stop（语义与旧 /start|/stop 等价，单一控制路径）
     await run("dsh", () => (running ? supervisorApi.lifecycleStop("dsh") : supervisorApi.lifecycleStart("dsh")), { success: running ? "正在停止 DSH…" : "正在启动 DSH…" });
   }
   async function openWeb() {
@@ -286,7 +286,7 @@ function EnvDetect() {
   // 无数据（加载中）或失败且无当前版本时不渲染
   if (!node?.current) return <span className="min-w-[120px] text-xs text-muted-foreground">环境检测…</span>;
 
-  //：改为消费后端**真实产出**的字段。
+  //改为消费后端**真实产出**的字段。
   //   原实现读 latestLts / updateAvailable / ltsName —— 后端（settings-view.js::nodeLtsStatus）
   //   从不产出这三个键（它不做远端查询），故「可更新到 vX LTS」整块是**不可达死分支**。
   //   现用 ltsLine（偶数主版本=通常为 LTS 线）给出真实提示，suggested 作 title 明细。

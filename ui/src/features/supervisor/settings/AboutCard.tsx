@@ -90,7 +90,7 @@ export function AboutCard() {
   useEffect(() => { void load(); }, [load]);
 
   // 挂载后台权威检查（非阻塞）：本地 GET 恒不联网，若不校验则「可更新」徽标永不自发出现。
-  //：**内核与桌面壳各查一次**（用户要求「一起检测」）。
+  //**内核与桌面壳各查一次**（用户要求「一起检测」）。
   useEffect(() => {
     let alive = true;
     (async () => {

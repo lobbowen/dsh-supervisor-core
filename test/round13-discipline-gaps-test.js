@@ -173,14 +173,14 @@ const TMP = fs.mkdtempSync(path.join(os.tmpdir(), 'r13-'));
   // -- 3) 令牌恢复文件权限收口 --
   console.log('== ③ 令牌恢复文件 mode 收口 ==');
   {
-    //：令牌持久化已随令牌组件目录化迁至 src/platform/service/token/persist.js
+    //令牌持久化已随令牌组件目录化迁至 src/platform/service/token/persist.js
     //   （原 DshTokenService._persistTokenFile 的内部实现 -> appendByRotation）。
     //   本断言的**意图不变**：写后显式 chmod 收口（mode 只对新建生效）+ 超限轮转而非清空。
     const T = require(path.join(ROOT, 'src', 'platform', 'service', 'token', 'persist.js'));
     check('③ 定位到令牌持久化实现 appendByRotation', typeof T.appendByRotation === 'function');
     const appendByRotation = T.appendByRotation;
     const fp = path.join(TMP, 'token.log');
-    //：**POSIX 权限位在 Windows 上不存在**。
+    //**POSIX 权限位在 Windows 上不存在**。
     //   Node 的 fs.chmodSync 在 Windows 只能切换**只读位**，statSync().mode 恒为 0666/0444 ——
     //   故「收口到 0600」这类断言在 Windows 上既不可能成立、也无意义
     //   （Windows 用 ACL 而非 mode 表达「世界可读」）。

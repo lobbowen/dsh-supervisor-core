@@ -258,7 +258,7 @@ export const supervisorApi = {
     post<GenericOk & RegistryInfo>("/dist/registry/set", p),
   registryRefresh: () => post<GenericOk & RegistryInfo>("/dist/registry/refresh"),
   /** 同源单源探活（服务端探测，不受页面 CSP connect-src 'self' 约束）。
-   *：原先由浏览器直连用户填的镜像 -> 被 CSP 拦截 -> 恒报「探测失败」。 */
+   *原先由浏览器直连用户填的镜像 -> 被 CSP 拦截 -> 恒报「探测失败」。 */
   registryProbe: (origin: string) => post<GenericOk & { origin: string; ok: boolean; latencyMs: number | null; probe?: string }>("/dist/registry/probe", { origin }),
   /** 内核更新状态（只读）：安装/重启由桌面壳执行（单写入者契约，见 kernelUpdateBridge）。 */
   selfUpdateStatus: () => get<SelfUpdateStatus>("/self-update/status"),

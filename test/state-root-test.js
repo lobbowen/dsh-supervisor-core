@@ -109,7 +109,7 @@ check('SR-4 config 不再硬编码 ~/.dsh/supervisor', !/stateFile:\s*'~\.dsh\/s
 {
   const pkg = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8'));
   const chain = pkg.scripts.test || '';
-  //：接受 `-r`（--require 的短形式）—— 二者语义相同。
+  //接受 `-r`（--require 的短形式）—— 二者语义相同。
   //   改用短形式是为压 scripts.test 长度以适配 **Windows cmd.exe 8191 命令行上限**
   //   （CI 实测 windows-latest 报 "The command line is too long."，Linux/macOS 不受限）；
   //   本判据的意图（链经 _preload 注入隔离、不依赖 shell 语法）不变。

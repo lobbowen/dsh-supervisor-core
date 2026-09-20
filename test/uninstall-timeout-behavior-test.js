@@ -126,9 +126,9 @@ const check = (n, c, x) => { results.push(!!c); console.log((c ? 'PASS' : 'FAIL'
 
     // 挂起假 npm：复用仓库内夹具 test/fake-npm.js 的 hang 模式（FAKE_MODE 经 **env** 传入）。
     //    绝不要把临时脚本路径放进 commandTemplate —— Windows runner 的 os.tmpdir() 是 8.3
-    //   短名（`C:\Users\RUNNER~1\…`），`~` 属 B11 禁用字符，runNpmInstall 会 fail-closed 拒掉
-    //   。仓库内路径只含 `\\`，
-    //   由 WIN_DRIVE_ABS_RE 豁免；pid 文件路径经 FAKE_PID_FILE 传，不进 argv。
+    //   短名（`C:\Users\RUNNER~1\…`），`~` 属 B11 禁用字符，runNpmInstall 会 fail-closed 拒掉；
+    //   仓库内路径只含反斜杠，由 WIN_DRIVE_ABS_RE 豁免；
+    //   pid 文件路径经 FAKE_PID_FILE 传，不进 argv。
     const pidFile = path.join(tmp, 'inflight-npm.pid');
     process.env.FAKE_MODE = 'hang';
     process.env.FAKE_PID_FILE = pidFile;

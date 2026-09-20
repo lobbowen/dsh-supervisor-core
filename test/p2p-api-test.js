@@ -143,8 +143,8 @@ registerDryRunApp();
   check('P14 更新检查端点', r.code === 200 && r.body.ok === true, r.code + ' ' + JSON.stringify(r.body));
 
   // 13. account discard（不存在 id -> 合理错误）
-  //    P15 原测 /router/providers/account/confirm —— 该端点已随 review 状态删除
-  //     。现断言"已不存在（404）"以锁住设计意图。
+  //    /router/providers/account/confirm 曾断言其存在；该端点随 review 状态删除后，
+  //    本用例改断言「已不存在（404）」，把删除这件事锁住而不是悄悄改掉。
   r = await api('POST', '/router/providers/account/confirm', { id: 'nope', keyId: 'x' });
   check('P15 confirm 端点已删除（404，review 状态已移除）', r.code === 404, r.code + ' ' + JSON.stringify(r.body));
   r = await api('POST', '/router/providers/account/discard', { id: 'nope', keyId: 'x' });

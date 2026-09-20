@@ -131,7 +131,7 @@ const mk = (opts) => {
     check('W3-i status() 暴露可观测字段', st.enabled === true && typeof st.intervalMs === 'number' && st.session && typeof st.session.available === 'boolean', JSON.stringify(st).slice(0, 90));
   }
   {
-    //：退出门下沉看护域 —— 退出中/已退出恒不拉起（退出管家后不再自愈）。
+    //退出门下沉看护域 —— 退出中/已退出恒不拉起（退出管家后不再自愈）。
     const m = mk({ alive: false, halted: () => true });
     await m.w.tick();
     m.adv(5000);

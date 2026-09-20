@@ -84,7 +84,7 @@ check('U-b verify 串包含 typecheck/lint/test/build 四步',
 //   用简单的 includes 会把说明文字当成仍然有效的声明（我第一版就踩了这个假阳性）。
 //   判据：不得存在「以肯定语气指向 [3/7]」的句子（排除标记为「原写/校正/并不存在」的说明行）。
 {
-  //：release-core.sh 已删除（硬标准：构建/发布均经 GitHub CI），[3/7] 之争随之终结。
+  //release-core.sh 已删除（硬标准：构建/发布均经 GitHub CI），[3/7] 之争随之终结。
   //   改为断言：CI 注释里不得再出现该历史阶段的「有效声称」（说明性行不算）。
   const liveClaim = ciYml
     .split(String.fromCharCode(10))

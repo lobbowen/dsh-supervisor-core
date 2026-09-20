@@ -267,7 +267,7 @@ export function InstancesPage({ onRegisterActions }: { onRegisterActions?: (a: {
                 const id = confirmId;
                 setConfirmId(null);
                 if (!id) return;
-                //：删除的**安全结果必须对用户可见**（失效模式 g）。
+                //删除的**安全结果必须对用户可见**（失效模式 g）。
                 //   后端在「单元仍在运行」时会**保留数据目录**（防不可逆丢失）并返回
                 //   dataPreserved=true；而确认框承诺的是「彻底删除、不可恢复」。
                 //   不对用户说明就等于谎报「数据已清」，用户/支持都无从得知、
