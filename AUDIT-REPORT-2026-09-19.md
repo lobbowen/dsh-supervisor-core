@@ -682,6 +682,7 @@ node/npm 拆成两个松字段（成功路径只写 node）；内核侧把 npm �
 | J-1d | `app/settings/env.js` | 另起一处手拼 `dirname(stateFile) + 'runtime.json'` 读契约；npm 只有 `detected` 一段 | 统一经 `contract/runtime` 读取；npm 与 node 同构三段 `{detected,runtime,path}` | `cross-platform-test` A5-h/A5-i/A5-a-c |
 | J-1e | `ui/.../OverviewPage.tsx` + `types.ts` | 环境卡只念 `/env/node-lts` 的 Node 版本；把 npm 标成 `required:true` 的声明式目录零消费；`EnvStatus.npm` 少声明两段 | 卡改为遍历 `catalog.items` 必填项渲染，类型与后端产出对齐 | A5-j~A5-q（含「只念 Node」旧形状反向夹具） |
 | J-1f | `design-notes/*`、`round13` 头注、`types.ts` 注释 | 错误引导：仍记 `npmExe`/`npmExeArgs` 为现存导出；指向不存在的 `guard/supervisor/settings-view.js` | 就地改指真实模块 | 文档门禁 + 人工复核 |
+| J-1g | `platform/contract/runtime.js`（CI 抓出） | 收口时 `read()` 只补了 `npmVersion`，漏出 `nodeVersion`：`/env/status` 的 `node.runtime` 恒为 null。同处 R-8 拿 `c2.nodeVersion`（undefined）作对照，于是**空转通过** | `read()` 两形都认（`j.nodeVersion \|\| node.version`）；R-8 先钉住对照项非空再比不等 | R-1「扁平旧键也解析出 nodeVersion」+ R-1「纯嵌套形状解析出 nodePath/nodeVersion/nodeBinDir」+ R-8 非空转前置 |
 
 ### J-2 壳侧发现（同批在壳仓修，见壳仓 CHANGELOG「装了 npm 却看不见 npm」条目）
 

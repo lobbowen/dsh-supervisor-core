@@ -32,6 +32,7 @@ function read() {
   return {
     schema: Number(j.schema) || 1,
     nodePath: j.nodePath || node.path || null,
+    nodeVersion: j.nodeVersion || node.version || null,
     nodeBinDir: j.nodeBinDir || node.binDir || null,
     npmPath: j.npmPath || npm.path || null,
     // 外壳可只提供包内 JS（npmPath=node，npmArgs=[npm-cli.js]），消费者必须带上 args。

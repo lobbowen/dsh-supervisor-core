@@ -14,7 +14,7 @@
   （Windows 上即 ENOENT，装了也误报 missing）、`app/settings/env.js` 另起一处手拼
   `path.dirname(stateFile) + 'runtime.json'` 读契约（与真实落点不同源，状态根一挪即静默读空）。
 - **单一解析口**：`platform/contract/runtime.js` 的 `npmBin()`（只回程序）换成 `npmLauncher()`，
-  成对返回 `{ program, args, version, source }`；`read()` 补出 `npmVersion` / `source` / `installedAt`。
+  成对返回 `{ program, args, version, source }`；`read()` 补出 `npmVersion` / `nodeVersion` / `source` / `installedAt`。
   分发安装、原生管理（`app/native/npm.js::npmLaunch`，保留 `_npmBin`/`_npmBinArgs` 注入且「注入即接管整对」）、
   环境探测三处消费者一律经该口，程序与前缀参数同源一次解析。
 - **版本探测带上 args**：`env-catalog` 的 `whichVersion/cachedWhichVersion` 增加参数维（缓存键含 args），

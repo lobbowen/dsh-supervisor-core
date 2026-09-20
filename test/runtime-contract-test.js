@@ -76,12 +76,14 @@ writeContract({
   const c2 = rc.read();
   check('R-1 schema2 解析出 node/npm/binDir', !!(c2 && c2.nodePath === NODE && c2.npmPath === NODE && c2.nodeBinDir === NODE_DIR), JSON.stringify(c2 && { n: c2.nodePath, m: c2.npmPath }));
   check('R-1 read() 带出 npmArgs 与 npmVersion', !!(c2 && c2.npmArgs[0] === NPM_CLI && c2.npmVersion === '10.9.2'), JSON.stringify(c2 && { a: c2.npmArgs, v: c2.npmVersion }));
+  check('R-1 read() 带出 nodeVersion（面板 node.runtime 念它）', c2 && c2.nodeVersion === 'v22.12.0', JSON.stringify(c2 && c2.nodeVersion));
   const l = rc.npmLauncher();
   check('R-2 契约在场时 source=contract', l.source === 'contract', l.source);
   check('R-2 program 取契约绝对路径', l.program === NODE, l.program);
   // 缺陷本体：只取 program 会把「node 跑 npm-cli.js」降级成裸跑 node。args 非空即证明拆读必然失真。
   check('R-2 args 与 program 成对（缺一半即失真）', l.args.length === 1 && l.args[0] === NPM_CLI, JSON.stringify(l.args));
-  check('R-8 version 取壳实跑回读的 npm 版本（不是 node 版本）', l.version === '10.9.2' && l.version !== c2.nodeVersion, String(l.version));
+  check('R-8 version 取壳实跑回读的 npm 版本（不是 node 版本）',
+    l.version === '10.9.2' && c2.nodeVersion === 'v22.12.0' && l.version !== c2.nodeVersion, String(l.version));
 }
 const env = rc.withPath({ PATH: '/ambient/bin' });
 check('R-3 withPath 把 nodeBinDir 置于首位', env.PATH.indexOf(NODE_DIR) === 0, env.PATH);
@@ -101,6 +103,23 @@ writeContract({ schema: 2, nodePath: NODE, nodeVersion: 'v22.12.0', nodeBinDir: 
   const l = rc.npmLauncher();
   check('R-8 壳未回读 npm 版本时 version=null（不编造）', l.version === null, String(l.version));
   check('R-2 扁平旧键仍解析出绝对 npm 与空 args', l.program === NPM && l.args.length === 0, JSON.stringify(l));
+  check('R-1 只写扁平旧键时也解析出 nodeVersion', rc.read().nodeVersion === 'v22.12.0', String(rc.read().nodeVersion));
+}
+
+// -- 只写嵌套 node{}/npm{} 的壳：两形都必须认，漏一侧面板就把运行时念成 null --
+writeContract({
+  schema: 2,
+  node: { path: NODE, binDir: NODE_DIR, version: 'v22.12.0' },
+  npm: { path: NODE, args: [NPM_CLI], version: '10.9.2' },
+});
+{
+  const c = rc.read();
+  check('R-1 纯嵌套形状解析出 nodePath/nodeVersion/nodeBinDir',
+    !!(c && c.nodePath === NODE && c.nodeVersion === 'v22.12.0' && c.nodeBinDir === NODE_DIR),
+    JSON.stringify(c && { p: c.nodePath, v: c.nodeVersion, b: c.nodeBinDir }));
+  const ln = rc.npmLauncher();
+  check('R-1 纯嵌套形状解析出 npm 启动形态',
+    ln.source === 'contract' && ln.args[0] === NPM_CLI && ln.version === '10.9.2', JSON.stringify(ln));
 }
 
 // -- schema 1 兼容（只有顶层旧键）--
