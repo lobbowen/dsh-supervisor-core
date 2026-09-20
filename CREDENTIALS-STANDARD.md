@@ -19,9 +19,15 @@
 那是 **ephemeral** 的 —— 每个会话/实例一个目录，换会话就没了。另有一份副本以 **0664（全局可读）**
 散落在 `$HOME` 根目录。
 
-**为什么「下午能推」**：推壳仓走的是 **SSH 部署密钥**（`~/.ssh/id_ed25519_wasi7`，经 repo-local `core.sshCommand`），
+**为什么「下午能推」**：当时推壳仓走的是 **SSH 部署密钥**（`~/.ssh/id_ed25519_wasi7`，经 repo-local `core.sshCommand`），
 **与令牌无关**。令牌只用于 **REST API**（查状态 / 设 secret / 改分支保护）——
 两者被混为一谈，才显得「令牌时而有时而没有」。
+
+> **现状纠正（2026-09-20 实测）**：上面那句只解释**当时**的症状，**不是**当前的推送方式。
+> SSH 部署密钥通道**已废弃且不可恢复**：`~/.ssh/` 下已无任何私钥（2026-09-19 事故连同旧库一并丢失），
+> 两仓 remote 现为 `https://github.com/lobbowen/...`。
+> **当前唯一推送通道 = HTTPS + repo-local `credential.helper store --file=<REAL_HOME>/develop/.credentials/git-credentials`**。
+> 不要把「找回 SSH 通道」当成待办，也不要用 `ssh.github.com:443`。
 
 ---
 
@@ -29,7 +35,7 @@
 
 | # | 铁律 | 门禁 |
 |---|---|---|
-| 1 | 凭据**只允许**存放在规范库 `<REAL_HOME>/develop/.credentials/`（SSH 密钥可留 `~/.ssh`）。**禁止**放在实例子目录或附件目录 | D-4 / 持久化-1 ~ 持久化-3 / R-6 |
+| 1 | 凭据**只允许**存放在规范库 `<REAL_HOME>/develop/.credentials/`。**禁止**放在实例子目录或附件目录 | D-4 / 持久化-1 ~ 持久化-3 / R-6 |
 | 2 | 库目录 **0700**、库内文件 **0600**；禁止令牌内嵌进 git remote URL；仓库文件里不得出现令牌值 | D-1 / D-2 / R-1 / R-3 / S-1 / S-2 / S-3 |
 | 3 | 令牌**必须有清单条目**（`index.json`），只存引用不存值；缺失要显式标 `missing` | D-3 / D-13 / R-2 |
 
@@ -45,15 +51,19 @@ os.homedir() 同值。
 
 ---
 
-## 2. 两类凭据，用途不同（不要再混）
+## 2. 一处凭据、两种用法（不要再混）
 
-| 类型 | 用途 | 能否改仓库设置 |
+> **实测（2026-09-20）**：库内 `github-pat` 与 `git-credentials` 存的是**同一枚** Fine-grained PAT
+> （长度与前缀逐位相同），只是**格式**不同。把它当成「两把不同的钥匙、能力不同」是本节要消灭的误解。
+
+| 用法 | 载体与形态 | 能做到 |
 |---|---|---|
-| **SSH 部署密钥**（`~/.ssh/id_ed25519_*`）| `git push` | 不能：只能读写 git，**无 API 权限** |
-| **GitHub PAT**（细粒度）| REST API：查状态 / 建 secret / **改分支保护** | 能：需 `Administration: Read and write` |
+| `git push` / `git fetch` | `git-credentials`，URL 形态 `https://x-access-token:<值>@github.com`，经两仓 repo-local `credential.helper store --file=` 指过去 | 读写 git；**不**要走 API 语义，helper 只在 http(s) remote 上生效 |
+| REST API：查 CI / 建 secret / **改分支保护** | `github-pat` 原值作 `Authorization: Bearer` | 取决于该 PAT 的仓库与权限授予（现为 `lobbowen` 两仓 + `Administration: Read and write`）|
 
-> 想设「required status checks」必须用 **PAT 且有 Administration 权限**；
-> SSH 密钥再全权限也**做不到** —— 本会话就在壳仓上撞到过 `Resource not accessible`。
+> 历史上还有第三类：**SSH 部署密钥**（`~/.ssh/id_ed25519_*`）——**已废弃，见 §0 现状纠正**，
+> 不要再去找或重建。它当时的教训仍然成立：部署密钥再全权限也**做不到**「required status checks」，
+> 那必须走 **API 且有 Administration 权限**（本会话就在壳仓上撞到过 `Resource not accessible`）。
 
 ---
 
@@ -61,8 +71,8 @@ os.homedir() 同值。
 
 ```bash
 bash release/scripts/cred.sh list      # 列出全部条目与状态
-bash release/scripts/cred.sh doctor    # 卫生检查（权限/缺项/散落副本/值泄漏），有缺项返回 1
-bash release/scripts/cred.sh verify    # 实测连通性（API 打点），不打印令牌值
+bash release/scripts/cred.sh doctor    # 卫生检查（权限/条目可寻址/库内路径/散落副本/清单含值），有 FAIL 行返回 1
+bash release/scripts/cred.sh verify [名] # 按清单的 verify 打点实测连通性，不打印令牌值
 bash release/scripts/cred.sh path 名    # 打印凭据文件路径
 bash release/scripts/cred.sh get  名    # 打印令牌值（仅给脚本消费）
 echo -n TOKEN | bash release/scripts/cred.sh put 名   # 写入并置 active
@@ -70,13 +80,21 @@ echo -n TOKEN | bash release/scripts/cred.sh put 名   # 写入并置 active
 
 库根可用 `DSH_CRED_DIR` 覆盖（测试 / 换机）。
 
+> 三点容易踩空的实测事实：
+> - **条目一律按 `index.json` 的 `name` 寻址**，不存在 `kernel` / `ref` 之类的别名；
+> - `verify` 用 node 的 `fetch` 打点，**不依赖 curl**（本机无 curl），且打点走 `HTTPS_PROXY` 时由
+>   调用方给代理环境；未知条目名**非零退出**，不是静默通过；
+> - `doctor` 的权限面枚举的是**库内全部常规文件**（含无扩展名的 `git-credentials`、`index.json`），
+>   不是只看 `*.pat`。
+
 ---
 
 ## 4. 新增一枚凭据的标准步骤
 
 1. 在 `index.json` 的 `entries` 增加条目：
-   `name` / `kind` / `account` / `purpose` / `repoScopes` /
-   `requiredPermission` / `file`（**必须在库内**）/ `verify`（API 打点）/ `status`；
+   `name`（**全库唯一**，`path`/`get`/`verify` 的寻址键）/ `kind` / `account` / `purpose` / `repoScopes` /
+   `requiredPermission` / `file`（**绝对路径且必须在规范库目录内**，不要写 `~` 或相对路径）/
+   `verify`（`{url,expect}` 走 API 打点，`{method:"file"}` 只查文件在库内且非空）/ `status`；
 2. 写入值：`bash release/scripts/cred.sh put 名`（从 stdin 读；自动 0600、自动置 active）；
 3. 验证：`bash release/scripts/cred.sh verify 名` 应显示 OK；
 4. 由 CI 门禁验证：`credential-hygiene-test` 必须全过（按 ACCEPTANCE-STANDARD，测试不在本机执行）；
@@ -86,16 +104,16 @@ echo -n TOKEN | bash release/scripts/cred.sh put 名   # 写入并置 active
 
 - 旧值**必须彻底删除**（`shred -u` 或 `rm`），不得留在附件目录、备份、`$HOME` 根；
 - 状态由 `put` 自动置 `active`；作废时手动改 `missing` 并写 `history`；
-- `doctor` 有缺项时返回 **1** —— 故意的：让「缺令牌」在自动检查里可见，而不是安静地继续。
+- `doctor` 只要出现 FAIL 行就返回 **1** —— 故意的：让「缺令牌 / 权限过宽 / 条目不可寻址」在自动检查里可见，而不是安静地继续。
 
 ---
 
 ## 5. 现状（以规范库 `index.json` 与两仓 secret 实测为准）
 
-| ref | 类型 | 账号 | 状态 |
+| 条目（`name`）| 类型 | 账号 | 状态 |
 |---|---|---|---|
 | `github-pat` | GitHub Fine-grained PAT | `lobbowen` | active；两仓共用（`lobbowen/dsh-supervisor-core`、`lobbowen/dsh-supervisor-launcher`），用途 = push（HTTPS）+ REST（查 CI / 设 secret / 分支保护）|
-| `git-credentials` | git credential store | `lobbowen` | active；`git credential.helper store --file` 指向该文件，是**唯一**推送通道 |
+| `git-credentials` | git credential store（URL 形态）| `x-access-token` | active；与上一行是**同一枚 PAT 的另一种形态**（见 §2）。两仓 repo-local `credential.helper store --file` 指向该文件，是**唯一**推送通道 |
 | `npm-token` | npm Granular Access Token（须带 bypass 2FA）| `lob.bowen` | active，`rotateBy` 2026-12-18；作用域 `@dsh-sup`；同一值以 repo secret `NPM_TOKEN` 存在于两仓 |
 | （壳自更新签名）| minisign 私钥 `TAURI_SIGNING_PRIVATE_KEY(_PASSWORD)` | - | **缺失**：2026-09-20 实测两仓 Actions secrets 只有 `NPM_TOKEN`，本机亦无密钥文件。壳的非 tag 构建已改为不因此变红，tag 发布仍由 workflow 主动拦下；恢复/重建流程见壳仓 `docs/UPDATER-SIGNING-KEY.md` |
 
@@ -118,9 +136,13 @@ echo -n TOKEN | bash release/scripts/cred.sh put 名   # 写入并置 active
 | D-9 | 任意 | 覆盖写等价性：恰好一份 `<文件>.bak-<14 位时间戳>`，内容 = 覆盖前旧值，权限 0600，目标为新值 |
 | D-10 | 任意 | `backup` 拒绝无目标与**实例目录内**目标（拒绝时不建目录）；合法目标产出带时间戳副本，目录 0700 / 文件 0600，提示明文风险但不回显令牌值 |
 | D-11 ~ D-13 | 任意 | 未知子命令、未知条目的 `put` 均非零退出且不落文件；清单里写入令牌值 -> `doctor` 判红并点名 |
+| D-14 | 任意 | 权限面覆盖**无扩展名**文件（`git-credentials` 形态）：放宽到 0644 判红、0600 判过 —— 旧实现只扫 `*.pat`，整条权限面对这类文件是空转的 |
+| D-15 | 任意 | **条目可寻址**：条目缺 `name`、`name` 重复、`file` 为空均判红（旧实现按 `kind` 枚举，清单用 `ref` 时 `path`/`get`/`verify` 全部「未知条目」而 `doctor` 仍全绿）|
+| D-16 | 任意 | 清单审计**不按 `kind` 挑食**：每条 `file` 都必须在库目录内，库外绝对路径判红 |
+| D-17 | 任意 | `verify` 不依赖 curl（node `fetch`）；未知条目名**非零退出**、已知条目回显身份/路径而非值 |
 | S-1 ~ S-3 | 任意（仓库不变量）| 工作树内无令牌值、git remote URL 未内嵌凭据、未跟踪 `*.pat`/`*.pem`/`*.key` |
 | 持久化-1 ~ 持久化-4 | 任意（-4 需真机库）| 库路径不含 `instances` 段、不被重定向的 `$HOME` 吸收、必须是绝对路径；真机令牌文件非空 |
-| R-1 ~ R-6 | 仅当规范库存在，否则显式 SKIP | 真机审计：目录/文件权限、清单权限、`doctor` 结论、旧别名与 `$HOME` 根散落副本 |
+| R-1 ~ R-6 | 仅当规范库存在，否则显式 SKIP | 真机审计：目录/文件权限、清单权限、`doctor` **零 FAIL 行**（判据按行首 `FAIL` 匹配并先 trim，缩进的 FAIL 也曾被漏掉）、旧别名与 `$HOME` 根散落副本 |
 | 反向 | 任意 | 判据非空转：能识别令牌值、不误报普通字符串、D 组夹具确实被创建 |
 
 真机库被破坏性覆盖的保护在 `test/destructive-op-safety-test.js`（W-1 ~ W-6，
@@ -131,7 +153,10 @@ echo -n TOKEN | bash release/scripts/cred.sh put 名   # 写入并置 active
 | 注入 | 命中 |
 |---|---|
 | 条目指向 ephemeral 附件路径 | **D-4 FAIL** |
-| 库内文件放宽到 0644 | **D-2 FAIL** |
+| 库内 `*.pat` 放宽到 0644 | **D-2 FAIL** |
+| 库内**无扩展名**凭据放宽到 0644 | **D-14 FAIL** |
+| 删掉条目的 `name` | **D-15 FAIL** |
+| 条目 `file` 指向库外 | **D-16 FAIL** |
 | `$HOME` 根放散落副本 | **R-6 FAIL** |
 | 清单内写入令牌值 | **D-13 FAIL** |
 
@@ -160,7 +185,7 @@ echo -n TOKEN | bash release/scripts/cred.sh put 名   # 写入并置 active
 | 直接原因 | 做本门禁的**注入验证**时，先注入「移除 `DSH_CRED_DIR`」以破坏夹具模式；脚本随后的 `put` 步骤**回落到真机库根**执行 |
 | 放大因素 | 迁移时把旧路径改成了**符号链接** → 覆盖立即生效、**无第二份副本可恢复** |
 | 不可恢复 | 备份包（2026-09-10）早于令牌创建时间（2026-09-11 10:55），已核实包内只有另一枚已失效令牌 |
-| 影响面 | **REST API**（查 CI / 合并 PR / 改分支保护）。**推送与发布不受影响**：两仓 push 走 SSH 部署密钥、Release 走 CI 的 `GITHUB_TOKEN`、npm 走 `NPM_TOKEN` |
+| 影响面 | **REST API**（查 CI / 合并 PR / 改分支保护）。**当时推送与发布不受影响**：Release 走 CI 的 `GITHUB_TOKEN`、npm 走 `NPM_TOKEN`、git push 走当时的 SSH 部署密钥（该通道现已废弃，见 §0 现状纠正）|
 
 ### 第 4 条铁律：破坏性操作默认拒绝真机
 

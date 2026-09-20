@@ -764,6 +764,91 @@ X-5 反向夹具同时投喂新旧两个 owner，且断言内核仓自身不被�
 四平台 build）全绿后合入 `master` = `4cef6d9`，分支已清理。K-1（恢复分支保护）按上文**保持待定案**，
 未擅自动服务端。壳侧产线修复随壳 PR #1 走。
 
+## L. 凭据工具链本身不可用 + 配套门禁空转（2026-09-20 继续清扫时顺藤摸出）
+
+### L-0 触发点
+
+K-3 落地时要写「API 用 `cred.sh path github-pat` 取路径」这条指引，实跑一次 `cred.sh path github-pat`
+返回**未知条目**。规范库是自己文档描述的那套工具的唯一消费方，工具读不到库说明问题不在文档措辞，
+而在**库、工具、门禁三者各说各话**。逐条实测后全部按根因修，未做文档侧圆场。
+
+### L-1 清单方言与工具寻址键不一致，凭据库经自己的 CLI 完全不可用 P1
+
+| 实测 | 结果 |
+|---|---|
+| `cred.sh path github-pat` / `get` / `verify` | 全部「未知条目」 |
+| `index.json` 条目字段 | 用 `ref` 作键、`file` 为相对/带 `~` 的形态 |
+| `cred.sh` 期望 | 按 `name` 寻址、`file` 为库内绝对路径 |
+
+同时文档 §4「新增凭据标准步骤」只列字段名不说方言，§5/`HANDOFF.md` 更指引 `cred.sh get kernel`
+—— 一个**从来不存在**的条目名，照抄即失败。
+
+修（三处一起，缺一不可）：真机 `index.json` 补齐 `name` + 绝对 `file` + `status` + `verify` +
+`schemaNote`（**令牌值一字未动**，改前副本留 `/tmp/credentials-index.pre-sweep.json`，0600）；
+`doctor` 第 2 段改为「条目可寻址 + 清单内文件是否都在库内」（缺 `name`、`name` 重复、`file` 空或库外一律 FAIL）；
+门禁 D-15/D-16 用旧方言（`delete entries[0].name`）做反向夹具；文档删掉 `get kernel` 指引并写明按 `name` 寻址。
+
+### L-2 权限面与备份只扫 `*.pat`，真正的推送凭据从未被审计过 P1
+
+`doctor` 的权限枚举与 `backup` 的文件复制都以 `"$STORE"/*.pat` 为字面量。库内实际文件是
+`git-credentials`（无扩展名）与 `index.json`：
+
+- 无扩展名凭据放宽到 0644，`doctor` 报「全部 0600」；
+- `backup` 产出的「持久化副本」**不含推送凭据**，即 K-3 事故那类丢失场景下这份备份救不了推送通道。
+
+修：枚举改为 node `readdirSync` + `statSync().isFile()`（覆盖全部常规文件，`backup` 复制除
+`index.json` 外的每个文件并逐个 0600）；`perm_of` 统一取权限；门禁 D-14 以「无扩展名文件 chmod 0644
+必红、改回 0600 必绿」为反向夹具。
+
+### L-3 `verify` 依赖 curl（本机没有）且未知条目零退出 P2
+
+`verify` 用 `curl -w '%{http_code}'`，本机无 curl，`|| echo 000` 把「无探测手段」洗成状态码 000，
+读起来像凭据失效；而未知条目名的 `want` 不匹配任何行时循环空转，退出码 0（假绿）。
+修：整段改单进程 node `fetch`（打点 URL/期望码由清单给出，代理环境由调用方注入），
+未知条目与非 2xx 均非零退出，输出只回显身份/路径/状态码；门禁 D-17 钉住「不出现 curl」与未知条目非零退出。
+
+### L-4 真机审计 R-4 结构性空转 P1（这条最危险）
+
+R-4 判据为 `rr.out.split('\n').filter(l => l.indexOf('FAIL') === 0)`，而 `doctor` 的 FAIL 行**带缩进**
+（`  FAIL ...`）⇒ 该行永远匹配不到 ⇒ 真机 doctor 断言恒过。L-1/L-2/L-3 三处缺陷因此在本机
+「凭据门禁全绿」的结论下长期存活。
+修：先 `trim` 再按行首 `FAIL` 匹配，判据文案同时改为「无 FAIL 行（权限 / 条目可寻址 / 库内路径 / 清单无值）」；
+本轮 doctor 真实跑通即 rc=0，且 `verify github-pat` 回 `OK (HTTP 200)`。
+
+### L-5 一并删除的错误引导（现在时态描述已不成立的状态）
+
+| 位置 | 原指引 | 现状 |
+|---|---|---|
+| `HANDOFF.md` §5 凭据/PR | `cred.sh get kernel`；`GIT_SSH_COMMAND=<部署密钥> git push`；`advgyxqamf/.../pull/20` | 三条全删，改为按 `name` 取路径 + HTTPS helper，且明写「勿再找回 SSH」 |
+| `release/README.md` 推送通道 | 重复一份「通道定稿」引用块 + SSH-over-443 方案 | 删重复块；HTTPS + `credential.helper store --file` 为唯一通道，443 只留一行历史注 |
+| `CROSS-PLATFORM-BUILD-AND-UPDATE.md` F2/F5 | 「配好 secret 即可签」「矩阵由 tag 触发」 | 改为实测语义：无私钥须 `unset` + `createUpdaterArtifacts:false`；触发为 push(main+tags)/PR/dispatch |
+| 同文件 §十 V2 | 以本机 `cargo build --release` 成功作为验收证据 | 划掉：既不足证（非四平台）又违反「运行期结论只由 CI 裁决」 |
+| `configure-credentials.sh` | 本机无 npm 认证判为待修；权限检查用 `stat -c` 未覆盖凭据文件 | 改为「发布走 CI 的 `NPM_TOKEN`，仅本机手工 publish 才需配」；权限统一经 `perm_of`；删掉死变量 `CRED` |
+| `release/runbooks/publish-and-verify.md` | registry 版本、CRLF 红叉、旧账号善后仍写「待办」 | 按 2026-09-20 实测校准（`beta` = 0.1.5-BETA.10 / `latest` = 0.1.5-BETA.7；CRLF 已修；旧账号项标注无需逐项清理） |
+
+### L-6 同仓并发的取证说明
+
+本仓 21:10 的 `5dc853a` 与本轮 21:35 之后的工作树编辑交叠：一次 `git add` 会把**另一会话正在进行**的
+未提交内容一并纳入（`CREDENTIALS-STANDARD.md` §5 即由此进入 PR #9）。这是 2026-09-19 记录的
+同机多会话事故的同一形态，属操作方式风险而非代码缺陷；本轮改为**先建分支再动工作区**并在提交前核对
+`git diff --stat` 的文件集，避免把两批修复混成一次裁决。
+
+### L-7 裁决登记
+
+L-1 ~ L-4 是行为修复（`release/scripts/cred.sh`、`release/scripts/configure-credentials.sh`、
+`test/credential-hygiene-test.js` D-14 ~ D-17 + R-4），L-5 是文档纠正，均**不含发布动作**。
+真机凭据值未被改写：只补清单元数据、只读地跑 doctor/verify。运行期结论按常规由 CI 裁决。
+
+### L-8 首轮 CI 红点（PR #10）与判据加固
+
+`test` job 与四个 `build` job 同时红在同一处：D-16 夹具里把清单路径写成 `j16.idxPath`
+（解析后的 JSON 对象，`undefined`），`fs.writeFileSync` 抛 `ERR_INVALID_ARG_TYPE`。
+本机不得跑测试套件，这类笔误只能由 CI 抓 —— 这正是「运行期结论只由 CI 裁决」的用途。
+
+顺带把 D-10 的备份判据加固：旧断言只要求副本里有 `kernel-test.pat`，对 L-2 那条
+「无扩展名凭据没被拷走」完全不敏感。现在夹具先在库内放一份无扩展名的 `git-credentials`，
+断言副本目录里**它也在、内容一致、权限 0600** —— 否则同一种缺陷下次仍会报成功。
+
 ## 附录：分域审计明细索引
 
 | 域 | 范围 | 规模 | 主要文件锚点 |

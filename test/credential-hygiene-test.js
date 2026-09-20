@@ -18,9 +18,11 @@
 //   R 组真机审计（库存在才做，缺失显式 SKIP）；S 组仓库本地不变量（任何宿主成立）。
 //
 // ## 标准（见 CREDENTIALS-STANDARD.md 与库内 index.json 的 rules）
-//   1. 凭据只允许存放在规范库（SSH 密钥可留 ~/.ssh）；禁止实例/附件目录（ephemeral）；
-//   2. 库目录 0700、库内文件 0600；禁止令牌内嵌 remote URL；仓库文件不得含令牌值；
-//   3. 令牌必须有清单条目，只存引用不存值；缺失要显式标 missing。
+//   1. 凭据只允许存放在规范库；禁止实例/附件目录（ephemeral）；
+//   2. 库目录 0700、库内**每一个**文件 0600（不得按扩展名挑食）；禁止令牌内嵌 remote URL；
+//      仓库文件不得含令牌值；
+//   3. 令牌必须有清单条目，只存引用不存值；缺失要显式标 missing；条目**必须有唯一 name**
+//      —— 工具（get/path/put/verify）一律按 name 寻址，缺 name 的条目对整套工具不可达。
 
 const fs = require('node:fs');
 const os = require('node:os');
@@ -238,16 +240,24 @@ const TMP = fs.mkdtempSync(path.join(os.tmpdir(), 'credgate-'));
   const r10w = runCredIn(d1, ['backup', 'X:\\ephemeral\\supervisor\\instances\\inst-9\\bak'], '');
   check('D-10 反斜杠路径同样被拒（闸与分隔符无关）', r10w.code !== 0,
     'exit=' + r10w.code + ' msg=' + r10w.out.trim().slice(-40));
+  // 真机凭据文件名无扩展名；按 *.pat 通配的备份会「报成功而一份凭据都没带走」。
+  const noextBak = path.join(d1, 'git-credentials');
+  fs.writeFileSync(noextBak, 'https://x-access-token:dummy-not-a-real-token@github.com');
+  fs.chmodSync(noextBak, 0o600);
   const okBak = path.join(TMP, 'persist-bak');
   const r10c = runCredIn(d1, ['backup', okBak], '');
   const outs = r10c.code === 0 ? fs.readdirSync(okBak) : [];
   const sub = outs.length ? path.join(okBak, outs[0]) : null;
   check('D-10 合法目标 -> 产出带时间戳的副本目录', outs.length === 1 && /^dsh-credentials-\d{14}$/.test(outs[0]), outs.join(','));
-  check('D-10 副本含清单与库内 *.pat',
-    !!sub && fs.existsSync(path.join(sub, 'index.json')) && fs.existsSync(path.join(sub, 'kernel-test.pat')),
+  check('D-10 副本含清单与库内每个凭据文件（含无扩展名者，且内容一致）',
+    !!sub && fs.existsSync(path.join(sub, 'index.json'))
+    && fs.existsSync(path.join(sub, 'kernel-test.pat'))
+    && fs.existsSync(path.join(sub, 'git-credentials'))
+    && fs.readFileSync(path.join(sub, 'git-credentials'), 'utf8') === 'https://x-access-token:dummy-not-a-real-token@github.com',
     sub ? fs.readdirSync(sub).join(',') : '无产出');
   check('D-10 副本目录 0700、副本文件 0600（POSIX）/ Windows 跳过',
-    !IS_POSIX || (sub && modeOf(sub) === '700' && modeOf(path.join(sub, 'kernel-test.pat')) === '600'),
+    !IS_POSIX || (sub && modeOf(sub) === '700' && modeOf(path.join(sub, 'kernel-test.pat')) === '600'
+      && modeOf(path.join(sub, 'git-credentials')) === '600'),
     IS_POSIX && sub ? modeOf(sub) + '/' + modeOf(path.join(sub, 'kernel-test.pat')) : 'Windows 无 POSIX 权限位');
   check('D-10 备份提示含明文风险，且不回显任何令牌值',
     /明文令牌/.test(r10c.out) && !/dummy-not-a-real-token/.test(r10c.out), r10c.out.trim().slice(0, 60));
@@ -267,6 +277,65 @@ const TMP = fs.mkdtempSync(path.join(os.tmpdir(), 'credgate-'));
   const r13 = runCred(d13, ['doctor']);
   check('D-13 清单含令牌值 -> doctor 失败', r13.code !== 0, 'exit=' + r13.code);
   check('D-13 失败信息点名「清单里出现了令牌值」', /清单里出现了令牌值/.test(r13.out), r13.out.trim().slice(-40));
+
+  // -- D-14 权限面必须覆盖**无扩展名**的凭据文件 --
+  //   真机库里的凭据文件名都没有扩展名，按 `*.pat` / `*.json` 通配会让整项审计静默漏空。
+  const d14 = path.join(TMP, 'perm-noext');
+  fixture(d14);
+  const noext = path.join(d14, 'github-pat');
+  fs.writeFileSync(noext, 'dummy-not-a-real-token');
+  fs.chmodSync(noext, 0o644);
+  const r14 = runCred(d14, ['doctor']);
+  check('D-14 无扩展名凭据文件权限过宽 -> doctor 判红（旧通配整体漏检）',
+    IS_POSIX ? (r14.code !== 0 && /github-pat 权限 644/.test(r14.out)) : true,
+    IS_POSIX ? 'exit=' + r14.code : 'Windows 无 POSIX 权限位');
+  fs.chmodSync(noext, 0o600);
+  const r14b = runCred(d14, ['doctor']);
+  check('D-14 同一文件收回到 0600 后 doctor 转绿（判据非单向）',
+    IS_POSIX ? (r14b.code === 0 && /github-pat 0600/.test(r14b.out)) : true,
+    IS_POSIX ? 'ok' : 'Windows 无 POSIX 权限位');
+
+  // -- D-15 条目必须可寻址：工具（get/path/put/verify）一律按 name 查 --
+  const d15 = path.join(TMP, 'nameless');
+  const f15 = fixture(d15);
+  const j15 = JSON.parse(fs.readFileSync(f15.idxPath, 'utf8'));
+  delete j15.entries[0].name;
+  fs.writeFileSync(f15.idxPath, JSON.stringify(j15, null, 2));
+  const r15 = runCred(d15, ['doctor']);
+  check('D-15 条目缺 name -> doctor 判红并说明「无法寻址」',
+    r15.code !== 0 && /缺 name/.test(r15.out), 'exit=' + r15.code);
+  const r15b = runCred(d15, ['path', 'kernel']);
+  check('D-15 缺 name 时 path 确实失效（红的是真实后果，不是措辞）',
+    r15b.code !== 0 && /未知条目/.test(r15b.out), r15b.out.trim().slice(0, 40));
+  const d15c = path.join(TMP, 'dupname');
+  const f15c = fixture(d15c);
+  const j15c = JSON.parse(fs.readFileSync(f15c.idxPath, 'utf8'));
+  j15c.entries.push({ name: 'kernel', kind: 'npm-token', account: 'x', file: f15c.kf, status: 'active' });
+  fs.writeFileSync(f15c.idxPath, JSON.stringify(j15c, null, 2));
+  const r15c = runCred(d15c, ['doctor']);
+  check('D-15 name 重复 -> doctor 判红（find 只会命中第一条，第二份永不可达）',
+    r15c.code !== 0 && /name 重复/.test(r15c.out), 'exit=' + r15c.code);
+
+  // -- D-16 清单一致性不得按 kind 挑食 --
+  //   旧实现只审 `kind==='github-pat'`；真机 kind 是 github-fine-grained-pat /
+  //   git-credential-store / npm-token，一条都不命中 -> 库外路径也照样绿。
+  const d16 = path.join(TMP, 'kind-outside');
+  const f16 = fixture(d16);
+  const j16 = JSON.parse(fs.readFileSync(f16.idxPath, 'utf8'));
+  j16.entries[0].kind = 'npm-token';
+  j16.entries[0].file = path.join(REAL_HOME, 'elsewhere', 'npm-token');
+  fs.writeFileSync(f16.idxPath, JSON.stringify(j16, null, 2));
+  const r16 = runCred(d16, ['doctor']);
+  check('D-16 非 github-pat kind 的条目指向库外 -> doctor 判红（旧 kind 过滤恒放过）',
+    r16.code !== 0 && /FAIL/.test(r16.out) && /elsewhere/.test(r16.out), 'exit=' + r16.code);
+
+  // -- D-17 verify 的尾账：未知条目不得假绿，且不得依赖 curl --
+  const r17 = runCred(d1, ['verify', 'nope']);
+  check('D-17 verify 未知条目 -> 非零退出且点名（旧实现过滤成空集后零退出）',
+    r17.code !== 0 && /未知条目/.test(r17.out), 'exit=' + r17.code);
+  const r17b = runCred(d1, ['verify', 'kernel']);
+  check('D-17 无 API 打点的条目如实说明并退出 0（不需要 curl 在场）',
+    r17b.code === 0 && /无 API 打点/.test(r17b.out), r17b.out.trim().slice(0, 50));
 }
 
 // -- S 组：仓库本地不变量（任何宿主都成立）--
@@ -319,9 +388,12 @@ const TMP = fs.mkdtempSync(path.join(os.tmpdir(), 'credgate-'));
     check('R-3 真机库内文件权限均 0600', files.length > 0 && loose.length === 0,
       loose.length ? loose.join(', ') : (files.length + ' 个文件均 0600'));
     const rr = runCred(REAL_STORE, ['doctor']);
-    const permFail = rr.out.split(String.fromCharCode(10)).filter((l) => l.indexOf('FAIL') === 0 && /权限|库内路径/.test(l));
-    check('R-4 真机 doctor 的权限与路径检查通过（缺项单列，不视为卫生问题）',
-      permFail.length === 0, permFail.length ? permFail[0].slice(0, 70) : 'ok');
+    //  doctor 的每一行都以两个空格缩进（'  FAIL ...'），原来的 `indexOf('FAIL') === 0`
+    //   恒为假 -> 真机权限/路径审计**从来没有失败过**。改为先去缩进再判。
+    const fails = rr.out.split(String.fromCharCode(10)).map((l) => l.trim())
+      .filter((l) => l.indexOf('FAIL') === 0);
+    check('R-4 真机 doctor 无 FAIL 行（权限 / 条目可寻址 / 库内路径 / 清单无值）',
+      fails.length === 0, fails.length ? fails[0].slice(0, 70) : 'ok');
     const missLine = rr.out.split(String.fromCharCode(10)).filter((l) => l.indexOf('缺') >= 0 && l.indexOf('OK') < 0);
     if (missLine.length) console.log('     （提示）真机存在缺项：' + missLine[0].trim());
     let aliasState = 'absent';

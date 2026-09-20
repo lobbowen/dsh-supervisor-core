@@ -1,7 +1,7 @@
 # 无控制台窗口规范（NO-CONSOLE-WINDOW-STANDARD）
 
 > **本文件是「壳启动内核全链路不得弹出终端窗口」的唯一事实源（SSOT）**，2026-09-16 立。
-> 适用范围：**两仓**（内核 `advgyxqamf/dsh-supervisor-core`、壳 `wasi7mglns/dsh-supervisor-launcher`）。
+> 适用范围：**两仓**（内核 `lobbowen/dsh-supervisor-core`、壳 `lobbowen/dsh-supervisor-launcher`）。
 
 ---
 

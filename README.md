@@ -70,11 +70,11 @@ DeepSeek Harness 生命周期监管工具：独立于 Harness 运行的系统级
 xdg-open http://127.0.0.1:36360/   # 浏览器直接开面板（默认端口；实际端口见 config.json 的 apiPort）
 ```
 
-桌面壳（Tauri 原生应用）源码在**壳仓** `wasi7mglns/dsh-supervisor-launcher`（MIT）的 `src-tauri/`，本仓不持有 `src-tauri/`。
+桌面壳（Tauri 原生应用）源码在**壳仓** `lobbowen/dsh-supervisor-launcher`（MIT）的 `src-tauri/`，本仓不持有 `src-tauri/`。
 
 ## 内核发布：Node launcher 统一形态（2026-09 定案：全平台弃 SEA）
 
-按产品方向（私有 GitHub 存源码 + 公开 npm 发布**内核构建物**热更新 + 壳开源引流），内核统一以 **Node launcher 包**发布。
+按产品方向（源码放 GitHub 公开仓 + 公开 npm 发布**内核构建物**热更新 + 壳开源引流），内核统一以 **Node launcher 包**发布。
 
 > **弃 SEA 原因（铁证）**：Node SEA 单文件二进制在 macOS 上注入后 `self-check` 即段错误——即使最小 hello-world SEA 亦崩（CI 双 arch 验证，与 useCodeCache/codesign/Node 版本均无关，为 Node SEA 的 macOS 上游缺陷）。为彻底消除平台差异、保证 macOS/Windows（产品主力）可用，全平台改发 Node launcher。
 
@@ -85,8 +85,9 @@ xdg-open http://127.0.0.1:36360/   # 浏览器直接开面板（默认端口；�
 - **平台命名**：npm 内核子包按平台分（`@scope/dsh-core-linux-x64` / `darwin-arm64` / `darwin-x64` / `win-x64`；`process.platform` 的 `win32` 需映射 `win`）。各平台在对应平台机器上各自构建（无交叉编译）。
 - **平台生产分工（2026-09-13 硬标准）**：**四平台全部由 GitHub CI 产出**（`build` job 的 4 runner 矩阵：ubuntu-22.04 / windows-latest / macos-latest / macos-14）；**本地不再有任何平台构建/发布路径**（`--all-platforms` 本地 exit 2，`release-core.sh` 已删除）。
 - **许可**：内核 **UNLICENSED**（闭源构建物，主 `package.json`/`LICENSE` 声明）；壳 **MIT**（`src-tauri/LICENSE`）。
-- **双仓库（壳开源引流）**：壳源码位于公开仓库 `wasi7mglns/dsh-supervisor-launcher`（MIT 许可）；
-  本仓库为内核（私有，`advgyxqamf/dsh-supervisor-core`）。两仓**完全独立**——
+- **双仓库（壳开源引流）**：壳源码位于公开仓库 `lobbowen/dsh-supervisor-launcher`（MIT 许可）；
+  本仓库为内核（**同为公开仓库** `lobbowen/dsh-supervisor-core`；公开是为了 CI 免额度跑四平台矩阵，
+  闭源语义由 `UNLICENSED` 承载，不是由仓库可见性承载）。两仓**完全独立**——
   本仓不持有任何壳资产（无 `src-tauri/`、无片面的壳打包工具/设计文档），
   壳相关工具与文档均在壳仓自身。
 - **跨仓协作方式**：内核侧仅保留**对接代码**（`src/domains/shell/`、`src/api/domains/shell.js` ——
@@ -251,7 +252,7 @@ POST /shutdown               已由 POST /session/stop 取代（保留供旧版�
 
 ## 版本与日志管理
 
-- **版本（双轨独立）**：内核单一版本源为 `package.json`（`bump.sh --core`，tag `v<内核>` 触发私有仓产线）；壳版本独立于内核（`bump.sh --shell`，0.1.0 起，Cargo.toml 与 tauri.conf.json 互锁，公开仓 tag 触发壳 Release）。
+- **版本（双轨独立）**：内核单一版本源为 `package.json`（`bump.sh --core`，tag `v<内核>` 触发本仓产线）；壳版本独立于内核（在**壳仓**三处互锁 `Cargo.toml` / `tauri.conf.json` / `Cargo.lock`，由壳仓 `scripts/bump-shell.sh` 提升，公开仓 tag 触发壳 Release）。
   守卫自报版本的三个入口：`dsh-supervisor --version`、`GET /status` 的 `guardVersion`、`guard_started` 事件。
 - **日志**：全部自动轮转（保留一代 `.1`），永不无限增长：
 
@@ -331,7 +332,7 @@ POST /shutdown               已由 POST /session/stop 取代（保留供旧版�
 ### 跨平台打包（**已移至壳仓**）
 
 壳（Tauri 引导器）的打包配置、`Cargo.toml`、`src-tauri/` 全部位于**壳仓**
-`wasi7mglns/dsh-supervisor-launcher`（MIT），本仓不再持有任何壳资产。
+`lobbowen/dsh-supervisor-launcher`（MIT），本仓不再持有任何壳资产。
 
 壳仓产线：四平台矩阵（`ubuntu-22.04` glibc 2.35 基座 / `macos-latest` arm64 /
 `macos-15-intel` x64 / `windows-latest`）→ Tauri bundle → GitHub Release + npm 壳包 +

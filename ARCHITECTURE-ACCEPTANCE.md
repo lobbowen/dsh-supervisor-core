@@ -11,6 +11,9 @@
 
 **CI run**：https://github.com/advgyxqamf/dsh-supervisor-core/actions/runs/35158648997 （commit `3cebaed`）
 
+> 该 run 在**旧账号仓** `advgyxqamf` 下，链接至今可访问；迁仓不会迁移 Actions 运行记录，
+> 所以在现仓 `lobbowen/dsh-supervisor-core` 里查不到这个 run —— 这是留档，不是待办线索。
+
 | CI job | 结果 |
 |---|---|
 | `test`（ubuntu-latest，127 条测试链经 Xvfb + launcher 产物） | ✅ success |

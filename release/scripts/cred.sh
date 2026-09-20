@@ -61,9 +61,9 @@ case "${1:-list}" in
   list)
     node -e "
       const j=require(process.env.INDEX);
-      const pad=(s,n)=>String(s).padEnd(n);
-      console.log(pad('名称',15)+pad('类型',12)+pad('账号',14)+pad('状态',10)+'文件');
-      for (const e of j.entries) console.log(pad(e.name,15)+pad(e.kind,12)+pad(e.account,14)+pad(e.status,10)+(e.file||''));
+      const pad=(s,n)=>String(s===undefined?'-':s).padEnd(n);
+      console.log(pad('名称',16)+pad('类型',26)+pad('账号',14)+pad('状态',10)+'文件');
+      for (const e of j.entries) console.log(pad(e.name,16)+pad(e.kind,26)+pad(e.account,14)+pad(e.status,10)+(e.file||''));
     "
     ;;
 
@@ -165,31 +165,42 @@ case "${1:-list}" in
     mkdir -p "$OUT" && chmod 700 "$OUT"
     cp "$INDEX" "$OUT/" && chmod 600 "$OUT/index.json"
     n=0
-    for p in "$STORE"/*.pat; do
-      [ -e "$p" ] || continue
-      cp "$p" "$OUT/" && chmod 600 "$OUT/$(basename "$p")" && n=$((n + 1))
-    done
+    # 必须覆盖库内每个普通文件：真机凭据文件名无扩展名，按 *.pat 通配会静默漏掉全部凭据
+    others=$(node -e "const fs=require('fs'),p=require('path');for(const x of fs.readdirSync(process.env.STORE)){if(x!=='index.json'){try{if(fs.statSync(p.join(process.env.STORE,x)).isFile())process.stdout.write(x+String.fromCharCode(10))}catch(e){}}}")
+    while IFS= read -r x; do
+      [ -n "$x" ] || continue
+      cp "$STORE/$x" "$OUT/" && chmod 600 "$OUT/$x" && n=$((n + 1))
+    done <<< "$others"
     echo "已备份到 ${OUT}（目录 0700，$((n + 1)) 个文件均 0600）"
     echo "  ⚠ 该副本含**明文令牌**：请置于加密卷/密码管理器，勿入版本库与聊天工具。"
     ;;
   verify)
-    want="${2:-}"
-    node -e "
+    # 用 node fetch 而非 curl：本机与精简 runner 不保证有 curl，缺工具时不能伪装成 HTTP 异常。
+    # 令牌在进程内读文件，不落命令行参数；条目名经 env 传入，不插进 JS 源码。
+    VERIFY_WANT="${2:-}" node -e "
+      const fs=require('fs');
       const j=require(process.env.INDEX);
-      for (const e of j.entries) {
-        if ('$want' && e.name !== '$want') continue;
-        console.log([e.name, e.status, (e.verify&&e.verify.url)||'', String((e.verify&&e.verify.expect)||'')].join('|'));
-      }
-    " | while IFS='|' read -r name status url expect; do
-      [ -n "$url" ] || { printf '  %-13s %s（无 API 打点）\n' "$name" "$status"; continue; }
-      #  必须在此**重新解析**：循环体在管道右侧的子 shell 中，file_of 可用但
-      #   entry_field 依赖的 $INDEX 在子 shell 里仍可用；此处显式再取一次以确保非空。
-      f=$(node -e "const j=require(process.env.INDEX);const e=j.entries.find(x=>x.name==='$name');process.stdout.write(e&&e.file?e.file:'')")
-      if [ ! -f "$f" ]; then printf '  %-13s **缺凭据文件** %s\n' "$name" "$f"; continue; fi
-      code=$(curl -sS -o /dev/null -w '%{http_code}' -H "Authorization: Bearer $(cat "$f")" "$url" 2>/dev/null || echo 000)
-      if [ "$code" = "$expect" ]; then printf '  %-13s OK  (HTTP %s)\n' "$name" "$code";
-      else printf '  %-13s **异常** HTTP %s（期望 %s）\n' "$name" "$code" "$expect"; fi
-    done
+      const want=process.env.VERIFY_WANT||'';
+      const es=want ? j.entries.filter((e)=>e.name===want) : j.entries;
+      if (want && !es.length) { console.log('  未知条目: '+want); process.exit(1); }
+      (async () => {
+        let bad=0;
+        for (const e of es) {
+          const v=e.verify||{};
+          if (!v.url) { console.log('  '+e.name+'  '+e.status+'（无 API 打点）'); continue; }
+          if (!e.file || !fs.existsSync(e.file)) { console.log('  '+e.name+'  **缺凭据文件** '+(e.file||'(未设)')); bad++; continue; }
+          let code='000';
+          try {
+            const r=await fetch(v.url, { headers: { authorization:'Bearer '+fs.readFileSync(e.file,'utf8').trim(), 'user-agent':'dsh-cred-verify' } });
+            code=String(r.status);
+          } catch (err) { code='ERR'; }
+          const ok=(v.expect==null) || String(v.expect)===code;
+          if (!ok) bad++;
+          console.log('  '+e.name+'  '+(ok?'OK  (HTTP '+code+')':'**异常** HTTP '+code+'（期望 '+v.expect+'）'));
+        }
+        process.exit(bad?1:0);
+      })();
+    "
     ;;
 
   doctor)
@@ -206,26 +217,39 @@ case "${1:-list}" in
     else
       dm=$(perm_of "$STORE")
       if [ "$dm" = '700' ]; then echo "  OK   库目录 0700"; else echo "  FAIL 库目录权限 ${dm}（应为 700）"; rc=1; fi
-      for f in "$STORE"/*.pat "$STORE"/*.json; do
-        [ -e "$f" ] || continue
-        m=$(perm_of "$f")
-        if [ "$m" = '600' ]; then echo "  OK   $(basename "$f") 0600"; else echo "  FAIL $(basename "$f") 权限 ${m}（应为 600）"; rc=1; fi
-      done
+      # 按 readdir 覆盖每个普通文件：真机凭据文件名无扩展名，*.pat / *.json 通配会在真机上全漏
+      files=$(node -e "const fs=require('fs'),p=require('path');for(const n of fs.readdirSync(process.env.STORE)){try{if(fs.statSync(p.join(process.env.STORE,n)).isFile())process.stdout.write(n+String.fromCharCode(10))}catch(e){}}")
+      if [ -z "$files" ]; then echo "  FAIL 库内没有任何文件（清单本身也缺失？）"; rc=1; fi
+      while IFS= read -r n; do
+        [ -n "$n" ] || continue
+        m=$(perm_of "$STORE/$n")
+        if [ "$m" = '600' ]; then echo "  OK   $n 0600"; else echo "  FAIL $n 权限 ${m}（应为 600）"; rc=1; fi
+      done <<< "$files"
     fi
-    echo '== 2) 清单内的文件是否都在库内 =='
+    echo '== 2) 条目可寻址 + 清单内的文件是否都在库内 =='
     node -e "
       const j=require(process.env.INDEX);
+      // 审计面不得按 kind 挑条目（真机清单的 kind 与旧过滤值不同形，按 kind 筛会一条都不命中）；
+      // 条目靠 name 寻址，缺 name / name 重复时 get/path/put/verify 对该条目失效，必须判红。
+      const fs=require('fs');
+      //  必须用 ${STORE}（DSH_CRED_DIR 可覆盖），不可硬编码库根 —— 否则换库根就误报
+      // 两侧都归一为 / 再比：Windows 的 e.file 可能是反斜杠形式，
+      // 而 STORE 已被启动时归一为 /（否则恒不匹配 -> doctor 误报缺项，exit 1）。
+      const norm = (x) => String(x).split(String.fromCharCode(92)).join('/');
+      const seen = new Set();
+      let bad = 0;
+      const fail = (msg) => { console.log('  FAIL ' + msg); bad++; };
+      if (!Array.isArray(j.entries) || !j.entries.length) fail('清单没有任何条目');
       for (const e of j.entries) {
-        if (e.kind!=='github-pat') continue;
-        const fs=require('fs');
-        //  必须用 ${STORE}（DSH_CRED_DIR 可覆盖），不可硬编码库根 —— 否则换库根就误报
-        // 两侧都归一为 / 再比：Windows 的 e.file 可能是反斜杠形式，
-        // 而 STORE 已被启动时归一为 /（否则恒不匹配 -> doctor 误报缺项，exit 1）。
-        const norm = (x) => String(x).split(String.fromCharCode(92)).join('/');
+        const nm = (typeof e.name === 'string' && e.name.trim()) ? e.name.trim() : null;
+        if (!nm) fail('条目缺 name，工具无法寻址（get/path/put/verify 全失效）: kind=' + e.kind + ' file=' + (e.file || '(未设)'));
+        else if (seen.has(nm)) fail('name 重复: ' + nm);
+        if (nm) seen.add(nm);
         const ok = e.file && norm(e.file).startsWith(norm(process.env.STORE) + '/');
-        console.log((ok?'  OK   ':'  FAIL ')+e.name+' -> '+(e.file||'(未设)'));
-        if(!ok) process.exitCode=1;
+        if (!ok) fail((nm || '(无 name)') + ' -> ' + (e.file || '(未设)'));
+        else console.log('  OK   ' + (nm || '(无 name)') + ' -> ' + e.file);
       }
+      if (bad) process.exitCode = 1;
     " || rc=1
     echo '== 3) 缺项（状态非 active）=='
     node -e "
