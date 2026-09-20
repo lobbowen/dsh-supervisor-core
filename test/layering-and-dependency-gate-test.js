@@ -98,6 +98,8 @@ const CROSS_LAYER = {
   'app -> shared': {
     'src/shared/guardian': '跨层依赖 —— 见 DIRECTORY-STRUCTURE-DESIGN',
     'src/shared/version': '跨层依赖 —— 见 DIRECTORY-STRUCTURE-DESIGN',
+    // 批 4 C-3：强度下限是 L0 判定，与 relay 域共用同一份；app 侧只取它 + relay 的暴露闸。
+    'src/shared/credential': '远程令牌强度下限（纯函数），与实例域/relay 域同源，避免跨域边',
   },
   'domains -> platform': {
     'src/platform/contract': '外部既定事实（矩阵/部署形态/镜像契约/运行期契约）',
@@ -111,6 +113,9 @@ const CROSS_LAYER = {
     'src/shared/guardian': '跨层依赖 —— 见 DIRECTORY-STRUCTURE-DESIGN',
     'src/shared/ip': '跨层依赖 —— 见 DIRECTORY-STRUCTURE-DESIGN',
     'src/shared/version': '跨层依赖 —— 见 DIRECTORY-STRUCTURE-DESIGN',
+    // 第 4 批 run 35489272772（DS-G1 实抓）：把 C-3 强度闸从 relay 域上移到 shared 后，
+    //   relay/core 与 instance/ops 两个域消费者各取同一份，**不再**逼出 domains→domains 边。
+    'src/shared/credential': '远程令牌强度下限（纯函数）被 relay 与 instance 两域共用，禁在域内重写第二份',
   },
   'platform -> shared': {
     'src/shared/ip': '跨层依赖 —— 见 DIRECTORY-STRUCTURE-DESIGN',

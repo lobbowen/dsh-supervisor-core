@@ -139,9 +139,12 @@ console.log('== K10 卸载失败时保留 manifest ==');
 
 // ── 批 4（AUDIT-2026-09-19 §C）：C-3/C-4/C-5/C-6/C-7/C-8 纯函数级逐例断言 ──
 // 判据纪律（§G-6-9）：多子句一律拆逐例 + 判据值回显。
-console.log('== 批4 C-3 remoteTokenStrength / backoffGate（relay/core 纯函数）==');
+console.log('== 批4 C-3 remoteTokenStrength（shared/credential）/ backoffGate（relay/core）==');
 {
   const core = require(path.join(ROOT, 'src', 'domains', 'relay', 'core.js'));
+  // 强度闸的实现住在 shared/credential（L0 纯判定）：三个消费点跨 relay/instance 两域 + app 编排层，
+  //   放在任一域内都会逼出 domains 间跨域边（DS-G1，第 4 批 run 35489272772 实抓，见 §H-7-17）。
+  const cred = require(path.join(ROOT, 'src', 'shared', 'credential.js'));
   const cases = [
     ['empty-string', '', false, 'empty'],
     ['spaces-only', '   ', false, 'empty'],
@@ -153,7 +156,7 @@ console.log('== 批4 C-3 remoteTokenStrength / backoffGate（relay/core 纯函�
     ['long', 'a-very-remote-token-value-0123456789', true, ''],
   ];
   for (const [label, input, wantOk, wantReason] of cases) {
-    const r = core.remoteTokenStrength(input);
+    const r = cred.remoteTokenStrength(input);
     check('C-3 strength ' + label + ' → ok=' + wantOk, r.ok === wantOk && r.reason === wantReason,
       JSON.stringify(r));
   }
@@ -182,9 +185,21 @@ console.log('== 批4 C-3 remoteTokenStrength / backoffGate（relay/core 纯函�
   }
   // 写入口接线（源码形态：两处写盘前都过同一纯函数）
   const opsSrc = fs.readFileSync(path.join(ROOT, 'src', 'domains', 'instance', 'ops.js'), 'utf8');
+  const coreSrc = fs.readFileSync(path.join(ROOT, 'src', 'domains', 'relay', 'core.js'), 'utf8');
   check('C-3 实例域写入口引用 remoteTokenStrength', /remoteTokenStrength\(/.test(opsSrc), '有');
   const actSrc = fs.readFileSync(path.join(ROOT, 'src', 'app', 'domain-actions', 'main.js'), 'utf8');
   check('C-3 main 写入口引用 remoteTokenStrength', /remoteTokenStrength\(/.test(actSrc), '有');
+  // 归属判据（run 35489272772 的 DS-G1 红固化成门禁）：单一实现 + 三个消费点全部经 shared 取用。
+  const credSrc = fs.readFileSync(path.join(ROOT, 'src', 'shared', 'credential.js'), 'utf8');
+  check('C-3 强度闸实现在 shared/credential 且已导出',
+    /^function remoteTokenStrength\(/m.test(credSrc) && /remoteTokenStrength/.test(credSrc.split('module.exports')[1] || ''),
+    '实现=' + /^function remoteTokenStrength\(/m.test(credSrc) + ' 导出=' + JSON.stringify(credSrc.split('module.exports')[1] || '').slice(0, 60));
+  check('C-3 反向：shared/credential 出度 = 0（L0 纯，不得 require 任何上层）',
+    !/require\(/.test(credSrc.replace(/^\/\*[\s\S]*?\*\//gm, '')), '无 require');
+  check('C-3 反向：relay/core 不再自带第二份实现',
+    !/function remoteTokenStrength\(/.test(coreSrc), coreSrc.indexOf('function remoteTokenStrength(') >= 0 ? '仍有本体' : '仅引用 shared');
+  check('C-3 反向：instance 域不再跨域 require relay（DS-G1 边的成因）',
+    !/require\(['"]\.\.\/relay/.test(opsSrc), '跨域 require 计数 0');
 }
 
 console.log('== 批4 C-4 upstreamPath（门卫令牌不进上游）==');

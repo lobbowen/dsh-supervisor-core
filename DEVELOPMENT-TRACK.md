@@ -42,6 +42,7 @@ shared      纯函数（version/ip/guardian）—— 与 platform 并列 L0，�
 | `domains -> shared/ip` | relay 复用回环/RFC1918 判定，**不得重写第二份**（`relay-source-gate-test` S-a 主动要求）|
 | `domains -> platform/service`（端口）| ports.js 自称「**系统级**统一端口管理」，instance/router/relay 都靠它登记端口 |
 | `platform -> shared` | version/ip 为 L0 纯函数，platform 与 domains 共用同一份，不得各自重写 |
+| `domains -> shared/credential` | 远程令牌强度下限（C-3）是 L0 判定，relay 与 instance 两域 + app 写入口共用同一份。**第 4 批 DS-G1 实抓**：为消灭重复而让 `instance/ops` 直接 require 兄弟域的 `relay/core`，是「单源做对、边界踩破」的同枚硬币——纯判定一律上移 shared（与 ip/guardian/version 同法）|
 | `api -> platform`、`root -> 全部` | 正常向下组装 |
 
 把这些写成「禁止」，门禁第一次运行就红，然后被人加白名单绕过 —— 那就成了摆设。

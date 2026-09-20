@@ -42,7 +42,7 @@
   `epoch` 断在途轮次；内核更新桥补面板侧来源校验。
 - **凭据脚本（B-25 残留收口）**：`cred.sh put` 空 stdin 一律 fail-closed —— 先读唯一临时文件、
   校验非空才写穿目标，不再落 0 字节并把 status 置 active。
-- **CI 裁决补录（七轮红 + 一次崩溃，取证见 §H-7-5/6/9/11/12/13/14/15/16）**：在途 npm 的中止改走平台层整树终止
+- **CI 裁决补录（八轮红 + 一次崩溃，取证见 §H-7-5/6/9/11/12/13/14/15/16/17）**：在途 npm 的中止改走平台层整树终止
   （Windows 无进程组语义，旧 `process.kill(-pid)` 只杀得到 `npm.cmd` 壳，孙进程照旧写盘）；
   测试夹具侧修十一处「判据/夹具自身失效」——D-12 反向例期望倒置、D-11 权限位缺 win32 门控、
   D-1b 把函数声明数成调用点、D-3 桩件对 const 数组自增（被产品 try/catch 吞掉后恒判 0）、
@@ -70,12 +70,22 @@
   `{ok:true, code:"0"}`，「可用 ⇒ `protectFile/protectDir` 绝不谎报 `mode=none`」成立；上一轮靠推演立的前提
   换成实测事实，同时如实登记 win32 那一支「不可用 ⇒ 如实 none」是恒不触发的蕴含式（其证据在 POSIX 宿主伪造
   win32 + 清空 PATH 那一支）。
+- **架构越界收口（DS-G1：为消灭重复而跨域，第 4 批 A 组自己带进来的）**：C-3 把远程令牌强度下限
+  `remoteTokenStrength` 落在 `domains/relay/core.js`，再让 `domains/instance/ops.js` 直接 require 兄弟域——
+  **单一事实源做对了、域边界踩破了**（五 job 同点红，平台无关一次即定性）。修法走本仓既有裁决而非新造规则：
+  纯判定上移新建的 L0 `src/shared/credential.js`（零 require/IO/平台分支/域知识），relay 与 instance 两域 +
+  app 写入口三个消费点同源取用，`relay/core` 不再导出第二份（不留兼容转发）；`backoffGate` 因带 relay 域知识
+  留在原域。两条跨层边按「登记 + 理由」补进 `layering-and-dependency-gate` 的 `CROSS_LAYER`，裁决记进
+  DIRECTORY-STRUCTURE-DESIGN §4.4.1 与 DEVELOPMENT-TRACK 登记表。并把这次红固化成四例判据（本体在 shared、
+  shared 出度 0、relay 不再自带本体、instance 不再出现跨域 require）——只靠 DS-G1 兜底的话下次还会再来。
 - **架构越界收口（CP-1 首次判红即真违规）**：第 4 批 D 组在 `domains/router/providers/probe.js` 自带的
   `sameProcessGroup` 含 `process.platform === 'win32'` 与 `/proc/<pid>/stat` 读取——平台知识的家只有一处。
   实现下沉 `platform/os/pidlookup`（与 `isAlive`/`readCmdline` 同族）并经门面导出，业务域改调
   `pidlook.sameProcessGroup(...)`；逐字搬运不改判（macOS 无 `/proc` 仍返回 false，与迁移前同形）。
   D-6 判据随搬家重写：平台文件取本体求值（注入 `fs`/`isWindows`）+ 两条反向（业务域不留副本、门面必须导出）。
-- **链推进的正向证据**：run `35487214678` 把链推到 #104 —— test job 与 ubuntu + 两个 macos 在
+- **链推进的正向证据**：run `35489272772` 把链推到 #123 —— **#111–#122 在四平台首次全绿**（含本批新并入的
+  #115 D-9 块与 #116/#121/#129 的门禁判据），上一轮的 X-1/X-2/X-9 三处全部转绿。
+  同一 run 的其余正向证据：run `35487214678` 把链推到 #104 —— test job 与 ubuntu + 两个 macos 在
   #78–#103 全绿（26 个此前从未被 CI 执行的门禁文件，含 frp 单源写盘三段判据、glibc E-2 静态断言），
   windows 因 #102 断链而覆盖到 #78–#101；链位 #113 的 API 重绑异步夹具在预清阶段以本机探针复现「同步读异步事实」
   并改写成可观测的重试环（跑满 10 次快重试 → 降级 30s + 留痕 → 退出意图即中止），未消耗额外 run。

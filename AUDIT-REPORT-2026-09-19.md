@@ -218,7 +218,7 @@
 |---|---|---|---|
 | C-1 | 确认缺陷（缺 Host 时整块跳过 → 两闸同时归零） | `api/security.js` `originAllowed`：Host 缺失即 fail-closed 拒绝 | `defects-batch-f-test`（K6-a 含反向：合法 Host 放行） |
 | C-2 | 裁决=**保持现状并钉死**（现代浏览器对 POST 一律发 Origin；不放宽为「无 Origin 即放行」） | `api/security.js` 注释登记裁决 + 判据 | `defects-batch-f-test` |
-| C-3 | 确认缺陷（令牌无长度下限、门卫凭据可无限爆破、WS 升级旁路） | `relay/core.js` `remoteTokenStrength`（<8 拒，单一事实源）+ `backoffGate` 纯函数（计时账本由调用方持有）；`domains/instance/ops.js` 三点写入口前置校验；`relay/proxy.js` per-IP 账本（60s 窗口 ≥10 次 → 429 + Retry-After）；`relay/tunnel.js` WS 升级同闸（`gateWaitMs`） | `lan-access-boundary-test` + `round13-router-relay-gaps-test`；UI 强度提示 |
+| C-3 | 确认缺陷（令牌无长度下限、门卫凭据可无限爆破、WS 升级旁路） | `shared/credential.js` `remoteTokenStrength`（<8 拒，单一事实源；**批 4 二次改判**：原住 `relay/core.js` 被实例域跨域 require，触发 DS-G1，见 §H-7-17）+ `relay/core.js` `backoffGate` 纯函数（计时账本由调用方持有）；`domains/instance/ops.js` 三点写入口前置校验；`relay/proxy.js` per-IP 账本（60s 窗口 ≥10 次 → 429 + Retry-After）；`relay/tunnel.js` WS 升级同闸（`gateWaitMs`） | `lan-access-boundary-test` + `round13-router-relay-gaps-test`；UI 强度提示 |
 | C-4 | 确认缺陷（门卫令牌进上游请求行 + 凭证响应可被缓存） | `relay/core.js` 转发路径剥离 `token=`；`relay/proxy.js` 401/302/429 统一 `no-store` | `relay-dshauth-test`（A 组） |
 | C-5 | 确认缺陷（`body += d` 逐块隐式解码，跨块多字节损坏；上限按字符数可撑内存） | `api/transport/body.js` 改 Buffer 累积 + end 一次性 utf8 + **按字节**计上限 | `core-test` |
 | C-6 | 确认缺陷 | `api/domains/instances.js` `/open` 303 的 Cookie 补 `SameSite=Strict`（跨端口共享是设计意图，跨站不是） | `kernel-daemon-contract-test` |
@@ -446,6 +446,28 @@
       的结论方向对、依据错，现已换成实测事实。
     - **链推进的正向证据**：本 run #78–#109 四平台全绿（#110 是本轮新到的执行位置），CP-1/X-9 之外的
       X 组与 D/E/P 组断言零回退。
+17. **run `35489272772`（HEAD `36b725e`）—— 五 job 同点一条红，且是第 4 批自己带进来的架构违规（DS-G1）**：
+    上一轮的 X-1/X-2/X-9 三处全部转绿，链从 #110 推进到 **#123 `directory-structure-gate`**（即 #111–#122
+    在四平台首次全绿，含 #115 D-9 块与 #116/#121/#129 等本批新增判据）。唯一红点：
+    `FAIL DS-G1 domains 之间跨域 require = 0 ← 1 条: domains/instance/ops.js -> domains/relay/core.js`。
+    - **定性：真违规，与 CP-1 同类，且是「修重复时踩坏边界」的形态**。第 4 批 A 组（C-3）为消灭
+      「remoteToken 强度下限各写一份」的重复，把 `remoteTokenStrength` 落在 `domains/relay/core.js`，
+      然后让 `domains/instance/ops.js` 直接 `require('../relay/core')` —— **单一事实源做对了，域边界踩破了**。
+      平台无关（五 job 同点红），故一次即定性。
+    - **修法按本仓既有裁决走，不新造规则**：`DIRECTORY-STRUCTURE-DESIGN` §4 已有三例同形裁决
+      （`domains→api/identity` 的纯 IP 事实上移 `shared/ip`；instance→guardian 的纯函数上移 `shared/guardian`；
+      `semverCompare` 上移 `shared/version`）。故新建 **`src/shared/credential.js`**（L0：零 require、零 IO、
+      零平台分支、零域知识）承载 `remoteTokenStrength`，三个消费点（`relay/core`、`instance/ops`、
+      `app/domain-actions/main`）全部经它取用；`relay/core` **不再导出**第二份（不留兼容转发）。
+      跨层边随之在 `layering-and-dependency-gate` 的 `CROSS_LAYER` 登记表补两条（`domains -> shared`、
+      `app -> shared`）并写理由——该闸的口径是「登记 + 理由 + 变更可见」，不是禁止向下复用。
+    - **把这次红固化成判据**（`defects-batch-f-test` #77，四例独立 + 回显）：强度闸本体在 `shared/credential`
+      且已导出、`shared/credential` 无 `require(`（L0 出度）、`relay/core` 不再自带本体、
+      `instance` 域不再出现 `require('../relay`。只靠 DS-G1 兜底的话，下一次「为消灭重复而跨域」还会再来。
+    - **本机取证上限**（按 §0 口径如实标注）：以上修法在推送前用**只读静态复算**验证过——按 DS-G1/DS-G2
+      同一套 `edgeUnit`/require 解析逻辑重算全 `src/` 边集，得「跨域边 0 条、shared 出度 0 条」，
+      并对 `remoteTokenStrength`/`validateFrpExposure` 做纯函数取样（8 位放行、7 位 `short`、relay 不再导出）。
+      这是静态推演，**不构成裁决**；四平台结论仍以下一个 run 为准。
 
 ### H-8 残留与诚实声明
 

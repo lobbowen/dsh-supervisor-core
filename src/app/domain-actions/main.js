@@ -7,9 +7,11 @@
 // 公网暴露安全闸单一事实源：调用 domains/relay/core.validateFrpExposure，使 app 侧
 // patchDshMain 与 relay 侧 setFrp 同规。实例冲突清单经注入的只读投影 views.exposurePeers()，
 // 不直读实例域的内部数组（消除跨域穿透）。
-// 无 Node 内建依赖：仅用 relay/core 的纯判定 + 注入的 deps。
+// 无 Node 内建依赖：仅用 relay/core 的暴露闸判定 + shared/credential 的强度下限 + 注入的 deps。
 
-const { validateFrpExposure, remoteTokenStrength } = require('../../domains/relay/core');
+const { validateFrpExposure } = require('../../domains/relay/core');
+// 强度下限是 L0 纯判定，住在 shared/credential 与 relay/instance 域同源（app→domains 只取暴露闸）。
+const { remoteTokenStrength } = require('../../shared/credential');
 
 /** patchDshMain 工厂。
  *  @param deps { getState, getViews, getDaemons, getEvents, getLogger } 全为惰性取值。 */

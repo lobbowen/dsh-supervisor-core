@@ -7,6 +7,8 @@
 const crypto = require('node:crypto');
 // 来源必须落在回环或 RFC1918 私有网段；复用 shared/ip 的同一份判定，绝不在本域重写第二份。
 const { isLoopbackAddress, isPrivateIpv4 } = require('../../shared/ip');
+// 远程令牌强度下限同理由三个跨层消费点共用，实现在 shared/credential（DS-G1 禁跨域边）。
+const { remoteTokenStrength } = require('../../shared/credential');
 
 /** 来源地址是否可信（回环 ∪ RFC1918）。
  *
@@ -190,18 +192,6 @@ function validateFrpServerSettings(settings) {
   return { ok: true };
 }
 
-/** 远程访问令牌强度闸（C-3，批 4）：与 apiAccessKey 的「至少 8 位」门（app/settings/access.js）
- *  同规。旧闸只判「非空白」——remoteToken 守护的是经 frp 暴露到公网的 DSH 特权面
- *  （relay 空 token 恒放行 + 回环呈现），1~2 位令牌等同无令牌，可被公网暴力枚举。
- *  纯函数：只回判定，落点（写盘前 / 暴露闸）由调用方负责。
- *  @param {string} token  @returns {{ok:boolean, reason:string}} reason ∈ ''（合格）| 'empty' | 'short' */
-function remoteTokenStrength(token) {
-  const t = String(token == null ? '' : token).trim();
-  if (!t) return { ok: false, reason: 'empty' };
-  if (t.length < 8) return { ok: false, reason: 'short' };
-  return { ok: true, reason: '' };
-}
-
 /** 凭据失败退避判定（C-3，批 4）：纯函数，计时与账本由调用方（proxy 层内存 Map）持有。
  *  门卫令牌校验（tokenGateDecision/hasValidToken）此前对失败完全无状态，公网侧可无限速爆破。
  *  @param {{failCount:number, firstAt:number, now:number}} f  now=当前时刻(ms)
@@ -253,7 +243,6 @@ module.exports = {
   hasValidToken,
   lanGateCookieValue,
   tokenGateDecision,
-  remoteTokenStrength,
   backoffGate,
   POLYFILL_SCRIPT,
   buildFrpcToml,

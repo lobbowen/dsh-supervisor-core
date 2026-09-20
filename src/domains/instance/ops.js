@@ -6,7 +6,9 @@
 
 const fs = require('node:fs');
 const ports = require('../../platform/service/ports').shared;
-const { remoteTokenStrength } = require('../relay/core'); // C-3（批 4）：远程令牌强度闸，单一事实源
+// C-3（批 4）：远程令牌强度闸。实现在 shared/credential（L0 纯判定），经它共用同一份下限——
+// 直接 require 兄弟域 relay/core 会构成 domains 间跨域边（DS-G1 判红）。
+const { remoteTokenStrength } = require('../../shared/credential');
 const model = require('./model');
 const sandbox = require('./sandbox');
 

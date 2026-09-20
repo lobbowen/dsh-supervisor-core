@@ -175,6 +175,16 @@ src/
 | dispatcher（server 端，白名单按域注入） | `platform/ctl/server.js` | 通用基础设施 |
 | 调用方（client 端，门面） | `app/ctl/client.js` | 编排层使用 |
 
+### 4.4.1 凭据强度下限的归属裁决（第 4 批 DS-G1 实抓，2026-09-20）
+
+| 内容 | 位置 | 理由 |
+|---|---|---|
+| `remoteTokenStrength` | **`src/shared/credential.js`** | L0 纯判定（零 require/IO/平台分支/域知识），消费者跨 relay 与 instance 两域 + app 写入口；留在任一域内都会逼出 `domains→domains` 跨域边（DS-G1） |
+| `backoffGate`（凭据失败退避） | **保留 `domains/relay/core.js`** | 只服务 relay 门卫一条链路，域知识在场，上移反而稀释 shared |
+
+与 §4 的 `shared/ip` / `shared/guardian` / `shared/version` 三例同法：**为消灭重复而跨域**不是理由，
+把纯判定上移 L0 才是；新增跨层边必须同批在 `layering-and-dependency-gate` 的 `CROSS_LAYER` 登记并写理由。
+
 ### 4.5 域内结构规范（六域统一）
 
 ```
