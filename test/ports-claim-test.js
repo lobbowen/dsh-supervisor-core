@@ -1,9 +1,9 @@
 #!/usr/bin/env node
 'use strict';
 
-// 确定性槽位仲裁 claimSlot 回归（2026-09，docs/port-architecture.md）：
+// 确定性槽位仲裁 claimSlot 回归：
 //  byOwner 绑定复用 / binding-lost 迁移(显式) / preferred advisory 回退 / 顺序补位 / 单 owner 单端口
-// 隔离 range（28130+50）→ 确定性，不依赖宿主真实 relay 段占用。
+// 隔离 range（28130+50）-> 确定性，不依赖宿主真实 relay 段占用。
 
 const path = require('node:path');
 const os = require('node:os');
@@ -83,7 +83,7 @@ const RANGE = { base: 28130, count: 50 };
     check('R-reload-4 reload 后 owner-A 绑定保留', p2.byOwner('owner-A') === pA, String(p2.byOwner('owner-A')));
   }
 
-  // ── B14（AUDIT §B-14）：IPv6-only 监听不再漏判 + 跨进程分配锁 + 登记后复检 ──
+  // -- B14：IPv6-only 监听不再漏判 + 跨进程分配锁 + 登记后复检 --
   {
     const net = require('node:net');
     const probe = require(path.join(ROOT, 'src', 'platform', 'service', 'ports', 'probe'));
@@ -117,7 +117,7 @@ const RANGE = { base: 28130, count: 50 };
     check('B14 bindable 拒绝 IPv4 已占端口', (await probe.bindable(RANGE2.base + 9)) === false, 'false');
     occ4.close();
 
-    // 跨进程锁存在性：模拟并发者持锁（fresh mtime）→ 本次分配不崩、fail-open 结果仍正确
+    // 跨进程锁存在性：模拟并发者持锁（fresh mtime）-> 本次分配不崩、fail-open 结果仍正确
     const lockF = path.join(TMP, 'ports-xlock.json') + '.alloc.lock';
     const px = new PortRegistry({ file: path.join(TMP, 'ports-xlock.json') });
     fs.writeFileSync(lockF, String(process.pid));

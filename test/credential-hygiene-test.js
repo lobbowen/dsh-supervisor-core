@@ -1,18 +1,18 @@
 #!/usr/bin/env node
 'use strict';
 
-// 凭据卫生门禁（2026-09-13）—— 凭据管理标准的可执行部分
+// 凭据卫生门禁—— 凭据管理标准的可执行部分
 //
 // ## 真实事故（本门禁要防的）
 //   壳仓令牌原存于**实例附件目录**（.../instances/inst-<id>/data/.dsh/attachments/.../gh_token.txt）
 //   ——那是 ephemeral 的，换个会话就没了 -> 「下午能推壳、现在找不到壳令牌」。
 //   另有一份副本以 0664（全局可读）散落在 $HOME 根。
 //
-// ## 本门禁自身的教训（首版被 CI 打回）
-//   首版直接断言**本机**凭据库存在 -> 本地全绿、CI 全红（C-1/C-2/C-3/C-4），
-//   因为 CI 机器上根本没有那个库。**门禁必须宿主无关** ——
-//   与 platform-layer-portability-test 同一条纪律，我却在写它时违反了。
-//   修法（三段式）：D 组用临时夹具库测规则本身（任意宿主可跑）；
+// ## 门禁必须宿主无关
+//   CI 机器上没有开发机那份凭据库：直接断言它存在，就是把环境事实当成产品事实
+//   （与 platform-layer-portability-test 同一条纪律）。
+//   因此本文件分三段：
+//   D 组用临时夹具库测规则本身（任意宿主可跑）；
 //   R 组真机审计（库存在才做，缺失显式 SKIP）；S 组仓库本地不变量（任何宿主成立）。
 //
 // ## 标准（见 CREDENTIALS-STANDARD.md 与库内 index.json 的 rules）
@@ -45,7 +45,7 @@ function realHome() {
   return os.homedir();
 }
 const REAL_HOME = realHome();
-// 规范库根（2026-09-19 定稿）：真实 home 下 develop/.credentials（与 cred.sh CANON_STORE 同口径）。
+// 规范库根：真实 home 下 develop/.credentials（与 cred.sh CANON_STORE 同口径）。
 const REAL_STORE = process.env.DSH_CRED_DIR || path.join(REAL_HOME, 'develop', '.credentials');
 const LEGACY_ALIAS = path.join(REAL_HOME, '.dsh', 'github-pat-advgyxqamf');
 const HOME_ROOT_STRAYS = ['gh_token.txt', 'gh_token', '.gh_token'].map((n) => path.join(REAL_HOME, n));
@@ -101,7 +101,7 @@ function fixture(dir, opts) {
 
 const TMP = fs.mkdtempSync(path.join(os.tmpdir(), 'credgate-'));
 
-// ── D 组：规则本身（夹具库，任意宿主可跑）──
+// -- D 组：规则本身（夹具库，任意宿主可跑）--
 {
   const d1 = path.join(TMP, 'ok');
   fixture(d1);
@@ -120,7 +120,7 @@ const TMP = fs.mkdtempSync(path.join(os.tmpdir(), 'credgate-'));
   const f2 = fixture(d2);
   fs.chmodSync(f2.kf, 0o644);
   const r2 = runCred(d2, ['doctor']);
-  // Windows 无 POSIX 权限位：chmod 0644 不会被判为「过宽」→ doctor 不会失败。
+  // Windows 无 POSIX 权限位：chmod 0644 不会被判为「过宽」-> doctor 不会失败。
   //   故仅在 POSIX 上断言该失败语义；Windows 断言改为「doctor 完成且不因权限误报」。
   check('D-2 库内文件权限过宽（0644）-> doctor 失败（POSIX）/ Windows 跳过',
     IS_POSIX ? r2.code !== 0 : true,
@@ -171,7 +171,7 @@ const TMP = fs.mkdtempSync(path.join(os.tmpdir(), 'credgate-'));
   check('D-6 put 后 doctor 通过（缺项已消）', runCred(d6, ['doctor']).code === 0, 'ok');
 }
 
-// ── S 组：仓库本地不变量（任何宿主都成立）──
+// -- S 组：仓库本地不变量（任何宿主都成立）--
 {
   const exts = ['.js', '.json', '.md', '.sh', '.yml', '.yaml', '.txt', '.rs', '.ts', '.tsx'];
   const hits = [];
@@ -208,7 +208,7 @@ const TMP = fs.mkdtempSync(path.join(os.tmpdir(), 'credgate-'));
     keyFiles.length === 0, keyFiles.length ? keyFiles.join(', ') : 'ok');
 }
 
-// ── R 组：真机审计（库存在才做；缺失显式 SKIP）──
+// -- R 组：真机审计（库存在才做；缺失显式 SKIP）--
 {
   if (!fs.existsSync(REAL_STORE)) {
     console.log('SKIP R 组：本机无规范凭据库（' + REAL_STORE + '）—— CI/新机属正常；规则本身已由 D 组用夹具库确定性验证。');
@@ -240,10 +240,10 @@ const TMP = fs.mkdtempSync(path.join(os.tmpdir(), 'credgate-'));
   }
 }
 
-// ── 持久化断言（2026-09-13）：库必须在**实例目录之外** ──
+// -- 持久化断言：库必须在**实例目录之外** --
 //   为什么单独锁：$HOME 被 DSH 重定向到 .../instances/<id>/data，
 //   若有人把库「改良」成 ~/.dsh/credentials，它就会落在**实例目录内** ——
-//   换会话即失效（正是历史事故的形态：凭据存在实例附件目录 → 下游会话找不到）。
+//   换会话即失效（正是历史事故的形态：凭据存在实例附件目录 -> 下游会话找不到）。
 {
   const sandboxHome = os.homedir();
   // 仅当 $HOME 确实被重定向到实例数据目录时该断言才适用；CI/新机 HOME 未重定向 -> 不适用。
@@ -271,7 +271,7 @@ const TMP = fs.mkdtempSync(path.join(os.tmpdir(), 'credgate-'));
   }
 }
 
-// ── 反向 ──
+// -- 反向 --
 {
   check('反向：令牌值判据能识别真实形态', TOKEN_RE.test('github_pat_' + 'A'.repeat(30)), 'hit');
   check('反向：判据不误报普通字符串', !TOKEN_RE.test('github_pat_short') && !TOKEN_RE.test('token=abc'), 'ok');

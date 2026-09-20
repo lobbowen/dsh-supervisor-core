@@ -25,10 +25,10 @@ export function OverviewPage() {
   const { snap } = useSupervisorData();
   const { busy, run } = useSupervisorAction();
   const [upgradeOpen, setUpgradeOpen] = useState(false);
-  // B28（AUDIT-2026-09-19）：停止运行中的主干 DSH 是高危动作（在飞请求中断）——需二次确认，
+  // 停止运行中的主干 DSH 是高危动作（在飞请求中断）——需二次确认，
   // 与其他无确认开关同批收敛（LanPage 三开关 / window.prompt 令牌录入）。
   const [confirmStopDsh, setConfirmStopDsh] = useState(false);
-  // main(原生 DSH) 守护开关（2026-09 收敛：守护=跟开关走，与沙箱同语义，默认关持久化 dsh-main.json）
+  // main(原生 DSH) 守护开关
   const [mainGuardian, setMainGuardian] = useState<boolean | null>(null);
   const s = snap.status;
   const native = s?.native;
@@ -48,7 +48,7 @@ export function OverviewPage() {
   const events = useMemo(() => snap.events.filter((e) => !NOISE.has(e.type)), [snap.events]);
 
   async function toggleDsh() {
-    // 2026-09：启停统一走 /lifecycle/dsh/start|stop（语义与旧 /start|/stop 等价，单一控制路径）
+    //：启停统一走 /lifecycle/dsh/start|stop（语义与旧 /start|/stop 等价，单一控制路径）
     await run("dsh", () => (running ? supervisorApi.lifecycleStop("dsh") : supervisorApi.lifecycleStart("dsh")), { success: running ? "正在停止 DSH…" : "正在启动 DSH…" });
   }
   async function openWeb() {
@@ -82,7 +82,7 @@ export function OverviewPage() {
   }
 
   // main 守护开关：读 A 平面真值(instances.native.guardian = dshMainView 持久化源, 即时准确)——
-  // 不走 /lifecycle/dsh(B 平面由心跳~5s 同步, 打开后立即刷新会读到同步前旧值=开关弹回关, 2026-09 修复)。
+  // 不走 /lifecycle/dsh(B 平面由心跳~5s 同步, 打开后立即刷新会读到同步前旧值=开关弹回关, 20复)。
   useEffect(() => {
     if (!installed) return;
     supervisorApi.instances().then((r2) => {
@@ -198,7 +198,7 @@ export function OverviewPage() {
                 <Button disabled={busy === "dsh"} onClick={() => { if (running) setConfirmStopDsh(true); else void toggleDsh(); }} size="sm" variant="outline">
                   {running ? <><Power className="size-4 text-status-error" />停止 DSH</> : <><Rocket className="size-4 text-primary" />启动 DSH</>}
                 </Button>
-                {/* 分割线（自停止/启动 DSH 后开始分割）→ 进程守护按钮（实例页同款按钮式，非 Switch） */}
+                {/* 分割线（自停止/启动 DSH 后开始分割）-> 进程守护按钮（实例页同款按钮式，非 Switch） */}
                 <span aria-hidden="true" className="mx-1 h-5 w-px bg-border" />
                 <Button className="h-[30px]" disabled={busy === "gu" || mainGuardian === null} onClick={() => void toggleMainGuardian()} size="sm" variant="outline">
                   <ShieldCheck className={cn("size-4", mainGuardian === true ? "text-status-ok" : "text-muted-foreground")} />
@@ -208,7 +208,7 @@ export function OverviewPage() {
             ) : null}
             {installed && !nBusy ? (
               <>
-                {/* 守护后无分割线(2026-09 用户定稿)——守护与危险操作直接相邻 */}
+                {/* 守护后无分割线(用户定稿)——守护与危险操作直接相邻 */}
                 <Button className="hidden h-[30px] md:inline-flex" disabled={busy === "uni"} onClick={() => void uninstallDsh()} size="sm" variant="destructive">
                   <Trash2 className="size-4" />卸载 DSH
                 </Button>
@@ -286,7 +286,7 @@ function EnvDetect() {
   // 无数据（加载中）或失败且无当前版本时不渲染
   if (!node?.current) return <span className="min-w-[120px] text-xs text-muted-foreground">环境检测…</span>;
 
-  // ⚠ 2026-09-13：改为消费后端**真实产出**的字段。
+  //：改为消费后端**真实产出**的字段。
   //   原实现读 latestLts / updateAvailable / ltsName —— 后端（settings-view.js::nodeLtsStatus）
   //   从不产出这三个键（它不做远端查询），故「可更新到 vX LTS」整块是**不可达死分支**。
   //   现用 ltsLine（偶数主版本=通常为 LTS 线）给出真实提示，suggested 作 title 明细。
@@ -305,7 +305,7 @@ function EnvDetect() {
   );
 }
 
-/** 事件日志（懒加载）：先渲染 15 条；滚到列表底部哨兵出现 → 继续 +15，直到全部事件渲染完。 */
+/** 事件日志（懒加载）：先渲染 15 条；滚到列表底部哨兵出现 -> 继续 +15，直到全部事件渲染完。 */
 function EventLogPanel({ events }: { events: SupervisorEvent[] }) {
   const PAGE = 12;
   const [visible, setVisible] = useState(PAGE);
@@ -358,7 +358,7 @@ function EventRow({ e }: { e: SupervisorEvent }) {
   );
 }
 
-/** 事件 → 人性化描述（对齐后端遥测语义；无匹配则空串 —— 标签已表达类型） */
+/** 事件 -> 人性化描述（对齐后端遥测语义；无匹配则空串 —— 标签已表达类型） */
 function eventDetail(e: SupervisorEvent): string {
   const d = e.data;
   if (!d) return "";
@@ -392,7 +392,7 @@ function eventDetail(e: SupervisorEvent): string {
   return parts.join(" · ");
 }
 
-/** 事件类型 → tone（覆盖：err 类红色、ok 类绿色、warn 黄、boot 蓝） */
+/** 事件类型 -> tone（覆盖：err 类红色、ok 类绿色、warn 黄、boot 蓝） */
 const EVENT_TONE: Record<string, "ok" | "err" | "warn" | "boot" | "off"> = {
   running: "ok", adopted: "ok", spawned: "ok", main_instance_registered: "ok",
   upgrade_installed: "ok", upgrade_done: "ok", api_listening: "ok",

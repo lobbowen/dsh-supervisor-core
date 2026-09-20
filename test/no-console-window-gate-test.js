@@ -1,36 +1,36 @@
 #!/usr/bin/env node
 'use strict';
 
-// ═══════════════════════════════════════════════════════════════════════════
-// 无控制台窗口门禁（内核侧）—— SSOT: NO-CONSOLE-WINDOW-STANDARD §4
+// ---------------------------------------------------------------------------
+// 无控制台窗口门禁（内核侧）—— SSOT: NO-CONSOLE-WINDOW-STANDARD
 //
 // ## 背景（真机取证）
 //   壳启动内核时弹出终端窗口。内核 platform/util/exec.js 的**同步** execFileSync
 //   已设 windowsHide:true（门禁 G9-d），但**异步 spawn 无统一封装**：
-//   SSOT §1 记录 src 下 14 处裸 spawn、其中 13 处缺 windowsHide。
+//   SSOT 记录 src 下 14 处裸 spawn、其中 13 处缺 windowsHide。
 //
-// ## 断言（SSOT §4）
+// ## 断言（SSOT）
 //   K-W1 src/platform/os/spawn.js 的 detached / piped / detachedIgnored
 //        三入口的 options 均含 windowsHide: true（不变量 W-1）。
 //   K-W2 src/** 下裸子进程调用点 = 0：spawn( / spawnSync( / execFile( / execFileSync( /
-//        execSync( / 裸 exec(（条 6 批 4 C 平台扩展——旧判据只匹配 spawn(，异步 execFile
-//        全盲区）；只允许经统一封装（spawn.js 豁免 spawn、util/exec.js 豁免 exec 族）。
-//   K-W3 反向：判据必须能识别旧形态（无 windowsHide 的裸 spawn / 裸 execFile）→ 门禁非空转。
+//        execSync( / 裸 exec(（判据要覆盖整个 exec 族；只匹配 spawn( 会把异步 execFile
+//        留在盲区）。只允许经统一封装（spawn.js 豁免 spawn、util/exec.js 豁免 exec 族）。
+//   K-W3 反向：判据必须能识别旧形态（无 windowsHide 的裸 spawn / 裸 execFile）-> 门禁非空转。
 //
 // 说明：本文件只**读**源码做静态分析，不执行被测代码。
 //
-// ## 覆盖缺口（E-2 制度化登记，AUDIT-2026-09-19 第 4 批）
+// ## 覆盖缺口
 //   K-W2 绿只证明「src/ 里没有裸子进程调用点」这一**文本形态**，不证明窗口隐藏这件事：
 //   1. 扫描面只有 `src/**.js`：`bin/` 入口、`release/scripts/`、`ui/` 不在射程内
 //      （G9 因同类事故已把 bin 纳入，本闸尚未跟进；当前 bin 实测 0 处裸调用，属**未设防**）。
 //   2. 判据是**逐行**正则（先 split 再 test），因此两类形态完全看不见：
-//      ① 调用名与 `(` 分处两行；② **解构改名**后调用（`const { spawn: go } = …; go(…)`）
+//      1) 调用名与 `(` 分处两行；2) **解构改名**后调用（`const { spawn: go } = …; go(…)`）
 //      ——改名后源码里不存在任何被匹配的字面量。要补强需换 AST，不在本批范围。
-//   3. 含 `child_process` 的整行跳过：同行「require + 调用」复合形态漏报（SSOT §4 已登记）。
+//   3. 含 `child_process` 的整行跳过：同行「require + 调用」复合形态漏报（SSOT 已登记）。
 //   4. K-W1 只在**封装入口**固定 windowsHide；调用方经 opts 传什么、子进程自己再起的孙进程
 //      是否弹窗，均不在本闸范围。
 //   5. 本闸不验证 Windows 真机行为（无 GUI 会话）：真机取证仍靠 CROSS-PLATFORM 文档的人工步骤。
-// ═══════════════════════════════════════════════════════════════════════════
+// ---------------------------------------------------------------------------
 
 const fs = require('node:fs');
 const path = require('node:path');
@@ -43,7 +43,7 @@ const check = (n, c, x) => {
 };
 
 const SPAWN_MODULE = 'src/platform/os/spawn.js';
-// 条 6（批 4 C 平台）：exec 族（含异步 execFile）的唯一合法调用点收口于 util/exec.js。
+// exec 族（含异步 execFile）的唯一合法调用点收口于 util/exec.js。
 const EXEC_MODULE = 'src/platform/util/exec.js';
 const ENTRY_FNS = ['detached', 'piped', 'detachedIgnored'];
 const HIDE_RE = /windowsHide\s*:\s*true/;
@@ -69,10 +69,10 @@ function jsFiles() {
 }
 
 /** K-W2 / K-W3 共用判据：逐行找裸子进程调用点（spawn 族 + exec 族）。
- *  · 跳过含 child_process 的行（require / 解构导入本身不是调用点）——已知残留盲区：
- *    同行「require + 调用」复合形态仍被此规则跳过，与 spawn 时代一致，已在 SSOT §4 登记；
- *  · \bspawn\( 不会命中 respawn(（词内无边界）；spawnSync( 由独立词形命中；
- *  · 裸 exec( 用 (?<![.\w$]) 排除 RegExp 属性形态（re.exec( 不是子进程调用）。 */
+ *  - 跳过含 child_process 的行（require / 解构导入本身不是调用点）——已知残留盲区：
+ *    同行「require + 调用」复合形态仍被此规则跳过，与 spawn 时代一致，已在 SSOT 登记；
+ *  - \bspawn\( 不会命中 respawn(（词内无边界）；spawnSync( 由独立词形命中；
+ *  - 裸 exec( 用 (?<![.\w$]) 排除 RegExp 属性形态（re.exec( 不是子进程调用）。 */
 const CALL_PATTERNS = [
   /\bspawn\s*\(/,
   /\bspawnSync\s*\(/,
@@ -149,7 +149,7 @@ function hiddenCarriers(src) {
   return names;
 }
 
-// ── K-W1：spawn.js 三入口均隐藏控制台 ──
+// -- K-W1：spawn.js 三入口均隐藏控制台 --
 console.log('== K-W1 spawn.js 三入口 windowsHide ==');
 {
   const abs = path.join(ROOT, SPAWN_MODULE);
@@ -178,14 +178,14 @@ console.log('== K-W1 spawn.js 三入口 windowsHide ==');
   }
 }
 
-// ── K-W2：src 下裸子进程调用点 = 0（spawn + exec 族，条 6 扩展）──
+// -- K-W2：src 下裸子进程调用点 = 0（spawn + exec 族，条 6 扩展）--
 console.log('== K-W2 src 下裸 spawn(/exec*() 调用点 ==');
 {
   const offenders = scanBareSpawns();
   check('K-W2 src/** 裸 spawn(/spawnSync(/execFile(/execFileSync(/execSync(/exec( 调用点 = 0',
     offenders.length === 0,
     offenders.length ? (offenders.length + ' 处: ' + offenders.slice(0, 5).join(' | ')) : 'ok');
-  // 收编证据（条 6）：曾经的三处异步 execFile 盲区调用点必须已改走统一封装。
+  // 收编证据：三处异步 execFile 调用点必须走统一封装，否则判据留盲区。
   const read = (rel) => stripComments(fs.readFileSync(path.join(ROOT, rel), 'utf8'));
   check('条 6 killTree 的 taskkill 走 exec.runAsync（不再裸 execFile）',
     /ex\.runAsync\('taskkill'/.test(read('src/platform/os/process.js')), '有');
@@ -195,7 +195,7 @@ console.log('== K-W2 src 下裸 spawn(/exec*() 调用点 ==');
     /ex\.runOutAsync\('git'/.test(read('src/app/settings/versions.js')), '有');
 }
 
-// ── K-W3：反向 —— 判据必须能识别旧形态 ──
+// -- K-W3：反向 —— 判据必须能识别旧形态 --
 console.log('== K-W3 反向（门禁非空转）==');
 {
   const legacy = [
@@ -213,7 +213,7 @@ console.log('== K-W3 反向（门禁非空转）==');
   // 正向：经统一封装的调用点（spawnMod.detached 形态）不应被误报
   const wrapped = "const child = spawnMod.detached(cmd, args, { env });";
   check('K-W3 判据不误报经封装的调用', bareSpawnCallSites(wrapped).length === 0, 'ok');
-  // 条 6（批 4 C 平台）：exec 族形态逐一命中（旧判据只匹配 spawn( → 全盲区）。
+  // exec 族形态逐一命中（旧判据只匹配 spawn( -> 全盲区）。
   const execLegacy = [
     "const child = execFile('git', ['fetch'], { timeout: 10000 }, (err) => {});",
     "const o = execFileSync('git', ['status']);",

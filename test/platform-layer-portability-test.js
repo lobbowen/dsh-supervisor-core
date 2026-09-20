@@ -1,40 +1,40 @@
 #!/usr/bin/env node
 'use strict';
 
-// ═══════════════════════════════════════════════════════════════════════════
-// 平台层「可移植性」穷举门禁（2026-09-13）
+// ---------------------------------------------------------------------------
+// 平台层「可移植性」穷举门禁
 //
 // 承接 four-platform-behavior-matrix-test：把**平台层模块**的平台相关行为
 // 也在**任意宿主**上穷举 —— 不依赖 mac/win runner。
 //
 // 覆盖三个模块（按可注入程度分两类）：
-//   · platform/os/exec-path.js  —— **完全参数化**（platform + env 均可注入）→ 直接穷举
-//   · platform/os/service.js    —— 加载期捕获 platform → **子进程伪造**后穷举
-//   · platform/os/autostart.js  —— 同上
+//   - platform/os/exec-path.js  —— **完全参数化**（platform + env 均可注入）-> 直接穷举
+//   - platform/os/service.js    —— 加载期捕获 platform -> **子进程伪造**后穷举
+//   - platform/os/autostart.js  —— 同上
 //
 // ## 本次同时修掉的两个真实缺陷（失效模式 a：声明与实现不一致）
 //
-// ① **exec-path 的 platform 注入没有传播**：
+// 1) **exec-path 的 platform 注入没有传播**：
 //    `npmBin({platform:'win32'})` 内部调 `resolveExecutable`（不传 platform/env）
-//    → 按**宿主**规则解析。实测在 Linux 上返回 `/home/.../bin/npm`（POSIX 路径！），
+//    -> 按**宿主**规则解析。实测在 Linux 上返回 `/home/.../bin/npm`（POSIX 路径！），
 //    使文档所称「platform 可注入，便于纯函数测试」**形同虚设** ——
 //    也就是「无法在 Linux 上验证 Windows 的 npm.cmd 解析」。
 //    修法：`resolveExecutable` 接受并**向下传播** platform/env；
 //    `standardDirs`/`inPath` 接受 env。
 //
-// ② **autostart.status() 在未知平台谎报 kind='systemd'**：
+// 2) **autostart.status() 在未知平台谎报 kind='systemd'**：
 //    原 Linux 分支是**无守卫 fallthrough**，freebsd 等未知平台落进去，
 //    对外声称 systemd，而同一平台的 `capabilityProfile().hostService` 是 `none`
 //    —— 同一事实两个相反答案。修法：未知平台显式 `kind:'none'` 且不触碰 systemctl。
 //
 // ## 锁定不变量
-//   X-1  exec-path：候选名 / 标准目录 / npmBin·npxBin 的**平台行为**可穷举
+//   X-1  exec-path：候选名 / 标准目录 / npmBin-npxBin 的**平台行为**可穷举
 //   X-2  **P1-C 复现**：在 Linux 上以注入 env 让 win32 解析命中 `npm.cmd`
 //        （即：Windows 上裸 `npm` 会 ENOENT 的那个缺陷类别，被本门禁钉死）
 //   X-3  service：四平台 kind 正确 + **方法集完全一致** + 不支持平台**显式抛错**
 //   X-4  autostart：daemonCommand 平台差异（win 带 .exe）+ status().kind 与能力档位一致
 //   X-5  反向：判据能识别宿主泄漏与静默误声明（门禁非空转）
-// ═══════════════════════════════════════════════════════════════════════════
+// ---------------------------------------------------------------------------
 
 const fs = require('node:fs');
 const os = require('node:os');
@@ -69,12 +69,12 @@ function underFake(platform, body, opts) {
 
 const TMP = fs.mkdtempSync(path.join(os.tmpdir(), 'platport-'));
 
-// ── X-1：exec-path 候选名 / 标准目录（纯参数化）──
+// -- X-1：exec-path 候选名 / 标准目录（纯参数化）--
 {
   const winNames = ep.candidateNames('npm', 'win32');
   check('X-1 win32 候选名含 npm.cmd（P1-C 的核心）',
     winNames.includes('npm.cmd'), JSON.stringify(winNames));
-  // ⚠ 必须断言**排位**：仅断言"包含 .cmd"会被 PATHEXT 的默认值兜住（假绿，已实测）
+  //  必须断言**排位**：仅断言"包含 .cmd"会被 PATHEXT 的默认值兜住（假绿，已实测）
   const iExe = winNames.indexOf('npm.exe');
   const iCmd = winNames.indexOf('npm.cmd');
   check('X-1 npm.exe 与 npm.cmd 在候选名里**显式且靠前**（不依赖 PATHEXT 默认值兜底）',
@@ -104,7 +104,7 @@ const TMP = fs.mkdtempSync(path.join(os.tmpdir(), 'platport-'));
     dDirs.includes('/opt/homebrew/bin') && dDirs.includes('/usr/local/bin'), JSON.stringify(dDirs));
 }
 
-// ── X-2：P1-C 复现 —— 在 Linux 上验证 win32 会命中 npm.cmd ──
+// -- X-2：P1-C 复现 —— 在 Linux 上验证 win32 会命中 npm.cmd --
 {
   // 造一个只有 npm.cmd 的目录（模拟 Windows 上 npm 的真实形态）
   const fakeBin = path.join(TMP, 'winbin');
@@ -123,7 +123,7 @@ const TMP = fs.mkdtempSync(path.join(os.tmpdir(), 'platport-'));
     ep.npmBin({ platform: 'linux', env }) === 'npm', ep.npmBin({ platform: 'linux', env }));
   check('X-2 darwin + 同一 env：同上', ep.npmBin({ platform: 'darwin', env }) === 'npm', ep.npmBin({ platform: 'darwin', env }));
 
-  // win32 但解析不到 → 必须回退 npm.cmd（而不是裸 npm，否则 Windows 必 ENOENT）
+  // win32 但解析不到 -> 必须回退 npm.cmd（而不是裸 npm，否则 Windows 必 ENOENT）
   const emptyDir = path.join(TMP, 'empty');
   fs.mkdirSync(emptyDir, { recursive: true });
   check('X-2 win32 解析不到时回退 npm.cmd（不是裸 npm）',
@@ -138,7 +138,7 @@ const TMP = fs.mkdtempSync(path.join(os.tmpdir(), 'platport-'));
     ep.npxBin({ platform: 'win32', env }) === fakeNpx, ep.npxBin({ platform: 'win32', env }));
 }
 
-// ── X-3：service —— 四平台 kind + 方法集一致 + 不支持平台显式抛错 ──
+// -- X-3：service —— 四平台 kind + 方法集一致 + 不支持平台显式抛错 --
 {
   const kinds = { linux: 'systemd', darwin: 'launchd', win32: 'windows-service', freebsd: 'none' };
   const sets = {};
@@ -181,7 +181,7 @@ const TMP = fs.mkdtempSync(path.join(os.tmpdir(), 'platport-'));
     inact === 'false', inact);
 }
 
-// ── X-4：autostart —— daemonCommand 平台差异 + status().kind 与能力档位一致 ──
+// -- X-4：autostart —— daemonCommand 平台差异 + status().kind 与能力档位一致 --
 {
   const cmds = {};
   for (const p of ['linux', 'darwin', 'win32']) {
@@ -191,7 +191,7 @@ const TMP = fs.mkdtempSync(path.join(os.tmpdir(), 'platport-'));
     ].join(String.fromCharCode(10)), { home: '/H' });
     cmds[p] = out;
   }
-  // ⚠ 2026-09-14：原断言把**期望路径硬编码**为 path.join('/H', ...)，依赖 underFake 的 home 注入。
+  //：原断言把**期望路径硬编码**为 path.join('/H', ...)，依赖 underFake 的 home 注入。
   //   但 Windows 宿主上产品用的是真实 home（fake 的 home 未覆盖 Windows 的 env 变量），
   //   故在 Windows CI 恒失败 —— 该门禁长期只在 ubuntu 跑（build 矩阵被 need_build 跳过），无人发现。
   //   断言应当表达**平台差异这一不变量**（win 带 .exe / posix 不带），而非某个绝对前缀。
@@ -235,18 +235,18 @@ const TMP = fs.mkdtempSync(path.join(os.tmpdir(), 'platport-'));
     noNoise === 'unsupported', noNoise);
 }
 
-// ── X-6：file-protect —— POSIX 分支 + Windows 不得静默成功 ──
+// -- X-6：file-protect —— POSIX 分支 + Windows 不得静默成功 --
 {
   const fp = require(path.join(ROOT, 'src', 'platform', 'os', 'file-protect.js'));
   check('X-6 hasIcacls(linux/darwin) 恒 false（POSIX 绝不探测 icacls）',
     fp.hasIcacls('linux') === false && fp.hasIcacls('darwin') === false, 'false');
   // Windows 分支：探测不到 icacls 时必须**如实失败**（不得静默 ok）。
-  //   ⚠ 本块的前提在 CI 上被证伪过一次（run 35487214678，windows job）：原先写的「win32 宿主
+  //    本块的前提在 CI 上被证伪过一次：原先写的「win32 宿主
   //   System32 必有 icacls，故清空 PATH 后仍可用」是**推演**，实测该 job 里 hasIcacls()=false
   //   （execFileSync('icacls') 在 PATH 清空后没被解析到）。教训：环境事实不能靠推演写进判据。
   //   现在两侧各验自己的不变量，并把「icacls 到底可不可用」降级为**回显的事实**而非前提：
-  //     POSIX 宿主 —— 清空 PATH → 探测必不可用 → 必须如实 ok=false/mode=none（不静默成功）；
-  //     win32 宿主 —— 真实 PATH → 「可用 ⇒ 绝不谎报 none」且「不可用 ⇒ 绝不假称收紧」（一致性）。
+  //     POSIX 宿主 —— 清空 PATH -> 探测必不可用 -> 必须如实 ok=false/mode=none（不静默成功）；
+  //     win32 宿主 —— 真实 PATH -> 「可用 => 绝不谎报 none」且「不可用 => 绝不假称收紧」（一致性）。
   const winMissing = path.join(TMP, 'nonexistent-xyz');
   const probeBody = [
     "const fp = require('./src/platform/os/file-protect.js');",
@@ -297,7 +297,7 @@ const TMP = fs.mkdtempSync(path.join(os.tmpdir(), 'platport-'));
   }
 }
 
-// ── X-7：netinfo —— 平台支持矩阵 + 未知平台显式空 + pick 纯逻辑 ──
+// -- X-7：netinfo —— 平台支持矩阵 + 未知平台显式空 + pick 纯逻辑 --
 {
   const ni = require(path.join(ROOT, 'src', 'platform', 'os', 'netinfo.js'));
   check('X-7 pick 是纯函数：过滤虚拟接口（docker/veth/br- 等）',
@@ -319,7 +319,7 @@ const TMP = fs.mkdtempSync(path.join(os.tmpdir(), 'platport-'));
   }
 }
 
-// ── X-8：browser —— 平台命令规划（A4 2026-09-19：win32 去 cmd /c start，杜绝二次解析注入）──
+// -- X-8：browser —— 平台命令规划--
 {
   const br = require(path.join(ROOT, 'src', 'platform', 'os', 'browser.js'));
   const u = 'http://127.0.0.1:28111/x';
@@ -373,7 +373,7 @@ const TMP = fs.mkdtempSync(path.join(os.tmpdir(), 'platport-'));
     JSON.stringify(lp.candidates[5].args) === JSON.stringify(['--private-window', u]), JSON.stringify(lp.candidates[5].args));
 }
 
-// ── X-5：反向（判据必须能识别宿主泄漏与静默误声明）──
+// -- X-5：反向（判据必须能识别宿主泄漏与静默误声明）--
 {
   check('X-5 反向：win32 候选名若缺 npm.cmd 会被判据识别',
     !ep.candidateNames('npm', 'win32').includes('npm.cmd') === false, 'hit');
@@ -385,11 +385,11 @@ const TMP = fs.mkdtempSync(path.join(os.tmpdir(), 'platport-'));
     'systemd' !== 'none', 'hit');
 }
 
-// ── X-9：批 4 C 条 3/4 —— 可执行位判定 + spawn 前可用性预检 ──
+// -- X-9 条 3/4 —— 可执行位判定 + spawn 前可用性预检 --
 {
   const br = require(path.join(ROOT, 'src', 'platform', 'os', 'browser.js'));
 
-  // 条 3：isExecutableFile 本体
+  // isExecutableFile 本体
   const nf = path.join(TMP, 'plain-0644');
   fs.writeFileSync(nf, 'x', { mode: 0o644 });
   if (process.platform !== 'win32') {
@@ -402,25 +402,25 @@ const TMP = fs.mkdtempSync(path.join(os.tmpdir(), 'platport-'));
     ep.isExecutableFile(nf, 'win32') === true, String(ep.isExecutableFile(nf, 'win32')));
   check('X-9 条3 不存在路径 → false（不抛）',
     ep.isExecutableFile(path.join(TMP, 'no-such-bin')) === false, 'false');
-  // 条 3：pidlookup ss 候选预检（linuxFindSs 要求宿主=linux，注入平台伪造无效 → 静态判据）
+  // pidlookup ss 候选预检（linuxFindSs 要求宿主=linux，注入平台伪造无效 -> 静态判据）
   const ssSrc = fs.readFileSync(path.join(ROOT, 'src', 'platform', 'os', 'pidlookup', 'probe.js'), 'utf8');
   check('X-9 条3 linuxFindSs 绝对路径候选先判执行位（EACCES 不再白耗一轮 spawn）',
     /if \(ssBin\.includes\('\/'\) && !isExecutableFile\(ssBin\)\) continue;/.test(ssSrc), '有');
   check('X-9 条3 裸名候选保留交 execFile 的 PATH 解析（预检不扩大）',
     /candidates = \['ss',/.test(ssSrc), 'ok');
 
-  // 条 4：launchIsolated spawn 前预检（binAvailable + spawn **双**注入 → 宿主无关、零真实进程）
-  //   ⚠ 第 4 批改判（静态推演得出，见 §H-7-10）：原写法只注入 binAvailable，且判据是
-  //   `r1.bin === plan.bin`。但产品的上报形态按分支不同 —— single 报 **plan.label**
-  //   （darwin='Google Chrome'、win32='explorer'/'chrome'），chain 才报 c.bin。
-  //   所以 linux 恰好相等，**darwin 与 win32 宿主必红**；且未注入 spawn 时还会在 CI 机器上
-  //   真起一次浏览器。现改注入 spawn 缝，断言「被真 spawn 的是哪个 bin」+「返回值与计划一致」。
+  // launchIsolated spawn 前预检（binAvailable + spawn **双**注入 -> 宿主无关、零真实进程）
+  //   只注入 binAvailable 并比 `r1.bin === plan.bin` 不够：产品的上报形态按分支不同 ——
+  //   single 报 **plan.label**（darwin='Google Chrome'、win32='explorer'/'chrome'），
+  //   chain 才报 c.bin。只比等值时 linux 恰好相等，**darwin 与 win32 宿主必红**；
+  //   且未注入 spawn 时还会在 CI 机器上真起一次浏览器。
+  //   故注入 spawn 缝，断言「被真 spawn 的是哪个 bin」+「返回值与计划一致」。
   const u9 = 'http://127.0.0.1:28999/x';
-  // ⚠ 第 4 批二次改判（run 35487214678，windows job）：夹具规划必须与产品规划**同源**，
-  //   且不能依赖「这台机器装了什么」。原先夹具按「无 chrome」算出 explorer.exe，而产品内部
-  //   自己调 findChromeWin()（win runner 装了 Chrome → 计划变成 chrome.exe 绝对路径、label='chrome'），
-  //   于是注入的 binAvailable 对产品真正询问的 bin 恒 false → 一个进程都不起、返回 ok:false，
-  //   看起来像产品缺陷。现把 chromeBin 变成显式入参（缺省仍为运行期探测），夹具固定注入探测结果，
+  //   夹具规划必须与产品规划**同源**，且不能依赖「这台机器装了什么」：
+  //   若夹具自行假定「无 chrome」而产品内部去 findChromeWin()（装了 Chrome 时计划变成
+  //   chrome.exe 绝对路径、label='chrome'），注入的 binAvailable 对产品真正询问的 bin 恒 false
+  //   -> 一个进程都不起、返回 ok:false，看起来像产品缺陷。
+  //   故 chromeBin 是显式入参（缺省仍为运行期探测），夹具固定注入探测结果，
   //   两侧规划同一入参即同一计划；Chrome 在/不在两种形态由 isolatedPlan 的纯函数用例覆盖。
   const chromeBin9 = br.findChromeWin();
   const plan9 = br.isolatedPlan(process.platform, u9, { profileDir: '/P', antiArgs: ['--a'], chromeBin: chromeBin9 });
@@ -436,7 +436,7 @@ const TMP = fs.mkdtempSync(path.join(os.tmpdir(), 'platport-'));
   });
   // 前提例：把「夹具规划 == 产品规划」本身变成可判事实。没有它，不同源只会表现为
   //   「一个进程都不起 + ok:false」，读起来像产品缺陷（本次就是这样绕了一个 run）。
-  //   ⚠ 三次改判（run 35488336734，chain 形态宿主）：chain 分支产品对**全部**候选做预检
+  //    三次改判：chain 分支产品对**全部**候选做预检
   //   （`filter` 语义，问完 7 个才挑第一个可用的），故「问的第一个 == 可达的第一个」恒假 ——
   //   产品对、判据错。同源的正确表述是**序列逐位相同**，与可达位在哪一格无关。
   const seq9 = plan9.kind === 'single' ? [plan9.bin] : plan9.candidates.map((c) => c.bin);

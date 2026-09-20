@@ -1,16 +1,16 @@
 #!/usr/bin/env node
 'use strict';
 
-// ═══════════════════════════════════════════════════════════════════════════
-// 跨平台架构契约门禁（2026-09-13）
+// ---------------------------------------------------------------------------
+// 跨平台架构契约门禁
 //
 // ## 这份门禁解决的问题
 //
 // 明确要求：「后续开发不会再因为内部业务逻辑开发而影响跨平台构建能力」。
 //
 // 反例（本仓真实发生过）：业务域里顺手写一个 `process.platform !== 'win32'`
-// 或一张 os 映射表 → 平台知识散落到 4 个业务域（见 platform-matrix-single-source-test
-// 的缺陷说明）→ 那些分支**在非本平台上不会被校验**，且与平台层能力声明脱钩。
+// 或一张 os 映射表 -> 平台知识散落到 4 个业务域（见 platform-matrix-single-source-test
+// 的缺陷说明）-> 那些分支**在非本平台上不会被校验**，且与平台层能力声明脱钩。
 //
 // ## 契约条款
 //
@@ -22,7 +22,7 @@
 //   CP-4  `package.json#engines.node` 必须存在（跨平台运行时下限的单一声明）
 //
 // 每条都有**反向断言**（判据必须能识别违规形态，否则门禁空转）。
-// ═══════════════════════════════════════════════════════════════════════════
+// ---------------------------------------------------------------------------
 
 const fs = require('node:fs');
 const path = require('node:path');
@@ -62,7 +62,7 @@ function collectJs(dir) {
 
 const PLATFORM_RE = /\bprocess\.(platform|arch)\b|\bos\.(platform|arch)\s*\(/;
 
-// ── CP-1：平台事实只允许在 src/platform/** ──
+// -- CP-1：平台事实只允许在 src/platform/** --
 {
   const files = collectJs(path.join(ROOT, 'src'));
   const offenders = [];
@@ -83,7 +83,7 @@ const PLATFORM_RE = /\bprocess\.(platform|arch)\b|\bos\.(platform|arch)\s*\(/;
     offenders.length ? offenders.join(String.fromCharCode(10) + '        ') : '未发现越界');
 }
 
-// ── CP-2：业务域不得持 os/arch 映射表 ──
+// -- CP-2：业务域不得持 os/arch 映射表 --
 {
   const files = collectJs(path.join(ROOT, 'src'));
   const mapRe = /\{\s*(?:win32|darwin|linux)\s*:\s*['"](?:win|darwin|linux)['"]/;
@@ -97,9 +97,9 @@ const PLATFORM_RE = /\bprocess\.(platform|arch)\b|\bos\.(platform|arch)\s*\(/;
     offenders.length === 0, offenders.length ? offenders.join(', ') : '未发现');
 }
 
-// ── CP-3：平台层结构齐备（新增平台必须同步加分支，否则平台层会缺档位）──
+// -- CP-3：平台层结构齐备（新增平台必须同步加分支，否则平台层会缺档位）--
 //
-//   ⚠ 内核是 JS：平台分派在 src/platform/os/index.js（capabilityProfile 的 if/else 档位）
+//    内核是 JS：平台分派在 src/platform/os/index.js（capabilityProfile 的 if/else 档位）
 //     + src/platform/contract/matrix.js（矩阵与标签）。壳仓才是 Rust 的 #[cfg(target_os)]。
 {
   const osDir = path.join(ROOT, 'src', 'platform', 'os');
@@ -122,14 +122,14 @@ const PLATFORM_RE = /\bprocess\.(platform|arch)\b|\bos\.(platform|arch)\s*\(/;
     matrixPlats.join(', '));
 }
 
-// ── CP-4：Node 运行时下限单一声明 ──
+// -- CP-4：Node 运行时下限单一声明 --
 {
   const pkg = require(path.join(ROOT, 'package.json'));
   check('CP-4 package.json#engines.node 已声明（跨平台运行时下限单源）',
     !!(pkg.engines && pkg.engines.node), (pkg.engines && pkg.engines.node) || '(缺)');
 }
 
-// ── 反向断言：判据必须能识别违规形态（否则门禁空转）──
+// -- 反向断言：判据必须能识别违规形态（否则门禁空转）--
 {
   check('反向：判据能识别业务域里的 process.platform',
     PLATFORM_RE.test("if (process.platform !== 'win32') { x(); }"), 'hit');

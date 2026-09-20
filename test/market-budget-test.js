@@ -1,31 +1,31 @@
 #!/usr/bin/env node
 'use strict';
 
-// ═══════════════════════════════════════════════════════════════════════════
-// 插件市场的**整体构建预算**（P2-8，2026-09-12）
+// ---------------------------------------------------------------------------
+// 插件市场的**整体构建预算**
 //
 // ## 缺陷
 //
 // 社区源候选约 **2468** 个，按 8 并发分批、每批各带超时 —— 最坏情况可达数十分钟；
 // 而 `GET /plugins/market` 会**阻塞到构建完成**：
-//   · 前端 15s 就放弃了（AbortSignal），**服务端却还在跑**；
-//   · 反复点「刷新」会叠加多轮构建。
+//   - 前端 15s 就放弃了（AbortSignal），**服务端却还在跑**；
+//   - 反复点「刷新」会叠加多轮构建。
 //
 // ## 修法
 //
 // 给整次构建一个上限（默认 4 分钟，可经 `buildBudgetMs` 注入）：
-//   · `buildIndex()` 置 `_deadline`，在 `finally` 清除；
-//   · 各源的批次循环在发起**新批次前**检查 `_budgetExhausted()`，到点即 break；
-//   · 用已采集的部分构建索引 —— 与既有的「坏构建保护」天然配合
+//   - `buildIndex()` 置 `_deadline`，在 `finally` 清除；
+//   - 各源的批次循环在发起**新批次前**检查 `_budgetExhausted()`，到点即 break；
+//   - 用已采集的部分构建索引 —— 与既有的「坏构建保护」天然配合
 //     （部分结果 < 旧缓存 50% 时会按 source 维度沿用旧缓存，不会冲掉）。
 //
 // ## 锁定不变量
 //   M-a  `buildBudgetMs` 可注入（默认 4 分钟）
 //   M-b  `buildIndex()` 期间 `_deadline` **已置位**（各源可观察到），结束后**清零**
-//   M-c  `_budgetExhausted()` 语义正确（未置位/未到点 → false；到点 → true）
+//   M-c  `_budgetExhausted()` 语义正确（未置位/未到点 -> false；到点 -> true）
 //   M-d  两个批次循环都检查预算（源码级：loop guard 在 `slice` 之前）
 //   M-e  超预算时**返回部分结果**（不抛、不清缓存）
-// ═══════════════════════════════════════════════════════════════════════════
+// ---------------------------------------------------------------------------
 
 const path = require('node:path');
 const fs = require('node:fs');
@@ -35,12 +35,12 @@ const ROOT = path.join(__dirname, '..');
 const results = [];
 const check = (n, c, x) => { results.push(!!c); console.log((c ? 'PASS' : 'FAIL') + ' ' + n + (x !== undefined && x !== '' ? '  ← ' + x : '')); };
 
-// 2026-09-16 步骤8a（DIRECTORY-STRUCTURE-DESIGN §4.5）：pluginmarket.js 改名归位为 market.js
+// 步骤8a（DIRECTORY-STRUCTURE-DESIGN）：pluginmarket.js 改名归位为 market.js
 const SRC = path.join(ROOT, 'src', 'domains', 'plugin', 'market.js');
 const src = fs.readFileSync(SRC, 'utf8');
 const { PluginMarket } = require(SRC);
 
-// ── M-a：可注入的预算 ──
+// -- M-a：可注入的预算 --
 {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mkt-'));
   const mk = (o) => new PluginMarket(Object.assign({ cacheDir: dir, stateFile: path.join(dir, 's.json'), logger: { info() {}, warn() {}, error() {} } }, o || {}));
@@ -49,7 +49,7 @@ const { PluginMarket } = require(SRC);
   fs.rmSync(dir, { recursive: true, force: true });
 }
 
-// ── M-c：_budgetExhausted 语义 ──
+// -- M-c：_budgetExhausted 语义 --
 {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mkt-'));
   const m = new PluginMarket({ cacheDir: dir, stateFile: path.join(dir, 's.json'), logger: { info() {}, warn() {}, error() {} } });
@@ -62,7 +62,7 @@ const { PluginMarket } = require(SRC);
   fs.rmSync(dir, { recursive: true, force: true });
 }
 
-// ── M-b / M-e：构建期间 deadline 生效，结束后清零；且返回部分结果不抛 ──
+// -- M-b / M-e：构建期间 deadline 生效，结束后清零；且返回部分结果不抛 --
 (async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mkt-'));
   const m = new PluginMarket({
@@ -94,7 +94,7 @@ const { PluginMarket } = require(SRC);
   check('M-b 构建结束后 _deadline 清零', m._deadline === 0, String(m._deadline));
   fs.rmSync(dir, { recursive: true, force: true });
 
-  // ── M-d：两个批次循环都在发起新批次前检查预算 ──
+  // -- M-d：两个批次循环都在发起新批次前检查预算 --
   {
     const loops = src.match(/for \(let i = 0; i < (names|links)\.length; i \+= (batch|8)\) \{[\s\S]{0,300}?slice\(i,/g) || [];
     check('M-d 定位到两个批次循环', loops.length === 2, loops.length + ' 个');
@@ -106,11 +106,11 @@ const { PluginMarket } = require(SRC);
       /finally \{ this\._deadline = 0; \}/.test(src), '有');
   }
 
-  // ── M-f：**预算截断的源必须与旧缓存并集**（P2-8 配套修复）──
+  // -- M-f：**预算截断的源必须与旧缓存并集**（P2-8 配套修复）--
   //
   // 缺陷：既有的「坏构建保护」判据是「本次**整源失败**」（`!freshSources.has(source)`），
-  //   而被截断的源**仍在结果里**（只是不完整）→ 该保护不保留它的旧条目
-  //   → 只跑到 200/2400 的 community 会**替换掉**完整的旧 community 列表。
+  //   而被截断的源**仍在结果里**（只是不完整）-> 该保护不保留它的旧条目
+  //   -> 只跑到 200/2400 的 community 会**替换掉**完整的旧 community 列表。
   {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mkt-'));
     const m = new PluginMarket({
@@ -147,7 +147,7 @@ const { PluginMarket } = require(SRC);
     fs.rmSync(dir, { recursive: true, force: true });
   }
 
-  // ── M-g（反向）：**未**截断的源不得合并旧条目（否则陈旧条目永不淘汰）──
+  // -- M-g（反向）：**未**截断的源不得合并旧条目（否则陈旧条目永不淘汰）--
   {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mkt-'));
     const m = new PluginMarket({ cacheDir: dir, stateFile: path.join(dir, 's.json'), logger: { info() {}, warn() {}, error() {} } });

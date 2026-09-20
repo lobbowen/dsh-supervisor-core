@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# 凭据库统一入口（**凭据管理的单一事实源**，2026-09-13 标准化）
+# 凭据库统一入口
 #
 # 解决的问题（真实事故）：
 #   壳仓令牌原存于**实例附件目录**（.../instances/<id>/data/.dsh/attachments/...）——
 #   那是 ephemeral 的，换个会话就找不到了。于是出现「下午能推壳、现在找不到壳令牌」。
 #   本工具把「哪个仓用哪个凭据、值在哪、是否有效、缺什么」变成可查、可验证的事实。
 #
-# ⚠ $HOME 被 DSH 重定向到实例数据目录，故本工具**一律用绝对路径**，不依赖 ~。
+#  $HOME 被 DSH 重定向到实例数据目录，故本工具**一律用绝对路径**，不依赖 ~。
 #
 # 用法：
 #   cred.sh list                 列出全部条目与状态
@@ -25,20 +25,20 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 . "$SCRIPT_DIR/_npm-auth.sh"
 REAL_HOME="$(dsh_real_home)"
 # 归一为 /（Windows 路径含反斜杠）——必须与下方 STORE 的归一保持一致，
-# 否则 IS_REAL 比较（STORE == CANON_STORE）在 Windows 上恒假 → 真机保护被绕过。
-# 规范库根（2026-09-19 用户定稿）：真实 home 下 develop/.credentials（随开发环境长期存在、
+# 否则 IS_REAL 比较（STORE == CANON_STORE）在 Windows 上恒假 -> 真机保护被绕过。
+# 规范库根：真实 home 下 develop/.credentials（随开发环境长期存在、
 #   多项目共享，不进任何项目仓；旧 ~/.dsh/credentials 位置已废弃）。仍然只由 REAL_HOME 派生，
 #   与 _npm-auth.sh 同源，不得写死任何机器绝对路径。换机/测试经 DSH_CRED_DIR 覆盖。
 CANON_STORE="$(printf '%s' "$REAL_HOME/develop/.credentials" | tr '\\' '/')"
 
 # 凭据库根：默认 = 真实 home 下的规范位置；可用 DSH_CRED_DIR 覆盖（测试 / 换机 / 多套环境）。
 STORE=${DSH_CRED_DIR:-$CANON_STORE}
-#  2026-09-14 跨平台归一：Windows 传入路径可能含反斜杠，而本脚本多处把
+#  跨平台归一：Windows 传入路径可能含反斜杠，而本脚本多处把
 #   $STORE / $INDEX 放进**双引号 shell 串**（反斜杠=转义，会被吃）；
 #   node 在 Windows 上同样接受正斜杠。故统一归一为 /。
 STORE=$(printf '%s' "$STORE" | tr '\\' '/')
 INDEX="$STORE/index.json"
-# ⚠ 导出供 node 子进程读取：**禁止**把路径插进 JS 源码字符串 ——
+#  导出供 node 子进程读取：**禁止**把路径插进 JS 源码字符串 ——
 #   Windows 路径含反斜杠，在 JS 单引号串里是**无效转义**（\U \A 等被吃），
 #   会导致 require 失败 / 行为错乱（本仓已在 arch-validation 踩过同类）。
 export INDEX STORE
@@ -46,9 +46,9 @@ export INDEX STORE
 [ -f "$INDEX" ] || { echo "凭据清单缺失: $INDEX" >&2; exit 1; }
 
 entry_field() { # <name> <field>
-  # ⚠ 字段名必须用**单引号**写 e['$2']：
-  #   · e[$2]  → node 当成变量名（file is not defined）
-  #   · e["$2"] → bash 在双引号串内遇到未转义的 " 会**提前结束字符串**，
+  #  字段名必须用**单引号**写 e['$2']：
+  #   - e[$2]  -> node 当成变量名（file is not defined）
+  #   - e["$2"] -> bash 在双引号串内遇到未转义的 " 会**提前结束字符串**，
   #               到 node 手里退化成 e[file] —— 同样是未定义变量。
   #   单引号在 bash 双引号串内是字面量，故 e['$2'] 是唯一正确形态。
   node -e "const j=require(process.env.INDEX);const e=j.entries.find(x=>x.name==='$1');
@@ -81,8 +81,8 @@ case "${1:-list}" in
   put)
     f=$(file_of "$2");
     [ -n "$f" ] || { echo "未知条目: $2" >&2; exit 1; }
-    # ══════════════════════════════════════════════════════════════════════════
-    # ⚠⚠ 覆盖保护（2026-09-13，**事后加固** —— 起因是一次真实事故）
+    # --------------------------------------------------------------------------
+    #  覆盖保护
     #
     # 事故：做门禁的注入验证时，先注入了「移除 DSH_CRED_DIR」以破坏夹具模式，
     #   然后脚本里的 put 步骤**回落到真机库根**执行，把测试串写进了
@@ -90,10 +90,10 @@ case "${1:-list}" in
     #   又因为迁移时把旧路径改成了**符号链接**，覆盖立刻生效、**无第二份副本可恢复**。
     #
     # 两条加固：
-    #   ① 默认（真机库）下 put 必须显式确认：--yes 或 DSH_CRED_ALLOW_OVERWRITE=1；
+    #   1) 默认（真机库）下 put 必须显式确认：--yes 或 DSH_CRED_ALLOW_OVERWRITE=1；
     #      若目标文件已存在，再要求 DSH_CRED_FORCE=1。测试用 DSH_CRED_DIR 不受此限。
-    #   ② 旧值先备份到 <file>.bak-<时间戳>（0600），使覆盖**不再不可逆**。
-    # ══════════════════════════════════════════════════════════════════════════
+    #   2) 旧值先备份到 <file>.bak-<时间戳>（0600），使覆盖**不再不可逆**。
+    # --------------------------------------------------------------------------
     IS_REAL=0
     [ "$STORE" = "$CANON_STORE" ] && IS_REAL=1
     if [ "$IS_REAL" = '1' ] && [ "${DSH_CRED_ALLOW_OVERWRITE:-}" != '1' ] && [ "${3:-}" != '--yes' ]; then
@@ -108,7 +108,7 @@ case "${1:-list}" in
       echo "  如确需轮换，设 DSH_CRED_FORCE=1（会自动备份旧值到 .bak-<时间戳>）。" >&2
       exit 2
     fi
-    # B-25 收口（第 4 批 F 组）：**空 stdin 一律拒写**，且必须在动目标之前 fail-closed。
+    # B-25 收口：**空 stdin 一律拒写**，且必须在动目标之前 fail-closed。
     #   旧形态 `cat > "$f"` 是「先截断、再等数据」：管道断裂、误敲 `cred.sh put x </dev/null`、
     #   或只喂进空白字符，都会写出 **0 字节**并把 status 置 active ——
     #   与 9-13「不可逆覆盖」同族的第二条例径（这次连覆盖都不需要，空输入本身就毁库）。
@@ -124,9 +124,9 @@ case "${1:-list}" in
       echo "拒绝：stdin 为空（或只有空白）—— 不落 0 字节凭据、不改 status。$f 保持原样。" >&2
       exit 2
     fi
-    # B25（AUDIT-2026-09-19）：备份是**尽力安全网**，不得成为写入的硬闸 ——
+    # B25：备份是**尽力安全网**，不得成为写入的硬闸 ——
     #   原实现 cp&&chmod 链任一失败（如通配已有 .bak 不可改、目标FS 不支 chmod）即中止 put，
-    #   把应急轮换路径堵死。降级为 warn 继续；确认项（①）不受影响仍为硬闸。
+    #   把应急轮换路径堵死。降级为 warn 继续；确认项（1)）不受影响仍为硬闸。
     if [ -f "$f" ]; then
       BK="$f.bak-$(date +%Y%m%d%H%M%S)"
       ( cp -p "$f" "$BK" && chmod 600 "$BK" ) 2>/dev/null \
@@ -146,8 +146,8 @@ case "${1:-list}" in
 
   backup)
     # 持久化保障：把规范库整份复制到**操作者指定的**持久位置。
-    # ⚠ 默认**必须显式给目录**：不给默认值，避免又写进实例子目录（那正是本仓踩过的坑）。
-    # ⚠ 在 case 分支里 $1 是**子命令名**（"backup"），目标目录是 $2。
+    #  默认**必须显式给目录**：不给默认值，避免又写进实例子目录（那正是本仓踩过的坑）。
+    #  在 case 分支里 $1 是**子命令名**（"backup"），目标目录是 $2。
     DEST="${2:-}"
     [ -n "$DEST" ] || DEST="${DSH_CRED_BACKUP_DIR:-}"
     [ -n "$DEST" ] || { echo "用法: cred.sh backup <目标目录>（或设 DSH_CRED_BACKUP_DIR）" >&2
@@ -179,7 +179,7 @@ case "${1:-list}" in
       }
     " | while IFS='|' read -r name status url expect; do
       [ -n "$url" ] || { printf '  %-13s %s（无 API 打点）\n' "$name" "$status"; continue; }
-      # ⚠ 必须在此**重新解析**：循环体在管道右侧的子 shell 中，file_of 可用但
+      #  必须在此**重新解析**：循环体在管道右侧的子 shell 中，file_of 可用但
       #   entry_field 依赖的 $INDEX 在子 shell 里仍可用；此处显式再取一次以确保非空。
       f=$(node -e "const j=require(process.env.INDEX);const e=j.entries.find(x=>x.name==='$name');process.stdout.write(e&&e.file?e.file:'')")
       if [ ! -f "$f" ]; then printf '  %-13s **缺凭据文件** %s\n' "$name" "$f"; continue; fi
@@ -192,8 +192,8 @@ case "${1:-list}" in
   doctor)
     rc=0
     echo '== 1) 目录与文件权限 =='
-    # ⚠ 2026-09-14 跨平台修复：原实现用 `stat -c %a`（**GNU 专有**）——
-    #   macOS 的 BSD stat 不支持 -c，Windows 根本没有 stat → 权限判定在这些平台必然失效。
+    #  跨平台修复：原实现用 `stat -c %a`（**GNU 专有**）——
+    #   macOS 的 BSD stat 不支持 -c，Windows 根本没有 stat -> 权限判定在这些平台必然失效。
     #   该缺陷长期隐藏，因为**四平台构建矩阵此前被 need_build 跳过**（只在 ubuntu 上跑过）。
     #   现改用 node（脚本已依赖 node 读清单）—— 三平台通用；并用 IS_WIN 判定跳过 POSIX 权限断言。
     IS_WIN=$(node -e "process.stdout.write(process.platform==='win32'?'1':'0')")
@@ -215,7 +215,7 @@ case "${1:-list}" in
       for (const e of j.entries) {
         if (e.kind!=='github-pat') continue;
         const fs=require('fs');
-        // ⚠ 必须用 ${STORE}（DSH_CRED_DIR 可覆盖），不可硬编码库根 —— 否则换库根就误报
+        //  必须用 ${STORE}（DSH_CRED_DIR 可覆盖），不可硬编码库根 —— 否则换库根就误报
         // 两侧都归一为 / 再比：Windows 的 e.file 可能是反斜杠形式，
         // 而 STORE 已被启动时归一为 /（否则恒不匹配 -> doctor 误报缺项，exit 1）。
         const norm = (x) => String(x).split(String.fromCharCode(92)).join('/');
@@ -232,7 +232,7 @@ case "${1:-list}" in
       if(!bad) console.log('  OK   无缺项');
       if(bad) process.exitCode=1;
     " || rc=1
-    # ⚠ 第 4 项是**真机检查**：别名/散落副本都锚定在真实库根。
+    #  第 4 项是**真机检查**：别名/散落副本都锚定在真实库根。
     #   当 DSH_CRED_DIR 覆盖了库根（测试夹具）时，这些真机事实与本库无关，必须跳过 ——
     #   否则夹具模式会因"别名指向另一个库根"而误报（已踩过）。
     if [ "$STORE" != "$CANON_STORE" ]; then

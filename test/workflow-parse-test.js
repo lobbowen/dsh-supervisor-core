@@ -1,14 +1,14 @@
 #!/usr/bin/env node
 'use strict';
 
-// 工作流解析门禁（2026-09-11）。
+// 工作流解析门禁。
 //
 // == 背景（真实 Windows CI 事故） ==
 //
 // Windows runner 的 git 检出会把 build.yml 转成 **CRLF**。测试里用 `\n` 锚定的正则
 // （如 `/\n  ([a-z]+):\n/` 提取 YAML job 段）在 CRLF 下**完全失配** —— job 名后紧跟的是 `\r`。
-// 于是 jobSection 返回空串 → 5 个断言失败；而 Linux/macOS（LF）全绿。
-// 表现为「只在 Windows 红」，极难排查。
+// 于是 jobSection 返回空串 -> 5 个断言失败，且只有 Windows 宿主复现（其余检出为 LF）。
+// 表现为「只在某一个平台红」，极难排查。
 //
 // 本门禁确保不再回归：
 //   W1 _workflow.normalize 对 CRLF / CR / LF 归一化结果一致
@@ -23,7 +23,7 @@ const W = require(path.join(__dirname, '_workflow.js'));
 const results = [];
 const check = (n, c, x) => { results.push(!!c); console.log((c ? 'PASS' : 'FAIL') + ' ' + n + (x !== undefined ? '  <- ' + x : '')); };
 
-// ── W1 归一化 ──
+// -- W1 归一化 --
 console.log('== W1 行尾归一化 ==');
 {
   const lf = 'a\nb\nc\n';
@@ -35,7 +35,7 @@ console.log('== W1 行尾归一化 ==');
   check('W1-d 混合行尾归一', W.normalize('a\r\nb\nc\r') === lf);
 }
 
-// ── W2/W3 真实 build.yml 在 CRLF 下解析一致 ──
+// -- W2/W3 真实 build.yml 在 CRLF 下解析一致 --
 console.log('== W2/W3 CRLF 下 jobSection 一致 ==');
 {
   const lf = W.readWorkflow('build.yml');
@@ -52,7 +52,7 @@ console.log('== W2/W3 CRLF 下 jobSection 一致 ==');
   }
   check('W2-b 全部 job 段在 LF/CRLF 下一致', same === names.length, same + '/' + names.length);
 
-  // W3：必须真的取到内容（这正是 CI 失败时的表现：取到空串）
+  // 必须真的取到内容（这正是 CI 失败时的表现：取到空串）
   check('W3-a CRLF 下 build 段非空', W.jobSection(crlf, 'build').length > 0, W.jobSection(crlf, 'build').length + ' 字符');
   check('W3-b CRLF 下 release 段非空', W.jobSection(crlf, 'release').length > 0, W.jobSection(crlf, 'release').length + ' 字符');
   check('W3-c CRLF 下 precheck 段非空', W.jobSection(crlf, 'precheck').length > 0, W.jobSection(crlf, 'precheck').length + ' 字符');
@@ -69,7 +69,7 @@ console.log('== W2/W3 CRLF 下 jobSection 一致 ==');
   check('W3-h CRLF 下 R6-g（precheck 用 ubuntu）', /runs-on:\s*ubuntu/.test(precheckSection));
 }
 
-// ── W4 禁止裸读 workflow ──
+// -- W4 禁止裸读 workflow --
 console.log('== W4 禁止裸读 .github/workflows ==');
 {
   const files = fs.readdirSync(path.join(ROOT, 'test'))
@@ -80,14 +80,14 @@ console.log('== W4 禁止裸读 .github/workflows ==');
     src.split(/\r?\n/).forEach((line, i) => {
       const t = line.trim();
       if (t.startsWith('//')) return;
-      // 直接 readFileSync 打开 workflows 下的文件 → 违规（缺行尾归一化）
+      // 直接 readFileSync 打开 workflows 下的文件 -> 违规（缺行尾归一化）
       if (/readFileSync/.test(line) && /workflows/.test(line)) offenders.push(f + ':' + (i + 1));
     });
   }
   check('W4 无裸 fs.readFileSync 读 workflow', offenders.length === 0, offenders.join(', '));
 }
 
-// ── W5 供应链形态：顶层最小权限 + 同 ref 串行 + uses 全钉 SHA（发布条 1，2026-09-20）──
+// -- W5 供应链形态：顶层最小权限 + 同 ref 串行 + uses 全钉 SHA--
 console.log('== W5 workflow 供应链形态（发布条 1）==');
 {
   const wf = W.readWorkflow('build.yml');

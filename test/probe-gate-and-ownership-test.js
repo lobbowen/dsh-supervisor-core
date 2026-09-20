@@ -1,32 +1,32 @@
 #!/usr/bin/env node
 'use strict';
 
-// ═══════════════════════════════════════════════════════════════════════════
+// ---------------------------------------------------------------------------
 // 第四轮续：订阅/取证/端口归属 三处缺陷的回归
 //
 // ## 缺陷
 //
-// P1-1「frozen 且探测失败」使探测闸门**恒真** → 每 5 分钟起停实例：
+// P1-1「frozen 且探测失败」使探测闸门**恒真** -> 每 5 分钟起停实例：
 //   `applyDetection` 的失败分支只写 lastProbeError，**不设 nextResetAt**；
-//   而路由的闸门是 `missingReset = frozen && !nextResetAt` → 永真。
+//   而路由的闸门是 `missingReset = frozen && !nextResetAt` -> 永真。
 //
 // P1-3 取证链路**零出口**却在转发主路径同步写盘：
 //   evidenceTail/evidenceStats 全仓无调用方、surface.js 未登记、前端零引用，
 //   而 append（statSync + appendFileSync）发生在每个上游 >=400 的路径上。
 //
 // P2-2 `PortRegistry.release(port, ownerId)` 的第二参被**静默忽略**：
-//   调用方（objects.js）以 owner 意图调用，实际按端口号无条件删除 → 可误删他人登记。
+//   调用方（objects.js）以 owner 意图调用，实际按端口号无条件删除 -> 可误删他人登记。
 //
 // P2-4 `setProviderKeys(removeMasked)` 删反代账号时**不做收尾**：
 //   缺 stopInstance / ports.unregister / instances 同步（removeProxyKey 三者齐备）
-//   → orphan 实例与端口记录再无人释放。
+//   -> orphan 实例与端口记录再无人释放。
 //
 // ## 锁定不变量
 //   E-a  applyDetection 失败分支必须给出 nextResetAt 兜底（仅 frozen 且无恢复点时）
 //   E-b  取证默认关闭（opt-in），且仍保留显式启用能力
 //   E-c  release 接受 ownerId 且不匹配时不释放
 //   E-d  setProviderKeys 删除路径必须复用与 removeProxyKey 同等的收尾
-// ═══════════════════════════════════════════════════════════════════════════
+// ---------------------------------------------------------------------------
 
 const path = require('node:path');
 const fs = require('node:fs');
@@ -36,16 +36,16 @@ const results = [];
 const check = (n, c, x) => { results.push(!!c); console.log((c ? 'PASS' : 'FAIL') + ' ' + n + (x !== undefined && x !== '' ? '  ← ' + x : '')); };
 
 const base = fs.readFileSync(path.join(ROOT, 'src', 'domains', 'router', 'providers', 'base.js'), 'utf8');
-// ⚠ providers 改造后 applyDetection 状态机下沉 policies/freeze.js（base 只剩薄委托）——
+//  providers 改造后 applyDetection 状态机下沉 policies/freeze.js（base 只剩薄委托）——
 //   E-a 判据必须读**实现文件**，否则文件一搬即静默假绿。
 const freezePolicySrc = fs.readFileSync(path.join(ROOT, 'src', 'domains', 'router', 'providers', 'policies', 'freeze.js'), 'utf8');
 const idx = fs.readFileSync(path.join(ROOT, 'src', 'domains', 'router', 'index.js'), 'utf8');
-// ⚠ 域改造后运维能力从 router-ops.js 拆到 ops/*（EXECUTION-CONTRACT §3.2）。
+//  域改造后运维能力从 router-ops.js 拆到 ops/*（EXECUTION-CONTRACT）。
 const opsAdmin = fs.readFileSync(path.join(ROOT, 'src', 'domains', 'router', 'ops', 'admin.js'), 'utf8');
 const opsApps = fs.readFileSync(path.join(ROOT, 'src', 'domains', 'router', 'ops', 'apps-registry.js'), 'utf8');
 const opsOauth = fs.readFileSync(path.join(ROOT, 'src', 'domains', 'router', 'ops', 'oauth.js'), 'utf8');
 
-// ── E-a：失败分支必须补 nextResetAt ──
+// -- E-a：失败分支必须补 nextResetAt --
 {
   const m = freezePolicySrc.match(/function applyDetection\(acc, det, provider\) \{[\s\S]*?\n\}/);
   check('E-a 定位到 applyDetection', !!m, m ? 'ok' : '未找到');
@@ -57,9 +57,9 @@ const opsOauth = fs.readFileSync(path.join(ROOT, 'src', 'domains', 'router', 'op
     /!acc\.nextResetAt/.test(failBranch), '有守卫');
 }
 
-// ── E-b：取证子系统已删除（2026-09-16 Phase 5 / 决策 A5）──
-//   ⚠ 旧断言要求"取证受 evidenceEnabled 控制（opt-in 默认关）"——但该子系统整链"有产出无消费"，
-//     属半成品脚手架。按 §6.1 P2-4「要么接线，要么删除」，现已**整体删除**。
+// -- E-b：取证子系统已删除--
+//    旧断言要求"取证受 evidenceEnabled 控制（opt-in 默认关）"——但该子系统整链"有产出无消费"，
+//     属半成品脚手架。按 P2-4「要么接线，要么删除」，现已**整体删除**。
 //     断言随之改为"确认已删除"（反向：源码中不得再出现取证构造）。
 check('E-b 取证子系统已删除（不再构造 UpstreamEvidence）',
   !/evidenceEnabled|evidenceFile/.test(idx), '已删除');
@@ -68,7 +68,7 @@ const idxCode = idx.split(String.fromCharCode(10)).filter((l) => !/^\s*(\/\/|\*|
 check('E-b 转发主路径不再有取证 append（同步 I/O 已移出）',
   !/_capture|evidence\.append/.test(idxCode), '已删除');
 
-// ── E-c：release 的 owner 校验 ──
+// -- E-c：release 的 owner 校验 --
 check('E-c release 签名接受第二参', /release\(port, ownerId\)/.test(
   fs.readFileSync(path.join(ROOT, 'src', 'platform', 'service', 'ports', 'pool.js'), 'utf8')), '已改');
 {
@@ -79,22 +79,22 @@ check('E-c release 签名接受第二参', /release\(port, ownerId\)/.test(
   const reg = new PortRegistry({ file: tmp });
   // allocateMark(port, role, owner) 才能登记自定义 owner（register 的 owner 固定为 system:<role>）
   reg.allocateMark(25000, 'proxyInstance', 'proxy:AAA');
-  // 异 owner 释放 → 必须 no-op
+  // 异 owner 释放 -> 必须 no-op
   const r1 = reg.release(25000, 'proxy:BBB');
   // 注：`get(role)` 按 role 查，按端口查须用 `isRegistered(port)`
   check('E-c 异 owner 释放被拒（不误删他人登记）', r1 === false && reg.isRegistered(25000),
     'released=' + r1 + ' stillRegistered=' + reg.isRegistered(25000));
-  // 同 owner 释放 → 成功
+  // 同 owner 释放 -> 成功
   const r2 = reg.release(25000, 'proxy:AAA');
   check('E-c 同 owner 释放成功', r2 === true && !reg.isRegistered(25000), 'released=' + r2);
-  // 不传 owner → 向后兼容（无条件释放）
+  // 不传 owner -> 向后兼容（无条件释放）
   reg.allocateMark(25001, 'proxyInstance', 'proxy:CCC');
   const r3 = reg.release(25001);
   check('E-c 不传 ownerId 保持向后兼容', r3 === true, 'released=' + r3);
   try { fs.rmSync(tmp, { force: true }); } catch {}
 }
 
-// ── E-d：setProviderKeys 删除路径的收尾 ──
+// -- E-d：setProviderKeys 删除路径的收尾 --
 {
   const m = opsAdmin.match(/setProviderKeys\(id, opts\) \{[\s\S]*?\n  \}/);
   check('E-d 定位到 setProviderKeys', !!m, m ? 'ok' : '未找到');
@@ -105,7 +105,7 @@ check('E-c release 签名接受第二参', /release\(port, ownerId\)/.test(
   check('E-d 收尾限定于 proxy 类（direct 无实例/端口）', /p\.kind === 'proxy'/.test(body), '有');
 }
 
-// ── E-e：applyProxyUpdate 的进度必须写进 task（P2-1）──
+// -- E-e：applyProxyUpdate 的进度必须写进 task（P2-1）--
 //   行为级：task 的 steps 能被子实例登记并推进 —— 这是前端读到的那个事实源。
 {
   const { TaskRegistry } = require(path.join(ROOT, 'src', 'platform', 'service', 'tasks.js'));
@@ -129,26 +129,26 @@ check('E-c release 签名接受第二参', /release\(port, ownerId\)/.test(
 check('E-e 源码调用 tasks.step 登记步骤', /tasks\.step\(task\.id/.test(opsApps), '有');
 check('E-e 源码调用 tasks.stepState 推进状态', /tasks\.stepState\(task\.id/.test(opsApps), '有');
 
-// ── E-h：daemon 模式下守卫**不得**写 providers.json（三条路径全覆盖）──
+// -- E-h：daemon 模式下守卫**不得**写 providers.json（三条路径全覆盖）--
 //   缺陷：`setPersistEnabled(false)` 此前只在 supervisor.js 的一处 daemon 分支执行，
-//         而 `_ensureRouterRuntime` 还有另两条返回 daemon 的路径 → 双写覆盖。
+//         而 `_ensureRouterRuntime` 还有另两条返回 daemon 的路径 -> 双写覆盖。
 {
-  // ⚠ 2026-09-16 步骤7：_ensureRouterRuntime/_disableRouterPersist 已从 supervise-view.js
+  //  步骤7：_ensureRouterRuntime/_disableRouterPersist 已从 supervise-view.js
   //   迁到 app/daemons/runtime.js —— 判据读取路径随之更新（否则判据静默失去覆盖面）。
   const sv = fs.readFileSync(path.join(ROOT, 'src', 'app', 'daemons', 'runtime.js'), 'utf8');
-  // ⚠ 2026-09-16 步骤7 收尾：routerAutostart 启动路径（含「进入 daemon 即关写权」的幂等兜底）
-  //   已从 src/supervisor.js 下沉；2026-09-17 R7 再下沉 app/domain-actions/router.js#setRouterRunning
+  //  步骤7 收尾：routerAutostart 启动路径（含「进入 daemon 即关写权」的幂等兜底）
+  //   已从 src/supervisor.js 下沉；R7 再下沉 app/domain-actions/router.js#setRouterRunning
   //   （facade 只读）—— 判据改读新模块。
   const sup = fs.readFileSync(path.join(ROOT, 'src', 'app', 'domain-actions', 'router.js'), 'utf8');
-  // ⚠ 剥离注释行后再判（说明文字里会引用这些写法 —— 本仓多次被自己的注释骗过）。
+  //  剥离注释行后再判（说明文字里会引用这些写法 —— 本仓多次被自己的注释骗过）。
   // 阶段六 P6-A：统一走 test/_strip.js（只丢「整行都是注释」的行；字符串/正则字面量感知）。
   const { dropCommentLines: stripComments } = require('./_strip');
-  // ⚠ 2026-09-17 P6-B B-1：runtime.js 实现体已**原地去 this**（改经惰性 deps），调用点由
-  //   `this._disableRouterPersist()` 变为 `d.disableRouterPersist()` ⇒ 判据一律**形态无关**
+  //  P6-B B-1：runtime.js 实现体已**原地去 this**（改经惰性 deps），调用点由
+  //   `this._disableRouterPersist()` 变为 `d.disableRouterPersist()` => 判据一律**形态无关**
   //   （只锁「该调用发生且受返回值判定约束」，不锁 this./d. 前缀）。判据本意不变。
   const DISABLE_PERSIST_CALL = /disableRouterPersist\s*\(\s*\)\s*;/;
   check('E-h 抽出 _disableRouterPersist 集中处置', /_disableRouterPersist\(\) \{/.test(sv), '有');
-  // 两条 daemon 路径：① 已在跑 ② 拉起/接管成功（③ supervisor.js 的兜底见下）。
+  // 两条 daemon 路径：1) 已在跑 2) 拉起/接管成功（3) supervisor.js 的兜底见下）。
   const n = (stripComments(sv).match(/[.\w]disableRouterPersist\s*\(\s*\)\s*;/g) || []).length;
   check('E-h supervise-view 内至少两处调用（覆盖两条 daemon 路径）', n >= 2, n + ' 处');
   check('E-h 拉起/接管路径按返回值判定',
@@ -165,7 +165,7 @@ check('E-e 源码调用 tasks.stepState 推进状态', /tasks\.stepState\(task\.
     inlineAll.length === 1, inlineAll.length + ' 处');
 }
 
-// ── E-i：objects.js 的端口释放必须**带 owner**（P2-2 配套）──
+// -- E-i：objects.js 的端口释放必须**带 owner**（P2-2 配套）--
 //   缺陷：`release(port, ownerId)` 此前忽略第二参，故 objects.js 有个
 //         `catch { release(port) }` 回退 —— 那会绕过 owner 判定（误删他人登记）。
 //   现已真正支持 owner 校验，回退必须删除。
@@ -179,7 +179,7 @@ check('E-e 源码调用 tasks.stepState 推进状态', /tasks\.stepState\(task\.
   check('E-i 无 owner 的回退已删除', !/release\(port\)/.test(code), '已删');
 }
 
-// ── E-g：`setProviderKeys(add)` 的 added 必须反映真实结果（P2-5）──
+// -- E-g：`setProviderKeys(add)` 的 added 必须反映真实结果（P2-5）--
 //   行为级用不到（需真供应商），故做源码级不变量 + 契约字段检查。
 {
   const m = opsAdmin.match(/async (?:function )?setProviderKeys\(id, opts\) \{[\s\S]*?\n  \}/);
@@ -194,7 +194,7 @@ check('E-e 源码调用 tasks.stepState 推进状态', /tasks\.stepState\(task\.
     !/addAccount\(t\)\.catch\(\(\) => \{\}\);\s*\n\s*added\+\+/.test(body), '已改');
 }
 
-// ── E-f：OAuth 登录的**两条退出路径**必须对称清理（P2-6）──
+// -- E-f：OAuth 登录的**两条退出路径**必须对称清理（P2-6）--
 //   成功与超时/异常分支都必须清 `_ccLoginResolve`/`_ccLoginReject`；
 //   否则残留的 reject 会被上一轮浏览器的退出回调取到，误杀**下一次**登录。
 {

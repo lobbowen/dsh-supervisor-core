@@ -1,37 +1,37 @@
 #!/usr/bin/env node
 'use strict';
 
-// ═══════════════════════════════════════════════════════════════════════════
-// 平台「输出解析 + 命令构造 + 会话判定」可移植性穷举门禁（2026-09-13）
+// ---------------------------------------------------------------------------
+// 平台「输出解析 + 命令构造 + 会话判定」可移植性穷举门禁
 //
 // 承接 platform-layer-portability-test：把**剩余平台层模块**的平台相关逻辑
 // 也在任意宿主上穷举。
 //
 // 为使逻辑可穷举，本次**抽出了纯函数并让生产代码直接调用**（非平行实现）：
-//   · pidlookup.js：parseProcNetTcpInodes / parseLsofPid / parseNetstatPid /
+//   - pidlookup.js：parseProcNetTcpInodes / parseLsofPid / parseNetstatPid /
 //                   parseSsPid / parseWmicCommandLine / parsePowerShellCommandLine
-//   · notify.js   ：notifyCommand / appleScriptString / powerShellString
-//   （原先把「解析/构造」与「I/O / spawn」揉在一起 → 只能在对应平台验证，
+//   - notify.js：notifyCommand / appleScriptString / powerShellString
+//   （原先把「解析/构造」与「I/O / spawn」揉在一起 -> 只能在对应平台验证，
 //     而平台解析与转义恰是跨平台 bug 的藏身处。）
 //
 // ## 本次同时修掉的真实缺陷（失效模式 b：同一事实两处实现且已分叉）
 //
 // **PowerShell 字符串转义被套用了 JSON 规则**：notify.js 的 Windows 分支用
 //   JSON.stringify 构造标题/正文（产出 "a\"b"），而 PowerShell 的双引号字符串
-//   用**双写**转义（"a""b"），反斜杠是字面字符 → PowerShell 在反斜杠处**终止字符串**
-//   → 语法错误 → notify 静默失败（best-effort 的 catch 吞掉）。
+//   用**双写**转义（"a""b"），反斜杠是字面字符 -> PowerShell 在反斜杠处**终止字符串**
+//   -> 语法错误 -> notify 静默失败（best-effort 的 catch 吞掉）。
 //   AppleScript 确实用反斜杠，故两平台**必须分开实现**（不可复用同一 helper）。
 //
 // ## 锁定不变量
 //   Y-1  pidlookup：三种平台格式的解析结果正确（含端口整段匹配、CRLF 容忍）
 //   Y-2  **P1-2 回归锚点**：wmic 输出 "No Instance(s) Available." 必须返回 null
-//        （⇒ 调用方继续走 PowerShell CIM 回退；旧实现直接 return null 跳过回退）
-//   Y-3  notify：平台→命令映射正确；**转义规则按平台区分**（AppleScript 反斜杠 /
+//        （=> 调用方继续走 PowerShell CIM 回退；旧实现直接 return null 跳过回退）
+//   Y-3  notify：平台->命令映射正确；**转义规则按平台区分**（AppleScript 反斜杠 /
 //        PowerShell 双写）；不支持平台返回 null
 //   Y-4  desktop：sessionAvailable 是三个探针的**或**，且方式探针尊重 XDG_RUNTIME_DIR；
 //        darwin/win32 恒真（会话由启动器限定）
 //   Y-5  反向：判据能识别错误转义 / 空 wmic 误判（门禁非空转）
-// ═══════════════════════════════════════════════════════════════════════════
+// ---------------------------------------------------------------------------
 
 const fs = require('node:fs');
 const os = require('node:os');
@@ -50,7 +50,7 @@ const check = (n, c, x) => {
 const LF = String.fromCharCode(10);
 const CRLF = String.fromCharCode(13) + String.fromCharCode(10);
 
-// ── Y-1：三平台监听者解析 ──
+// -- Y-1：三平台监听者解析 --
 {
   // Windows netstat -ano（真实形态：CRLF；IPv6 行；非 LISTENING 行）
   const netstat = [
@@ -66,8 +66,8 @@ const CRLF = String.fromCharCode(13) + String.fromCharCode(10);
   check('Y-1 netstat：命中 LISTENING 行取 pid', pid.parseNetstatPid(netstat, 28100) === 12345, String(pid.parseNetstatPid(netstat, 28100)));
   check('Y-1 netstat：端口**整段**匹配（:28100 不被 :2800 误命中）',
     pid.parseNetstatPid(netstat, 2800) === 9999, String(pid.parseNetstatPid(netstat, 2800)));
-  // ⚠ 严格判据：夹具里**只有** :28100，却询问 :2800 → 必须 null。
-  //   贪婪子串匹配（indexOf）会错误返回 :28100 那行的 pid —— 这一条专门抓它。
+  //  严格判据：夹具里**只有**:28100，却询问:2800 -> 必须 null。
+  //   贪婪子串匹配（indexOf）会错误返回:28100 那行的 pid —— 这一条专门抓它。
   const onlyLonger = '  TCP    127.0.0.1:28100        0.0.0.0:0              LISTENING       12345'
     + CRLF + '  TCP    127.0.0.1:12800        0.0.0.0:0              LISTENING       22222';
   check('Y-1 netstat：**严格判据** 只有 :12800 / :28000 时询问 :2800 → null（抓贪婪匹配）',
@@ -110,7 +110,7 @@ const CRLF = String.fromCharCode(13) + String.fromCharCode(10);
     pid.parseProcNetTcpInodes(procTcp, 0x6DCC).size === 0, '0');
 }
 
-// ── Y-2：P1-2 回归锚点 —— wmic 空输出必须回退 ──
+// -- Y-2：P1-2 回归锚点 —— wmic 空输出必须回退 --
 {
   check('Y-2 wmic 正常输出：取出 CommandLine 并 trim',
     pid.parseWmicCommandLine('CommandLine=node.exe --flag  ' + CRLF + CRLF) === 'node.exe --flag',
@@ -119,7 +119,7 @@ const CRLF = String.fromCharCode(13) + String.fromCharCode(10);
   check('Y-2 wmic 多行命令行保留内部换行',
     pid.parseWmicCommandLine('CommandLine=a' + CRLF + 'b') === 'a' + CRLF + 'b',
     JSON.stringify(pid.parseWmicCommandLine('CommandLine=a' + CRLF + 'b')));
-  // ⚠ 核心：进程已退出/权限不足时 wmic 输出这个 → 必须 null（⇒ 调用方走 CIM 回退）
+  //  核心：进程已退出/权限不足时 wmic 输出这个 -> 必须 null（=> 调用方走 CIM 回退）
   const noInstance = 'No Instance(s) Available.';
   check('Y-2 **P1-2 锚点**：wmic 输出 No Instance(s) Available. → null（触发 CIM 回退）',
     pid.parseWmicCommandLine(noInstance) === null, JSON.stringify(pid.parseWmicCommandLine(noInstance)));
@@ -131,7 +131,7 @@ const CRLF = String.fromCharCode(13) + String.fromCharCode(10);
     && pid.parsePowerShellCommandLine('   ') === null, 'ok');
 }
 
-// ── Y-3：notify 平台→命令映射 + 转义规则区分 ──
+// -- Y-3：notify 平台->命令映射 + 转义规则区分 --
 {
   const L = notify.notifyCommand('linux', 'T', 'B');
   check('Y-3 linux → notify-send，标题/正文作为 argv（无 shell 转义面）',
@@ -145,8 +145,8 @@ const CRLF = String.fromCharCode(13) + String.fromCharCode(10);
   check('Y-3 不支持平台 → null（notify 返回 false，不静默谎报已派发）',
     notify.notifyCommand('freebsd', 'T', 'B') === null, 'null');
 
-  // ⚠ 转义：两平台规则**不同**，必须分开实现（本次修复的正是"套用 JSON 规则"）
-  // B9（AUDIT-2026-09-19）：PowerShell 侧改**单引号字面量**——旧双引号串漏 $，
+  //  转义：两平台规则**不同**，必须分开实现（本次修复的正是"套用 JSON 规则"）
+  // PowerShell 侧改**单引号字面量**——旧双引号串漏 $，
   //   body（含 err.message 通路）里的 $(...) 会被子表达式插值执行 = 注入面。
   const Q = String.fromCharCode(34);
   const SQ = String.fromCharCode(39);
@@ -191,7 +191,7 @@ function underFakeEnv(platform, env, body) {
   } catch (e) { return 'EXECFAIL:' + ((e && e.message) || e); }
 }
 
-// ── Y-4：desktop 会话判定 ──
+// -- Y-4：desktop 会话判定 --
 {
   const BODY = [
     "const d = require('./src/platform/os/desktop.js');",
@@ -212,7 +212,7 @@ function underFakeEnv(platform, env, body) {
       !!j && j.available === true && j.reason === 'env(DISPLAY/WAYLAND_DISPLAY)', out.slice(0, 90));
   }
   {
-    // 空 XDG_RUNTIME_DIR → wayland 探针必须为假（尊重该变量）；x11 探针取决于宿主
+    // 空 XDG_RUNTIME_DIR -> wayland 探针必须为假（尊重该变量）；x11 探针取决于宿主
     const empty = fs.mkdtempSync(path.join(os.tmpdir(), 'sess-'));
     const out = underFakeEnv('linux', { DISPLAY: null, WAYLAND_DISPLAY: null, XDG_RUNTIME_DIR: empty }, BODY);
     let j = null; try { j = JSON.parse(out); } catch {}
@@ -225,7 +225,7 @@ function underFakeEnv(platform, env, body) {
   }
 }
 
-// ── Y-5：反向（判据必须能识别违规）──
+// -- Y-5：反向（判据必须能识别违规）--
 {
   const Q = String.fromCharCode(34);
   check('Y-5 反向：判据能识别"把 JSON 规则套到 PowerShell"的旧形态',

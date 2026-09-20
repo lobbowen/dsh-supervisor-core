@@ -1,17 +1,17 @@
 #!/usr/bin/env node
 'use strict';
 
-// 内核全平台构建/发布纪律回归（2026-09-11 起，2026-09-13 硬标准改版）。
+// 内核全平台构建/发布纪律回归。
 //
 // 硬标准：**所有平台构建与发布必须经 GitHub CI 完成；本地不得产生发布产物。**
-//   本测试锁定该纪律的**可执行面**，防止「本地构建 → 本地发布」旁路复活。
+//   本测试锁定该纪律的**可执行面**，防止「本地构建 -> 本地发布」旁路复活。
 //
 // 锁定的不变量：
 //   T1 平台矩阵来自 package.json 单一事实源，且为固定顺序的 4 条
 //   T2 本地无全平台构建/发布路径；**单平台真发布亦仅 CI 内**（GITHUB_ACTIONS 守卫）
 //   T3 npm scripts 无本地发布入口
 //   T4 构建脚本内含「四平台 core.cjs 逐字节一致」断言
-//   T5 workflow：四平台完整构建不得被 need_build 跳过（2026-09-14 硬标准）
+//   T5 workflow：四平台完整构建不得被 need_build 跳过
 //   T6 「纯 JS 产物」前提本身（0 依赖 / esbuild 无平台参数 / 产物无原生二进制）
 
 const fs = require('node:fs');
@@ -31,7 +31,7 @@ function matrix() {
   return (r.stdout || '').trim().split(/\r?\n/).filter(Boolean);
 }
 
-// ── T1 平台矩阵单一事实源 ──
+// -- T1 平台矩阵单一事实源 --
 console.log('== T1 平台矩阵（单一事实源）==');
 {
   const m = matrix();
@@ -48,14 +48,14 @@ console.log('== T1 平台矩阵（单一事实源）==');
   check('T1-f 矩阵可推出全部子包名', pkgs.every((p) => derived.includes(p)), JSON.stringify(derived));
 }
 
-// ── T2 脚本接入（**2026-09-13 硬标准改版**）──
+// -- T2 脚本接入--
 //
 // 硬标准：**任何平台构建/发布都必须经 GitHub CI**；本地不得有全平台路径。
 // 故：
-//   · build-launcher.sh --all-platforms  **仅 CI 内允许**（CI test job 需四平台产物）
-//   · publish-core.sh --all-platforms     **一律拒绝**（本地不得全平台发布）
-//   · ci-core.sh --all-platforms          **一律拒绝**
-//   · release-core.sh                     **已删除**（纯本地编排器，CI 从不调用）
+//   - build-launcher.sh --all-platforms  **仅 CI 内允许**（CI test job 需四平台产物）
+//   - publish-core.sh --all-platforms     **一律拒绝**（本地不得全平台发布）
+//   - ci-core.sh --all-platforms          **一律拒绝**
+//   - release-core.sh                     **已删除**（纯本地编排器，CI 从不调用）
 console.log('== T2 硬标准：本地无全平台构建/发布路径 ==');
 {
   const build = read('release/scripts/build-launcher.sh');
@@ -73,7 +73,7 @@ console.log('== T2 硬标准：本地无全平台构建/发布路径 ==');
     /--all-platforms\)/.test(pub) && /已废弃/.test(pub) && /exit 2/.test(pub), 'ok');
   check('T2-d ci-core 的 --all-platforms 一律拒绝',
     /--all-platforms\)/.test(ci) && /已废弃/.test(ci) && /exit 2/.test(ci), 'ok');
-  // ⭐ 2026-09-14：单平台真发布也必须仅 CI 内（原漏洞：只封了 --all-platforms）。
+  //：单平台真发布也必须仅 CI 内（原漏洞：只封了 --all-platforms）。
   check('T2-b2 publish-core 单平台真发布也仅 CI 内（GITHUB_ACTIONS 守卫）',
     /GITHUB_ACTIONS/.test(pub), 'ok');
   check('T2-d2 ci-core 真发布也仅 CI 内（GITHUB_ACTIONS 守卫）',
@@ -99,14 +99,14 @@ console.log('== T2 硬标准：本地无全平台构建/发布路径 ==');
   check('T2-j publish-core 从 _platforms.sh 取矩阵', /\. "\$ROOT\/release\/scripts\/_platforms\.sh"/.test(pub), 'ok');
 }
 
-// ── T4 同源保证（构建期断言）──
+// -- T4 同源保证（构建期断言）--
 console.log('== T4 四平台同源保证 ==');
 {
   const build = read('release/scripts/build-launcher.sh');
   check('T4-a 全平台模式断言 core.cjs 逐字节一致', /一致性断言/.test(build) && /BASE_HASH/.test(build), 'ok');
   check('T4-b 不一致即失败（exit 1）', /core\.cjs 与基准不一致/.test(build) && /exit 1/.test(build), 'ok');
   // B26 固版后 bundling 调用字面量为 `"esbuild@$ESBUILD_VER" bin/dsh-supervisor`（--version 对账
-  // 调用不带 bin 路径，不计数）。旧正则 `esbuild bin/...` 在固版形态下恒 0 命中→门禁静默失去覆盖面。
+  // 调用不带 bin 路径，不计数）。旧正则 `esbuild bin/...` 在固版形态下恒 0 命中->门禁静默失去覆盖面。
   const esbuildBundles = (s) => (s.match(/"esbuild@\$ESBUILD_VER" bin\/dsh-supervisor/g) || []).length;
   check('T4-c 构建只做一次（esbuild 不在平台循环内；B26 固版形态）',
     esbuildBundles(build) === 1, 'esbuild 打包调用出现 ' + esbuildBundles(build) + ' 次');
@@ -115,7 +115,7 @@ console.log('== T4 四平台同源保证 ==');
     esbuildBundles('a=npx --yes "esbuild@$ESBUILD_VER" bin/dsh-supervisor --bundle\nb=npx --yes "esbuild@$ESBUILD_VER" bin/dsh-supervisor --bundle') === 2, 'hit=2');
 }
 
-// ── T5 workflow precheck（tag 触发时的省额度闸）──
+// -- T5 workflow precheck（tag 触发时的省额度闸）--
 console.log('== T5 workflow precheck ==');
 {
   // 经 _workflow.js 读取（行尾归一化）：本段断言本身是行首锚定（CRLF 安全），
@@ -125,7 +125,7 @@ console.log('== T5 workflow precheck ==');
   check('T5-a 存在 precheck job', /^\s{2}precheck:/m.test(code), 'ok');
   check('T5-b precheck 输出 need_build', /need_build:\s*\$\{\{\s*steps\.probe\.outputs\.need_build\s*\}\}/.test(code), 'ok');
   check('T5-c build 依赖 precheck', /needs:\s*precheck/.test(code), 'ok');
-  // ⭐ 2026-09-14 反转：build 段内**不得**有 job 级 if:（不得被 need_build 跳过）。
+  //  反转：build 段内**不得**有 job 级 if:（不得被 need_build 跳过）。
   //   旧断言「build 仅在 need_build=true 时运行」是**省额度时代**的规则，
   //   它锁住了「矩阵被跳过」这一隐藏问题的成因；硬标准（构建/发布一律经 CI）下必须反转。
   {
@@ -147,7 +147,7 @@ console.log('== T5 workflow precheck ==');
   check('T5-h release 同时依赖 precheck 与 build', /needs:\s*\[precheck,\s*build\]/.test(code), 'ok');
 }
 
-// ── T6 「纯 JS 产物」前提（全平台本地构建的成立条件）──
+// -- T6 「纯 JS 产物」前提（全平台本地构建的成立条件）--
 console.log('== T6 纯 JS 产物前提 ==');
 {
   const pkg = require(path.join(ROOT, 'package.json'));
@@ -169,8 +169,8 @@ console.log('== T6 纯 JS 产物前提 ==');
     })(launcherDir);
     check('T6-d 构建产物中无 .node 原生二进制', found.length === 0, JSON.stringify(found));
     // 实测四平台目录的 core.cjs 一致（若产物齐备）。
-    // ⚠ 必须按**当前版本**过滤（2026-09-11 修复）：dist/launcher 会累积历史版本的平台目录，
-    //   不过滤就会把「旧版 4 份 + 新版 4 份」一起比对 → **假失败**（实测 8 份 / 2 哈希）。
+    //  必须按**当前版本**过滤：dist/launcher 会累积历史版本的平台目录，
+    //   不过滤就会把「旧版 4 份 + 新版 4 份」一起比对 -> **假失败**（实测 8 份 / 2 哈希）。
     //   与壳组装器同类的「缺版本过滤」缺陷 —— 一致性断言的语义是「同一版本的各平台必须一致」。
     const CUR_VER = require(path.join(ROOT, 'package.json')).version;
     const dirs = fs.readdirSync(launcherDir).filter((d) =>
@@ -183,7 +183,7 @@ console.log('== T6 纯 JS 产物前提 ==');
       check('T6-e 实测：全部平台目录 core.cjs 哈希一致', new Set(hashes).size === 1, hashes.length + ' 份，唯一哈希 ' + new Set(hashes).size);
     } else {
       console.log('SKIP T6-e（产物不足 2 个平台目录；先跑 build:launcher:all 可覆盖）');
-      // 2026-09-13：CI 会先跑 build:launcher:all 并设 DSH_LAUNCHER_REQUIRED=1；
+      //：CI 会先跑 build:launcher:all 并设 DSH_LAUNCHER_REQUIRED=1；
       // 此时产物不足即**硬失败**，不得静默跳过（否则该断言在产线上永不检查）。
       if (process.env.DSH_LAUNCHER_REQUIRED === '1') {
         check('T6-e 需要真实产物（已声明 DSH_LAUNCHER_REQUIRED=1，不得静默跳过）', false,

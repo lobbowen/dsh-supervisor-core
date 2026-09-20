@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 'use strict';
 
-// ═══════════════════════════════════════════════════════════════════════════
-// 测试**不得产生真实副作用**（P1-F 事故后立的门禁，2026-09-12）
+// ---------------------------------------------------------------------------
+// 测试**不得产生真实副作用**
 //
 // ## 事故
 //
@@ -10,7 +10,7 @@
 //
 // ```js
 // const execPath = require('.../exec-path.js');
-// execPath.npmBin = () => fakeNpm;   // ← 看起来对，实际无效
+// execPath.npmBin = () => fakeNpm;   // <- 看起来对，实际无效
 // ```
 //
 // 但 `const { npmBin } = require(...)` 是**值绑定**：调用方拿到的是函数值，
@@ -25,7 +25,7 @@
 //      （识别形如 `<mod>.<fn> = ...` 其中 `<mod>` 来自 require 绑定）
 //   B  若测试需要假外部命令，必须用 `new X({ npmBin: ... })` 这类**构造期注入**
 //   C  卸载/安装相关测试必须显式注入，绝不依赖真实 npm
-// ═══════════════════════════════════════════════════════════════════════════
+// ---------------------------------------------------------------------------
 
 const fs = require('node:fs');
 const path = require('node:path');
@@ -37,7 +37,7 @@ const check = (n, c, x) => { results.push(!!c); console.log((c ? 'PASS' : 'FAIL'
 const testDir = path.join(ROOT, 'test');
 const files = fs.readdirSync(testDir).filter((f) => f.endsWith('.js') && f !== path.basename(__filename));
 
-// ── A：识别「patch require 绑定的模块导出」──
+// -- A：识别「patch require 绑定的模块导出」--
 // 形态：先 `const X = require('...')`（非解构），后 `X.someFn = ...`
 const offenders = [];
 for (const f of files) {
@@ -64,7 +64,7 @@ check('A 测试未 patch 模块导出以伪造依赖（值绑定无效 → 会�
   offenders.length === 0,
   offenders.length ? offenders.join(' | ') : '未发现');
 
-// ── B/C：卸载/安装类行为测试必须显式注入 npmBin ──
+// -- B/C：卸载/安装类行为测试必须显式注入 npmBin --
 {
   const behaviorFiles = files.filter((f) => /uninstall|install/.test(f) && /behavior/.test(f));
   check('B 存在卸载/安装行为测试', behaviorFiles.length > 0, behaviorFiles.join(',') || '（无）');
@@ -77,7 +77,7 @@ check('A 测试未 patch 模块导出以伪造依赖（值绑定无效 → 会�
   }
 }
 
-// ── 反向：门禁自身必须能识别伪造（自检）──
+// -- 反向：门禁自身必须能识别伪造（自检）--
 {
   const probe = ['const execPath = require("./x");', 'execPath.npmBin = () => 1;'].join(String.fromCharCode(10));
   const mods = new Set();

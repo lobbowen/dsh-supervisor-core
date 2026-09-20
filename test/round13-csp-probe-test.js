@@ -1,16 +1,16 @@
 #!/usr/bin/env node
 'use strict';
 
-// ═══════════════════════════════════════════════════════════════════════════
-// 第十三轮续：镜像「测试」按钮必须走同源后端（2026-09-13 P2）
+// ---------------------------------------------------------------------------
+// 第十三轮续：镜像「测试」按钮必须走同源后端
 //
 // ## 缺陷（结构性失败被伪装成网络失败）
 //
 // 设置页的「测试」按钮由**浏览器直连**用户填写的任意镜像源
-// （RegistryCard.tsx::testLatency → fetch(url + "/-/ping")）。
+// （RegistryCard.tsx::testLatency -> fetch(url + "/-/ping")）。
 // 而该页面由**内核 HTTP 服务**下发，并附带 CSP：
 //     connect-src 'self'        （src/api/static.js，步骤9 由 index.js 拆出）
-// → 浏览器**在发起请求之前**就按 CSP 拦截，fetch 立刻 reject，
+// -> 浏览器**在发起请求之前**就按 CSP 拦截，fetch 立刻 reject，
 //   被 catch 统一吞成 toast「探测失败」。
 //
 // 后果：该按钮对**任何**地址恒报「探测失败」，且换网络、换镜像都无法解决；
@@ -30,7 +30,7 @@
 //   C 前端经 supervisorApi 包装调用（不再直接 fetch）
 //   D 端点已登记到 api/contract.js（可发现性；步骤9 由 surface.js 改名）
 //   E 反向：判据能识别跨源裸 fetch 形态（门禁非空转）
-// ═══════════════════════════════════════════════════════════════════════════
+// ---------------------------------------------------------------------------
 
 const fs = require('node:fs');
 const path = require('node:path');
@@ -73,7 +73,7 @@ const check = (n, c, x) => {
     check('B 存在 /dist/registry/probe 端点', api.indexOf("'/dist/registry/probe'") >= 0, '有');
     check('B 校验 origin 必须以 http(s) 开头（防 SSRF 到任意协议）',
       /\^https\?:/.test(api), '有');
-    // ⚠ 2026-09-17（域结构第三轮）：probeOrigin 落在 registry.js，按目录聚合读取。
+    //  （域结构第三轮）：probeOrigin 落在 registry.js，按目录聚合读取。
     const distDir = path.join(ROOT, 'src', 'platform', 'distribution');
     const dist = fs.readdirSync(distDir).filter((f) => f.endsWith('.js')).sort().map((f) => fs.readFileSync(path.join(distDir, f), 'utf8')).join(String.fromCharCode(10));
     const i = dist.indexOf('async function probeOrigin(');
@@ -103,7 +103,7 @@ const check = (n, c, x) => {
   check('E 判据对 await x.y(...) 形态不误报',
     !/\bfetch\(/.test('const r = await supervisorApi.registryProbe(url);'), 'no-false-positive');
 
-  // ══ F B8 面板访问密钥闭环（AUDIT-2026-09-19）══
+  // -- F B8 面板访问密钥闭环--
   // 后端对非回环请求 fail-closed（401），UI 必须：本机存 key（保存成功时落 localStorage、
   // URL ?access_key= bootstrap）、每个请求（http + getText）带 Bearer、401 呈现为
   // 「访问密钥缺失或错误」而非假「离线」。行为细节在 vitest（client.test.ts）；
@@ -133,11 +133,11 @@ const check = (n, c, x) => {
       !/["']Authorization["']\]?\s*[:=]\s*["']Bearer ["']\s*\+/.test(legacy), 'no-hit');
   }
 
-  // ══ G B28/B7-UI 高危动作确认与令牌脱敏（AUDIT-2026-09-19）══
-  // LanPage：window.prompt 令牌录入 → 脱敏 Dialog；远程控制/公网暴露/FRP 总闸三个
-  // 无确认 Switch → 二次确认；frps authToken 服务端已脱敏（仅 authTokenSet），
+  // -- G B28/B7-UI 高危动作确认与令牌脱敏--
+  // LanPage：window.prompt 令牌录入 -> 脱敏 Dialog；远程控制/公网暴露/FRP 总闸三个
+  // 无确认 Switch -> 二次确认；frps authToken 服务端已脱敏（仅 authTokenSet），
   // UI 不得再回填、留空提交必须省略字段（提交 '' 会被后端清除现值）。
-  // OverviewPage：停止主干 DSH 需确认。无组件测试设施 → 锁源码形态。
+  // OverviewPage：停止主干 DSH 需确认。无组件测试设施 -> 锁源码形态。
   console.log('== G B28/B7-UI 确认对话框与 authToken 脱敏 ==');
   {
     const rd = (rel) => fs.readFileSync(path.join(ROOT, ...rel.split('/')), 'utf8');

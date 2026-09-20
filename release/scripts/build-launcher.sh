@@ -1,20 +1,20 @@
 #!/usr/bin/env bash
-# 内核统一发布物（2026-09 定案：全平台弃 SEA，改 Node launcher 形态）。
+# 内核统一发布物。
 # 背景：Node SEA 单文件二进制在 macOS 上注入后即段错误（最小 hello-world SEA 亦崩，
 # 与代码/codecache/codesign 无关 = Node SEA 在 mac 的上游缺陷，铁证）。为彻底消除平台差异，
 # 全平台统一发布「Node launcher」npm 包：esbuild bundle + node 启动脚本 + ui-react。
 # 产物（dist/launcher/）：
 #   dsh-supervisor-<ver>-<platform>-<arch>/
-#     ├── bin/dsh-supervisor        # node shebang 启动脚本（require ./core.cjs）
-#     ├── core.cjs                  # esbuild 单文件 bundle（含 __DSH_VERSION__ 注入）
-#     └── ui-react/                 # 面板发布镜像
+#     +-- bin/dsh-supervisor        # node shebang 启动脚本（require ./core.cjs）
+#     +-- core.cjs                  # esbuild 单文件 bundle（含 __DSH_VERSION__ 注入）
+#     +-- ui-react/                 # 面板发布镜像
 # 依赖：Node.js >=18 运行时（非 SEA 免运行时——发布物需目标机有 node）。
 #
 # 用法:
 #   release/scripts/build-launcher.sh [outDir]          # 单平台（本机；可用 DSH_*_OVERRIDE 指定）
 #   release/scripts/build-launcher.sh --all-platforms   # **一次构建**产出全部 4 个平台目录
 #
-# 为什么 --all-platforms 是「一次构建 + 派生四份」而非「构建四次」（2026-09-11 定案）：
+# 为什么 --all-platforms 是「一次构建 + 派生四份」而非「构建四次」：
 #   launcher 是**纯 JS 产物**——内核依赖数为 0、产物中 .node 文件数为 0，平台差异**仅**体现在
 #   npm 的 os/cpu 元数据与目录名。实测同一 bundle 在 linux/win32/darwin 三种覆盖下 sha256 完全一致。
 #   故正确做法是构建一次再派生元数据包装：既省时，也从**构造上保证**四平台代码同源
@@ -29,9 +29,9 @@ OUT_REL="dist/launcher"
 while [ $# -gt 0 ]; do
   case "$1" in
     --all-platforms)
-      # 硬标准（2026-09-13）：**任何平台构建都必须经 GitHub CI**，本地不得有全平台构建残留。
+      # 硬标准：**任何平台构建都必须经 GitHub CI**，本地不得有全平台构建残留。
       #   本选项仅允许在 GitHub Actions 内（CI 的 test job 需四平台产物供 T6-d/T6-e 断言）。
-      #   本地一律拒绝 —— 防止「本地构建 → 本地发布」这条旁路复活。
+      #   本地一律拒绝 —— 防止「本地构建 -> 本地发布」这条旁路复活。
       if [ "${GITHUB_ACTIONS:-}" != 'true' ]; then
         echo '拒绝：--all-platforms 只允许在 GitHub CI 内运行（GITHUB_ACTIONS=true）。' >&2
         echo '  硬标准：所有平台构建必须经 GitHub CI 完成；本地不得产生发布产物。' >&2
@@ -67,9 +67,9 @@ bash "$ROOT/release/scripts/build-ui.sh"
 [ -f "$ROOT/ui-react/supervisor.html" ] || { echo "错误：UI 镜像缺失"; exit 1; }
 
 echo "[2/6] esbuild 打包 bin → core.cjs…（平台无关：仅 --platform=node + 版本注入）"
-# B23/B26（AUDIT-2026-09-19）：
-#  ① 版本形态硬校验后才进 --define 插值 —— 防含引号/空格/$ 的 version 破坏参数或注入 shell。
-#  ② npx 浮动拉包 = 同 commit 不同天构建结果可能不同（esbuild 新 release 悄悄换默认行为）。
+# B23/B26：
+#  1) 版本形态硬校验后才进 --define 插值 —— 防含引号/空格/$ 的 version 破坏参数或注入 shell。
+#  2) npx 浮动拉包 = 同 commit 不同天构建结果可能不同（esbuild 新 release 悄悄换默认行为）。
 #     固版：默认锁一个已验证版本，DSH_ESBUILD_VERSION 显式覆盖；构建后复跑 --version 对账，
 #     不一致即失败（npx 拉不到固版会自行报错，不会静默回退别的版本）。
 case "$VER" in
@@ -95,12 +95,12 @@ while read -r P_OS P_PLAT P_ARCH; do
   cat > "$DIR/bin/dsh-supervisor" <<'LAUNCHER'
 #!/usr/bin/env node
 'use strict';
-// 统一 launcher 启动器（2026-09 定案：全平台弃 SEA）。require 同目录 core.cjs（esbuild bundle）。
+// 统一 launcher 启动器。require 同目录 core.cjs（esbuild bundle）。
 require('../core.cjs');
 LAUNCHER
   chmod 755 "$DIR/bin/dsh-supervisor"
   cp "$OUT/core.cjs" "$DIR/core.cjs"
-  # 携带 ui-react（src/api/index.js 候选② <exe>/../ui-react 解析：pkg/bin/dsh-supervisor → pkg/ui-react）
+  # 携带 ui-react（src/api/index.js 候选2) <exe>/../ui-react 解析：pkg/bin/dsh-supervisor -> pkg/ui-react）
   rm -rf "$DIR/ui-react"
   cp -r "$ROOT/ui-react" "$DIR/ui-react"
   # 版本自检文件（供 self-check/版本核对复用）
@@ -166,10 +166,10 @@ if ! printf "%s" "$UI_BODY" | grep -q "<div id=\"root\">"; then
 fi
 echo "  UI 服务断言 OK"
 kill "$SMOKE_PID" 2>/dev/null || true
-# 必须**等进程真正退出**再删目录（2026-09-11 修复，实测 CI mac/win 均因此失败）：
+# 必须**等进程真正退出**再删目录：
 #   kill 是异步的；刚启动的 daemon 及其子进程可能仍在写 $SMOKE_HOME，
 #   此时 rm -rf 会因遍历期间目录被新建文件而报 "Directory not empty" 并以非零退出；
-#   在 set -e 下直接中止整个构建（测试其实全绿，却报发布失败）。
+#   在 set -e 下直接中止整个构建（冒烟断言其实已通过，却报发布失败）。
 for _ in 1 2 3 4 5 6 7 8 9 10; do
   kill -0 "$SMOKE_PID" 2>/dev/null || break
   sleep 0.3

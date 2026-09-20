@@ -79,7 +79,7 @@ const upstream = http.createServer((q, s) => {
   svcs.push(svc);
   registerCleanup(() => svcs.flatMap((s) => s.providers || []));
 
-  // ════════ A. 直连供应商全链路 ════════
+  // -------- A. 直连供应商全链路 --------
   const rA = svc.addDirectProvider({ name: 'Zen', presetId: 'opencode-zen', keys: [] });
   // 供应商独立端点语义：直连转发前先激活直连供应商（激活即分配独立 API 端口）
   await svc.activateProvider(rA.id).catch(() => {});
@@ -97,7 +97,7 @@ const upstream = http.createServer((q, s) => {
   const aFullAcc = dp.accounts.find((a) => a.keyId === aFull.account.keyId);
   check('A6 满额冻结期不可用（不参与挑选）', dp.isAccountUsable(aFullAcc) === false);
 
-  // 运行中自动恢复：窗口重置后定时探测 → applyDetection 自动解冻（与「添加时冻结」同一条状态机；无需人工入池）
+  // 运行中自动恢复：窗口重置后定时探测 -> applyDetection 自动解冻（与「添加时冻结」同一条状态机；无需人工入池）
   const renewed = { rolling: { status: 'ok', percent: 15, resetsAt: null }, weekly: { status: 'ok', percent: 20, resetsAt: null }, monthly: { status: 'ok', percent: 30, resetsAt: null } };
   dp.applyDetection(aFullAcc, { ok: true, quota: renewed });
   check('A7 窗口重置后探测 → 自动 ready（无入池点击）', aFullAcc.status === 'ready' && (!aFullAcc.limit || !aFullAcc.limit.kind), aFullAcc.status + ' limit=' + JSON.stringify(aFullAcc.limit));
@@ -120,7 +120,7 @@ const upstream = http.createServer((q, s) => {
   check('A13 用量已记录', svc.getUsage().requests >= 1 && svc.getUsage().totalTokens >= 7, JSON.stringify(svc.getUsage()));
   check('A14 按 key 用量累计', svc.getUsage().byKey && svc.getUsage().byKey[aGood.account.keyId] && svc.getUsage().byKey[aGood.account.keyId].totalTokens >= 7, JSON.stringify(svc.getUsage().byKey));
 
-  // ════════ B. 反代包装器全链路（dry-run：真实 spawn）════════
+  // -------- B. 反代包装器全链路（dry-run：真实 spawn）--------
   const rB = svc.addProxyProvider({ name: 'Dry', appId: 'test-dry-run', keys: ['proxy-key-1'] });
   // 供应商独立端点：激活（开放独立 API 端口；创建默认停用）
   check('B1 反代供应商添加', rB.ok === true, JSON.stringify(rB));
@@ -128,8 +128,8 @@ const upstream = http.createServer((q, s) => {
   check('B2 反代类型/appId', pp.kind === 'proxy' && pp.proxyAppId === 'test-dry-run', pp.kind + '/' + pp.proxyAppId);
   const actR = await svc.activateProvider(rB.id);
   check('B2b 激活反代供应商（独立端点端口分配）', actR.ok === true && pp.activated === true && !!pp.apiPort, JSON.stringify({ ok: actR.ok, activated: pp.activated, apiPort: pp.apiPort }));
-  // 轮询等待注册落终态：原固定 8s sleep 在负载下会骑到 waitHealthy（6 次 ×1.5s ≈9s）
-  // 的边界上 → B3/B5 偶发假失败；改为带上限的 deadline 轮询。
+  // 轮询等待注册落终态：原固定 8s sleep 在负载下会骑到 waitHealthy（6 次 x1.5s ~9s）
+  // 的边界上 -> B3/B5 偶发假失败；改为带上限的 deadline 轮询。
   await (async () => { const t0 = Date.now(); while (Date.now() - t0 < 20000) { const a = pp.accounts.find((x) => x.key === 'proxy-key-1'); if (a && a.status !== 'registering') return; await new Promise((r) => setTimeout(r, 200)); } })();
   const pacc = pp.accounts.find((a) => a.key === 'proxy-key-1');
   check('B3 反代账号注册完成', pacc && pacc.status === 'ready', JSON.stringify(pacc && pacc.status));
@@ -146,8 +146,8 @@ const upstream = http.createServer((q, s) => {
 
   check('B8 反代配额已检测', pinst.quota && pinst.quota.rolling && Number.isFinite(Number(pinst.quota.rolling.percent)), JSON.stringify(pinst.quota));
 
-  // B9/B10：实例四态词表（PROVIDER-GATEWAY-ARCHITECTURE §4.1 / PG-3）。
-  //   ⚠ 实例级 freeze/unfreeze 已删除（未接线的死代码）；"冻结"是账号级语义。
+  // B9/B10：实例四态词表（PROVIDER-GATEWAY-ARCHITECTURE）。
+  //    实例级 freeze/unfreeze 已删除（未接线的死代码）；"冻结"是账号级语义。
   check('B9 实例态为四态词表之一', ['COLD', 'WARM', 'HOT', 'DEAD'].includes(pinst.status), pinst.status);
   check('B9b 有进程 → occupiesSlot=true', pinst.occupiesSlot() === true, String(pinst.occupiesSlot()));
   check('B10 就绪 → isServable（HOT+pid）', typeof pinst.isServable() === 'boolean', String(pinst.isServable()));
@@ -170,7 +170,7 @@ const upstream = http.createServer((q, s) => {
   const apps = svc.proxyApps();
   check('B13 proxyApps 注册表', apps.length >= 2 && apps.some((a) => a.id === 'commandcode' && a.registry === 'commandcode-api-proxy'), apps.map((a) => a.id + ':' + a.registry).join(','));
 
-  // ════════ C. 持久化 round-trip ════════
+  // -------- C. 持久化 round-trip --------
   await svc.stop(); // 路由停止即停全部反代实例（防 dry-run/verproxy 子进程残留占用动态端口段）
   const svc2 = new RouterService({ config: {}, providerFile, portsFile: path.join(TMP, 'ports-router.json'), usageTotalsFile: path.join(TMP, 'totals.json'), logger: { info() {}, warn() {}, error() {} }, events: null });
   svcs.push(svc2);
@@ -181,7 +181,7 @@ const upstream = http.createServer((q, s) => {
   check('C3 反代账号 key 保留', pp2.accounts[0].key === 'proxy-key-1', pp2.accounts[0].key);
   check('C4 反代实例 key 保留', pp2.instances[0].key === 'proxy-key-1', pp2.instances[0].key);
 
-  // ════════ D. 维护调度 ════════
+  // -------- D. 维护调度 --------
   check('D1 维护方法存在', typeof svc2._startMaintenance === 'function' && typeof svc2._stopIdleProxyInstances === 'function' && typeof svc2._probeAccountStates === 'function' && typeof svc2.refreshOfficialPricingAll === 'function');
   await svc2.start();
   await new Promise((r) => setTimeout(r, 500));
@@ -189,37 +189,37 @@ const upstream = http.createServer((q, s) => {
   await svc2.stop(); // 同上：停止即停实例
   check('D3 停止后定时器清理', svc2._maintTimer === null && svc2._pricingTimer === null);
 
-  // ════════ E. 冻结释放调度（resetAt 已到 → applyDetection 自动解冻，状态机层面验证）════════
+  // -------- E. 冻结释放调度（resetAt 已到 -> applyDetection 自动解冻，状态机层面验证）--------
   // 注：_releaseFrozenInstances 已在架构重构中删除，解冻语义收敛为 _probeAccountStates 的
-  // 到点探测 + applyDetection 恢复（frozen + nextResetAt ≤ now → 探测通过 → ready）。
+  // 到点探测 + applyDetection 恢复（frozen + nextResetAt <= now -> 探测通过 -> ready）。
   const pp3 = svc2.providers.find((p) => p.kind === 'proxy');
   const acc3 = pp3 && pp3.accounts && pp3.accounts[0];
   if (acc3) {
     acc3.status = 'frozen';
-    acc3.nextResetAt = Date.now() - 1000; // 复位时间已过 → 到点触发探测
+    acc3.nextResetAt = Date.now() - 1000; // 复位时间已过 -> 到点触发探测
     pp3.applyDetection(acc3, { ok: true, quota: { monthly: { status: 'ok', percent: 10, resetsAt: null }, weekly: null, rolling: null } });
     check('E1 resetAt 已到自动解冻（applyDetection 调度语义）', acc3.status === 'ready', acc3.status);
   } else {
     check('E1 冻结释放（无账号，跳过）', true);
   }
 
-  // ════════ F. 锁收敛语义（2026-09 A 定稿）════════
+  // -------- F. 锁收敛语义--------
   // 锁只对「当前可用」账号有意义：账号因任何原因冻结（额度满等，与其余限额账号同一状态机）
-  // → 锁失效清空；恢复后不自动回锁，需要时用户显式重新锁定。不存在独立于状态机的死锁残留。
+  // -> 锁失效清空；恢复后不自动回锁，需要时用户显式重新锁定。不存在独立于状态机的死锁残留。
   const ppF = svc2.providers.find((p) => p.kind === 'proxy');
   const accF = ppF && ppF.accounts && ppF.accounts.find((a) => a.status === 'ready');
   if (accF) {
     ppF.selectedAccountKeyId = accF.keyId; // 显式锁定可用账号
-    // 冻结（真实状态机路径 _freezeLimited → _setStatus frozen）→ 锁随可用性清除
+    // 冻结（真实状态机路径 _freezeLimited -> _setStatus frozen）-> 锁随可用性清除
     ppF._freezeLimited(accF, 'window', '额度用尽（测试冻结）', { type: 'at', at: Date.now() + 3600000 });
     check('F1 冻结即清锁（锁不残留于冻结账号）', ppF.selectedAccountKeyId === null, String(ppF.selectedAccountKeyId));
-    // 恢复（到点探测）→ ready；锁不自动回来；选号正常（粘滞/池内选可用）
+    // 恢复（到点探测）-> ready；锁不自动回来；选号正常（粘滞/池内选可用）
     accF.nextResetAt = Date.now() - 1000;
     ppF.applyDetection(accF, { ok: true, quota: { monthly: { status: 'ok', percent: 10, resetsAt: null }, weekly: null, rolling: null } });
     ppF.activeAccount = null;
     const pickedF = svc2.switcher.pickFor(ppF);
     check('F2 恢复后无自动回锁（可用账号正常入选）', ppF.selectedAccountKeyId === null && !!pickedF, String(pickedF && pickedF.keyId));
-    // 显式重新锁定 → 恢复后用户可再锁定并优先
+    // 显式重新锁定 -> 恢复后用户可再锁定并优先
     ppF.selectedAccountKeyId = accF.keyId;
     ppF.activeAccount = null;
     const pickedF2 = svc2.switcher.pickFor(ppF);

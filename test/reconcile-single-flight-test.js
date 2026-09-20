@@ -1,18 +1,18 @@
 #!/usr/bin/env node
 'use strict';
 
-// ═══════════════════════════════════════════════════════════════════════════
-// P2-8：LanManager.reconcile 的**单飞**（single-flight）
+// ---------------------------------------------------------------------------
+// LanManager.reconcile 的**单飞**（single-flight）
 //
 // ## 缺陷
 //
 // `reconcile()` 内含逐实例 `await targetReachable(inst)`（每个最多 600ms TCP 超时），
 // 而它被多个 **2 秒级**节拍触发：
-//   · 前端 UI 每 2s 轮询 `/lan/list` → `list()` 内部调 reconcile（manager.js:64）；
-//   · lan-daemon 自身每 2s tick（daemon.js:127）；
-//   · supervisor / adapters / converge-view 亦各有一处。
+//   - 前端 UI 每 2s 轮询 `/lan/list` -> `list()` 内部调 reconcile（manager.js:64）；
+//   - lan-daemon 自身每 2s tick（daemon.js:127）；
+//   - supervisor / adapters / converge-view 亦各有一处。
 //
-// N 个不可达实例时，多轮 reconcile 重叠 → 串行等待堆在事件循环上 →
+// N 个不可达实例时，多轮 reconcile 重叠 -> 串行等待堆在事件循环上 ->
 // ctl / 面板响应变慢。
 //
 // ## 修法
@@ -25,7 +25,7 @@
 //   S8-b  在途期间返回的是**同一个** Promise（调用方可 await 到真实结果）
 //   S8-c  完成后可再次发起（单飞只合并重叠，不永久占用）
 //   S8-d  执行体抛错时，单飞状态被清空（不会永久卡住后续对账）
-// ═══════════════════════════════════════════════════════════════════════════
+// ---------------------------------------------------------------------------
 
 const path = require('node:path');
 const fs = require('node:fs');
@@ -43,7 +43,7 @@ check('S8-d finally 清空单飞状态（异常也不会卡死）',
   /finally\(\(\) => \{ this\._reconcileInFlight = null; \}\)/.test(src), '有');
 check('S8-a 主体已拆为 _reconcileOnce', /async _reconcileOnce\(\)/.test(src), '有');
 
-// ── 行为级：直接实例化 LanManager，替换对账主体，验证单飞语义 ──
+// -- 行为级：直接实例化 LanManager，替换对账主体，验证单飞语义 --
 //   说明：reconcile 依赖 this.instances/_allManaged/logger 等；
 //   此处只验证**单飞包装本身**，故用一个最小对象复用其原型方法。
 {
@@ -59,7 +59,7 @@ check('S8-a 主体已拆为 _reconcileOnce', /async _reconcileOnce\(\)/.test(src
     return { mgr, calls };
   };
 
-  // a/b：两个并发调用 → 主体只跑 1 次，且拿到同一个 Promise
+  // a/b：两个并发调用 -> 主体只跑 1 次，且拿到同一个 Promise
   {
     let release;
     const gate = new Promise((r) => { release = r; });

@@ -1,13 +1,13 @@
 #!/usr/bin/env node
 'use strict';
 
-// 卸载类测试（项目政策，2026-08-31）：本脚本含插件卸载（PluginManager.uninstall）场景，涉及卸载类操作，
+// 卸载类测试：本脚本含插件卸载（PluginManager.uninstall）场景，涉及卸载类操作，
 // 已纳入 npm test（CI）自动测试链执行；测试结论只能由 CI 裁决，本地不单独复跑
 // （如需排查，可显式执行 node test/plugin-change-restart-test.js 或 npm run test:plugin-change-restart）。
 
-// 插件管理双机制（原生宿主 × 沙箱实例）核心行为测试：
+// 插件管理双机制（原生宿主 x 沙箱实例）核心行为测试：
 //  - 卸载：官方 CLI + bundles 清理 + 跨层残留（home 补丁层/原生 overlay/profile 补丁层）清理
-//    + 运行中实例自动重启；job 级核算（部分失败 → failed）
+//    + 运行中实例自动重启；job 级核算（部分失败 -> failed）
 //  - 停用/启用：官方补丁层机制（$DSH_HOME/cordis.patch.yml）热载面，不动 bundles（防 reconcile 击穿），
 //    无需重启；启用顺带清理 legacy overlay
 //  - 更新：检测（registry 最高版 vs 已装版）+ 执行（update/add）+ 重启生效；本地/git 型拒绝
@@ -17,7 +17,7 @@ const path = require('node:path');
 const fs = require('node:fs');
 const os = require('node:os');
 const ROOT = path.join(__dirname, '..');
-// 2026-09-16 步骤8a（DIRECTORY-STRUCTURE-DESIGN §4.5）：plugin 域补 index.js，
+// 步骤8a（DIRECTORY-STRUCTURE-DESIGN）：plugin 域补 index.js，
 // 原 plugins.js 拆为 index/ops/jobs/store（market.js 由 pluginmarket.js 改名）。
 const { PluginManager } = require(path.join(ROOT, 'src', 'domains', 'plugin'));
 const results = [];
@@ -68,7 +68,7 @@ function makePM(opts = {}) {
     dshPort: 3080, instances: null, tasks: null, logger: { info() {}, warn() {}, error() {} },
     events: { append: (t, d) => events.push({ t, d }) },
     onNativeRestart: opts.nativeRestart || (() => { instances.calls.push('native-restart'); return { ok: true }; }),
-    // B16（AUDIT-2026-09-19）：默认未退出；O 组用例注入 () => true 验证退出门。
+    // 默认未退出；O 组用例注入 () => true 验证退出门。
     exitIntended: opts.exitIntended || (() => false),
     dist: { fetchNpmLatest: async (n) => (opts.distLatest !== undefined ? opts.distLatest[n] : '2.0.0') },
   });
@@ -97,7 +97,7 @@ const homePatchFile = (profileDir) => path.join(path.dirname(path.dirname(profil
 const eventsOf = (arr, type) => (arr || []).some((e) => e.t === type);
 
 (async () => {
-  // ── A. 卸载成功 + 运行中沙箱 → 重启；bundles 移除 ──
+  // -- A. 卸载成功 + 运行中沙箱 -> 重启；bundles 移除 --
   {
     const { pm, instances, events, aProfile } = makePM({ running: true, pnpmResult: true });
     const before = (readJson(path.join(aProfile, 'package.json')).dsh.profile.bundles || []).slice();
@@ -110,7 +110,7 @@ const eventsOf = (arr, type) => (arr || []).some((e) => e.t === type);
     check('A4 bundles 移除', before.includes('@x/p') && !after.includes('@x/p'), JSON.stringify(after));
     check('A5 重启日志入列', (job.targets[0].log || []).some((l) => /已重启/.test(l)), '');
   }
-  // ── B. 卸载成功 + 实例未运行 → 不重启 ──
+  // -- B. 卸载成功 + 实例未运行 -> 不重启 --
   {
     const { pm, instances } = makePM({ running: false, pnpmResult: true });
     const r = await pm.uninstall('@x/p', 'inst-a');
@@ -119,7 +119,7 @@ const eventsOf = (arr, type) => (arr || []).some((e) => e.t === type);
     check('B2 未运行的实例不重启', !instances.calls.includes('stop:inst-a') && !instances.calls.includes('start:inst-a'), instances.calls.join(','));
     check('B3 提示下次启动生效', (job.targets[0].log || []).some((l) => /下次启动/.test(l)), '');
   }
-  // ── C. pnpm 报「依赖已不存在」+ bundles 已清理 → 视为成功并重启 ──
+  // -- C. pnpm 报「依赖已不存在」+ bundles 已清理 -> 视为成功并重启 --
   {
     const { pm, instances } = makePM({
       running: true, pnpmResult: false,
@@ -131,7 +131,7 @@ const eventsOf = (arr, type) => (arr || []).some((e) => e.t === type);
     check('C1 依赖已移除判定为成功', job.state === 'done', job.state);
     check('C2 成功路径仍重启', instances.calls.includes('start:inst-a'), instances.calls.join(','));
   }
-  // ── D. 硬失败（无 bundles 变更）→ job failed，不重启 ──
+  // -- D. 硬失败（无 bundles 变更）-> job failed，不重启 --
   {
     const { pm, instances } = makePM({ running: true, pnpmResult: false, pnpmError: 'registry timeout', bundlesClean: false });
     pm._removeFromProfileBundles = () => false;
@@ -140,7 +140,7 @@ const eventsOf = (arr, type) => (arr || []).some((e) => e.t === type);
     check('D1 硬失败 job failed', job.state === 'failed', job.state);
     check('D2 失败不重启', !instances.calls.includes('stop:inst-a'), instances.calls.join(','));
   }
-  // ── E. native 目标变更 + 运行中 → onNativeRestart；不直接碰 systemd ──
+  // -- E. native 目标变更 + 运行中 -> onNativeRestart；不直接碰 systemd --
   {
     let nativeRestartCalls = 0;
     const { pm, instances } = makePM({ running: true, pnpmResult: true, nativeRestart: () => { nativeRestartCalls++; return { ok: true }; } });
@@ -150,7 +150,7 @@ const eventsOf = (arr, type) => (arr || []).some((e) => e.t === type);
     check('E2 原生走 supervisor 重启回调', nativeRestartCalls === 1, 'calls=' + nativeRestartCalls);
     check('E3 未直接操作 systemd', !instances.calls.some((c) => c.startsWith('stop:main')), '');
   }
-  // ── F0. 行保留回归：禁用/启用不得误删补丁层中的非 disabled 用户行/insert 行（2026-09 审计修复）──
+  // -- F0. 行保留回归：禁用/启用不得误删补丁层中的非 disabled 用户行/insert 行--
   {
     const { pm, aProfile } = makePM({ running: true });
     const hpFile = homePatchFile(aProfile);
@@ -174,7 +174,7 @@ const eventsOf = (arr, type) => (arr || []).some((e) => e.t === type);
     check('F0.5 启用保留 insert 型行', hp.some((e) => Array.isArray(e.insert) && e.insert.some((r) => r.name === '@x/p')), JSON.stringify(hp));
     check('F0.6 启用保留其它插件行', hp.some((e) => e.id === '@y/q'), JSON.stringify(hp));
   }
-  // ── F1. 禁用（沙箱）：写 home 补丁层，不动 bundles，不重启（热应用）──
+  // -- F1. 禁用（沙箱）：写 home 补丁层，不动 bundles，不重启（热应用）--
   {
     const { pm, instances, events, aProfile } = makePM({ running: true });
     const res = await pm.setBundleEnabled('@x/p', false, 'inst-a');
@@ -187,7 +187,7 @@ const eventsOf = (arr, type) => (arr || []).some((e) => e.t === type);
     check('F1.4 不重启（热应用）', !instances.calls.includes('stop:inst-a') && !instances.calls.includes('start:inst-a'), instances.calls.join(','));
     check('F1.5 事件 hot:true', eventsOf(events, 'plugin_disabled'), '');
   }
-  // ── F2. 启用（沙箱）：移除禁用行 ──
+  // -- F2. 启用（沙箱）：移除禁用行 --
   {
     const { pm, aProfile } = makePM({ running: true });
     await pm.setBundleEnabled('@x/p', false, 'inst-a');
@@ -195,7 +195,7 @@ const eventsOf = (arr, type) => (arr || []).some((e) => e.t === type);
     const hp = readJson(homePatchFile(aProfile)) || [];
     check('F2.1 启用后禁用行移除', res2.rows === 1 && !hp.some((e) => e.id === '@x/p'), JSON.stringify(hp));
   }
-  // ── G. 安装成功 + 运行中沙箱 → 不自动重启，仅提示 ──
+  // -- G. 安装成功 + 运行中沙箱 -> 不自动重启，仅提示 --
   {
     const { pm, instances } = makePM({ running: true, pnpmResult: true });
     const r = await pm.install('@x/p', { target: 'inst-a' });
@@ -204,7 +204,7 @@ const eventsOf = (arr, type) => (arr || []).some((e) => e.t === type);
     check('G2 安装不自动重启', !instances.calls.includes('stop:inst-a') && !instances.calls.includes('start:inst-a'), instances.calls.join(','));
     check('G3 提示下次重启加载', (job.targets[0].log || []).some((l) => /下次重启|实例重启后/.test(l)), '');
   }
-  // ── H. all：native 失败 + 沙箱成功 → job failed（部分目标失败）──
+  // -- H. all：native 失败 + 沙箱成功 -> job failed（部分目标失败）--
   {
     const { pm, instances } = makePM({ running: true, pnpmResult: (t) => t.kind === 'sandbox', pnpmError: 'registry timeout', bundlesClean: false });
     pm._removeFromProfileBundles = () => false;
@@ -214,7 +214,7 @@ const eventsOf = (arr, type) => (arr || []).some((e) => e.t === type);
     check('H2 失败目标 error 记录', (job.targets.find((t) => t.id === 'native') || {}).error === 'registry timeout', '');
     check('H3 成功目标仍重启', instances.calls.includes('start:inst-a'), instances.calls.join(','));
   }
-  // ── I. _removeFromProfileBundles 真实写盘：幂等 ──
+  // -- I. _removeFromProfileBundles 真实写盘：幂等 --
   {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'plugin-rm-'));
     const profileDir = path.join(tmp, 'profile');
@@ -227,7 +227,7 @@ const eventsOf = (arr, type) => (arr || []).some((e) => e.t === type);
     check('I2 插件从 bundles 消失', !(after.dsh.profile.bundles || []).includes('@x/p'), '');
     check('I3 二次移除返回 false（幂等）', pm._removeFromProfileBundles({ profileDir }, '@x/p') === false, '');
   }
-  // ── J. 卸载残留清理（home 补丁层 / overlay / profile 补丁层 JSON）──
+  // -- J. 卸载残留清理（home 补丁层 / overlay / profile 补丁层 JSON）--
   {
     const { pm, aProfile, overlayFile } = makePM({ running: true, pnpmResult: true });
     const hpFile = homePatchFile(aProfile);
@@ -242,7 +242,7 @@ const eventsOf = (arr, type) => (arr || []).some((e) => e.t === type);
     check('J3 profile 补丁层 insert 残留已清（纯 JSON 可安全改写）', !ppAfter.some((e) => (e.insert || []).some((row) => row.name === '@x/p')), JSON.stringify(ppAfter));
     check('J4 日志含清理记录', (job.targets[0].log || []).some((l) => /残留|补丁层/.test(l)), '');
   }
-  // ── K. 启用 native：清 legacy overlay 禁用行 ──
+  // -- K. 启用 native：清 legacy overlay 禁用行 --
   {
     const { pm, overlayFile } = makePM({ running: true });
     const before = readJson(overlayFile) || [];
@@ -252,7 +252,7 @@ const eventsOf = (arr, type) => (arr || []).some((e) => e.t === type);
       check('K1 启用时清理 legacy overlay', res.rows >= 1 && !after.some((e) => e.id === 'include:p'), JSON.stringify(after));
     } else { check('K1 启用时清理 legacy overlay', false, 'seed missing'); }
   }
-  // ── L. 更新：检测 + 执行 + 重启 ──
+  // -- L. 更新：检测 + 执行 + 重启 --
   {
     const { pm, instances, events } = makePM({ running: true, pnpmResult: true, distLatest: { '@x/p': '2.0.0' } });
     const chk = await pm.checkUpdates();
@@ -266,7 +266,7 @@ const eventsOf = (arr, type) => (arr || []).some((e) => e.t === type);
     check('L5 更新后重启', instances.calls.includes('start:inst-a'), instances.calls.join(','));
     check('L6 更新事件', eventsOf(events, 'plugin_update_done'), '');
   }
-  // ── M. 更新已是最新 → 跳过不执行 ──
+  // -- M. 更新已是最新 -> 跳过不执行 --
   {
     const { pm, instances } = makePM({ running: true, distLatest: { '@x/p': '1.0.0' } });
     const r = await pm.update('@x/p', 'inst-a');
@@ -275,7 +275,7 @@ const eventsOf = (arr, type) => (arr || []).some((e) => e.t === type);
     check('M2 不执行更新命令', !instances.calls.some((c) => c.startsWith('cli:inst-a:update')), instances.calls.join(','));
     check('M3 不重启', !instances.calls.includes('start:inst-a'), '');
   }
-  // ── N. 本地型插件更新 → 拒绝并失败 ──
+  // -- N. 本地型插件更新 -> 拒绝并失败 --
   {
     const { pm, instances } = makePM({ running: true, distLatest: { '@x/p': '2.0.0' } });
     pm.installedOn = (t) => [{ name: '@x/p', version: '1.0.0', source: 'file:/home/me/dev/x', bundle: true }];
@@ -284,7 +284,7 @@ const eventsOf = (arr, type) => (arr || []).some((e) => e.t === type);
     check('N1 本地型更新 job failed', job.state === 'failed', job.state + ' / ' + (job.error || ''));
     check('N2 本地型不执行 CLI', !instances.calls.some((c) => c.startsWith('cli:inst-a:update')), instances.calls.join(','));
   }
-  // ── O. B16（AUDIT-2026-09-19 §B-16）：INV-S1 退出门约束插件变更生效重启 ──
+  // -- O. B16：INV-S1 退出门约束插件变更生效重启 --
   //   本测试注入的是裸 instances（无外层适配器门）——域侧必须自查 ctx.exitIntended。
   {
     const A_TGT = { id: 'inst-a', name: '沙箱甲', kind: 'sandbox', profileDir: 'p', profileName: 'web' };

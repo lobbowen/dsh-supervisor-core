@@ -1,25 +1,25 @@
 #!/usr/bin/env node
 'use strict';
 
-// ═══════════════════════════════════════════════════════════════════════════
-// 第八轮修复的回归（进程/部署/版本比较/壳拉起，2026-09-12）
+// ---------------------------------------------------------------------------
+// 第八轮修复的回归
 //
 // ## 缺陷
 //
 // P0-A `deploy.detect()` 只认「二进制 magic 头」，而发布形态**早已弃 SEA**
-//   （build-launcher.sh:2 明写）→ 真实用户落 `source-shell` → 自更新永久不可用。
+//   （build-launcher.sh:2 明写）-> 真实用户落 `source-shell` -> 自更新永久不可用。
 //
 // P0-B `DaemonLifecycle.cmdMark` 传的是 `'router-daemon'`，而真实 cmdline 是
 //   `node <pkg>/src/domains/router/daemon.js -c …` —— 子串**不匹配**（实测 -1）
-//   → ctl 属主反查恒 null → 换代逻辑与「异主不接管」全线死代码。
+//   -> ctl 属主反查恒 null -> 换代逻辑与「异主不接管」全线死代码。
 //
-// P1-C `semverCompare` 用 `split('-')` 只取前两段 → `1.0.0-beta-2` 的 `-2` 被丢弃
-//   → 与 `1.0.0-beta-1` 判等（实测均为 0）。
+// P1-C `semverCompare` 用 `split('-')` 只取前两段 -> `1.0.0-beta-2` 的 `-2` 被丢弃
+//   -> 与 `1.0.0-beta-1` 判等（实测均为 0）。
 //
-// P1-D `self-update` 的 `prune`/`currentDir` 用**字符串**比较版本 →
-//   `v0.10.0` 被排在 `v0.9.0` 之前 → prune 从下标 0 删，**删掉刚装的当前版本**。
+// P1-D `self-update` 的 `prune`/`currentDir` 用**字符串**比较版本 ->
+//   `v0.10.0` 被排在 `v0.9.0` 之前 -> prune 从下标 0 删，**删掉刚装的当前版本**。
 //
-// P1-E `_spawn()` 不接 `'error'`、不看 `child.pid` 就写身份 → ENOENT 时
+// P1-E `_spawn()` 不接 `'error'`、不看 `child.pid` 就写身份 -> ENOENT 时
 //   异常逃逸（守卫自杀）+ 身份写成 undefined（每轮重复 spawn）。
 //
 // ## 锁定不变量
@@ -28,12 +28,12 @@
 //   J-c  semverCompare 保留连字符后的完整 prerelease，且符合 semver 规范
 //   J-d  self-update 的版本排序用 semverCompare（非字符串）
 //   J-e  _spawn 接 'error'；无 pid 时不写身份并返回 failed
-// ═══════════════════════════════════════════════════════════════════════════
-// ⚠ 编号消歧（AUDIT-2026-09-19 §H-0）：本文件里
-//   · `E-1 / E-2 / E-4`（J-n/J-o/J-p）＝ 审计报告 **§E 跨域立项**编号；
-//   · `UI 条 5 / UI 条 6`（J-l/J-m）＝ 第 4 批 E 组的**发布/UI 六条**（原写 E-5/E-6，已改）。
+// ---------------------------------------------------------------------------
+//  编号消歧：本文件里
+//   - `E-1 / E-2 / E-4`（J-n/J-o/J-p）＝ 审计报告 **跨域立项**编号；
+//   - `UI 条 5 / UI 条 6`（J-l/J-m）＝ **发布/UI 六条**，与跨域立项编号无关。
 //   两套编号无关，别把「E-1 绿了」读成「发布链第 1 条被验过」。
-// ═══════════════════════════════════════════════════════════════════════════
+// ---------------------------------------------------------------------------
 
 const path = require('node:path');
 const fs = require('node:fs');
@@ -43,29 +43,29 @@ const ROOT = path.join(__dirname, '..');
 const results = [];
 const check = (n, c, x) => { results.push(!!c); console.log((c ? 'PASS' : 'FAIL') + ' ' + n + (x !== undefined && x !== '' ? '  ← ' + x : '')); };
 const read = (p) => fs.readFileSync(path.join(ROOT, p), 'utf8');
-// ⚠ 2026-09-16 步骤8a（DIRECTORY-STRUCTURE-DESIGN §4.5）：shell/plugin 两域已拆为
+//  步骤8a（DIRECTORY-STRUCTURE-DESIGN）：shell/plugin 两域已拆为
 //   index/journal/restart 与 index/ops/store/market。本套源码级断言的**对象是「域」**
 //   （restartShell 的 'error' 监听、插件 CLI 的 detached 杀树、市场重定向协议），
 //   与文件切分无关 —— 故按域聚合读取，避免把判据搬走而静默失去覆盖面。
 const readDomain = (dir) => fs.readdirSync(path.join(ROOT, dir)).filter((f) => f.endsWith('.js')).sort()
   .map((f) => read(dir + '/' + f)).join(String.fromCharCode(10));
 
-// ── J-a：deploy launcher 形态识别 ──
+// -- J-a：deploy launcher 形态识别 --
 {
   const dep = require(path.join(ROOT, 'src', 'platform', 'contract', 'deploy.js'));
   check('J-a 导出 isLauncherForm', typeof dep.isLauncherForm === 'function', typeof dep.isLauncherForm);
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'depj-'));
-  // ① 发布布局：<pkg>/bin/dsh-supervisor + <pkg>/core.cjs
+  // 1) 发布布局：<pkg>/bin/dsh-supervisor + <pkg>/core.cjs
   const pkg = path.join(tmp, 'pkg');
   fs.mkdirSync(path.join(pkg, 'bin'), { recursive: true });
   const tgt = path.join(pkg, 'bin', 'dsh-supervisor');
   fs.writeFileSync(tgt, '#!/usr/bin/env node\n');
-  // ⚠ 顺序：先断言「无 core.cjs 时不识别」，再放 core.cjs 断言「识别」。
+  //  顺序：先断言「无 core.cjs 时不识别」，再放 core.cjs 断言「识别」。
   //   （我第一版把断言写在创建 core.cjs 之前，却期望 true —— 自造的假失败。）
   check('J-a 尚未放 core.cjs → 不识别', dep.isLauncherForm(tgt) === false, 'false');
   fs.writeFileSync(path.join(pkg, 'core.cjs'), '//b');
   check('J-a 放上 core.cjs（发布布局）→ 识别为 launcher', dep.isLauncherForm(tgt) === true, 'true');
-  // ② 源码布局：无 core.cjs
+  // 2) 源码布局：无 core.cjs
   const src = path.join(tmp, 'repo', 'bin');
   fs.mkdirSync(src, { recursive: true });
   const t2 = path.join(src, 'dsh-supervisor');
@@ -78,7 +78,7 @@ const readDomain = (dir) => fs.readdirSync(path.join(ROOT, dir)).filter((f) => f
     /弃 SEA|不再是 SEA/.test(srcTxt), '已校正');
 }
 
-// ── J-b：DaemonLifecycle 标记派生 ──
+// -- J-b：DaemonLifecycle 标记派生 --
 {
   const { DaemonLifecycle } = require(path.join(ROOT, 'src', 'app', 'daemons', 'process.js'));
   const script = path.join(ROOT, 'src', 'domains', 'router', 'daemon.js');
@@ -87,13 +87,13 @@ const readDomain = (dir) => fs.readdirSync(path.join(ROOT, dir)).filter((f) => f
     cmdMark: 'router-daemon', identityFile: path.join(os.tmpdir(), 'j-b.json'),
   });
   check('J-b 标记含语义名', lc._cmdMarks.includes('router-daemon'), JSON.stringify(lc._cmdMarks));
-  // ⚠ 2026-09-13 更正：标记**本来就统一为 "/"**（构造器用 norm() 归一化），
+  //  更正：标记**本来就统一为 "/"**（构造器用 norm() 归一化），
   //   故此处**正斜杠字面量是正确的**（我先前误改成 path.join，反而弄坏了它 —— 已回退）。
   check('J-b 标记含 script 绝对路径',
     lc._cmdMarks.some((m) => m.endsWith('/src/domains/router/daemon.js')), '有');
   // 行为级：真实 spawn 产生的 cmdline 必须被匹配。
   //   此处用**原生** cmdline（不手工归一化）—— 因为产品必须自己归一化：
-  //   实测 Windows 上原生 cmdline 是反斜杠，而标记是正斜杠 → 曾是**真实产品缺陷**
+  //   实测 Windows 上原生 cmdline 是反斜杠，而标记是正斜杠 -> 曾是**真实产品缺陷**
   //   （daemon-lifecycle._ctlOwnerPid 在 Windows 永远认不出自己的 daemon）。
   //   修法见 src/platform/os/pidlookup.js 的 normCmdline + 三处调用点。
   //   下面这行因此同时是「测试」与「产品不变量」的检验。
@@ -106,21 +106,21 @@ const readDomain = (dir) => fs.readdirSync(path.join(ROOT, dir)).filter((f) => f
   const dlSrc = read('src/app/daemons/process.js');
   check('J-b _ctlOwnerPid 用 _cmdMarks 匹配', /_cmdMarks\.some/.test(dlSrc), '已改');
 
-  // -- J-b-2: cmdline 与标记的分隔符归一化（2026-09-13 新增，锁真实产品缺陷）--
+  // -- J-b-2: cmdline 与标记的分隔符归一化--
   //
   //   缺陷：标记由构造器 norm() 成 "/"，而 readCmdline 返回原生分隔符；
   //     Windows 的 cmdline 是反斜杠 -> 直接 indexOf 永远 -1 ->
   //     认不出自己的 router/lan daemon（可能误判端口异主或重复拉起）。
   //   修法：pidlookup 导出 normCmdline，三处比较点先归一化。
   //   本节在 Linux 上也能拦住该回归（不依赖 Windows runner）。
-  // ⚠ 2026-09-17 域结构改造：pidlookup 已拆为 pidlookup/{index,probe,norm}.js —— 按目录聚合读取。
+  //  域结构改造：pidlookup 已拆为 pidlookup/{index,probe,norm}.js —— 按目录聚合读取。
   const pidSrc = readDomain('src/platform/os/pidlookup');
   check('J-b-2 pidlookup 导出 normCmdline',
     /module\.exports\s*=\s*\{[^}]*normCmdline[^}]*\}/.test(pidSrc), '已导出');
   for (const [f, label] of [
     ['src/app/daemons/process.js', 'daemon-lifecycle._ctlOwnerPid'],
     ['src/app/daemons/probe.js', 'supervise-view._routerDaemonActive'],
-    // ⚠ 2026-09-16 步骤7：lan daemon 判定（_lanDaemonActive）与 router 判定同归 app/daemons/probe.js
+    //  步骤7：lan daemon 判定（_lanDaemonActive）与 router 判定同归 app/daemons/probe.js
     ['src/app/daemons/probe.js', 'control-view lan daemon 判定'],
   ]) {
     const src = read(f);
@@ -142,13 +142,13 @@ const readDomain = (dir) => fs.readdirSync(path.join(ROOT, dir)).filter((f) => f
   }
 }
 
-// ── J-c：semverCompare 规范符合性 ──
+// -- J-c：semverCompare 规范符合性 --
 {
   const { semverCompare } = require(path.join(ROOT, 'src', 'platform', 'distribution', 'index.js'));
   const cases = [
     ['1.0.0-beta-2', '1.0.0-beta-1', '>'],   // 连字符后不再被截断
-    ['1.0.0-rc-10', '1.0.0-rc-2', '<'],      // 非纯数字标识符 → 字典序（规范）
-    ['1.0.0-rc.10', '1.0.0-rc.2', '>'],      // 点分数字 → 数值
+    ['1.0.0-rc-10', '1.0.0-rc-2', '<'],      // 非纯数字标识符 -> 字典序（规范）
+    ['1.0.0-rc.10', '1.0.0-rc.2', '>'],      // 点分数字 -> 数值
     ['1.0.0', '1.0.0-rc.1', '>'],            // release > prerelease
     ['1.2.3', '1.2.10', '<'],
     ['1.0.0-rc.1+b5', '1.0.0-rc.1', '='],    // build metadata 忽略
@@ -166,7 +166,7 @@ const readDomain = (dir) => fs.readdirSync(path.join(ROOT, dir)).filter((f) => f
     !/const \[core, pre\] = clean\.split\('-'\)/.test(dsrc), '已改');
 }
 
-// ── J-e：daemon _spawn 的缺陷防护 ──
+// -- J-e：daemon _spawn 的缺陷防护 --
 {
   const dl = read('src/app/daemons/process.js');
   const m = dl.match(/_spawn\(\) \{[\s\S]*?\n  \}/);
@@ -174,7 +174,7 @@ const readDomain = (dir) => fs.readdirSync(path.join(ROOT, dir)).filter((f) => f
   check('J-e 定位到 _spawn', !!m, m ? 'ok' : '未找到');
   check("J-e 监听 'error'（不再逃逸为 uncaughtException）", /child\.on\('error'/.test(body), '有');
   check('J-e 无 pid 时不写身份并返回 failed', /if \(!child\.pid\)/.test(body) && /mode: 'failed'/.test(body), '有');
-  // ⚠ 必须用**最后**一次 _writeIdentity 出现位置：注释里会提前提到它（我第一版踩了这个）。
+  //  必须用**最后**一次 _writeIdentity 出现位置：注释里会提前提到它（我第一版踩了这个）。
   check('J-e 身份写入在 pid 校验之后',
     body.lastIndexOf('_writeIdentity') > body.indexOf('if (!child.pid)'),
     'write@' + body.lastIndexOf('_writeIdentity') + ' check@' + body.indexOf('if (!child.pid)'));
@@ -184,11 +184,11 @@ const readDomain = (dir) => fs.readdirSync(path.join(ROOT, dir)).filter((f) => f
   check('J-e shell.restartShell 校验 child.pid', /if \(!child\.pid\)/.test(sh), '有');
 }
 
-// ── J-f：detect() 的消费方必须接受 launcher 形态（P0-A 配套）──
+// -- J-f：detect() 的消费方必须接受 launcher 形态（P0-A 配套）--
 //   若只看 form==='sea-binary'，则真实 launcher 用户读不到磁盘版本、
 //   updatePending 恒 false、面板永不提示「已装好待重启」。
 {
-  // ⚠ 2026-09-16 步骤7：settings-view.js 拆为 6 模块，_readBinarySelfVersion 归 app/settings/versions.js。
+  //  步骤7：settings-view.js 拆为 6 模块，_readBinarySelfVersion 归 app/settings/versions.js。
   const sv = read('src/app/settings/versions.js');
   check('J-f _readBinarySelfVersion 用 updatable 而非 form 硬判',
     /if \(!dep\.updatable \|\| !dep\.runningTarget\) return null;/.test(sv), '已改');
@@ -202,16 +202,16 @@ const readDomain = (dir) => fs.readdirSync(path.join(ROOT, dir)).filter((f) => f
     !/dep\.form === 'sea-binary'/.test(codeOnly), '已清理');
 }
 
-// ── J-g：插件域的两个 P1 ──
+// -- J-g：插件域的两个 P1 --
 {
-  // 域改造后 HTTP 原语（getJson/getText）落在 market-net.js（SSOT §5.4）。
+  // 域改造后 HTTP 原语（getJson/getText）落在 market-net.js（SSOT）。
   const pm = read('src/domains/plugin/market-net.js');
   const pg = readDomain('src/domains/plugin');
-  // P1-3：重定向目标必须校验协议（file:// 会让 http.get 同步抛 → uncaughtException）
+  // 重定向目标必须校验协议（file:// 会让 http.get 同步抛 -> uncaughtException）
   const guards = (pm.match(/重定向到不支持的协议/g) || []).length;
   check('J-g getJson/getText 均校验重定向协议', guards >= 2, guards + ' 处');
   check('J-g 保留跳数上限（防重定向环）', /redirectsLeft <= 0/.test(pm), '有');
-  // P1-6：registry 为 null 时不得写进 env（Node 会把 null 转成 'null'）
+  // registry 为 null 时不得写进 env（Node 会把 null 转成 'null'）
   check('J-g 仅在 reg 非空时注入 npm_config_registry',
     /if \(reg\) \{ envBase\.npm_config_registry = reg;/.test(pg), '已改');
   check('J-g 无可用镜像时如实记日志', /无可用的 registry 镜像/.test(pg), '有');
@@ -219,7 +219,7 @@ const readDomain = (dir) => fs.readdirSync(path.join(ROOT, dir)).filter((f) => f
   check('J-g 旧的 Object.assign(..., { npm_config_registry: reg }) 已消失',
     !/npm_config_registry: reg, NPM_CONFIG_REGISTRY: reg \}\);/.test(pg), '已改');
 
-  // P1-5：停用插件的 entryId 匹配不得用子串（会误伤 dsh-tool-extra）
+  // 停用插件的 entryId 匹配不得用子串（会误伤 dsh-tool-extra）
   const m = pg.match(/async _patchEntryIdsForPlugin\(target, name\) \{[\s\S]*?\n  \}/);
   const fbody = m ? m[0] : '';
   check('J-g 定位到 _patchEntryIdsForPlugin', !!m, m ? 'ok' : '未找到');
@@ -238,17 +238,17 @@ const readDomain = (dir) => fs.readdirSync(path.join(ROOT, dir)).filter((f) => f
   }
 }
 
-// ── J-h：daemon stop 必须如实回报（P2-2）──
-//   超时是唯一的失败信号，此前被丢弃：仍 return ok:true 且抹掉身份 →
+// -- J-h：daemon stop 必须如实回报（P2-2）--
+//   超时是唯一的失败信号，此前被丢弃：仍 return ok:true 且抹掉身份 ->
 //   对 SIGTERM 无响应的 daemon 成为「无人知道 pid」的孤儿。
 {
   const dl = read('src/app/daemons/process.js');
   const m = dl.match(/async stop\(\) \{[\s\S]*?\n  \}/);
   const body = m ? m[0] : '';
   check('J-h 定位到 stop', !!m, m ? 'ok' : '未找到');
-  // ⚠ 必须断言「`ok:false` 的返回**位于** `!dead` 分支内」——
+  //  必须断言「`ok:false` 的返回**位于** `!dead` 分支内」——
   //   只做两处字符串存在性检查时，把 `if (!dead)` 改成 `if (false)` 仍会通过（我第一版如此）。
-  // ⚠ 必须匹配**独立的 guard 行**（行首 `if (!dead) {`）——
+  //  必须匹配**独立的 guard 行**（行首 `if (!dead) {`）——
   //   我第一版用 `indexOf('if (!dead)')`，命中的却是上面那行 `if (!dead) this.logger.warn(...)`，
   //   于是把 guard 改成 `if (false)` 仍然通过（假门禁）。
   const iGuardDead = body.search(/^\s*if \(!dead\) \{$/m);
@@ -259,7 +259,7 @@ const readDomain = (dir) => fs.readdirSync(path.join(ROOT, dir)).filter((f) => f
     iGuardDead >= 0 && iFailRet > iGuardDead, 'guard@' + iGuardDead + ' ret@' + iFailRet);
   check('J-h 失败分支位于 clearIdentity 之前（结构正确）',
     iFailRet > 0 && iClearFn > iFailRet, 'ret@' + iFailRet + ' clear@' + iClearFn);
-  // ⚠ 剥离注释行后定位 —— 说明文字里会提到 `_clearIdentity`（我第一版数错了位置）。
+  //  剥离注释行后定位 —— 说明文字里会提到 `_clearIdentity`（我第一版数错了位置）。
   const codeLines = body.split(String.fromCharCode(10))
     .filter((l) => { const t = l.trim(); return !t.startsWith('//') && !t.startsWith('*'); })
     .join(String.fromCharCode(10));
@@ -269,18 +269,18 @@ const readDomain = (dir) => fs.readdirSync(path.join(ROOT, dir)).filter((f) => f
     iClear > iGuard && iGuard >= 0, 'clear@' + iClear + ' guard@' + iGuard);
   check('J-h 失败时记事件供面板可见', /daemon_stop_timeout/.test(body), '有');
   // 配套：调用方必须消费返回值（否则记录又丢了）
-  // ⚠ 2026-09-16 步骤7：shutdownAll 已从 supervisor.js 下沉 app/session/shutdown.js
+  //  步骤7：shutdownAll 已从 supervisor.js 下沉 app/session/shutdown.js
   //   （薄壳后 supervisor.js 不再持有业务方法体）。判据对象随之更新。
   const sup = read('src/app/session/shutdown.js');
   check('J-h shutdownAll 消费 stop() 返回值',
     /r\.ok === false/.test(sup) && /shutdown_daemon_stop_incomplete/.test(sup), '已改');
 }
 
-// ── J-i：插件 CLI 超时必须杀**整棵树**（P1-7）──
-//   原实现只 child.kill() 直接子进程 → pnpm 的孙进程成孤儿，占 profile/store 锁。
+// -- J-i：插件 CLI 超时必须杀**整棵树**（P1-7）--
+//   原实现只 child.kill() 直接子进程 -> pnpm 的孙进程成孤儿，占 profile/store 锁。
 {
   const pg = readDomain('src/domains/plugin');
-  // 2026-09-16（SSOT NO-CONSOLE-WINDOW-STANDARD W1）：插件 CLI 的 spawn 已收口到
+  // （SSOT NO-CONSOLE-WINDOW-STANDARD W1）：插件 CLI 的 spawn 已收口到
   //   platform/os/spawn.js 的 piped({detached:true}) —— windowsHide 由封装固定，不再出现在调用点。
   //   本断言的**意图不变**（插件 CLI 必须自成进程组），故改为断言「经统一封装 + 显式 detached:true」。
   check('J-i 插件 CLI spawn 用 detached（自成进程组）',
@@ -293,11 +293,11 @@ const readDomain = (dir) => fs.readdirSync(path.join(ROOT, dir)).filter((f) => f
   // 反向：确认旧的「只 kill 直接子进程」写法已消失
   check('J-i 超时分支不再只用 child.kill（单进程）',
     !/try \{ child\.kill\('SIGTERM'\); \} catch \{\}/.test(pg), '已改');
-  // 对照：dist 的 npm 安装同样自成进程组 —— 证明「整树终止」是本仓既有正确做法，不是本处新造的规矩。
-  //   ⚠ 第 4 批改判（run 35483861183 四平台 + test job 唯一红）：原第二判据钉的是 dist 里那行
-  //   自写 `process.kill(-child.pid, 'SIGKILL')`。该行已按 §H-7-6 收口到平台层 killTree
-  //   （Windows 无进程组语义，自写负 pid 只杀得到 npm.cmd 那层壳），故对照点随之换成「走平台层单源」。
-  //   反向钉住「不得再自写负 pid」的职责移交给 uninstall-timeout-behavior-test 的 D-10 结构闸。
+  // 对照：dist 的 npm 安装同样自成进程组 —— 「整树终止」是本仓既有做法，不是本处新造的规矩。
+  //   第二判据对照的是「杀树走平台层 killTree 单源」，而不是 dist 里某一行代码：
+  //   Windows 无进程组语义，域内自写 `process.kill(-child.pid, 'SIGKILL')`
+  //   只杀得到 npm.cmd 那层壳，故各域一律不得再自写负 pid。
+  //   该禁令的结构闸在 uninstall-timeout-behavior-test 的 D-10。
   const dist = readDomain('src/platform/distribution');
   const distDetached = /detached: o\.detached !== false/.test(dist);
   const distViaPlatformKillTree = /procOS\.killTree\(child\.pid/.test(dist);
@@ -306,7 +306,7 @@ const readDomain = (dir) => fs.readdirSync(path.join(ROOT, dir)).filter((f) => f
     distViaPlatformKillTree, distViaPlatformKillTree ? '是' : '否');
 }
 
-// ── J-j：内核写 registry.json 时必须保留壳的 v2 字段（P2 双写）──
+// -- J-j：内核写 registry.json 时必须保留壳的 v2 字段（P2 双写）--
 //   该文件所有权在壳（registry-contract.js 声明），壳也会读回（core.rs:150）；
 //   内核若整份覆盖，会抹掉 catalog/probe/selected，削弱壳的镜像解析。
 {
@@ -343,9 +343,9 @@ const readDomain = (dir) => fs.readdirSync(path.join(ROOT, dir)).filter((f) => f
   fs.rmSync(tmpR, { recursive: true, force: true });
 }
 
-// ── J-k（批 4 / C-8）：镜像源写入口 SSRF 闸 —— 私网/元数据字面量不得落盘 ──
+// -- J-k：镜像源写入口 SSRF 闸 —— 私网/元数据字面量不得落盘 --
 //   旧 setRegistryConfig 只过 isValidOrigin：http://127.0.0.1:4873 之类合法落盘，
-//   并反向豁免探测闸①层（已配置源按 hostname 放行）。现在写盘前过 registryOriginViolation。
+//   并反向豁免探测闸1)层（已配置源按 hostname 放行）。现在写盘前过 registryOriginViolation。
 {
   const { DistributionManager } = require(path.join(ROOT, 'src', 'platform', 'distribution', 'index.js'));
   const tmpK = fs.mkdtempSync(path.join(os.tmpdir(), 'regk-'));
@@ -358,7 +358,7 @@ const readDomain = (dir) => fs.readdirSync(path.join(ROOT, dir)).filter((f) => f
   };
   // manual 切换 + 私网手动源：**同步校验段零改动**（内存配置与磁盘都不动）。
   //   异步段会经 registryInfo 回读实况（可能按既有选源逻辑复测），所以本例只断言同步段。
-  //   原缺陷：rc 曾是 state.registryConfig 的别名，mode 在校验前就被写进内存 → 拒后
+  //   原缺陷：rc 曾是 state.registryConfig 的别名，mode 在校验前就被写进内存 -> 拒后
   //   UI 显示 manual 而磁盘仍是 auto，且下次自动重测按 manual 走旧手动源。
   {
     const dm = mkDm();
@@ -379,10 +379,10 @@ const readDomain = (dir) => fs.readdirSync(path.join(ROOT, dir)).filter((f) => f
   fs.rmSync(tmpK, { recursive: true, force: true });
 }
 
-// ── J-l（批 4 / UI 条 5）：写端点的「200 假成功」必须归真，且前端有统一判据 ──
+// -- J-l：写端点的「200 假成功」必须归真，且前端有统一判据 --
 //   setRegistryConfig 的拒因放在返回值的 error 字段（不带 ok 键）。旧 dist.js 一律
-//   `send(200, { ok: true, ...r })` → 被 SSRF 闸拒绝的镜像源仍回 200，而 UI 的 http()
-//   只在 !res.ok（状态码）时抛错 → 照样弹「已保存」。
+//   `send(200, { ok: true, ...r })` -> 被 SSRF 闸拒绝的镜像源仍回 200，而 UI 的 http()
+//   只在 !res.ok（状态码）时抛错 -> 照样弹「已保存」。
 //   UI 条 5 两半：后端有拒因即 400 + ok:false；前端 run() 按返回值判失败（判据单源在 client 层）。
 {
   const codeOnly = (s) => s.split('\n')
@@ -406,12 +406,12 @@ const readDomain = (dir) => fs.readdirSync(path.join(ROOT, dir)).filter((f) => f
     /export function failureFromResult/.test(uiClient) && /r\.ok !== false/.test(uiClient), 'ok');
 }
 
-// ── J-m（批 4 / UI 条 6）：面板轮询中心的游标与心跳节奏 ──
-//   ① 事件游标唯一写点是 Math.max(snap.eventsSeq, r.seq)：后端 r.seq 非数值时 NaN 会
-//      永久污染（Math.max(NaN, x) 恒 NaN → 下一轮拼出 after=NaN 再也拉不到事件）。
-//   ② 心跳必须是「跑完一轮再按连续失败次数自排」的退避链，不能是固定 setInterval：
+// -- J-m：面板轮询中心的游标与心跳节奏 --
+//   1) 事件游标唯一写点是 Math.max(snap.eventsSeq, r.seq)：后端 r.seq 非数值时 NaN 会
+//      永久污染（Math.max(NaN, x) 恒 NaN -> 下一轮拼出 after=NaN 再也拉不到事件）。
+//   2) 心跳必须是「跑完一轮再按连续失败次数自排」的退避链，不能是固定 setInterval：
 //      守卫离线时固定 2s 节奏 = 每 2s 白打 8 个请求，慢网下还会轮次堆叠。
-//   ⚠ 判据一律走 codeOnly：注释里复述旧缺陷（NaN / setInterval）不该算命中。
+//    判据一律走 codeOnly：注释里复述旧缺陷（NaN / setInterval）不该算命中。
 {
   const codeOnly = (s) => s.split('\n')
     .filter((l) => { const t = l.trim(); return !t.startsWith('//') && !t.startsWith('*') && !t.startsWith('/*'); }).join('\n');
@@ -434,9 +434,9 @@ const readDomain = (dir) => fs.readdirSync(path.join(ROOT, dir)).filter((f) => f
     (polling.match(/epoch \+= 1;/g) || []).length === 2, 'epoch += 1 出现 ' + (polling.match(/epoch \+= 1;/g) || []).length + ' 次');
 }
 
-// ── J-n（批 4 / E-1）：状态落盘的原子写必须**单源**，且不得用可预测的固定 .tmp 名 ──
+// -- J-n：状态落盘的原子写必须**单源**，且不得用可预测的固定 .tmp 名 --
 //   缺陷机理：全仓 31 处「tmp + rename」各自实现，其中 26 处拼的是**固定** `file + '.tmp'`。
-//   升级重叠期新旧两个守卫进程同时写同一份状态 → 两者写的是同一个临时文件 → rename 出去的
+//   升级重叠期新旧两个守卫进程同时写同一份状态 -> 两者写的是同一个临时文件 -> rename 出去的
 //   是两次序列化字节的**交错混合体**（既不是新版也不是旧版）；另有实现未带 mode，令牌/URL 落 0644。
 //   收敛：platform/util/fs 的 writeAtomic（tmp 名含 pid+毫秒、默认 0600、rename 后收口、失败抛错）。
 //   豁免（保留自有实现，但 tmp 名同样含 pid）：token/persist.js（返回 {ok} 契约，TK-G3 口径）、
@@ -480,11 +480,11 @@ const readDomain = (dir) => fs.readdirSync(path.join(ROOT, dir)).filter((f) => f
     ['relay/frp.js', 'app/main/signals.js', 'router/store/usage.js'].filter((k) => !users.some((f) => relOf(f).endsWith(k))).join(',') || 'ok');
 }
 
-// ── J-o（批 4 / E-2）：静态门禁必须显式登记自己的覆盖缺口（制度化防复发）──
-//   审计 §E-2 的病灶不是判据写错，而是**门禁的名字比判据大**：文件叫 xxx-gate-test，
+// -- J-o：静态门禁必须显式登记自己的覆盖缺口（制度化防复发）--
+//   审计 的病灶不是判据写错，而是**门禁的名字比判据大**：文件叫 xxx-gate-test，
 //   读者把绿当成「xxx 已被验证」，于是这道「看起来存在的防线」阻止了下一次检查
 //   （glibc 声称产线校验、CI 零调用；TK-G4 白名单放行；K-W2 只匹配 spawn(；发布包 README 违 RC-1）。
-//   规则落在 ACCEPTANCE-STANDARD.md §7，本节是其执法点：缺口块必须存在、在头部、且是可核对的逐条清单。
+//   规则落在 ACCEPTANCE-STANDARD.md ，本节是其执法点：缺口块必须存在、在头部、且是可核对的逐条清单。
 {
   const MARKER = '覆盖缺口（E-2 制度化登记';
   const GAP_GATES = [
@@ -516,8 +516,8 @@ const readDomain = (dir) => fs.readdirSync(path.join(ROOT, dir)).filter((f) => f
     /## 7\.[^\n]*覆盖缺口/.test(std) && /round8-fixes-test\.js[^\n]*J-o|J-o/.test(std), 'ok');
 }
 
-// ── J-p（批 4 / E-4）：外部输入的字符集白名单必须单源，且真的拦住注入 ──
-//   审计 §E-4：version / unit 名 / URL / model 名 / commandTemplate「各自散防」——
+// -- J-p：外部输入的字符集白名单必须单源，且真的拦住注入 --
+//   审计：version / unit 名 / URL / model 名 / commandTemplate「各自散防」——
 //   病灶不是某一份写错，而是**新增入口时无处可抄**，于是每个新调用点都要重新赌一次校验。
 //   现：platform/util/input.js 是字符集/形态判定的唯一存放处；语义级闸（SSRF、semver 比较）
 //   仍留在各域，但不得再复制字符集。判据 = 对象同一性 + 「同一字符集只有一个定义处」+ 行为表。
@@ -537,7 +537,7 @@ const readDomain = (dir) => fs.readdirSync(path.join(ROOT, dir)).filter((f) => f
   check('E-4 消费方拿到的就是同一个 RegExp 对象（无复制粘贴的第二把尺子）',
     inst.PKG_NAME_RE === input.PKG_NAME_RE && inst.BAD_ARGV_CHAR_RE === input.ARGV_UNSAFE_RE
     && inst.WIN_DRIVE_ABS_RE === input.WIN_ABS_PATH_RE && svc.UNIT_NAME_RE === input.UNIT_NAME_RE, 'ok');
-  // 反向（§G-6-9 非空转）：造一个「把 UNIT_NAME_RE 抄进别的文件」的样本，同一判据必须数出 2 个定义处。
+  // 反向：造一个「把 UNIT_NAME_RE 抄进别的文件」的样本，同一判据必须数出 2 个定义处。
   const CLONE_DIR = fs.mkdtempSync(path.join(require('node:os').tmpdir(), 'e4-clone-'));
   try {
     const CLONE = path.join(CLONE_DIR, 'second-ruler.js');
@@ -548,7 +548,7 @@ const readDomain = (dir) => fs.readdirSync(path.join(ROOT, dir)).filter((f) => f
   } finally {
     try { fs.rmSync(CLONE_DIR, { recursive: true, force: true }); } catch { /* 临时目录清理尽力 */ }
   }
-  // 行为表：逐例独立 + 判据值回显（§G-6-9）。
+  // 行为表：逐例独立 + 判据值回显。
   const CASES = [
     ['argv posix 路径放行', input.argvViolation('/tmp/fake-npm.js'), null],
     ['argv win 盘符路径放行（CI run17 误杀对象）', input.argvViolation('D:\\a\\x\\fake-npm.js'), null],

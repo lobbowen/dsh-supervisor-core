@@ -1,18 +1,18 @@
 #!/usr/bin/env bash
 # 本机凭据安全配置脚本：把令牌值从「环境变量」写入「系统级安全存储」，值绝不落入仓库/历史/日志。
 # 用法（仓库根执行）：
-#   bash release/scripts/configure-credentials.sh --npm     # NPM_TOKEN 环境变量 → ~/.npmrc（0600）
+#   bash release/scripts/configure-credentials.sh --npm     # NPM_TOKEN 环境变量 -> ~/.npmrc（0600）
 #
-# 2026-09-13：已删除 --git 模式（原「GH_TOKEN -> git credential helper store」）。
+# ：已删除 --git 模式（原「GH_TOKEN -> git credential helper store」）。
 #   理由：它与现行标准冲突且多余 ——
-#     · 两仓 push 走 SSH 部署密钥（repo-local core.sshCommand），不用 https 凭据；
-#     · GitHub 凭据的现行唯一标准是 CREDENTIALS-STANDARD.md + release/scripts/cred.sh
+#     - 两仓 push 走 SSH 部署密钥（repo-local core.sshCommand），不用 https 凭据；
+#     - GitHub 凭据的现行唯一标准是 CREDENTIALS-STANDARD.md + release/scripts/cred.sh
 #       （规范库 0700/0600、清单化管理）。
 #   保留旧机制会诱导「把令牌写进 ~/.git-credentials」—— 那正是标准要消灭的散落副本。
 #   bash release/scripts/configure-credentials.sh --check   # 只读自检（不含任何值）
 # 原则：本脚本不接收命令行明文参数、不打印 token、不写仓库内任何文件。
 #
-# 与发布链路的关系（2026-09-10 标准化）：本脚本与 publish-core.sh **共用** release/scripts/_npm-auth.sh
+# 与发布链路的关系：本脚本与 publish-core.sh **共用** release/scripts/_npm-auth.sh
 #   的同一份解析实现（单源）。本脚本负责**把 token 落到规范位置**，publish-core 负责**读**：
 #     规范位置 = **真实用户 home** 下的 .npmrc（不是沙箱 $HOME）——见 _npm-auth.sh 的解析顺序。
 #   之所以强调「真实 home」：DSH 沙箱会把 $HOME 指向实例数据目录，若写到 $HOME/.npmrc，

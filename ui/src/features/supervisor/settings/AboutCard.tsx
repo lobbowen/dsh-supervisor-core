@@ -2,10 +2,10 @@
  * 设置 — 关于卡（产品信息，放设置页最底部）
  * 产品逻辑：像成熟产品一样，设置页底部是「关于」——版本信息 + 产品简介 + 检查更新。
  *
- * 2026-09-11 调整（用户要求）：
+ * 调整（用户要求）：
  *   1) 本产品由**两个独立组件**构成，各有独立版本线，须分别呈现：
- *        · 桌面壳（Tauri 壳，dsh-supervisor-gui）—— 承载窗口/托盘/引导
- *        · 内核（守卫，dsh-supervisor）—— 承载生命周期/路由/远程控制/实例
+ *        - 桌面壳（Tauri 壳，dsh-supervisor-gui）—— 承载窗口/托盘/引导
+ *        - 内核（守卫，dsh-supervisor）—— 承载生命周期/路由/远程控制/实例
  *      「当前版本」只显示一个会产生歧义，故拆为两行明确呈现。
  *   2) 「检查更新」对**两者一起检测**（内核走 npm 子包；桌面壳走壳发布清单，同源 npm registry）。
  *   3) 版本号**不带 v 前缀**（直接显示纯版本号），与用户定稿一致。
@@ -72,9 +72,9 @@ export function AboutCard() {
     }
   }, []);
 
-  // ── 本地版本（无网络 I/O，进卡即显示）──
+  // -- 本地版本（无网络 I/O，进卡即显示）--
   // 内核：/guard/version（守卫自身版本，编译期常量）
-  // 桌面壳：/shell/status → identity.version（壳启动时写入 ~/.dsh/shell/identity.json）
+  // 桌面壳：/shell/status -> identity.version（壳启动时写入 ~/.dsh/shell/identity.json）
   const load = useCallback(async () => {
     const [core, sh] = await Promise.all([
       supervisorApi.guardVersion().catch(() => null),
@@ -90,7 +90,7 @@ export function AboutCard() {
   useEffect(() => { void load(); }, [load]);
 
   // 挂载后台权威检查（非阻塞）：本地 GET 恒不联网，若不校验则「可更新」徽标永不自发出现。
-  // 2026-09-11：**内核与桌面壳各查一次**（用户要求「一起检测」）。
+  //：**内核与桌面壳各查一次**（用户要求「一起检测」）。
   useEffect(() => {
     let alive = true;
     (async () => {
@@ -105,11 +105,11 @@ export function AboutCard() {
     return () => { alive = false; };
   }, []);
 
-  // ── 检查更新（内核 + 桌面壳一起检测）──
-  // 内核两条通道：① 标准形态 → /self-update/status（npm）；② 源码形态 → /guard/version/check（git）。
+  // -- 检查更新（内核 + 桌面壳一起检测）--
+  // 内核两条通道：1) 标准形态 -> /self-update/status（npm）；2) 源码形态 -> /guard/version/check（git）。
   const check = async () => {
     await run("chk", async () => {
-      // ① 内核
+      // 1) 内核
       let coreMsg = "内核：状态未知";
       const r = await supervisorApi.selfUpdateStatus().catch(() => null);
       if (r && r.ok !== false) {
@@ -129,7 +129,7 @@ export function AboutCard() {
           coreMsg = "内核：" + ((r && r.error) || "自更新未配置");
         }
       }
-      // ② 桌面壳
+      // 2) 桌面壳
       const sh = await supervisorApi.shellCheckUpdate().catch(() => null);
       let shellMsg = "桌面壳：状态未知";
       if (sh && sh.ok !== false) {
@@ -148,7 +148,7 @@ export function AboutCard() {
     }, { refresh: false });
   };
 
-  // 内核更新（无跳过，用户定稿 2026-09）：**唯一写入者 = 桌面壳**。
+  // 内核更新：**唯一写入者 = 桌面壳**。
   //   面板不能调用内核端点安装（/self-update/apply 已下架 = 410）；经消息桥请壳执行
   //   kernel_update_apply（装内核 + 由所有者重启守卫）。
   const applyCoreUpdate = async () => {
@@ -163,7 +163,7 @@ export function AboutCard() {
     }, { refresh: true });
   };
 
-  // 桌面壳更新：壳的自更新发生在**启动时**（门 0：查清单 → 下载 → 验签 → 安装 → 重启）。
+  // 桌面壳更新：壳的自更新发生在**启动时**（门 0：查清单 -> 下载 -> 验签 -> 安装 -> 重启）。
   // 因此「应用壳更新」= 重启桌面壳，新进程的门 0 会把它升到新版本。
   const applyShellUpdate = async () => {
     if (!window.confirm("将重启桌面壳以应用更新 " + fmt(shell?.latest) + "。\n\n桌面壳窗口会关闭并重新打开；内核与被管实例不受影响。是否继续？")) return;

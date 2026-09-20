@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 'use strict';
 
-// ═══════════════════════════════════════════════════════════════════════════
+// ---------------------------------------------------------------------------
 // 验收与测试标准门禁（ACCEPTANCE-STANDARD.md）
 //
 // ## 解决的问题
@@ -16,7 +16,7 @@
 //   A-4  CI 工作流的 build job **不得被条件跳过**（无 need_build 条件）
 //   A-5  根级 + `release/**` + `.github/**` 的 .md 不得把「本机」结果写成「验收」结论（违规句式）
 //   A-6  反向：判据能识别缺失/篡改（门禁非空转）
-// ═══════════════════════════════════════════════════════════════════════════
+// ---------------------------------------------------------------------------
 
 const fs = require('node:fs');
 const path = require('node:path');
@@ -44,7 +44,7 @@ function collectMd(dir, out) {
   }
 }
 
-// ── A-1：规范存在且声明硬标准 ──
+// -- A-1：规范存在且声明硬标准 --
 {
   check('A-1 规范 ' + STD + ' 存在', stdText.length > 0, stdText.length + ' 字节');
   check('A-1 声明「不得在本机执行测试」', /不得在本机执行|不允许在本机跑测试/.test(stdText), 'ok');
@@ -52,7 +52,7 @@ function collectMd(dir, out) {
   check('A-1 声明验收只能由 CI 裁决', /CI[^\n]*裁决|由 CI 裁决/.test(stdText), 'ok');
 }
 
-// ── A-2：CI test job 的前置步骤齐备 ──
+// -- A-2：CI test job 的前置步骤齐备 --
 {
   const need = [
     ['build-ui.sh', /build-ui\.sh/],
@@ -65,7 +65,7 @@ function collectMd(dir, out) {
   check('A-2 CI test job 含全部断言前置步骤', miss.length === 0, miss.length ? '缺: ' + miss.join(', ') : 'ok');
 }
 
-// ── A-3：四平台矩阵 ──
+// -- A-3：四平台矩阵 --
 {
   const need = [
     ['ubuntu-22.04（glibc 2.35 基座）', /ubuntu-22\.04/],
@@ -77,17 +77,17 @@ function collectMd(dir, out) {
   check('A-3 CI 含四平台构建矩阵', miss.length === 0, miss.length ? '缺: ' + miss.join(', ') : 'ok（4/4）');
 }
 
-// ── A-4：build job 不得被条件跳过 ──
+// -- A-4：build job 不得被条件跳过 --
 {
   check('A-4 build job 未被 need_build 条件门控',
     !/needs:\s*precheck[\s\S]{0,400}?if:\s*[^\n]*need_build/.test(ciText), 'ok');
 }
 
-// ── A-5：含验收结论的文档必须同时指向 CI（根级 + release/** + .github/**） ──
+// -- A-5：含验收结论的文档必须同时指向 CI（根级 + release/** + .github/**） --
 {
   // 判据：**给出验收结论**的文档，必须同时**指向 CI**——否则即「以本机结果作验收」。
-  // 2026-09：扫描面由根级 .md 扩到 release/** 与 .github/**（根级之外的验收叙述此前无人管）。
-  // ⚠ 不按「本机」字面量判：正确的免责声明（如「本机自检，不构成验收证据」）
+  //：扫描面由根级 .md 扩到 release/** 与 .github/**（根级之外的验收叙述此前无人管）。
+  //  不按「本机」字面量判：正确的免责声明（如「本机自检，不构成验收证据」）
   //   本就同时出现「本机」与「验收」两词，按字面量判会造成假阳性
   //   （首版即因此误报 ARCHITECTURE-ACCEPTANCE.md，由 CI 发现）。
   const VERDICT = /验收结论|验收通过|已验收|交付完成|验收状态/;
@@ -125,7 +125,7 @@ function collectMd(dir, out) {
     VERDICT.test('验收结论：本机通过') && !CIREF.test('验收结论：本机通过'), 'hit');
 }
 
-// ── A-6：反向（门禁非空转） ──
+// -- A-6：反向（门禁非空转） --
 {
   check('A-6 反向：判据能识别缺失规范文件', !fs.existsSync(path.join(ROOT, 'NO-SUCH-STANDARD.md')), 'hit');
   check('A-6 反向：缺失前置步骤能被检出（构造）',

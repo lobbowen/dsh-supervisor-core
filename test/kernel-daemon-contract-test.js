@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 'use strict';
 
-// ═══════════════════════════════════════════════════════════════════════════
-// 内核守护进程契约门禁（D-1..D-8；KERNEL-DAEMON-CONTRACT.md）—— 2026-09-15
+// ---------------------------------------------------------------------------
+// 内核守护进程契约门禁（D-1..D-8；KERNEL-DAEMON-CONTRACT.md）——
 //
 // 锁定内核侧「被壳拉起时必须提供什么」，防止回退成「内核自建服务/双启动器/端口不自报」：
 //   D-1  daemon 自足：配置缺失时内嵌默认配置自建（不依赖外置模板）
@@ -10,7 +10,7 @@
 //   D-3  /healthz 可用（壳的唯一就绪判据）
 //   D-4  内核 install **不再**写服务定义/autostart（唯一所有者=壳）— 反向非空转
 //   D-5  单实例：guard.lock 占用即退出非零
-// ═══════════════════════════════════════════════════════════════════════════
+// ---------------------------------------------------------------------------
 
 const fs = require('node:fs');
 const path = require('node:path');
@@ -35,14 +35,14 @@ const readDomain = (rel) => {
 };
 const cli = read('bin/dsh-supervisor');
 
-// ── D-1：daemon 自足（内嵌默认配置）──
+// -- D-1：daemon 自足（内嵌默认配置）--
 check('D-1 配置缺失时 autoCopy 自建', /resolveConfigPath\(\{ autoCopy: true \}\)/.test(cli), 'ok');
 check('D-1 内嵌 DEFAULT_CONFIG（不依赖外置模板）', /const DEFAULT_CONFIG = Object\.assign/.test(cli), 'ok');
 
-// ── D-2：对外声明实际端口 ──
-// ⚠ 步骤 7（2026-09-16）：HTTP 启动与端口登记已从 src/supervisor.js 下沉到
+// -- D-2：对外声明实际端口 --
+//  步骤 7：HTTP 启动与端口登记已从 src/supervisor.js 下沉到
 //   app/assembly/api-rebind.js（startApi 绑定后登记实际端口、_rebindApiHost 重绑后同登记）。
-//   supervisor.js 现为 ≤200 行薄壳，仅在 start() 经 _apiStart → apiRebind.startApi 装配。
+//   supervisor.js 现为 <=200 行薄壳，仅在 start() 经 _apiStart -> apiRebind.startApi 装配。
 //   判据跨文件：读「薄壳 + 实现」整组；不变量不变（supervisor-api 必须写入 ports.json），
 //   否则文件一搬门禁就静默失去覆盖面。
 const apiSources = [
@@ -51,11 +51,11 @@ const apiSources = [
 ].join('\n');
 check('D-2 supervisor-api 写入 ports.json', /ports(?:Shared)?\.register\('supervisor-api'/.test(apiSources), 'ok');
 
-// ── D-3：healthz ──
+// -- D-3：healthz --
 const apiSrc = ['src/api/index.js', 'src/api/domains/lifecycle.js'].map((f) => { try { return read(f); } catch { return ''; } }).join('\n');
 check('D-3 /healthz 路由存在', /\/healthz/.test(apiSrc), 'ok');
 
-// ── D-4：install 不写服务定义/autostart（唯一所有者=壳）──
+// -- D-4：install 不写服务定义/autostart（唯一所有者=壳）--
 const installStart = cli.indexOf('function cmdInstall');
 const installEnd = cli.indexOf('function cmdGuiAutostart');
 const installBody = installStart >= 0 && installEnd > installStart ? cli.slice(installStart, installEnd) : '';
@@ -69,10 +69,10 @@ const legacy = "fs.writeFileSync(UNIT_PATH, unit); execInherit('systemctl', ['--
 check('D-4 反向：旧写服务定义形态被识别', looksLikeDeploy(legacy), 'ok');
 check('D-4 反向：当前 install 不被误判', !looksLikeDeploy(installBody), 'ok');
 
-// ── D-5：单实例 ──
+// -- D-5：单实例 --
 check('D-5 acquireLock + 退出非零', /function acquireLock/.test(cli) && /已有守卫实例在运行/.test(cli) && /process\.exit\(1\)/.test(cli), 'ok');
 
-// ── D-6：绑定后登记**实际端口**（P6 就绪判据的单一来源）──
+// -- D-6：绑定后登记**实际端口**（P6 就绪判据的单一来源）--
 // 判据跨文件：实现随步骤 7 下沉到 app/assembly/api-rebind.js（见上 D-2），故在整组上断言。
 // 释放登记的实现形态为 require('.../ports').shared.release(prev, 'system:supervisor-api')
 // （owner 字符串必须一致），故匹配点从 `ports.release(` 收窄到调用本身 `.release(prev, ...)`——
@@ -84,11 +84,11 @@ const registersActual = (src) => /ports(?:Shared)?\.register\('supervisor-api', 
 check('D-6 反向：只登记配置端口的旧形态被识别', !registersActual("ports.register('supervisor-api', this.config.apiPort);"), 'ok');
 check('D-6 反向：当前实现被判为已落实', registersActual(apiSources), 'ok');
 
-// ── D-7：数据/日志路径经注入的 stateDir，不得各自 os.homedir()（G6）──
+// -- D-7：数据/日志路径经注入的 stateDir，不得各自 os.homedir()（G6）--
 const proxySrc = read('src/domains/router/providers/proxy.js');
 check('D-7 proxy 用注入的 stateDir 落日志', /this\.stateDir/.test(proxySrc), 'ok');
 check('D-7 proxy 不再直拼 os.homedir() 的 supervisor/logs', !/homedir\(\), '\.dsh', 'supervisor', 'logs'/.test(proxySrc), 'ok');
-// ⚠ 域改造后 stateDir 注入随 router 拆分搬移（SSOT §5.1：派生/注入在 store/ops）——
+//  域改造后 stateDir 注入随 router 拆分搬移（SSOT：派生/注入在 store/ops）——
 //   按整域聚合读取，避免文件一搬门禁就静默失去覆盖面。
 // 不变量不变：provider 的 stateDir 由 config.stateFile 派生后注入。形态随域拆分从
 //   stateDir: this.config && this.config.stateFile 改为 (d.config && d.config.stateFile)，
@@ -96,8 +96,8 @@ check('D-7 proxy 不再直拼 os.homedir() 的 supervisor/logs', !/homedir\(\), 
 const ridx = readDomain('src/domains/router').split('\n').filter((l) => !l.trim().startsWith('//')).join('\n');
 check('D-7 router 向 provider 注入 stateDir', /stateDir[^\n]{0,120}config\.stateFile/.test(ridx), 'ok');
 
-// ── D-8：Windows 看护（watchdog）所有者 = 壳（G3/C2）──
-// ⚠ 2026-09-17 域结构改造：autostart 已拆为 autostart/{index,win32,darwin,linux}.js ——
+// -- D-8：Windows 看护（watchdog）所有者 = 壳（G3/C2）--
+//  域结构改造：autostart 已拆为 autostart/{index,win32,darwin,linux}.js ——
 //   按目录聚合读取，D-8 的覆盖面不因文件切分而静默失效。
 const auto = readDomain('src/platform/os/autostart');
 const kernelCreatesWatchdog = (src) =>
@@ -114,8 +114,8 @@ const legacyWatchdog = "ex.runDetail('schtasks', ['/Create', '/TN', 'DSH-Supervi
 check('D-8 反向：旧形态被识别', kernelCreatesWatchdog(legacyWatchdog), 'ok');
 check('D-8 反向：当前实现不被误判', !kernelCreatesWatchdog(auto), 'ok');
 
-// ── D-9（批 4 / C-9=B-22c）：API 重绑的监听错误分支绝不静默下线 ──
-//   ⚠ 时序是本块的第一风险：夹具的 error 与真实 http.Server 一样只在**下一拍** emit（setImmediate），
+// -- D-9：API 重绑的监听错误分支绝不静默下线 --
+//    时序是本块的第一风险：夹具的 error 与真实 http.Server 一样只在**下一拍** emit（setImmediate），
 //   所以每条断言前必须把 immediate 队列跑干；同步读 ev/scheduled 会双双恒空（四例恒红、判据空转）。
 //   本块因此是异步的：文件末尾的汇总与退出挂在它的完成回调上（finish），不能留在同步尾部。
 //   快重试环由夹具**手动拨表**（setTimeout 只记录不执行），才能把「10 次后降级 30s 并留痕」跑满。
@@ -150,7 +150,7 @@ check('D-8 反向：当前实现不被误判', !kernelCreatesWatchdog(auto), 'ok
       const create = () => {
         const s = { on(e, f) { if (e === 'error') s._f = f; }, listen() {} };
         // 夹具自己用「当时的真实 setImmediate」（realSI）排投递：本块会改写 global.setTimeout，
-        // 若将来改用 setTimeout 排投递，写成 realSI 也不会被自己的桩吃掉（同 §H-7-9 一类的桩件自伤）。
+        // 若将来改用 setTimeout 排投递，写成 realSI 也不会被自己的桩吃掉（同 一类的桩件自伤）。
         if (err) realSI(() => { if (!s._fired) { s._fired = true; s._f(err); } }); // 单次触发：真实 server 不会二次 emit
         return s;
       };
@@ -162,7 +162,7 @@ check('D-8 反向：当前实现不被误判', !kernelCreatesWatchdog(auto), 'ok
     const arm = (err) => withStub(async () => { const x = mkHost(err); await drain(); return x; });
     const fire = (list) => withStub(async () => { for (const t of list) { t.cb(); await drain(); } });
 
-    // ① EACCES（配置性错误，重试不可消解）：一次性 api_offline，且不空转重试
+    // 1) EACCES（配置性错误，重试不可消解）：一次性 api_offline，且不空转重试
     const a = await arm({ code: 'EACCES', message: 'permission denied' });
     check('C-9 EACCES → 落一条 api_offline 事件（失败可见，不静默下线）',
       a.ev.filter((e) => e === 'api_offline').length === 1, JSON.stringify(a.ev));
@@ -170,7 +170,7 @@ check('D-8 反向：当前实现不被误判', !kernelCreatesWatchdog(auto), 'ok
     check('C-9 EACCES → 不进重试环（零排程）', dueA.length === 0, '排程=' + msOf(dueA));
     check('C-9 EACCES → host.api 保持 null（不假装在线）', a.h.api === null, String(a.h.api));
 
-    // ② EADDRINUSE（瞬时）：300ms 快重试；跑满 10 次后**必须**降级 30s 慢重试并留 api_error
+    // 2) EADDRINUSE（瞬时）：300ms 快重试；跑满 10 次后**必须**降级 30s 慢重试并留 api_error
     const b = await arm({ code: 'EADDRINUSE', message: 'in use' });
     let fireB = takeDue();
     check('C-9 EADDRINUSE 首错 → 排 300ms 快重试',
@@ -194,13 +194,13 @@ check('D-8 反向：当前实现不被误判', !kernelCreatesWatchdog(auto), 'ok
     check('C-9 慢环遇退出意图 → 留 warn 痕迹（中止这件事本身可见）',
       b.ev.indexOf('warn:api rebind 中止：检测到退出意图') >= 0, JSON.stringify(b.ev));
 
-    // ③ 未知错误：保守按「可自愈」处理 → 立刻入 30s 环并留痕（不停在静默分支）
+    // 3) 未知错误：保守按「可自愈」处理 -> 立刻入 30s 环并留痕（不停在静默分支）
     const c = await arm({ code: 'EHOSTUNREACH', message: 'no route' });
     check('C-9 未知错误 → 留 api_error 痕迹', c.ev.indexOf('api_error') >= 0, JSON.stringify(c.ev));
     const dueC = takeDue();
     check('C-9 未知错误 → 入 30s 自愈环', dueC.length === 1 && dueC[0].ms === 30000, '排程=' + msOf(dueC));
 
-    // ④ EADDRNOTAVAIL：与 EADDRINUSE 同环（网卡地址未就绪是瞬时的，不是配置性拒绝）
+    // 4) EADDRNOTAVAIL：与 EADDRINUSE 同环（网卡地址未就绪是瞬时的，不是配置性拒绝）
     const d = await arm({ code: 'EADDRNOTAVAIL', message: 'addr not available' });
     const dueD = takeDue();
     check('C-9 EADDRNOTAVAIL → 与 EADDRINUSE 同环（排 300ms 快重试）',
@@ -215,7 +215,7 @@ check('D-8 反向：当前实现不被误判', !kernelCreatesWatchdog(auto), 'ok
     console.log(String.fromCharCode(10) + '结果: ' + (results.length - failed.length) + ' passed, ' + failed.length + ' failed');
     process.exit(failed.length ? 1 : 0);
   };
-  // 块自身抛错也只吃一条 FAIL，不让它把链尾 #114–#129 一起带走（§H-7-11 崩溃代价高于判红）
+  // 块自身抛错也只吃一条 FAIL，不让它把链尾 #114–#129 一起带走（崩溃代价高于判红）
   run().then(finish, (e) => {
     check('C-9 D-9 块自身未抛错（require/驱动失败即判红）', false, String((e && e.stack) || e));
     finish();

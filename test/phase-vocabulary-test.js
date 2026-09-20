@@ -1,21 +1,21 @@
 #!/usr/bin/env node
 'use strict';
 
-// ═══════════════════════════════════════════════════════════════════════════
-// phase 词表唯一源（K3 回归，2026-09-11）
+// ---------------------------------------------------------------------------
+// phase 词表唯一源
 //
 // ## 修复的缺陷
 //
 // 仓里曾有两份**各自维护**的 phase 词表：
-//   · `guard/lifecycle/objects.js` —— 控制平面 v3 canonical（supervisor.js 注释亦如此声明）；
-//   · `guard/lifecycle/managed.js`   —— 一份自建副本。
+//   - `guard/lifecycle/objects.js` —— 控制平面 v3 canonical（supervisor.js 注释亦如此声明）；
+//   - `guard/lifecycle/managed.js`   —— 一份自建副本。
 //
 // 两者**两个方向都不一致**：
 //   副本多了 `degraded`（全仓 0 处使用 —— 死词）；
 //   副本少了 `installing` / `backoff` / `failed` / `restarting`。
 //
 // 危害不是「不一致」本身，而是它与 `_setPhase` 的**静默丢弃**叠加：
-//     _setPhase(p) { if (!PHASES.includes(p)) return; }   // 写错值 → 无声拒绝
+//     _setPhase(p) { if (!PHASES.includes(p)) return; }   // 写错值 -> 无声拒绝
 // 于是 `managed` 侧永远表达不了 `installing`/`backoff`/`failed`/`restarting`，
 // 且随时可能因副本漂移而继续无声拒绝合法值。
 //
@@ -25,7 +25,7 @@
 //   K3-c  canonical 必须含真实在用的状态（installing/backoff/failed/restarting）
 //   K3-d  全仓不存在第二份 PHASES 字面量定义
 //   K3-e  `_setPhase` 对非白名单值静默丢弃的行为**被文档化**（防被误当 bug 改掉）
-// ═══════════════════════════════════════════════════════════════════════════
+// ---------------------------------------------------------------------------
 
 const path = require('node:path');
 const fs = require('node:fs');
@@ -37,24 +37,24 @@ const objects = require(path.join(ROOT, 'src', 'app', 'control', 'registry.js'))
 const results = [];
 const check = (n, c, x) => { results.push(!!c); console.log((c ? 'PASS' : 'FAIL') + ' ' + n + (x !== undefined && x !== '' ? '  ← ' + x : '')); };
 
-// ── K3-a 同一引用（这是「唯一源」的强判据：内容相等 ≠ 同源）──
+// -- K3-a 同一引用（这是「唯一源」的强判据：内容相等 != 同源）--
 check('K3-a managed.PHASES 与 objects.PHASES 是同一数组引用',
   managed.PHASES === objects.PHASES,
   'managed===objects ? ' + (managed.PHASES === objects.PHASES));
 
-// ── K3-b 死词 `degraded` 不得回流 ──
+// -- K3-b 死词 `degraded` 不得回流 --
 check('K3-b canonical 不含死词 degraded',
   !objects.PHASES.includes('degraded'),
   JSON.stringify(objects.PHASES));
 
-// ── K3-c 真实在用的状态必须都在表内（防「合并时抄成较小的那份」）──
+// -- K3-c 真实在用的状态必须都在表内（防「合并时抄成较小的那份」）--
 const needed = ['stopped', 'installing', 'starting', 'running', 'draining', 'backoff', 'failed', 'restarting'];
 const missing = needed.filter((p) => !objects.PHASES.includes(p));
 check('K3-c canonical 覆盖全部在用的真实状态',
   missing.length === 0,
   missing.length ? '缺 ' + missing.join(',') : '完备');
 
-// ── K3-d 全仓不存在第二份 PHASES 字面量定义 ──
+// -- K3-d 全仓不存在第二份 PHASES 字面量定义 --
 function walk(dir, out) {
   for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
     if (['node_modules', '.git'].includes(e.name)) continue;
@@ -74,11 +74,11 @@ for (const f of files) {
   }
 }
 check('K3-d 全仓只有一处 PHASES 字面量定义',
-  // ⚠ 2026-09-16 步骤6：guard/lifecycle/objects.js → app/control/registry.js（编排层重组）
+  //  步骤6：guard/lifecycle/objects.js -> app/control/registry.js（编排层重组）
   defs.length === 1 && defs[0].endsWith(path.join('app', 'control', 'registry.js')),
   defs.length ? defs.join(', ') : '（无）');
 
-// ── K3-e `_setPhase` 的静默丢弃行为被文档化 ──
+// -- K3-e `_setPhase` 的静默丢弃行为被文档化 --
 {
   const src = fs.readFileSync(path.join(ROOT, 'src', 'app', 'control', 'entry.js'), 'utf8');
   check('K3-e _setPhase 静默丢弃的行为有注释说明（防被误改）',
@@ -86,7 +86,7 @@ check('K3-d 全仓只有一处 PHASES 字面量定义',
     '注释与实现都在');
 }
 
-// ── 行为面：白名单执法仍然生效（合并不能把校验弄丢）──
+// -- 行为面：白名单执法仍然生效（合并不能把校验弄丢）--
 {
   const lc = new managed.ManagedLifecycle({ id: 'k3-t', kind: 'test', name: 'T' });
   lc._setPhase('running');

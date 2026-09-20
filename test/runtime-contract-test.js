@@ -1,12 +1,12 @@
 #!/usr/bin/env node
 'use strict';
 
-// ═══════════════════════════════════════════════════════════════════════════
-// 运行期启动契约（壳写、内核读）门禁（2026-09-15）
+// ---------------------------------------------------------------------------
+// 运行期启动契约（壳写、内核读）门禁
 //
 // ## 解决的问题
 //   内核自身也要执行 npm（自更新 / 装 DSH / 插件）。旧实现用 ambient PATH 的裸 npm
-//   与 process.env；GUI/服务环境的 PATH 常不含 nvm/fnm 的 npm → 「壳能装、内核自己装不了」。
+//   与 process.env；GUI/服务环境的 PATH 常不含 nvm/fnm 的 npm -> 「壳能装、内核自己装不了」。
 //   现统一读壳投放的 ~/.dsh/supervisor/runtime.json（schema 2）。
 //
 // ## 锁定不变量
@@ -15,7 +15,7 @@
 //   R-3  withPath() 把 nodeBinDir 置于 PATH 首位（分隔符跨平台）
 //   R-4  消费点接入：dist/index.js 的 npm 与 env、env-catalog 的 minNode
 //   R-5  反向：无契约时退回 ambient（不空转）
-// ═══════════════════════════════════════════════════════════════════════════
+// ---------------------------------------------------------------------------
 
 const fs = require('node:fs');
 const os = require('node:os');
@@ -42,7 +42,7 @@ fs.writeFileSync(NPM, '#!/bin/sh\n');
 const savedHome = process.env.HOME; const savedUp = process.env.USERPROFILE;
 process.env.HOME = TMP; process.env.USERPROFILE = TMP;
 
-// R-5 反向：无契约 → null + fallback。
+// R-5 反向：无契约 -> null + fallback。
 check('R-5 无契约时 read()=null', rc.read() === null);
 check('R-5 无契约时 npmBin 退回 fallback', rc.npmBin('FALLBACK') === 'FALLBACK');
 
@@ -64,7 +64,7 @@ fs.writeFileSync(path.join(SUP, 'runtime.json'), JSON.stringify({ schema: 1, nod
 const c1 = rc.read();
 check('R-1 schema1 兼容（binDir 由 nodePath 推导前仍可读 minNode）', !!(c1 && c1.minNode === 'v22.12.0' && c1.nodePath === NODE), JSON.stringify(c1));
 
-// 损坏 JSON → null（不抛）。
+// 损坏 JSON -> null（不抛）。
 fs.writeFileSync(path.join(SUP, 'runtime.json'), '{ bad json', 'utf8');
 check('R-1 损坏 JSON → null（不抛）', rc.read() === null);
 
@@ -72,16 +72,16 @@ check('R-1 损坏 JSON → null（不抛）', rc.read() === null);
 check('R-6 契约 schema 版本 = 2（与壳 handshake）', rc.SUPPORTED_SCHEMA === 2, String(rc.SUPPORTED_SCHEMA));
 
 // R-4 消费点接入（静态）。
-// ⚠ 2026-09-17（域结构第三轮）：distribution 已拆为 release/policies/registry/install + index 门面；
+//  （域结构第三轮）：distribution 已拆为 release/policies/registry/install + index 门面；
 //   断言对象是「分发能力」而非单文件，故按目录聚合读取（读取面随文件搬移同步，判据语义不变）。
 const distDir = path.join(ROOT, 'src', 'platform', 'distribution');
 const dist = fs.readdirSync(distDir).filter((f) => f.endsWith('.js')).sort().map((f) => fs.readFileSync(path.join(distDir, f), 'utf8')).join(String.fromCharCode(10));
 check('R-4 dist/index.js 用契约解析 npm', /runtimeContract\.npmBin\(/.test(dist), 'ok');
 check('R-4 dist/index.js 用契约注入 PATH', /runtimeContract\.withPath\(/.test(dist), 'ok');
 const ec = fs.readFileSync(path.join(ROOT, 'src', 'platform', 'service', 'env-catalog.js'), 'utf8');
-// ⚠ 步骤 1 结构迁移（2026-09-16）：模块改名 platform/runtime-contract.js → platform/contract/runtime.js；
+//  步骤 1 结构迁移：模块改名 platform/runtime-contract.js -> platform/contract/runtime.js；
 //   env-catalog 已改为 require('../contract/runtime').read()。旧判据匹配字面量 'runtime-contract'
-//   恒假（改名≠实现丢失）——改为断言"确实经契约模块读取"（两种写法都接受，避免又绑死单一路径）。
+//   恒假（改名!=实现丢失）——改为断言"确实经契约模块读取"（两种写法都接受，避免又绑死单一路径）。
 check('R-4 env-catalog 用契约读 minNode',
   /require\(\s*['"][^'"]*contract\/runtime['"]\s*\)/.test(ec) || /contract\/runtime/.test(ec), 'ok');
 

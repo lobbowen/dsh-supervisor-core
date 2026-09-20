@@ -3,7 +3,7 @@
 // IP 地址纯函数（L0，出度 0）。原在 api/identity.js，被 domains/relay 反向依赖后拆出：
 // 纯 IP 事实归本文件；HTTP 请求到 socket 的事实见 platform/security/identity.js。
 
-/** 规范 socket 远端地址：IPv4-mapped IPv6（:ffff:a.b.c.d）归一为 IPv4 字面量。 */
+/** 规范 socket 远端地址：IPv4-mapped IPv6（ffff:a.b.c.d）归一为 IPv4 字面量。 */
 function normalizeRemoteAddress(ra) {
   if (typeof ra !== 'string' || !ra) return null;
   // Node 对 IPv4-mapped IPv6 呈现::ffff:a.b.c.d

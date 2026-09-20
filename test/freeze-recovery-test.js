@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 'use strict';
 
-// 响应驱动冻结机制端到端验证（2026-09-05 修复 A/B 验收）：
+// 响应驱动冻结机制端到端验证：
 //   A) markQuotaExhausted 恢复点 = 上游 429 body 的精确 ISO 时间（非默认 +5h）；
 //   B) 冻结后 _probeAfterResponseFreeze 自动补探测刷新 quota（消除 stale 快照）。
 // 方法：本地 mock Command billing（/alpha/billing/credits）+ 真实 ProxyProvider，
@@ -26,7 +26,7 @@ const check = (n, c, x) => { results.push(!!c); console.log((c ? 'PASS' : 'FAIL'
   ports.configureFile(path.join(TMP, 'ports-router.json'));
   const log = { info(){}, warn(){}, error(){}, debug(){} };
 
-  // ── mock Command billing：可编程响应 ──
+  // -- mock Command billing：可编程响应 --
   let billingState = {
     limited: true,
     exceeded: 'fiveHour',
@@ -68,7 +68,7 @@ const check = (n, c, x) => { results.push(!!c); console.log((c ? 'PASS' : 'FAIL'
     return { p, inst, acc };
   }
 
-  // ═══ 修复 A：429 body ISO 精确恢复点 ═══
+  // --- 修复 A：429 body ISO 精确恢复点 ---
   console.log('== 修复 A：markQuotaExhausted 用 429 body 的精确 ISO 恢复点（非默认 +5h）==');
   {
     const { p, inst, acc } = await addAcc(await mkProvider('pa'), 'sk-freeze-a');
@@ -90,18 +90,18 @@ const check = (n, c, x) => { results.push(!!c); console.log((c ? 'PASS' : 'FAIL'
     billingHits = 0;
   }
 
-  // ═══ 修复 B：冻结后自动补探测刷新 quota ═══
+  // --- 修复 B：冻结后自动补探测刷新 quota ---
   console.log('== 修复 B：429/400 冻结后 _probeAfterResponseFreeze 自动补探测（quota 不再 stale）==');
   {
     const { p, inst, acc } = await addAcc(await mkProvider('pb'), 'sk-freeze-b');
     const hitsBefore = billingHits;
-    // 冻结（走 markQuotaExhausted 覆写 → 触发 _probeAfterResponseFreeze 的 300ms 定时补探测）
+    // 冻结（走 markQuotaExhausted 覆写 -> 触发 _probeAfterResponseFreeze 的 300ms 定时补探测）
     p.markQuotaExhausted(acc, 5 * 3600 * 1000);
     // 等 300ms 定时补探测完成（其效果由 B2/B3 断言，此处不设恒真标记）
     await new Promise((r) => setTimeout(r, 800));
     // 补探测应命中 billing server（detectInstanceQuota 直连 mock）
     check('B2 补探测已访问 billing server（冻结后 quota 不再 stale）', billingHits > hitsBefore, 'hits ' + hitsBefore + '→' + billingHits);
-    // quota 应刷新为真实超限（fiveHour exceeded → mapW percent 100 / rate-limited）
+    // quota 应刷新为真实超限（fiveHour exceeded -> mapW percent 100 / rate-limited）
       const q = acc.quota || inst.quota || null;
     const rl = q && q.rolling;
     check('B3 补探测后 rolling = 100%/rate-limited（真实超限，非 stale 百分比）', !!rl && rl.status === 'rate-limited' && rl.percent === 100, JSON.stringify(rl));
@@ -112,13 +112,13 @@ const check = (n, c, x) => { results.push(!!c); console.log((c ? 'PASS' : 'FAIL'
     billingHits = 0;
   }
 
-  // ═══ 修复 B 自愈：billing 显示未超限 → 冻结误判自动解冻 ═══
+  // --- 修复 B 自愈：billing 显示未超限 -> 冻结误判自动解冻 ---
   console.log('== 修复 B 自愈：补探测发现未超限 → applyDetection 自动解冻 ==');
   {
     const { p, inst, acc } = await addAcc(await mkProvider('pc'), 'sk-freeze-c');
     // 先制造一次真实超限冻结，再让 billing 变健康
     billingState = { limited: false, exceeded: null, fiveHour: { used: 0.5, cap: 3, exceeded: false, resetAt: new Date(Date.now() + 3600 * 1000).toISOString() }, weekly: { used: 1, cap: 6, exceeded: false, resetAt: null } };
-    // 冻结后 300ms 补探测会读到「健康」billing → applyDetection 解冻回 ready
+    // 冻结后 300ms 补探测会读到「健康」billing -> applyDetection 解冻回 ready
     const hitsC = billingHits;
     p.markQuotaExhausted(acc, 5 * 3600 * 1000);
     // 轮询等待补探测完成（最多 3s）：避免固定 800ms 与跨组定时器竞态

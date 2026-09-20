@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 'use strict';
 
-// ═══════════════════════════════════════════════════════════════════════════
-// 供应商网关架构门禁（PROVIDER-GATEWAY-ARCHITECTURE §6.2）
+// ---------------------------------------------------------------------------
+// 供应商网关架构门禁（PROVIDER-GATEWAY-ARCHITECTURE）
 //
 // ## 锁定的设计决策
 //   PG-1 两类 pattern 的抽象方法必须显式声明（构造期可校验）
@@ -19,9 +19,9 @@
 //   「隐式契约 + 无白名单 + 双事实源」。本文档类规范都配机器校验（一域一规范），
 //   本门禁即该设计的可执行部分。
 //
-// ⚠ Phase 1-5 尚未落地：PG-1/2/3/4/5/7 预期 FAIL（如实报告，不掩盖）。
+//  Phase 1-5 尚未落地：PG-1/2/3/4/5/7 预期 FAIL（如实报告，不掩盖）。
 //   PG-6 当前已成立，PG-8 证明判据非空转。
-// ═══════════════════════════════════════════════════════════════════════════
+// ---------------------------------------------------------------------------
 
 const fs = require('node:fs');
 const path = require('node:path');
@@ -69,24 +69,24 @@ const IDX = 'src/domains/router/index.js';
 
 const proxySrc = read(PROXY);
 const directSrc = read(DIRECT);
-// ⚠ providers 已按功能切分（base/model/policies/store/command/pool/restart/probe）——
+//  providers 已按功能切分（base/model/policies/store/command/pool/restart/probe）——
 //   本组判据（PG-6 凭证剔除 / PG-4 资源闸与预算）必须读**整组**，否则文件一搬即静默假绿。
 const providerSrc = proxySrc + String.fromCharCode(10) + read('src/domains/router/providers/command.js') + String.fromCharCode(10) + read('src/domains/router/providers/pool.js') + String.fromCharCode(10) + read('src/domains/router/providers/probe.js') + String.fromCharCode(10) + read('src/domains/router/providers/restart.js') + String.fromCharCode(10) + read('src/domains/router/providers/base.js') + String.fromCharCode(10) + read('src/domains/router/providers/model.js');
-// ⚠ 转发 IO 已拆到 handlers/forward.js（SSOT §5.1：forward-core.js 收敛为门面）——
+//  转发 IO 已拆到 handlers/forward.js（SSOT：forward-core.js 收敛为门面）——
 //   本组判据（PG-2 能力猜测 / PG-4 双预算使用）必须读**整组**，否则文件一搬即静默假绿。
 const forwardSrc = read(FORWARD) + String.fromCharCode(10) + read('src/domains/router/handlers/forward.js');
 const ctlSrc = read(CTL);
 const appsSrc = read(APPS);
 const idxSrc = read(IDX);
 
-// ═══════════════════════════════════════════════════════════════════════════
-// PG-6 凭证只经 env 注入，绝不进 spawn 命令行（★ 当前已成立，先锁住防回退）
-// ═══════════════════════════════════════════════════════════════════════════
+// ---------------------------------------------------------------------------
+// PG-6 凭证只经 env 注入，绝不进 spawn 命令行（当前已成立，先锁住防回退）
+// ---------------------------------------------------------------------------
 {
   // proxy-apps 的命令模板里可以有 {{key}} 占位；但 provider 启动时必须把它剔除。
   const code = stripComments(providerSrc);
   // 判据：确实存在"剔除 --api-key 与 {{key}}"的逻辑（见 proxy.js:114）。
-  //   ⚠ 必须匹配【剔除动作】，不能只匹配字符串出现——否则判据形同虚设。
+  //    必须匹配【剔除动作】，不能只匹配字符串出现——否则判据形同虚设。
   const stripsKey = /--api-key/.test(code) && /\{\{key\}\}/.test(code)
     && /(?:filter|replace|indexOf|includes)[^;]{0,120}(?:--api-key|\{\{key\}\})/.test(code);
   check('PG-6 反代启动命令**剔除** --api-key / {{key}} 占位（key 只经 env）',
@@ -106,15 +106,15 @@ const idxSrc = read(IDX);
     cmdLine.slice(0, 80));
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
+// ---------------------------------------------------------------------------
 // PG-1 抽象方法显式声明（Phase 2 目标）
-// ═══════════════════════════════════════════════════════════════════════════
+// ---------------------------------------------------------------------------
 {
   const baseSrc = read('src/domains/router/providers/base.js');
   // 统计"契约占位抛错"的总数（含 detectAccount 的 by subclass 与 process-pool 能力面的 by process-pool provider）。
   const throwsNotImpl = (stripComments(baseSrc).match(/must be implemented by (subclass|process-pool provider)/g) || []).length;
-  // 设计要求：process-pool 的能力方法也应在基类声明（当前一个都没有 → 本项应 FAIL）。
-  //   ★ 判据不能是"≥1"（恒真，等于空转）——必须是"达到设计要求的数量"。
+  // 设计要求：process-pool 的能力方法也应在基类声明（当前一个都没有 -> 本项应 FAIL）。
+  //    判据不能是">=1"（恒真，等于空转）——必须是"达到设计要求的数量"。
   // 设计要求：process-pool 的能力面（11 个）都应在基类显式声明 + detectAccount = 12。
   check('PG-1 基类显式声明全部抽象能力方法（detectAccount + 11 个 process-pool 能力）',
     throwsNotImpl >= 12,
@@ -130,12 +130,12 @@ const idxSrc = read(IDX);
     (stripComments('throw new Error("must be implemented by subclass")').match(/must be implemented by subclass/g) || []).length === 1, 'hit');
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
+// ---------------------------------------------------------------------------
 // PG-2 转发层不得用 typeof 猜测能力（Phase 2/3 目标）
-// ═══════════════════════════════════════════════════════════════════════════
+// ---------------------------------------------------------------------------
 {
   const code = stripComments(forwardSrc);
-  // ⚠ 判据只针对 **provider 能力猜测**（typeof prov/activeProv/rt.prov === 'function'）——
+  //  判据只针对 **provider 能力猜测**（typeof prov/activeProv/rt.prov === 'function'）——
   //   Node 内建/平台方法的探测（res.flushHeaders / clientRes.once / this.canPersist）
   //   是合法的兼容写法，不属于"契约靠猜测"。
   const guesses = (code.match(/typeof\s+(?:rt\.prov|activeProv|prov|this\.prov)[\w.]*\s*===\s*'function'/g) || []);
@@ -148,11 +148,11 @@ const idxSrc = read(IDX);
     (OLD_GUESS.match(/typeof\s+(?:rt\.prov|activeProv|prov|this\.prov)[\w.]*\s*===\s*'function'/g) || []).length === 1, 'hit');
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
+// ---------------------------------------------------------------------------
 // PG-3 实例态四态（Phase 4 目标）
-// ═══════════════════════════════════════════════════════════════════════════
+// ---------------------------------------------------------------------------
 {
-  // ⚠ 实例模型已上移 router/model.js（instances/proxy-instance.js 降为 1 行过渡 shim）
+  //  实例模型已上移 router/model.js（instances/proxy-instance.js 降为 1 行过渡 shim）
   const code = stripComments(proxySrc) + stripComments(read('src/domains/router/model.js'));
   const hasNew = /COLD|WARM|HOT|DEAD/.test(code);
   check('PG-3 [Phase4] 实例态使用 COLD/WARM/HOT/DEAD 四态',
@@ -160,9 +160,9 @@ const idxSrc = read(IDX);
     hasNew ? 'ok' : '仍用旧 6 态（registered/starting/running/unhealthy/stopped/failed）');
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
+// ---------------------------------------------------------------------------
 // PG-4 资源上限 maxHot/maxWarm（Phase 4 目标）
-// ═══════════════════════════════════════════════════════════════════════════
+// ---------------------------------------------------------------------------
 {
   const code = stripComments(providerSrc);
   // 资源闸：常量存在 + 被 _limits()/desiredRunningAccounts 实际引用（不能只是定义了不用）。
@@ -171,7 +171,7 @@ const idxSrc = read(IDX);
   check('PG-4 存在 maxHot/maxWarm 资源上限且被 reconcile 引用',
     hasCaps && usedInGate,
     (hasCaps ? '有常量' : '无常量') + ' / ' + (usedInGate ? '已被引用' : '未被引用'));
-  // 双预算切换（§4.3）：同步预算存在 + 异步预置存在
+  // 双预算切换：同步预算存在 + 异步预置存在
   const hasBudget = /_switchBudgetMs/.test(code) && /DEFAULT_SWITCH_BUDGET_MS/.test(code);
   const hasPrewarm = /prewarmAsync/.test(code);
   const fwd = stripComments(forwardSrc);
@@ -185,14 +185,14 @@ const idxSrc = read(IDX);
     multiTrigger, multiTrigger ? 'ok（含故障前兆/时间维度/资源闸）' : '仍只有单一 80% 阈值');
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
+// ---------------------------------------------------------------------------
 // PG-5 ctl 白名单（Phase 2 目标）—— 安全面
-// ═══════════════════════════════════════════════════════════════════════════
+// ---------------------------------------------------------------------------
 {
   const code = stripComments(ctlSrc);
   const routerDaemonSrc = stripComments(read(ROUTER_DAEMON));
   const relayDaemonSrc = stripComments(read(RELAY_DAEMON));
-  // ⚠ 判据必须看**实际调用形态**：调用前有白名单闸，且两个 daemon 各自注入本域的表。
+  //  判据必须看**实际调用形态**：调用前有白名单闸，且两个 daemon 各自注入本域的表。
   //   不能用"字符串里是否出现 target[method].apply"——注释里也会出现（stripComments 已去，
   //   但为稳妥仍需断言"调用被闸保护"这一正向事实）。
   // 步骤4 后通用 dispatcher 不再持有任何域的表：白名单随域迁到 daemon。
@@ -218,18 +218,18 @@ const idxSrc = read(IDX);
     && !/allowMethods:\s*ROUTER_CTL_METHODS|allowMethods:\s*LAN_CTL_METHODS/.test(OLD_REFLECT2), 'hit');
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
+// ---------------------------------------------------------------------------
 // PG-7 写权统一闸（Phase 2 目标）
-// ═══════════════════════════════════════════════════════════════════════════
+// ---------------------------------------------------------------------------
 {
-  // ⚠ 域改造后用量落盘从 forward-core.js 收敛进 store/usage.js（SSOT §5.1 缺陷 2）。
+  //  域改造后用量落盘从 forward-core.js 收敛进 store/usage.js（SSOT 缺陷 2）。
   //   继续按 _writeTotals() 的函数体正则抓取，方法一改名/搬文件即静默抓空。
   //   判据改为「用量落盘模块（旧家 + 新家）内含落盘且经统一写权闸」这一**结构不变量**。
   const usageSrc = stripComments([
     'src/domains/router/store/usage.js',
     'src/domains/router/forward-core.js',
   ].map((f) => read(f)).join('\n'));
-  // E-1（原子写单源，2026-09-20）：落盘从各点自拼 `fs.writeFileSync(tmp,…)` 收敛进
+  // 落盘从各点自拼 `fs.writeFileSync(tmp,…)` 收敛进
   // platform/util/fs 的 writeAtomic —— 只认 writeFileSync 会让本判据静默抓空。
   // 不变量本身不变：**用量落盘必须先过 canPersist()**。落盘手段两式皆可（单源或直接写）。
   const gated = /canPersist\(\)|_canPersist\s*\(\s*\)/.test(usageSrc)
@@ -243,13 +243,13 @@ const idxSrc = read(IDX);
     !/canPersist\(\)/.test(stripComments(OLD_WRITE)), 'hit');
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
+// ---------------------------------------------------------------------------
 // PG-9 daemon 入口守卫（安全面）——require 不得启动真实 daemon
 //
 // 背景：daemon.js 此前裸调 `main()`，导致 require（测试/工具/静态分析）会**立即启动
 //   真实 daemon**（连真实 npm、拉起真实实例）。本仓实测发生过一次误启生产 daemon。
 //   标准写法是 `if (require.main === module) main();` —— 直接运行才启动，require 为纯导入。
-// ═══════════════════════════════════════════════════════════════════════════
+// ---------------------------------------------------------------------------
 {
   for (const rel of ['src/domains/router/daemon.js', 'src/domains/relay/daemon.js']) {
     const code = stripComments(read(rel));
@@ -264,9 +264,9 @@ const idxSrc = read(IDX);
     /^\s*main\(\);\s*$/m.test('\nmain();\n') && !/require\.main/.test('\nmain();\n'), 'hit');
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
+// ---------------------------------------------------------------------------
 // PG-8 反向：判据能识别旧形态（门禁非空转）
-// ═══════════════════════════════════════════════════════════════════════════
+// ---------------------------------------------------------------------------
 {
   const OLD_REFLECT = 'return send(200, { ok: true, value: router[method].apply(router, args) });';
   const OLD_TYPEOF = "if (typeof prov.startInstance === 'function') prov.startInstance(inst);";
@@ -279,6 +279,6 @@ const idxSrc = read(IDX);
     !!m && !/_persistEnabled|_canPersist|writeGate/.test(m[1]), 'hit');
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
+// ---------------------------------------------------------------------------
 console.log('\n结果: ' + (results.length - results.filter((x) => !x).length) + ' passed, ' + results.filter((x) => !x).length + ' failed');
 process.exit(results.every((x) => x) ? 0 : 1);

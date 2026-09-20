@@ -7,7 +7,7 @@
  * ============================================================================
  */
 
-// ── /status ──────────────────────────────────────────────
+// -- /status ----------------------------------------------
 export type DshPhase =
   | "RUNNING" | "STOPPED" | "STARTING" | "RESTARTING"
   | "BACKOFF" | "OBSERVED" | string;
@@ -48,7 +48,7 @@ export interface UpgradeState {
   logTail?: string[];
 }
 
-// 会话生命周期（契约 §3）：与 phase 正交——phase 是 main 状态机相位，
+// 会话生命周期：与 phase 正交——phase 是 main 状态机相位，
 // sessionState 是整个服务链的运行相位（退出中/已退出）。
 export type SessionState = "starting" | "running" | "stopping" | "stopped" | "failed" | string;
 
@@ -57,7 +57,7 @@ export interface SupervisorStatus {
   phase?: DshPhase;
   sessionState?: SessionState;
   guardVersion?: string;
-  /** 安装标识（UUID v4）：灰度名单的匹配依据，面板底部外显供用户申请灰度（契约 §5.2）。 */
+  /** 安装标识（UUID v4）：灰度名单的匹配依据，面板底部外显供用户申请灰度。 */
   installId?: string | null;
   dshPid?: number | null;
   dshPort?: number | null;
@@ -70,7 +70,7 @@ export interface SupervisorStatus {
   backoffUntil?: string | null;
   lastFailure?: string | null;
   upgradeHold?: boolean;
-  /** 用户「退出管家」持久标记：退出后守卫重启不得凭看护把壳拉回（2026-09-18）。 */
+  /** 用户「退出管家」持久标记：退出后守卫重启不得凭看护把壳拉回。 */
   shellHalted?: boolean;
   commandMissing?: boolean;
   dshTokenCaptured?: boolean;
@@ -81,7 +81,7 @@ export interface SupervisorStatus {
   updatedAt?: string;
 }
 
-// ── /events ──────────────────────────────────────────────
+// -- /events ----------------------------------------------
 export interface SupervisorEvent {
   seq?: number;
   type: string;
@@ -102,7 +102,7 @@ export interface SupervisorEvent {
 }
 export interface EventsPage { seq: number; events: SupervisorEvent[]; }
 
-// ── /ports（端口注册表：对接后端的全部已注册端口）──
+// -- /ports（端口注册表：对接后端的全部已注册端口）--
 export interface PortRecord {
   port: number;
   role: string;
@@ -114,7 +114,7 @@ export interface PortRecord {
 export interface PortsResponse { records?: PortRecord[]; }
 
 
-// ── /instances ──────────────────────────────────────────
+// -- /instances ------------------------------------------
 export type InstanceDomain = "native" | "sandbox";
 export interface InstanceSandbox { privateTmp?: boolean; protectHome?: boolean; memoryMax?: string; cpuQuota?: string; }
 export interface InstanceState {
@@ -166,7 +166,7 @@ export interface InstancesResponse {
   native?: SupervisorInstance | null;
 }
 
-// ── /lan-access + /lan/frp ──────────────────────────────
+// -- /lan-access + /lan/frp ------------------------------
 export interface LanItem {
   id: string;
   name?: string;
@@ -192,7 +192,7 @@ export interface LanItem {
   } | null;
 }
 export interface LanAccessResponse { items: LanItem[]; addresses: string[]; }
-// B7（AUDIT-2026-09-19）：/lan/frp 状态面不再回显 authToken 明文，只下发 authTokenSet 布尔；
+// /lan/frp 状态面不再回显 authToken 明文，只下发 authTokenSet 布尔；
 // UI 提交走 patch 语义——字段缺省=服务端保留现值，故此处 authToken 为可选（仅提交新值时带）。
 export interface FrpSettings { enabled?: boolean; serverAddr: string; serverPort: number; authToken?: string; authTokenSet?: boolean; user?: string; }
 export interface FrpStatus {
@@ -204,7 +204,7 @@ export interface FrpStatus {
   instancesExposed?: Array<{ id?: string; name?: string; wanPort?: number; remotePort?: number }>;
 }
 
-// ── router ──────────────────────────────────────────────
+// -- router ----------------------------------------------
 export type ProviderKind = "direct" | "proxy";
 export type AccountStatus =
   | "registering" | "frozen" | "banned" | "discarded" | "ready" | "normal" | string;
@@ -218,9 +218,9 @@ export interface AccountQuota {
   weekly?: QuotaWindow;
   monthly?: QuotaWindow;
   monthlyRemaining?: number;
-  /** 月额度随订阅续期重置时刻（epoch ms；Command /alpha/billing/subscriptions currentPeriodEnd 真实采样 2026-09）。 */
+  /** 月额度随订阅续期重置时刻。 */
   monthlyResetAt?: number | null;
-  /** Command /alpha/billing/credits 原体透传（真实采样 2026-09-04）：belowThreshold/creditThreshold 为上游低余额提醒 */
+  /** Command /alpha/billing/credits 原体透传：belowThreshold/creditThreshold 为上游低余额提醒 */
   credits?: {
     monthlyCredits?: number | null;
     purchasedCredits?: number | null;
@@ -295,7 +295,7 @@ export interface ProxyAppInfo {
 export interface RouterStatus {
   running: boolean;
   autostart?: boolean;
-  // conflict?: boolean —— 已移除（后端从不产出，死字段；2026-09 审计）
+  // conflict?: boolean —— 已移除
   activatedProviders?: number;
   usage: {
     requests: number;
@@ -312,7 +312,7 @@ export interface ProvidersResponse {
   providers?: RouterProvider[];
   proxyApps?: ProxyAppInfo[];
 }
-// ── /tasks ──────────────────────────────────────────────
+// -- /tasks ----------------------------------------------
 export type TaskKind = "native" | "instance" | "plugin" | "proxy-app";
 export type TaskAction = "install" | "upgrade" | "uninstall" | "update";
 export type TaskState = "pending" | "running" | "succeeded" | "failed" | "skipped" | "canceled" | string;
@@ -335,7 +335,7 @@ export interface TaskRecord {
 }
 export interface TasksResponse { tasks: TaskRecord[]; current?: unknown; }
 
-// ── plugins ─────────────────────────────────────────────
+// -- plugins ---------------------------------------------
 export type PluginSource = "npm" | "github" | "community" | "official";
 export interface MarketPlugin {
   name: string;
@@ -403,7 +403,7 @@ export interface ProxyUpdateStatus {
   taskId?: string;
   error?: string;
 }
-// ── settings / env / guard / registry / self-update ─────
+// -- settings / env / guard / registry / self-update -----
 export interface AutostartStatus { on: boolean; unit?: string; gui?: boolean; }
 export interface LanPanelStatus { enabled: boolean; host?: string; port?: number; urls?: string[]; }
 export interface AccessKeyStatus { configured: boolean; host?: string; }
@@ -431,8 +431,8 @@ export interface SelfUpdateStatus {
   restartRequired?: boolean;
 }
 export interface GuardVersion { version?: string; commit?: string; latest?: string; updateAvailable?: boolean; upstream?: string; }
-// ── 桌面壳（Tauri 壳）版本与更新 ──────────────────────────────
-// 产品语义（2026-09-11）：关于卡需同时呈现「桌面壳版本」与「内核版本」，
+// -- 桌面壳（Tauri 壳）版本与更新 ------------------------------
+// 产品语义：关于卡需同时呈现「桌面壳版本」与「内核版本」，
 // 且「检查更新」要对两者一起检测。壳版本来自壳启动时写入的 identity.json（经 /shell/status）。
 export interface ShellIdentity {
   version?: string;
@@ -462,7 +462,7 @@ export interface ShellUpdateCheck {
   updateAvailable?: boolean;
   error?: string | null;
 }
-// 平台能力矩阵（A1 接线）：三平台静态档位 × 实际工具探测；UI 据此灰化/提示不支持项。
+// 平台能力矩阵（A1 接线）：三平台静态档位 x 实际工具探测；UI 据此灰化/提示不支持项。
 export interface PlatformCapabilities {
   platform?: string;
   arch?: string;
@@ -488,7 +488,7 @@ export interface EnvStatus {
   ok?: boolean;
   catalog?: { ready?: boolean; items?: Record<string, { label: string; required?: boolean; state: string; detail?: string }> };
   capabilities?: PlatformCapabilities | null;
-  /** 桌面壳看护的观测快照（P2 接线 2026-09-12）：壳反复拉起失败时面板可见。 */
+  /** 桌面壳看护的观测快照：壳反复拉起失败时面板可见。 */
   shellWatchdog?: {
     enabled?: boolean;
     intervalMs?: number;
@@ -504,7 +504,7 @@ export interface EnvStatus {
 }
 /** Node.js 环境检测（GET /env/node-lts）。
  *
- *  ⚠ 2026-09-13 修正契约（此前声明了后端**从不产出**的字段）：
+ *   正契约（此前声明了后端**从不产出**的字段）：
  *    旧声明含 latestLts / ltsName / updateAvailable，而内核
  *    `guard/supervisor/settings-view.js::nodeLtsStatus()` **明确不做远端查询**
  *    （避免守卫启动依赖网络），实返只有 { ok, current, major, ltsLine, suggested,
@@ -529,7 +529,7 @@ export interface NodeLtsStatus {
 
 export interface GenericOk { ok?: boolean; error?: string | null; [k: string]: unknown; }
 
-// ── /lifecycle（2026-09 归一化：统一生命周期 API）────────────────────────────
+// -- /lifecycle----------------------------
 export type LifecycleModuleId = "dsh" | "router" | "lan" | "instances" | "plugins";
 export interface LifecycleModuleState {
   id: string;

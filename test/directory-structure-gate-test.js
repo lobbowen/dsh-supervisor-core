@@ -1,34 +1,34 @@
 #!/usr/bin/env node
 'use strict';
 
-// ═══════════════════════════════════════════════════════════════════════════
-// 目录结构与分层门禁（DIRECTORY-STRUCTURE-DESIGN §5）
+// ---------------------------------------------------------------------------
+// 目录结构与分层门禁（DIRECTORY-STRUCTURE-DESIGN）
 //
 // ## 锁定的不变量
 //   DS-G1 layerOf 细分到**域粒度**（修复"跨域边从不检查"的制度缺口）
 //   DS-G2 shared/ 出度 = 0；platform 无上层入边
 //   DS-G3 无 Object.defineProperties(X.prototype, require(...)) 注入（硬）
-//   DS-G3b 无 Object.assign(X.prototype, ...) 注入（R4→R6 补齐；初始 report-only）
+//   DS-G3b 无 Object.assign(X.prototype, ...) 注入（R4->R6 补齐；初始 report-only）
 //   DS-G4 platform 源码（去注释）无域名词
 //   DS-G5 层内 require 图无环（单位 = 路径前 3 段）
-//   DS-G6 每域有 index.js；域内子目录白名单 = R2（DOMAIN-STRUCTURE-DESIGN §6）
-//   DS-G7 src/supervisor.js ≤200 行；不含 setInterval/writeState/_mSet
-//   DS-9 门面 index.js ≤150 / 单文件 ≤300（R3 取严；初始 report-only）
+//   DS-G6 每域有 index.js；域内子目录白名单 = R2（DOMAIN-STRUCTURE-DESIGN）
+//   DS-G7 src/supervisor.js <=200 行；不含 setInterval/writeState/_mSet
+//   DS-9 门面 index.js <=150 / 单文件 <=300（R3 取严；初始 report-only）
 //   DS-G8 反向：判据能识别旧形态（门禁非空转）
 //
 // ## 为什么有本门禁
 //   审计发现**最关键的制度缺口**：旧 layering gate 的 layerOf() 把整个 domains/
-//   视为一个层，于是 domains→domains（跨域）的边**从未被检查**——
+//   视为一个层，于是 domains->domains（跨域）的边**从未被检查**——
 //   这正是 9 个文件依赖 domains/dist 能长期存在的制度原因（步骤3 后 dist 域已解体）。
 //   本门禁把「域粒度」与其余结构不变量变成可执行断言。
 //
-// 进度：§6 步骤1/2/3/4/5 已落地——dist 域已解体（步骤3），ctl dispatcher 上移 platform/ctl（步骤4），
-//   跨域边 2 → 1 → 0（relay/daemon.js 不再 require router 域：改向下消费 L0 的 platform/ctl/server.js）。
-// ⚠ 迁移未完成（域结构改造并行进行中）：本批新补的严格判据（DS-G3b 的 assign 形态、
-//   DS-9 的严阈值 ≤150/≤300）初始为 report-only —— 只打印 RED、不计入退出码；
+// 进度：步骤1/2/3/4/5 已落地——dist 域已解体（步骤3），ctl dispatcher 上移 platform/ctl（步骤4），
+//   跨域边 2 -> 1 -> 0（relay/daemon.js 不再 require router 域：改向下消费 L0 的 platform/ctl/server.js）。
+//  迁移未完成（域结构改造并行进行中）：本批新补的严格判据（DS-G3b 的 assign 形态、
+//   DS-9 的严阈值 <=150/<=300）初始为 report-only —— 只打印 RED、不计入退出码；
 //   GATE_STRICT=1 可整体转硬失败。既有判据（DS-G1..G8）保持硬失败，保证「不退化」。
-//   （DS-G6 已随步骤6 guard→app 平移通过；DS-G8 证明判据非空转。）
-// ═══════════════════════════════════════════════════════════════════════════
+//   （DS-G6 已随步骤6 guard->app 平移通过；DS-G8 证明判据非空转。）
+// ---------------------------------------------------------------------------
 
 const fs = require('node:fs');
 const path = require('node:path');
@@ -64,7 +64,7 @@ const files = walk(SRC, []);
 const rel = (f) => path.relative(SRC, f).split(path.sep).join('/');
 // 剥离注释 = test/_strip.js 的**字符级词法**（test/ 下唯一实现）。
 //   原为两条正则链（阶段五已把顺序改为「先行注释、再块注释」，但那只堵住「行注释里的 glob」；
-//   **字符串/正则字面量里的同形字符**仍会被当成注释开符并吞掉后续代码 → 门禁对该区间失明（假阴性）。
+//   **字符串/正则字面量里的同形字符**仍会被当成注释开符并吞掉后续代码 -> 门禁对该区间失明（假阴性）。
 //   词法实现只在**真注释**处剥离，字符串/正则字面量原样保留 —— 这是本阶段要根除的一类。
 const { stripComments } = require('./_strip');
 const strip = stripComments;
@@ -83,7 +83,7 @@ const strip = stripComments;
   check('DS-G9 ④ 正则字面量不被误当注释', reKept, reKept ? 'ok' : '被吞');
 }
 
-/** 依赖边（from → to 的域粒度单元） */
+/** 依赖边（from -> to 的域粒度单元） */
 function edgeUnit(relPath) {
   const parts = relPath.split('/');
   if (relPath.startsWith('domains/')) return 'domains/' + (parts[1] || '?');
@@ -110,9 +110,9 @@ for (const f of files) {
   }
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
+// ---------------------------------------------------------------------------
 // DS-G1 跨域依赖 = 0（域粒度）
-// ═══════════════════════════════════════════════════════════════════════════
+// ---------------------------------------------------------------------------
 {
   const cross = edges.filter((e) => e.from.startsWith('domains/') && e.to.startsWith('domains/') && e.from !== e.to);
   check('DS-G1 domains 之间跨域 require = 0',
@@ -125,9 +125,9 @@ for (const f of files) {
     sample.filter((e) => e.from.startsWith('domains/') && e.to.startsWith('domains/') && e.from !== e.to).length === 1, 'hit');
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
+// ---------------------------------------------------------------------------
 // DS-G2 shared 出度 = 0；platform 无上层入边
-// ═══════════════════════════════════════════════════════════════════════════
+// ---------------------------------------------------------------------------
 {
   const hasShared = fs.existsSync(path.join(SRC, 'shared'));
   if (!hasShared) {
@@ -136,7 +136,7 @@ for (const f of files) {
     const sharedOut = edges.filter((e) => e.from === 'shared' && e.to !== 'shared');
     check('DS-G2 shared/ 出度 = 0', sharedOut.length === 0, sharedOut.length ? sharedOut.length + ' 条出边' : 'ok');
   }
-  // ⚠ 判据修正：api/root → platform 是**合法**的向下依赖（api=L3、root=L4，platform=L0）。
+  //  判据修正：api/root -> platform 是**合法**的向下依赖（api=L3、root=L4，platform=L0）。
   //   真正的不变量是**方向**：platform 不得**出边**到任何上层。
   const platformOut = edges.filter((e) => e.from.startsWith('platform') &&
     (e.to.startsWith('domains') || e.to === 'app' || e.to === 'api' || e.to === 'root'));
@@ -144,9 +144,9 @@ for (const f of files) {
     platformOut.length ? platformOut.length + ' 条: ' + [...new Set(platformOut.map((x) => x.fromRel + ' -> ' + x.toRel))].slice(0, 3).join(' | ') : 'ok');
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
+// ---------------------------------------------------------------------------
 // DS-G3 无属性描述符 mixin 注入
-// ═══════════════════════════════════════════════════════════════════════════
+// ---------------------------------------------------------------------------
 {
   const hits = [];
   for (const f of files) {
@@ -159,9 +159,9 @@ for (const f of files) {
     /Object\.defineProperties\(\s*\w+\.prototype\s*,\s*require\(/.test('Object.defineProperties(Supervisor.prototype, require("./x"))'), 'hit');
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
-// DS-G3b 无 Object.assign(X.prototype, ...) 注入（R4→R6：右值不限，先剥注释）
-// ═══════════════════════════════════════════════════════════════════════════
+// ---------------------------------------------------------------------------
+// DS-G3b 无 Object.assign(X.prototype, ...) 注入（R4->R6：右值不限，先剥注释）
+// ---------------------------------------------------------------------------
 {
   // R6 定稿判据：右值不限（变量 / 内联 require / 成员表达式都算）。
   const MIXIN_INTO_PROTOTYPE = /Object\.(defineProperties|assign)\(\s*[\w$.]+\.prototype\s*[,)]/;
@@ -177,9 +177,9 @@ for (const f of files) {
   check('DS-G8 反向：DS-G3b 不误报普通 assign/注释', missPlain && missComment, 'miss');
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
+// ---------------------------------------------------------------------------
 // DS-G4 platform 源码无域名词
-// ═══════════════════════════════════════════════════════════════════════════
+// ---------------------------------------------------------------------------
 {
   const DOMAIN_WORDS = ['router', 'lan-daemon', 'router-daemon', 'proxyInstance', 'providerApi', 'dsh-main', 'frpc'];
   /** DS-G4 判据本体：去注释源码中命中的域名词（空数组 = 干净）。DS-G8 复用**同一函数**做反向自检。 */
@@ -194,7 +194,7 @@ for (const f of files) {
   check('DS-G4 platform 源码无域名词（去注释）', hits.length === 0,
     hits.length ? hits.length + ' 个文件: ' + hits.slice(0, 4).join(', ') : 'ok');
   // 反向自检：样本必须**确实包含** DOMAIN_WORDS 中的词（且能穿过 strip），
-  //   否则样本与词表无交集，断言恒真 → 判据空转（2026-09-17 修复：旧样本
+  //   否则样本与词表无交集，断言恒真 -> 判据空转（复：旧样本
   //   "const SEGMENT_POOL = { relay: 'managed' };" 不含任何词，DS-G8 假 PASS）。
   //   样本形态取自 platform/util/srcpath.js 的历史写法；DS-G4 后该映射已上移
   //   app/daemons/scripts.js（域名词做键 + 相对路径段）——platform 侧不得再出现。
@@ -204,9 +204,9 @@ for (const f of files) {
     dsG8HitWords.length ? 'hit: ' + dsG8HitWords.join(',') : '样本与 DOMAIN_WORDS 无交集（自检失效）');
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
+// ---------------------------------------------------------------------------
 // DS-G6 每域有 index.js；域内子目录白名单
-// ═══════════════════════════════════════════════════════════════════════════
+// ---------------------------------------------------------------------------
 {
   const dirs = [];
   try {
@@ -217,7 +217,7 @@ for (const f of files) {
   const noIndex = dirs.filter((d) => !fs.existsSync(path.join(SRC, 'domains', d, 'index.js')));
   check('DS-G6 每个域都有 index.js', noIndex.length === 0,
     noIndex.length ? '缺: ' + noIndex.join(', ') : 'ok（' + dirs.length + ' 域）');
-  // ⚠ R2（DOMAIN-STRUCTURE-DESIGN §6）白名单 + ops（EXECUTION-CONTRACT §3.2 冻结的 `ops/*.js` / SSOT §5.1 目标树）
+  //  R2（DOMAIN-STRUCTURE-DESIGN）白名单 + ops（EXECUTION-CONTRACT 冻结的 `ops/*.js` / SSOT 目标树）
   const ALLOWED = new Set(['providers', 'instances', 'policies', 'model', 'store', 'handlers', 'core', 'jobs', 'ops']);
   const badDirs = [];
   for (const d of dirs) {
@@ -229,14 +229,14 @@ for (const f of files) {
     badDirs.length ? badDirs.join(', ') : 'ok');
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
+// ---------------------------------------------------------------------------
 // DS-G7 supervisor.js 薄壳
-// ═══════════════════════════════════════════════════════════════════════════
+// ---------------------------------------------------------------------------
 {
   const p = path.join(SRC, 'supervisor.js');
   const s = fs.existsSync(p) ? fs.readFileSync(p, 'utf8') : '';
   // 行数按「行终止符」计：尾换行不额外算一行（否则 169 行会显示 170，
-  //   且恰好 200 行 + 尾换行的文件会被误判 FAIL）。阈值仍为 ≤200，未放宽。
+  //   且恰好 200 行 + 尾换行的文件会被误判 FAIL）。阈值仍为 <=200，未放宽。
   const lines = s ? s.split('\n').length - (s.endsWith('\n') ? 1 : 0) : 0;
   check('DS-G7 [Phase6/7] src/supervisor.js ≤200 行（当前 ' + lines + '）', lines > 0 && lines <= 200,
     lines > 200 ? '仍 ' + lines + ' 行' : 'ok');
@@ -245,9 +245,9 @@ for (const f of files) {
     bad.length ? '仍含: ' + bad.join(', ') : 'ok');
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
-// DS-9 行数阈值（R3 取严：门面 index.js ≤150 / 单文件 ≤300，与 DG-2 同值）
-// ═══════════════════════════════════════════════════════════════════════════
+// ---------------------------------------------------------------------------
+// DS-9 行数阈值（R3 取严：门面 index.js <=150 / 单文件 <=300，与 DG-2 同值）
+// ---------------------------------------------------------------------------
 {
   const FACADE_MAX = 150, FILE_MAX = 300;
   const facadeOver = files
@@ -267,7 +267,7 @@ for (const f of files) {
   check('DS-G8 反向：DS-9 对 300 行边界不误报', !(countLines(edgeSample) > FILE_MAX), 'miss');
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
+// ---------------------------------------------------------------------------
 const hardFailed = results.filter((x) => !x).length;
 console.log('\n结果: ' + results.filter((x) => x).length + ' passed, ' + hardFailed + ' failed(hard), ' + softFailures.length + ' failed(soft/report-only)');
 if (softFailures.length) {

@@ -1,12 +1,12 @@
 #!/usr/bin/env node
 'use strict';
 
-// ═══════════════════════════════════════════════════════════════════════════
-// 域结构与域间契约门禁（DOMAIN-STRUCTURE-DESIGN §9 / EXECUTION-CONTRACT §1）
+// ---------------------------------------------------------------------------
+// 域结构与域间契约门禁（DOMAIN-STRUCTURE-DESIGN）
 //
-// ## 锁定的不变量（DG-1..DG-16，逐条见 SSOT §9）
-//   DG-1  域门面 index.js ≤150 行且去注释源码无业务逻辑关键词      （DF-1 / R3）
-//   DG-2  任何 src/**/*.js ≤300 行                                   （DF-2 / R3）
+// ## 锁定的不变量（DG-1..DG-16，逐条见 SSOT）
+//   DG-1  域门面 index.js <=150 行且去注释源码无业务逻辑关键词      （DF-1 / R3）
+//   DG-2  任何 src/**/*.js <=300 行                                   （DF-2 / R3）
 //   DG-3  contract.pure 声明的纯文件零 IO require                    （DF-3）
 //   DG-4  域内跨文件 this.X() = 0（剔关键字 + 契约豁免 + 抽象占位）  （DF-4）
 //   DG-4b 豁免项必须在 contract.js 有出处（防豁免表腐化）
@@ -19,35 +19,35 @@
 //   DG-7  域内依赖方向单调（不得 index 被 ops 依赖）                 （DF-7）
 //   DG-8  无 Object.(defineProperties|assign)(X.prototype, ...) 注入 （R4-R6）
 //   DG-9  contract.js 与实际导出/ctor 双向一致（未建即 FAIL）
-//   DG-10 消费方成员 ⊆ 目标域 PUBLIC_API（排除 domains/router 的 ProxyInstance）
+//   DG-10 消费方成员 <= 目标域 PUBLIC_API（排除 domains/router 的 ProxyInstance）
 //   DG-11 域外无 .instances.instances 内部数组穿透
 //   DG-12 门禁非空转（合成样本抽取函数自检 + 反向自检完备；真实总量仅证据）
 //   DG-13 门禁不得以行号为断言目标（只作证据）
 //   DG-14 app/facade/* 只读，写动作应下沉 app/domain-actions/        （R7）
 //   DG-15 require() 必须在模块顶层，函数体内 0 处                     （DF-8）
 //         唯一显式白名单：src/supervisor.js 的 get lan() 惰性 require（见 DG-15 块注释）
-//   DG-16 函数（回调/闭包）嵌套深度 ≤6，超出的须提为具名函数         （DF-9）
+//   DG-16 函数（回调/闭包）嵌套深度 <=6，超出的须提为具名函数         （DF-9）
 //
 // ## 纪律（继承既有门禁的三条教训）
 //   1. 判据本体抽纯函数，正向检查与反向自检共用同一个函数；
 //   2. 反向样本必须真的与匹配器有交集（防样本不含关键词导致假 PASS）；
 //   3. 门禁不可空转：存在性下界 + 反向自检条数完备。
-//   ★ 所有源码扫描统一先 strip() 剥注释（R1 取证陷阱：supervisor.js 的说明性注释
+//    所有源码扫描统一先 strip() 剥注释（R1 取证陷阱：supervisor.js 的说明性注释
 //     含并原型写法，instance/index.js / plugin/index.js 同理会造成假阳性）。
 //
 // ## 初始模式：report-only
 //   域改造尚未完成，默认 DG 判据只打印 RED 清单、退出码恒 0；反向自检永远硬失败
-//   （门禁自身完整性必须真实）。DG_STRICT=1 可整体转硬失败（迁移批 10 用）。
+//   （门禁自身完整性必须真实）。DG_STRICT=1 可整体转硬失败。
 //   RED 基线记录在 design-notes/EXEC-gates.md。
 //
 // ## 已知待办（如实报告，不掩盖）
-//   · DG-8 命中 src/supervisor.js（Object.assign(Supervisor.prototype, mod.methods)）——
+//   - DG-8 命中 src/supervisor.js（Object.assign(Supervisor.prototype, mod.methods)）——
 //     那是编排层既有关键装配机制，属 app/ 层改造范围；
-//   · DG-3/DG-9/DG-10 依赖 src/domains/*/contract.js（本批 0 已立门禁、未建契约），
+//   - DG-3/DG-9/DG-10 依赖 src/domains/*/contract.js，
 //     当前判定为契约未建 RED，由后续批（M3/M4）补齐；
-//   · DG-6 采用静态代理而非子进程 require 探针 —— 遵守不启动进程 / 不碰产品状态根
+//   - DG-6 采用静态代理而非子进程 require 探针 —— 遵守不启动进程 / 不碰产品状态根
 //     的硬约束（见 EXEC-gates.md 偏差记录）。
-// ═══════════════════════════════════════════════════════════════════════════
+// ---------------------------------------------------------------------------
 
 const fs = require('node:fs');
 const path = require('node:path');
@@ -57,7 +57,7 @@ const SRC = path.join(ROOT, 'src');
 const DOMAINS_DIR = path.join(SRC, 'domains');
 const STRICT = process.env.DG_STRICT === '1';
 
-// ── 结果收集器：judge = 默认 report-only 的判据；selfcheck = 永远硬失败的反向自检 ──
+// -- 结果收集器：judge = 默认 report-only 的判据；selfcheck = 永远硬失败的反向自检 --
 const passed = [];
 const failedHard = [];
 const failedSoft = [];
@@ -75,7 +75,7 @@ const short = (arr, n) => {
   return arr.slice(0, k).join(', ') + (arr.length > k ? ' ...(+' + (arr.length - k) + ')' : '');
 };
 
-// ── 源码地基：strip / countLines / definedNames / thisCalls / requireEdges ──
+// -- 源码地基：strip / countLines / definedNames / thisCalls / requireEdges --
 // 阶段六 P6-A：统一走 test/_strip.js 的字符级单一实现（语义等价且正则字面量感知）。
 const { stripComments } = require('./_strip');
 function strip(src) { return stripComments(src); }
@@ -104,7 +104,7 @@ function readBrace(s, openIdx) {
   return s.slice(openIdx + 1);
 }
 /** 方法定义的受支持形态（DG-14 用）。**不再只认「2-6 空格的方法简写」** —— 原判据在重构
- *  （工厂化把方法改写为「name: function」/箭头属性、或改变缩进）后会**抽不到方法体 ⇒ 判据恒绿
+ *  （工厂化把方法改写为「name: function」/箭头属性、或改变缩进）后会**抽不到方法体 => 判据恒绿
  *  = 静默失覆盖**，而 DG-14 正是靠它判定「app/facade/* 无写动作」。本仓已四次因「门禁看不见」而假绿。
  *    A 方法简写          name(args) {              （含 async / get / set / static）
  *    B 属性函数          name: function (args) {
@@ -133,7 +133,7 @@ function methodBodies(src) {
  *  返回这些形态的名字，由 DG-14 显式判为违规，使门禁对未知形态**失败可见**而非静默失覆盖。 */
 // 尾部用 `\s*[^{\s]`（要求 => 后第一个非空白字符存在且非 {）——旧写法 `\s*(?!\{)` 会因
 // `\s*` 回退到零宽而使 lookahead 落在空白上，把 `setX: () => { ... }`（=> 与 { 之间有空格）
-// **误报**为未支持形态（2026-09-19 第 3 批全量链复跑抓出，反向自检判 FAIL）。
+// **误报**为未支持形态。
 const UNSUPPORTED_METHOD_FORM = /^[ \t]{2,8}([A-Za-z_$][\w$]*)\s*:\s*(?:async\s+)?(?:\([^)]*\)|[A-Za-z_$][\w$]*)\s*=>\s*[^{\s]/gm;
 function unsupportedMethodForms(src) {
   const out = []; let m;
@@ -196,7 +196,7 @@ function parseModuleExportsKeys(src) {
   return { kind: 'literal', keys };
 }
 
-// ── 文件系统扫描（只读；无进程/无状态根写入）──
+// -- 文件系统扫描（只读；无进程/无状态根写入）--
 function walk(dir, out) {
   let ents;
   try { ents = fs.readdirSync(dir, { withFileTypes: true }); } catch { return out; }
@@ -236,7 +236,7 @@ function requireEdges(abs, src) {
 
 const ENTRIES = SRC_FILES.map((abs) => ({ abs, rel: REL(abs), raw: rawOf(abs), src: strippedOf(abs), lines: countLines(rawOf(abs)) }));
 
-// ── 域模型（供 DG-4/5/6/7）──
+// -- 域模型（供 DG-4/5/6/7）--
 const DOMAINS = (() => {
   try { return fs.readdirSync(DOMAINS_DIR, { withFileTypes: true }).filter((e) => e.isDirectory()).map((e) => e.name).sort(); }
   catch { return []; }
@@ -283,7 +283,7 @@ function crossFileThisViolations(sources, opts) {
   return out;
 }
 
-// 判据本体（纯）：bare this.X() 被 ≥2 个兄弟文件定义 → 指向不明（真实歧义）。
+// 判据本体（纯）：bare this.X() 被 >=2 个兄弟文件定义 -> 指向不明（真实歧义）。
 function ambiguousConsumedNames(sources, opts) {
   const files = [...sources.keys()];
   const defs = (opts && opts.defs) || new Map(files.map((f) => [f, definedNames(sources.get(f))]));
@@ -305,7 +305,7 @@ function unimplementedAbstracts(abstracts, defsMap) {
   return [...abstracts].filter((n) => !impl.has(n));
 }
 
-// ── Tarjan SCC（DG-5）──
+// -- Tarjan SCC（DG-5）--
 function tarjanSCC(nodes, adjFn) {
   let index = 0;
   const stack = [], onStack = new Set(), idx = new Map(), low = new Map(), sccs = [];
@@ -340,7 +340,7 @@ function combinedAdj(model) {
   return adj;
 }
 
-// DG-5c：extends 两文件 + 基类声明抽象占位 → 合法继承 SCC。
+// extends 两文件 + 基类声明抽象占位 -> 合法继承 SCC。
 function isInheritanceSCC(comp, model) {
   if (comp.length !== 2) return false;
   const [a, b] = comp;
@@ -351,7 +351,7 @@ function isInheritanceSCC(comp, model) {
   return abstractPlaceholders(model.srcs.get(a)).size > 0 || abstractPlaceholders(model.srcs.get(b)).size > 0;
 }
 
-// ── DG-7 依赖方向 rank ──
+// -- DG-7 依赖方向 rank --
 const RANK = {
   'index.js': 0, 'daemon.js': 0,
   // rank 1：编排 / 服务本体 / 入口适配
@@ -363,11 +363,11 @@ const RANK = {
   'core.js': 2, 'policies': 2, 'policies.js': 2, 'switch.js': 2, 'journal.js': 2, 'jobs.js': 2,
   'state-machine.js': 2, 'cli.js': 2, 'targets.js': 2, 'frp.js': 2, 'managed.js': 2, 'views.js': 2,
   'session.js': 2, 'tunnel.js': 2, 'market-net.js': 2, 'market-sources.js': 2,
-  // frp-install.js 与 frp.js 同为原 frpmgr.js 的按副作用二分半（relay.md:216 判定 frp→frp-install 域内合法）：
+  // frp-install.js 与 frp.js 同为原 frpmgr.js 的按副作用二分半（relay.md:216 判定 frp->frp-install 域内合法）：
   'frp-install.js': 2,
   // rank 3：模型 / 持久化 / 多实现 / 纯数据
   'model.js': 3, 'store.js': 3, 'providers': 3, 'port-segments.js': 3, 'proxy-apps.js': 3,
-  // 域契约文件（纯数据、零 require，与 model/store 同层）。此前未登记 → rank=null；
+  // 域契约文件（纯数据、零 require，与 model/store 同层）。此前未登记 -> rank=null；
   //   当前无域内消费者故 DG-7 仍绿，一旦有人 require('./contract') 会以「未归类」误报而非做方向检查。
   'contract.js': 3,
   'layers.js': 3, 'ports.js': 3, 'config.js': 3, 'usage.js': 3, 'sandbox.js': 3,
@@ -393,14 +393,14 @@ function directionalViolations(edges) {
   return out;
 }
 
-// ── DG-8 mixin 判据（R6 三件套；必须先剥注释）──
+// -- DG-8 mixin 判据（R6 三件套；必须先剥注释）--
 const MIXIN_INTO_PROTOTYPE = /Object\.(defineProperties|assign)\(\s*[\w$.]+\.prototype\s*[,)]/;
 const METHODS_FRAGMENT = /module\.exports\s*=\s*\{\s*methods\s*[:}]/;
 const METHODS_FRAGMENT_SHORT = /module\.exports\s*=\s*\{[\s\S]{0,200}?\bmethods\b\s*[,:}]/;
 function mixinIntoPrototype(src) { return MIXIN_INTO_PROTOTYPE.test(src); }
 function methodsFragment(src) { return METHODS_FRAGMENT.test(src) || METHODS_FRAGMENT_SHORT.test(src); }
 
-// ─ DG-3 纯/IO（契约声明驱动）──
+// - DG-3 纯/IO（契约声明驱动）--
 const IO_MODULES = ['node:fs', 'node:fs/promises', 'node:net', 'node:child_process', 'node:http', 'node:https', 'node:tls', 'node:dns'];
 function ioRequireHits(src, modules) {
   return (modules || IO_MODULES).filter((m) => new RegExp("require\\(\\s*['\"]" + m.replace(/[/:]/g, '\\$&') + "['\"]\\s*\\)").test(src));
@@ -416,7 +416,7 @@ function pureViolations(sources, pureRels) {
   return out;
 }
 
-// ── DG-6 叶子模块（静态代理）──
+// -- DG-6 叶子模块（静态代理）--
 const ENTRY_FILES = new Set(['domains/relay/daemon.js', 'domains/router/daemon.js']);
 // 顶层 = 行首第 0 列（方法体内的缩进行不算顶层；否则内嵌 new Promise/setTimeout 会误报）。
 const TOP_LEVEL_SIDE_EFFECTS = [
@@ -438,7 +438,7 @@ function leafViolations(files, opts) {
   return out;
 }
 
-// ── DG-9 契约双向一致 ──
+// -- DG-9 契约双向一致 --
 function loadContract(domain) {
   const p = path.join(DOMAINS_DIR, domain, 'contract.js');
   if (!fs.existsSync(p)) return null;
@@ -453,7 +453,7 @@ function exportsMismatch(declared, actual) {
   };
 }
 
-// ── DG-10 消费方 ⊆ PUBLIC_API ──
+// -- DG-10 消费方 <= PUBLIC_API --
 const CONSUMER_BINDING = /(?:\bthis|\bhost|\bsup|\bself)\s*\.\s*(instances|router|lan|pluginManager|pluginMarket|shellDomain)\s*\.\s*([A-Za-z_$][\w$]*)/g;
 const BINDING_DOMAIN = { instances: 'instance', router: 'router', lan: 'relay', pluginManager: 'plugin', pluginMarket: 'plugin', shellDomain: 'shell' };
 function consumerViolations(files, apiByDomain) {
@@ -478,7 +478,7 @@ function consumerViolations(files, apiByDomain) {
   return { violations, unverifiable };
 }
 
-// ─ DG-11 数组穿透 ──
+// - DG-11 数组穿透 --
 // 判据必须同时覆盖四种真实写法：this.instances.instances（原）、别名 instances.instances、
 //   经 getter 的 instances().instances、括号字符串取值 instances['instances']。
 //   原判据要求字面点号前缀，别名/调用形态长期漏检（app/control/adapters.js、app/control/specs.js、
@@ -490,11 +490,11 @@ function piercings(files) {
   return files.filter((f) => ARRAY_PIERCE.test(f.src)).filter((f) => !f.rel.startsWith('domains/instance/')).map((f) => f.rel);
 }
 
-// ── DG-13 门禁不得硬编码行号 ──
+// -- DG-13 门禁不得硬编码行号 --
 const LINE_ASSERT = /(?:\.line|lineNumber|_line)\s*===\s*\d+/;
 function lineNumberAssertions(src) { const m = src.match(LINE_ASSERT); return m ? [m[0]] : []; }
 
-// ── DG-15/16 函数体花括号 / 内联 require / 嵌套深度（EXEC3 §1；零第三方依赖）──
+// -- DG-15/16 函数体花括号 / 内联 require / 嵌套深度（EXEC3 ；零第三方依赖）--
 // 判据本体（纯）：返回「函数体开括号」下标集合。只有这些 { 计入函数嵌套作用域；
 // 顶层对象/数组字面量不计入，避免把顶层 module.exports = { x: require(...) } 误判为函数内。
 const FUNCTION_CONTROL_KEYWORDS = new Set(['if', 'for', 'while', 'switch', 'catch', 'with', 'else', 'do',
@@ -502,7 +502,7 @@ const FUNCTION_CONTROL_KEYWORDS = new Set(['if', 'for', 'while', 'switch', 'catc
   'await', 'yield', 'function']);
 function functionBodyBraces(src) {
   const marked = new Set(); let m;
-  // ① function 关键字：跳到形参右括号后第一个 {
+  // 1) function 关键字：跳到形参右括号后第一个 {
   const reFn = /\bfunction\b/g;
   while ((m = reFn.exec(src))) {
     let j = m.index + m[0].length;
@@ -517,14 +517,14 @@ function functionBodyBraces(src) {
     while (j < src.length && /\s/.test(src[j])) j++;
     if (src[j] === '{') marked.add(j);
   }
-  // ② 箭头函数块体：=> 后跳过空白遇 {
+  // 2) 箭头函数块体：=> 后跳过空白遇 {
   const reArrow = /=>/g;
   while ((m = reArrow.exec(src))) {
     let j = m.index + 2;
     while (j < src.length && /\s/.test(src[j])) j++;
     if (src[j] === '{') marked.add(j);
   }
-  // ③ 方法简写 / class 方法 / getter / setter（排除 if/for/while/switch/catch 等控制关键字）
+  // 3) 方法简写 / class 方法 / getter / setter（排除 if/for/while/switch/catch 等控制关键字）
   const reMethod = /(?:^|[^\w$)\]}])(?:async\s+)?(?:get\s+|set\s+|static\s+|\*)?([A-Za-z_$][\w$]*)\s*\(([^()]*)\)\s*\{/g;
   while ((m = reMethod.exec(src))) {
     if (FUNCTION_CONTROL_KEYWORDS.has(m[1])) continue;
@@ -550,7 +550,7 @@ function functionScan(src) {
   return { maxFn, inlineRequires };
 }
 
-// ── DG-14 facade 只读 ──
+// -- DG-14 facade 只读 --
 const WRITE_VERB = /^(set|patch|install|apply|toggle|sync|start|stop|restart|enable|disable|update|remove|delete|reset)/i;
 const WRITE_TARGET_CALL = /\.(frpAction|setFrp|syncFrpc)\s*\(/;
 const FACADE_EXCEPTIONS = {
@@ -571,13 +571,13 @@ function facadeWriteViolations(files, exceptions) {
   return out;
 }
 
-// ═════════════════════════════════════════════════════════════════════════
+// -------------------------------------------------------------------------
 // 判据执行
-// ════════════════════════════════════════════════════════════════════════
+// ------------------------------------------------------------------------
 console.log('模式: ' + (STRICT ? 'STRICT（判据硬失败）' : 'report-only（判据软失败，退出码恒 0）'));
 console.log('扫描: ' + ENTRIES.length + ' 个 src/**/*.js，' + DOMAINS.length + ' 个域\n');
 
-// ── DG-1 门面 ≤150 行且无业务逻辑关键词 ──
+// -- DG-1 门面 <=150 行且无业务逻辑关键词 --
 {
   const FACADE_BANNED = ['http.createServer', 'fs.writeFileSync', 'setInterval('];
   const facadeViolations = (entries, maxLines) => entries
@@ -595,7 +595,7 @@ console.log('扫描: ' + ENTRIES.length + ' 个 src/**/*.js，' + DOMAINS.length
   selfcheck('DG-1 反向：合规样本不命中', facadeViolations([{ rel: 's', src: strip(okSample), lines: 2 }], 150).length === 0, 'miss');
 }
 
-// ── DG-2 单文件 ≤300 行 ─
+// -- DG-2 单文件 <=300 行 -
 {
   const oversized = (entries, maxLines) => entries.filter((e) => e.lines > maxLines).map((e) => e.rel + '(' + e.lines + ')');
   const v = oversized(ENTRIES, 300);
@@ -605,10 +605,10 @@ console.log('扫描: ' + ENTRIES.length + ' 个 src/**/*.js，' + DOMAINS.length
   // 非空转证明：合成样本必须能命中（不得依赖真实违规存在）
   selfcheck('DG-2 反向：合成样本按阈值命中（非空转）',
     oversized([{ rel: 'a', lines: 301 }, { rel: 'b', lines: 300 }, { rel: 'c', lines: 999 }], 300).length === 2, 'synthetic');
-  // ⚠ 原为「真实超限 >=1」——那会随架构改善而恒假（门禁自锁），已改为合成样本。
+  //  原为「真实超限 >=1」——那会随架构改善而恒假（门禁自锁），已改为合成样本。
 }
 
-// ── DG-3 contract.pure 声明的纯文件零 IO require ──
+// -- DG-3 contract.pure 声明的纯文件零 IO require --
 {
   const pureRels = [];
   for (const d of DOMAINS) {
@@ -627,7 +627,7 @@ console.log('扫描: ' + ENTRIES.length + ' 个 src/**/*.js，' + DOMAINS.length
     pureViolations(new Map([['a', strip("const fs = require('node:fs');")]]), ['a']).length === 1, 'hit');
 }
 
-// ── DG-4/4b/4c/4d 域内跨文件 this ──
+// -- DG-4/4b/4c/4d 域内跨文件 this --
 {
   const CONTRACT_HOOKS = {
     instance: ['onRemoteChange', 'onInstanceStart', 'onInstanceStop', 'onCreate', 'onRemove', 'onDestroy'],
@@ -725,7 +725,7 @@ console.log('扫描: ' + ENTRIES.length + ' 个 src/**/*.js，' + DOMAINS.length
     unimplementedAbstracts(absOf("class A {\n  foo() { throw new Error('foo must be implemented by x'); }\n}"), new Map([['a', new Set(['bar'])], ['b', new Set(['foo'])]])).length === 0, 'miss');
 }
 
-// ── DG-5 require DAG + mixin SCC + 继承豁免 ──
+// -- DG-5 require DAG + mixin SCC + 继承豁免 --
 {
   const requireSCCs = [], mixinSCCs = [], inheritanceSCCs = [];
   for (const d of DOMAINS) {
@@ -759,7 +759,7 @@ console.log('扫描: ' + ENTRIES.length + ' 个 src/**/*.js，' + DOMAINS.length
   }), 'hit');
 }
 
-// ── DG-6 叶子模块可 require（静态代理）──
+// -- DG-6 叶子模块可 require（静态代理）--
 {
   const files = ENTRIES.filter((e) => e.rel.startsWith('domains/')).map((e) => ({ rel: e.rel, src: e.src }));
   const v = leafViolations(files, { entryFiles: ENTRY_FILES });
@@ -771,7 +771,7 @@ console.log('扫描: ' + ENTRIES.length + ' 个 src/**/*.js，' + DOMAINS.length
     leafViolations([{ rel: 'domains/x/foo.js', src: strip('module.exports = { f() {} };') }], {}).length === 0, 'miss');
 }
 
-// ── DG-7 依赖方向单调 ──
+// -- DG-7 依赖方向单调 --
 {
   const edges = [];
   for (const d of DOMAINS) {
@@ -791,7 +791,7 @@ console.log('扫描: ' + ENTRIES.length + ' 个 src/**/*.js，' + DOMAINS.length
   selfcheck('DG-7 反向：未归类文件命中', directionalViolations([{ from: 'foo.js', to: 'store.js' }]).length === 1, 'hit');
 }
 
-// ─ DG-8 mixin 并原型（R6 三件套，先剥注释）──
+// - DG-8 mixin 并原型（R6 三件套，先剥注释）--
 {
   const v = [];
   let mixinCount = 0;
@@ -812,14 +812,14 @@ console.log('扫描: ' + ENTRIES.length + ' 个 src/**/*.js，' + DOMAINS.length
     !mixinIntoPrototype(strip('Object.assign({}, a);')), 'miss');
   selfcheck('DG-8 反向：注释样本不命中（先剥注释）',
     !mixinIntoPrototype(strip('// Object.assign(X.prototype, mod.methods) 并入同一原型')), 'miss');
-  // AP1（批 8/10）收口后 src 全域真实命中 = 0（原型挂载已消除），故「非空转」自检
+  // AP1收口后 src 全域真实命中 = 0（原型挂载已消除），故「非空转」自检
   //   改为在**合成样本**上验证判据命中，并确认扫描集非空（取代原先依赖真实违规的存在）。
   const sampleHit = (strip('Object.assign(Supervisor.prototype, mod.methods);').match(new RegExp(MIXIN_INTO_PROTOTYPE.source, 'g')) || []).length;
   selfcheck('DG-8 反向：判据在样本上命中且扫描集非空（非空转）',
     sampleHit >= 1 && ENTRIES.length > 0, 'sample=' + sampleHit + ' files=' + ENTRIES.length + ' real=' + mixinCount);
 }
 
-// ── DG-9 契约双向一致 ──
+// -- DG-9 契约双向一致 --
 {
   const problems = [];
   for (const d of DOMAINS) {
@@ -840,14 +840,14 @@ console.log('扫描: ' + ENTRIES.length + ' 个 src/**/*.js，' + DOMAINS.length
   selfcheck('DG-9 反向：缺失键 missing 命中', fx2.missing.length === 1 && fx2.missing[0] === 'c', 'hit:missing=' + fx2.missing.join(','));
 }
 
-// ── DG-10 消费方 ⊆ PUBLIC_API ──
+// -- DG-10 消费方 <= PUBLIC_API --
 {
   const apiByDomain = {};
   let declared = 0;
   for (const d of DOMAINS) {
     const c = contractOf(d);
-    // DG-10 判据是「消费方成员 ⊆ 目标域 PUBLIC_API」（SSOT B.1.4 / B.3.10），
-    // 与 DG-9 的 exports（≡ index.js module.exports 键）是**两个不同的面**：
+    // DG-10 判据是「消费方成员 <= 目标域 PUBLIC_API」（SSOT B.1.4 / B.3.10），
+    // 与 DG-9 的 exports（== index.js module.exports 键）是**两个不同的面**：
     //   exports 是门面导出面；PUBLIC_API 是类方法/域间契约面（消费者实际访问的成员）。
     // 兼容回退：未声明 PUBLIC_API 时，若 exports 为数组则沿用（旧契约形态）。
     const ex = c
@@ -871,7 +871,7 @@ console.log('扫描: ' + ENTRIES.length + ' 个 src/**/*.js，' + DOMAINS.length
   selfcheck('DG-10 反向：domains/router 的 ProxyInstance 同名物被排除', routerSelf.length === 0, 'miss');
 }
 
-// ─ DG-11 数组穿透 ──
+// - DG-11 数组穿透 --
 {
   const files = ENTRIES.map((e) => ({ rel: e.rel, src: e.src }));
   const v = piercings(files);
@@ -894,8 +894,8 @@ console.log('扫描: ' + ENTRIES.length + ' 个 src/**/*.js，' + DOMAINS.length
     piercings([{ rel: 'app/x.js', src: strip("const a = obj['instances'];") }]).length === 0, 'miss');
 }
 
-// ─ DG-12 非空转（合成样本；真实总量仅证据）──
-// 教训（HANDOFF §4.3）：用**真实总量**（文件数 / 字节数 / this 调用数）做下界会随注释精简与重构
+// - DG-12 非空转（合成样本；真实总量仅证据）--
+// 教训（HANDOFF）：用**真实总量**（文件数 / 字节数 / this 调用数）做下界会随注释精简与重构
 //   **自锁** —— 数据趋势向下，门禁迟早在与「判据有无分辨力」无关的地方假红。
 //   故改为：自建最小可判定输入，证明抽取函数（strip / countLines / thisCallNames）在给定输入上
 //   产出预期；真实总量只作 evidence 打印，**不参与判定**。
@@ -934,7 +934,7 @@ console.log('扫描: ' + ENTRIES.length + ' 个 src/**/*.js，' + DOMAINS.length
     'const a = 1; // 行注'.includes('行注') && !strip('const a = 1; // 行注').includes('行注'), 'hit');
 }
 
-// ── DG-13 门禁不以行号为断言目标 ──
+// -- DG-13 门禁不以行号为断言目标 --
 {
   const gateFiles = [__filename, path.join(__dirname, 'directory-structure-gate-test.js')];
   const v = [];
@@ -948,7 +948,7 @@ console.log('扫描: ' + ENTRIES.length + ' 个 src/**/*.js，' + DOMAINS.length
   selfcheck('DG-13 反向：证据字符串样本不命中', lineNumberAssertions(okSample).length === 0, 'miss');
 }
 
-// ─ DG-14 facade 只读 ──
+// - DG-14 facade 只读 --
 {
   const files = ENTRIES.filter((e) => e.rel.startsWith('app/facade/')).map((e) => ({ rel: e.rel, src: e.src }));
   const v = facadeWriteViolations(files, FACADE_EXCEPTIONS);
@@ -980,9 +980,9 @@ console.log('扫描: ' + ENTRIES.length + ' 个 src/**/*.js，' + DOMAINS.length
     facadeWriteViolations([{ rel: 'app/facade/lan.js', src: strip('module.exports = { methods: {\n  lanFrpc(a, b) { this.lan.frpAction(a, b); }\n} };') }], {}).length === 1, 'hit');
 }
 
-// ── DG-15 顶层 require（DF-8；EXEC3 §1）──
+// -- DG-15 顶层 require（DF-8；EXEC3）--
 {
-  // ★ 显式白名单（逐文件、带上限），**绝不**放宽为「任意文件豁免」：
+  //  显式白名单（逐文件、带上限），**绝不**放宽为「任意文件豁免」：
   //   唯一例外 = src/supervisor.js 的 get lan() 惰性 require（daemon 模式结构性排除，
   //   relay 域经 app 层装配；源文件 42-44 行有同款注释）。max 限制其条数，
   //   防止该文件被悄悄塞入更多内联 require 而不被察觉。
@@ -1024,7 +1024,7 @@ console.log('扫描: ' + ENTRIES.length + ' 个 src/**/*.js，' + DOMAINS.length
     inlineTotal >= 1 && ENTRIES.length > 0, 'inlineTotal=' + inlineTotal + ' files=' + ENTRIES.length);
 }
 
-// ── DG-16 函数嵌套深度（DF-9；EXEC3 §1）──
+// -- DG-16 函数嵌套深度（DF-9；EXEC3）--
 {
   const FN_MAX = 6;
   const df9 = [];
@@ -1048,7 +1048,7 @@ console.log('扫描: ' + ENTRIES.length + ' 个 src/**/*.js，' + DOMAINS.length
     functionScan(strip('class A {\n  m() {\n    const p = new Promise((res) => {\n      res(() => {});\n    });\n    return p;\n  }\n}')).maxFn === 3, 'hit=3');
 }
 
-// ── 汇总 ──
+// -- 汇总 --
 console.log('\n结果: ' + passed.length + ' passed, ' + failedHard.length + ' failed(hard), ' + failedSoft.length + ' failed(soft/report-only)');
 if (failedSoft.length) {
   console.log('\nRED 清单（report-only，待域改造收敛；基线见 design-notes/EXEC-gates.md）:');

@@ -12,7 +12,7 @@ import { cn } from "../../framework/utils";
 
 function roleTone(role: string, owner?: string | null): "ok" | "boot" | "warn" | "off" {
   if (role === "dsh-main" || role === "supervisor-api") return "boot";
-  if ((owner || "").startsWith("inst:")) return "ok"; // owner 后端可为 null（ports.js owner:||null）→ 必须防空
+  if ((owner || "").startsWith("inst:")) return "ok"; // owner 后端可为 null（ports.js owner:||null）-> 必须防空
   if (role === "relay") return "warn";
   if (role.startsWith("managed:")) return "boot";
   return "off";
@@ -34,7 +34,7 @@ function roleLabel(r: PortRecord): string {
   if (m) return map[r.role] ?? m[1];
   return map[r.role] ?? r.role;
 }
-/** 归属标签化：不暴露账号/内部 id。反代(proxy)归属 → 供应商名；其余 → 语义类别。 */
+/** 归属标签化：不暴露账号/内部 id。反代(proxy)归属 -> 供应商名；其余 -> 语义类别。 */
 function resolveOwner(r: PortRecord, providers: RouterProvider[]): string {
   const o = r.owner || "";
   if (r.role === "proxyInstance") {
@@ -61,7 +61,7 @@ export function PortPanel({ providers = [] }: { providers?: RouterProvider[] }) 
   const raw = snap.ports?.records ?? null;
   const records = useMemo<PortRecord[] | null>(() => {
     if (!raw) return null;
-    // 过滤：supervisor-api 旧端口 3100 已废弃（当前 API 端口 36360 为新注册项）→ 不重复展示
+    // 过滤：supervisor-api 旧端口 3100 已废弃（当前 API 端口 36360 为新注册项）-> 不重复展示
     const vis = raw.filter((r) => !(r.role === "supervisor-api" && (r.port === 3100 || r.port === 3101)));
     // 排序：激活(监听中)在上，停用(未监听)在下；组内按端口号升序
     return [...vis].sort((a, b) => {

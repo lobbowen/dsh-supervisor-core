@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 'use strict';
 
-// 令牌边界回归（2026-09，docs/token-management.md）：
+// 令牌边界回归：
 //  - supervisor.listLan() 输出剔除 token/dshToken（/lan-access 允许 LAN 访问，防会话令牌泄漏）
 //  - InstanceManager.load 剔除历史遗留 dshToken 列（会话令牌不落盘）
 //  - /status 仅暴露 dshTokenCaptured 布尔
@@ -54,7 +54,7 @@ async function main() {
     check('listLan 保留结构字段', !!it && it.id === 'inst-x' && it.wanPort === 28213);
     check('listLan 剔除 remoteToken', !!it && !Object.prototype.hasOwnProperty.call(it, 'token'));
     check('listLan 剔除 dshToken', !!it && !Object.prototype.hasOwnProperty.call(it, 'dshToken'));
-    // 白名单（2026-09 扩展）：新增 frpEnabled/frpRemotePort/tokenSet —— 均为**非机密**
+    // 白名单：新增 frpEnabled/frpRemotePort/tokenSet —— 均为**非机密**
     //   （布尔与端口号；tokenSet 只表明「令牌已设」，绝不含明文），用于 UI 呈现公网暴露开关。
     //   机密字段（token/dshToken/remoteToken）仍被剔除（上方两条断言继续守护）。
     const ALLOWED = ['dshPort','enabled','frpEnabled','frpRemotePort','id','localPort','name','running','tokenSet','wanPort'].sort().join(',');
@@ -76,7 +76,7 @@ async function main() {
   {
     const sup = buildSupervisor();
     // daemon 门面：listLan 经 ctl 后 sanitize——以假 Promise 覆写 _lanCtlCall 验证
-    // 2026-09 结构单写后 daemon 门面由 lanDaemonEnabled() 判定（lanApi/API 方法均改判该）；测试 mock 对应
+    // 结构单写后 daemon 门面由 lanDaemonEnabled() 判定；测试 mock 对应
     sup.lanDaemonEnabled = () => true;
     sup._lanCtlCall = () => Promise.resolve({ items: [{ id: 'inst-y', dshPort: 3082, wanPort: 28214, dshToken: 'SECRET2' }], addresses: [] });
     const r = await sup.listLan();
@@ -97,9 +97,9 @@ async function main() {
     const sup = buildSupervisor();
     let pushed = null;
     const unsub = sup.tokenService.onChange((id, tok) => { pushed = { id, tok }; });
-    // 批 4 令牌条 3（TK-3）：attach 必须给可登记的分类（显式 kind；unit 留空以隔离 journal 档，
-    //   本用例只测 stdout 链路）——旧写法 {unit:null} 下 attach 实为静默失败，
-    //   捕获全靠 feedLine 的隐式源旁路（正是 TK-3 要封的洞）。
+    // attach 必须给可登记的分类（显式 kind；unit 留空以隔离 journal 档，
+    //   本用例只测 stdout 链路）。分类不可登记时 attach 静默失败，
+    //   捕获只能靠 feedLine 的隐式源旁路（正是 TK-3 要封的洞）。
     check('B4-3 attach(dsh-instance) 登记成功（前置）', sup.tokenService.attach('inst-z', { kind: 'dsh-instance', unit: null }) === true);
     sup.tokenService.feedLine('inst-z', 'dsh web: http://127.0.0.1:3081/?token=AbC123');
     check('feedLine 捕获成功', sup.tokenService.get('inst-z') === 'AbC123');
@@ -118,7 +118,7 @@ async function main() {
   console.log('== 令牌边界：clear() 必须同步清空 stdout 残留行（TK-1 死令牌回灌，AUDIT B-3）==');
   {
     const sup = buildSupervisor();
-    sup.tokenService.attach('inst-w', { kind: 'dsh-instance', unit: null }); // B4-3：合规分类登记（同上）
+    sup.tokenService.attach('inst-w', { kind: 'dsh-instance', unit: null }); // 合规分类登记（同上）
     sup.tokenService.feedLine('inst-w', 'dsh web: http://127.0.0.1:3081/?token=OLD999');
     check('清除前 capture 正常（前置状态）', sup.tokenService.get('inst-w') === 'OLD999');
     sup.tokenService.clear('inst-w');
@@ -134,7 +134,7 @@ async function main() {
   console.log('== 令牌边界：批4 条3 feedLine 未 attach 旁路封堵（TK-3）==');
   {
     const sup = buildSupervisor();
-    // 既未 attach、inferKind 又推不出（id 不在 byId、无 unit/file）→ feedLine 必须拒绝入池。
+    // 既未 attach、inferKind 又推不出（id 不在 byId、无 unit/file）-> feedLine 必须拒绝入池。
     const r = sup.tokenService.feedLine('ghost-id', 'dsh web: http://127.0.0.1:3081/?token=GHOST');
     check('B4-3 无法分类的未 attach 源：feedLine 不入池（get 为空）', r === null && sup.tokenService.get('ghost-id') === '', String(r) + '/' + sup.tokenService.get('ghost-id'));
   }

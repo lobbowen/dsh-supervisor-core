@@ -10,7 +10,7 @@
 const defaults = [
   {
     at: 'portPools',
-    // daemon 控制通道端口（router/lan 独立进程 ctl）：集中定义，杜绝散落硬编码（2026-09 端口收敛）。
+    // daemon 控制通道端口（router/lan 独立进程 ctl）：集中定义，杜绝散落硬编码。
     // 这两个值同时是 app/ctl/client.js 与两个 daemon 的兜底端口，不得单独改动
     //   （改动即需同步 8 处 43107/43108 兜底常量）。
     values: {

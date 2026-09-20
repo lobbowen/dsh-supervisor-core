@@ -1,18 +1,18 @@
 #!/usr/bin/env node
 'use strict';
 
-// ═══════════════════════════════════════════════════════════════════════════
-// shell 脚本可移植性门禁（2026-09-14）
+// ---------------------------------------------------------------------------
+// shell 脚本可移植性门禁
 
 // ## 起源：两个只在 mac/win 暴露、被跳过矩阵长期掩盖的缺陷
 
-//   **①  `$VAR` 紧跟非 ASCII 字符**（如 `$m（应为 600）`）：
-//     macOS 自带 **bash 3.2** 会把后续多字节字节并进变量名 →
+//   **1)  `$VAR` 紧跟非 ASCII 字符**（如 `$m（应为 600）`）：
+//     macOS 自带 **bash 3.2** 会把后续多字节字节并进变量名 ->
 //     `m: unbound variable` / `STORE: unbound variable` —— 脚本直接报错。
 //     修法：写成 `${m}（应为 600）`（花括号显式界定名字）。
-//   **②  把文件路径插进 JS 源码字符串**（如 `require('$INDEX')`）：
+//   **2)  把文件路径插进 JS 源码字符串**（如 `require('$INDEX')`）：
 //     Windows 路径含反斜杠，在 JS 单引号串里是**无效转义**（\U \A 被吃）
-//     → require 失败或路径错乱。修法：经 `export` + `process.env.X` 传参。
+//     -> require 失败或路径错乱。修法：经 `export` + `process.env.X` 传参。
 
 // ## 为什么需要本门禁
 //   上述两类缺陷在 **Linux/macOS 本地**都不报错（本地 bash 5 + 正斜杠路径），
@@ -24,7 +24,7 @@
 //   S-2  release/scripts/*.sh 的 node 片段不得把 shell 变量插进 JS 字符串字面量
 //   S-3  反向：判据能识别这两类违规（构造样本）
 //   S-4  反向：判据不误报合法写法（${VAR}、process.env.X、非 ASCII 前的普通文本）
-// ═══════════════════════════════════════════════════════════════════════════
+// ---------------------------------------------------------------------------
 
 const fs = require('node:fs');
 const path = require('node:path');
@@ -39,7 +39,7 @@ const check = (n, c, x) => {
 
 const files = fs.readdirSync(SCRIPTS).filter((f) => f.endsWith('.sh'));
 
-// ── S-1：$VAR 紧跟非 ASCII ──
+// -- S-1：$VAR 紧跟非 ASCII --
 // 判据：$ 后跟 名称字符，且紧接着是一个非 ASCII 字节（多字节 UTF-8 的首字节 >= 0x80）
 const UNSAFE_VAR = /\$[A-Za-z_][A-Za-z0-9_]*[^\x00-\x7F]/;
 {
@@ -56,9 +56,9 @@ const UNSAFE_VAR = /\$[A-Za-z_][A-Za-z0-9_]*[^\x00-\x7F]/;
     offenders.length === 0, offenders.length ? offenders.slice(0, 3).join(' | ') : files.length + ' 个脚本均合规');
 }
 
-// ── S-2：node 片段里的 JS 字符串插值 shell **路径**变量 ──
+// -- S-2：node 片段里的 JS 字符串插值 shell **路径**变量 --
 // 判据：require('$X') / ='$X' / ('$X' 形态，且变量名**属于路径类**。
-//   ⚠ 只查路径类：值/名字类（`$want` / `$name` / `$1`）插进 JS 是安全的 ——
+//    只查路径类：值/名字类（`$want` / `$name` / `$1`）插进 JS 是安全的 ——
 //     它们的取值不含反斜杠；把它们一并拦下属**误报**（首版即如此，会让人绕过门禁）。
 const PATHISH = /(?:PATH|INDEX|STORE|DIR|ROOT|FILE|HOME|NPMRC|CRED|SCRIPTS|REPO)/;
 const JS_INTERP = /(?:require\(|[=(,]\s*)'\$([A-Za-z_][A-Za-z0-9_]*)/;
@@ -80,7 +80,7 @@ const JS_INTERP = /(?:require\(|[=(,]\s*)'\$([A-Za-z_][A-Za-z0-9_]*)/;
     offenders.length === 0, offenders.length ? offenders.slice(0, 3).join(' | ') : '未发现');
 }
 
-// ── S-3 / S-4：反向 ──
+// -- S-3 / S-4：反向 --
 {
   check('S-3 反向：判据能识别 $m 紧跟全角括号', UNSAFE_VAR.test('echo "权限 $m' + String.fromCharCode(0xFF08) + '应为 600' + String.fromCharCode(0xFF09) + '"'), 'hit');
   check('S-3 反向：判据能识别 require(\'$INDEX\')', JS_INTERP.test("const j=require('$INDEX');"), 'hit');

@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 'use strict';
 
-// 上游 credits 余额不足 → 切换（2026-09 修复）回归：
+// 上游 credits 余额不足 -> 切换（20复）回归：
 //  - classifyUpstreamLimited：400/402/429/403 中 insufficient credits/billing/balance 识别为 'credits'（窗口词为 'window'，其余 'none'）
 //  - ProviderBase.markCreditsExhausted：冻结 + 周期重探（充值后自动恢复语义）
 //  - credits-low 账号被 isAccountUsable 排除（不参与挑选）
@@ -20,7 +20,7 @@ function check(name, cond, extra) {
 
 async function main() {
   console.log('== 上游限制分类 classifyUpstreamLimited ==');
-  // 实据（2026-09-04 核验，非臆测）：
+  // 实据：
   // - Command /alpha/generate 原始错误体：{"success":false,"error":{"code":"BAD_REQUEST","status":400,
   //   "message":"You have insufficient credits to make this request. Please purchase more credits…"}}
   // - commandcode-api-proxy 将其包为 OpenAI 信封 type:"proxy_error"，message="CC API 400: <raw>"，
@@ -145,7 +145,7 @@ async function main() {
     check('无 monthlyResetAt → applyDetection 保持 credits/poll', acc.limit && acc.limit.kind === 'credits' && acc.limit.recovery.type === 'poll', acc.limit);
   }
 
-  // ⚠ 2026-09-16 Phase 5（决策 A5）：取证子系统已整体删除（有产出无消费），
+  //  Phase 5（决策 A5）：取证子系统已整体删除（有产出无消费），
   //   本块随之从"验证证据内容"改为"验证**分类与动作**"——那才是 reactToFailure 的真实职责，
   //   且不依赖任何已删除的旁路（原断言的 evidence 内容已无意义）。
   console.log('== reactToFailure：上游 ≥400 的分类与动作（取证旁路已删除）==');
@@ -255,8 +255,8 @@ async function main() {
 
   console.log('== applyDetection 收敛修复（2026-09 二次）：过期 nextResetAt 采纳新精确值 / credits at 不降级）==');
   {
-    // Bug1: window 分支——既有 nextResetAt 已过期(01:58)但真实 resetsAt 在 6 天后 → 必须采纳新精确值，
-    // 否则永久卡过期值 → 每 5min 临近探测死循环
+    // Bug1: window 分支——既有 nextResetAt 已过期(01:58)但真实 resetsAt 在 6 天后 -> 必须采纳新精确值，
+    // 否则永久卡过期值 -> 每 5min 临近探测死循环
     const p = new ProviderBase({ id: 'tb1', name: 'TB1', kind: 'direct' });
     const realReset = Date.now() + 6 * 24 * 3600 * 1000;
     const acc = { key: 'kw-stale', keyId: 'kw-stale', status: 'frozen', maskedKey: '...kw-stale', quota: { rolling: { status: 'ok', percent: 10 }, weekly: { status: 'rate-limited', percent: 100, resetsAt: realReset }, monthly: null }, nextResetAt: Date.now() - 2 * 3600 * 1000, limit: { kind: 'window', since: Date.now() - 86400000, recovery: { type: 'at', at: Date.now() - 2 * 3600 * 1000 } } };
@@ -264,7 +264,7 @@ async function main() {
     check('过期 nextResetAt → 采纳真实 resetsAt（不再卡死）', acc.nextResetAt === realReset && acc.limit.recovery.at === realReset, JSON.stringify({ next: acc.nextResetAt, limitAt: acc.limit.recovery.at }));
   }
   {
-    // Bug2: credits 分支——单次探测未取到 monthlyResetAt（quota.monthlyResetAt=null）但既有 recovery.at 在未来 →
+    // Bug2: credits 分支——单次探测未取到 monthlyResetAt（quota.monthlyResetAt=null）但既有 recovery.at 在未来 ->
     // 保留 at，不降级 poll（否则每 5min 临近探测死循环）
     const p = new ProviderBase({ id: 'tb2', name: 'TB2', kind: 'direct' });
     const at = Date.now() + 20 * 24 * 3600 * 1000;

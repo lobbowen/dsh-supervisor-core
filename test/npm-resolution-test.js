@@ -1,28 +1,28 @@
 #!/usr/bin/env node
 'use strict';
 
-// ═══════════════════════════════════════════════════════════════════════════
+// ---------------------------------------------------------------------------
 // P1-C：npm 必须经**统一解析入口**，不得硬编码裸 'npm'
 //
 // ## 缺陷
 //
 // Windows 上 npm 的实际可执行是 `npm.cmd`；Node 的 `spawn`/`execFileSync` **不做 PATHEXT 解析**
 // （`.cmd`/`.bat` 必须由 cmd.exe 承载；自 CVE-2024-27980 起 Node 也不再隐式代跑 `.cmd`）
-// → 传裸 `'npm'` 一律 `ENOENT`。
+// -> 传裸 `'npm'` 一律 `ENOENT`。
 //
 // 旧实现在**三处**各自硬编码：
-//   · platform/distribution/index.js   let bin = 'npm'      （唯一安装执行器；步骤3 前为 domains/dist）
-//   · guard/native/manager.js      ex.runOut('npm', ...)    （版本/root 探测）
-//   · guard/native/manager.js      spawn('npm', ...)        （卸载）
+//   - platform/distribution/index.js   let bin = 'npm'      （唯一安装执行器；步骤3 前为 domains/dist）
+//   - guard/native/manager.js      ex.runOut('npm', ...)    （版本/root 探测）
+//   - guard/native/manager.js      spawn('npm', ...)        （卸载）
 // 后果：Windows 用户的「升级内核 / 安装 / 卸载 DSH」全部失败，错误只是含糊的 ENOENT。
-// 两仓对同一事实答案不一致：壳仓早有 `npm_exe() → npm.cmd`。
+// 两仓对同一事实答案不一致：壳仓早有 `npm_exe() -> npm.cmd`。
 //
 // ## 锁定不变量
 //   C-a  `npmBin()` 存在且：非 Windows 返回 'npm'，Windows 返回带扩展名的可执行
 //   C-b  解析结果是**绝对路径或带扩展名**（Windows）—— 不能是裸 'npm'
 //   C-c  源码里不得再出现裸 npm 调用（runOut('npm')/spawn('npm')/bin='npm'）
 //   C-d  模板路径（commandTemplate 首项为 'npm'）同样被解析
-// ═══════════════════════════════════════════════════════════════════════════
+// ---------------------------------------------------------------------------
 
 const path = require('node:path');
 const fs = require('node:fs');
@@ -35,14 +35,14 @@ const _asyncGates = [];
 
 const { npmBin } = require(path.join(ROOT, 'src', 'platform', 'os', 'exec-path.js'));
 
-// ── C-a：基础行为 ──
+// -- C-a：基础行为 --
 check('C-a npmBin 是函数', typeof npmBin === 'function', typeof npmBin);
 check("C-a 非 Windows 返回 'npm'", npmBin({ platform: 'linux' }) === 'npm', npmBin({ platform: 'linux' }));
 check("C-a darwin 返回 'npm'", npmBin({ platform: 'darwin' }) === 'npm', npmBin({ platform: 'darwin' }));
 
-// ── C-b：Windows 解析**逻辑**必须真的去找带扩展名的可执行 ──
+// -- C-b：Windows 解析**逻辑**必须真的去找带扩展名的可执行 --
 //
-// ⚠ 断言设计说明：在 Linux 上跑 `npmBin({platform:'win32'})` 仍会走本机 PATH，
+//  断言设计说明：在 Linux 上跑 `npmBin({platform:'win32'})` 仍会走本机 PATH，
 //   于是「返回绝对路径」这个条件会因**本机恰好有 npm** 而通过 —— 那是弱断言，
 //   无法证明 Windows 分支真的会补扩展名。故此处直接断言**候选名生成**（纯函数），
 //   它才是 Windows 解析的本质：必须先试 npm.cmd，而不是裸 npm。
@@ -59,7 +59,7 @@ const { candidateNames } = require(path.join(ROOT, 'src', 'platform', 'os', 'exe
   check('C-b Windows 结果非裸 npm', w !== 'npm', w);
 }
 
-// ── C-c：源码不得再有裸 npm 调用 ──
+// -- C-c：源码不得再有裸 npm 调用 --
 function walk(dir, out) {
   for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
     if (['node_modules', '.git'].includes(e.name)) continue;
@@ -78,7 +78,7 @@ for (const f of files) {
   lines.forEach((l, i) => {
     const s = l.trim();
     if (s.startsWith('//')) return; // 注释里的说明不算
-    // ⚠ P1-4 修复（2026-09-12）：原正则只匹配 'npm' —— **对 'npx' 是盲区**，
+    //  P复：原正则只匹配 'npm' —— **对 'npx' 是盲区**，
     //   于是反代路径的裸 `execFile('npx', ...)` 长期绕过本门禁，
     //   而它的问题是**完全相同**的（Windows 上 npx 也是 .cmd）。
     //   现同时覆盖两者。
@@ -89,7 +89,7 @@ for (const f of files) {
 }
 check('C-c 源码无裸 npm/npx 调用', bare.length === 0, bare.length ? bare.join(' | ') : '已全部经 npmBin()/npxBin()');
 
-// ── C-e：npx 与 npm 同构（P1-4）──
+// -- C-e：npx 与 npm 同构（P1-4）--
 const { npxBin } = require(path.join(ROOT, 'src', 'platform', 'os', 'exec-path.js'));
 check('C-e npxBin 是函数', typeof npxBin === 'function', typeof npxBin);
 check("C-e 非 Windows 返回 'npx'", npxBin({ platform: 'linux' }) === 'npx', npxBin({ platform: 'linux' }));
@@ -102,9 +102,9 @@ check("C-e 非 Windows 返回 'npx'", npxBin({ platform: 'linux' }) === 'npx', n
   check('C-e Windows 结果非裸 npx', w2 !== 'npx', w2);
 }
 
-// ── C-d：模板路径也解析 ──
+// -- C-d：模板路径也解析 --
 {
-  // ⚠ 2026-09-17（域结构第三轮）：distribution 已拆分，按目录聚合读取（安装执行器落在 install.js）。
+  //  （域结构第三轮）：distribution 已拆分，按目录聚合读取（安装执行器落在 install.js）。
   const distDir = path.join(ROOT, 'src', 'platform', 'distribution');
   const dist = fs.readdirSync(distDir).filter((f) => f.endsWith('.js')).sort().map((f) => fs.readFileSync(path.join(distDir, f), 'utf8')).join(String.fromCharCode(10));
   check('C-d commandTemplate 首项为 npm 时经统一 npm 解析（runtimeContract.npmBin(npmBin)）',
@@ -112,13 +112,13 @@ check("C-e 非 Windows 返回 'npx'", npxBin({ platform: 'linux' }) === 'npx', n
     '已接入');
 }
 
-// ── C-f：B11 —— 安装执行器入参白名单 + --ignore-scripts + 纯 origin 闸 ──
+// -- C-f：B11 —— 安装执行器入参白名单 + --ignore-scripts + 纯 origin 闸 --
 {
   const distDir = path.join(ROOT, 'src', 'platform', 'distribution');
   const dist = fs.readdirSync(distDir).filter((f) => f.endsWith('.js')).sort().map((f) => fs.readFileSync(path.join(distDir, f), 'utf8')).join(String.fromCharCode(10));
   check('C-f 默认 npm argv 带 --ignore-scripts（安装期不执行包内生命周期脚本）',
     /'--no-fund'\];[\s\S]{0,400}?push\('--ignore-scripts'\)/.test(dist), '有');
-  // E-4（批 4）：字符集白名单搬家到 platform/util/input 单源，本域只保留同名导出。
+  // 字符集白名单搬家到 platform/util/input 单源，本域只保留同名导出。
   //   旧判据钉「install.js 里有 `const PKG_NAME_RE = /…/` 字面量」——搬家后会静默 FAIL，
   //   而它真正要守的是「pkg 进 argv 前过白名单」。现判据 = 调用点问闸 + 尺子只有一把。
   const INPUT_JS = path.join(ROOT, 'src', 'platform', 'util', 'input.js');
@@ -172,7 +172,7 @@ check("C-e 非 Windows 返回 'npx'", npxBin({ platform: 'linux' }) === 'npx', n
       && require(path.join(ROOT, 'src', 'shared', 'version.js')).VERSION_RE.test('0.1.5-BETA.10'), 'ok');
 
   // B11 windows 例外（CI run17 实测回归）：BAD_ARGV_CHAR_RE 把 `\\` 一刀切禁用，
-  // 误杀 win32 盘符绝对路径（D:\a\...\test\fake-npm.js）→ windows 升级链确定性判红。
+  // 误杀 win32 盘符绝对路径（D:\a\...\test\fake-npm.js）-> windows 升级链确定性判红。
   // 纯静态判据 + 组合判据仿真（不 spawn）。逐例独立断言 + 判据值回显（run20 教训：
   // 多子句 && 串一条 check，CI 只能报条名不能报子句，等于没取证）。
   const gate = (s) => inst.BAD_ARGV_CHAR_RE.test(String(s)) && !inst.WIN_DRIVE_ABS_RE.test(String(s));
@@ -182,7 +182,7 @@ check("C-e 非 Windows 返回 'npx'", npxBin({ platform: 'linux' }) === 'npx', n
     ['D:\\', false],                          // 盘符根：形态合法，豁免
     ['D:\\a\\x\\y', false],                   // 连续分隔符：形态判据不做路径规范化，豁免
     ['D:/a/x/y', false],                      // 正斜杠无 `\\`：根本不触发禁用集
-    ['C:rel\\path', true],                    // 盘符相对（有 `\\` 非 `X:\` 绝对形态）：不豁免 → 拒（run21 实测定性：产品对、旧期望错）
+    ['C:rel\\path', true],                    // 盘符相对（有 `\\` 非 `X:\` 绝对形态）：不豁免 -> 拒（run21 实测定性：产品对、旧期望错）
     ['/tmp/fake.js', false],                  // posix 路径：不触发
     ['D:\\a\\x;y', true],                     // 盘符 + 命令链字符：拒
     ['D:\\a\\x y', true],                     // 盘符 + 空白：拒
@@ -197,7 +197,7 @@ check("C-e 非 Windows 返回 'npx'", npxBin({ platform: 'linux' }) === 'npx', n
   }
 }
 
-// ── 反向：解析结果确实可执行（本机验证，非 Windows 分支）──
+// -- 反向：解析结果确实可执行（本机验证，非 Windows 分支）--
 {
   const local = npmBin();
   check('反向：本机解析结果可用（非空字符串）', typeof local === 'string' && local.length > 0, local);

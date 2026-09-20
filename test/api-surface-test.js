@@ -3,9 +3,9 @@
 
 // API 契约面强制测试（P3 断点修复）：
 //   断言「源码中出现的每个路由」都在 src/api/contract.js 登记，且登记的每个路由都真实存在
-//   （双向一致）。新增路由若不登记 → 本测试失败；删除路由若不清理清单 → 也失败。
+//   （双向一致）。新增路由若不登记 -> 本测试失败；删除路由若不清理清单 -> 也失败。
 //
-// ⚠ 步骤 9（DIRECTORY-STRUCTURE-DESIGN §3）：路由实现已平移至 src/api/domains/，
+//  步骤 9（DIRECTORY-STRUCTURE-DESIGN）：路由实现已平移至 src/api/domains/，
 //   契约面元数据 surface.js 改名为 contract.js。本测试的扫描目录随之扩展为
 //   「api/ 顶层 + api/domains/」两处——只扫顶层会让 10 个域的路由**全部漏检**
 //   （双向一致退化为空转），那正是本门禁要防的失效模式。
@@ -20,8 +20,8 @@ const check = (n, c, x) => { results.push(!!c); console.log((c ? 'PASS' : 'FAIL'
 
 const { SURFACE, PREFIXES, CATEGORIES, summary } = require(path.join(API_DIR, 'contract'));
 
-// ── 从源码提取路由 ──
-// 范围：api/ 顶层（排除网关 index.js 与契约 contract.js 自身）∪ api/domains/*.js。
+// -- 从源码提取路由 --
+// 范围：api/ 顶层（排除网关 index.js 与契约 contract.js 自身）并 api/domains/*.js。
 //   其余顶层基础件（security/static/router-table/deps/identity）无路由定义，被扫到也无副作用。
 function extract() {
   const exact = new Map();   // path -> Set(file)

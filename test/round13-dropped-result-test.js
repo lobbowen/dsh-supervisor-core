@@ -1,29 +1,29 @@
 #!/usr/bin/env node
 'use strict';
 
-// ═══════════════════════════════════════════════════════════════════════════
-// 第十三轮续：两处「检查/应答存在但结果被丢弃」（2026-09-13）
+// ---------------------------------------------------------------------------
+// 第十三轮续：两处「检查/应答存在但结果被丢弃」
 //
 // ## 缺陷
 //
-// ① P1 self-update.js::sanityCheck —— **丢弃 exec.run 返回值** → 检查恒通过
-//    exec.run 的契约是「失败/超时返回 null」，而该行不检查返回值也不抛错 →
+// 1) P1 self-update.js::sanityCheck —— **丢弃 exec.run 返回值** -> 检查恒通过
+//    exec.run 的契约是「失败/超时返回 null」，而该行不检查返回值也不抛错 ->
 //    对任何语法损坏的 bin 都静默通过（注释却写「语法自检即冒烟」）。apply() 随后
-//    把 current 翻转到**语法错误**的版本并 prune 掉旧版本 → 守卫再也起不来且无回滚。
+//    把 current 翻转到**语法错误**的版本并 prune 掉旧版本 -> 守卫再也起不来且无回滚。
 //    生产调用点为零，只有 guard-update-test.js 覆盖，而它从未断言失败路径。
 //
-// ② P2 src/api/domains/router.js 多处 `.then((r)=>send(...))` **无 .catch** → ctl 拒绝时请求永久挂起
+// 2) P2 src/api/domains/router.js 多处 `.then((r)=>send(...))` **无 .catch** -> ctl 拒绝时请求永久挂起
 //    daemon 监督模式下 routerApi() 是 ctl 门面，超时/ECONNREFUSED 会 reject；
-//    这些链无 catch，api/index.js 的外层也接不住（那是另一条链）→
+//    这些链无 catch，api/index.js 的外层也接不住（那是另一条链）->
 //    unhandledRejection + **客户端永久挂起**（无超时的 curl/TUI）。同文件其它链都有 catch。
 //
 // ## 门禁
 //   A sanityCheck 的失败路径**行为级**可证伪（真实造损坏 bin）
 //   B router.js 的每个 `.then((r)=>send` 链都必须有 `.catch`
-//   C **行为级**：ctl 拒绝时 handle() 必须恰好应答一次且为 500（旧实现 0 次 → 挂起）
+//   C **行为级**：ctl 拒绝时 handle() 必须恰好应答一次且为 500（旧实现 0 次 -> 挂起）
 //   D 反向：`.catch` 必须挂在 **Promise 链尾**，不能误挂在 send() 调用上
 //     （我第一版脚本化补丁就犯了这个错：`send(...).catch(...)` 语义完全不同）
-// ═══════════════════════════════════════════════════════════════════════════
+// ---------------------------------------------------------------------------
 
 const fs = require('node:fs');
 const os = require('node:os');
@@ -39,7 +39,7 @@ const TMP = fs.mkdtempSync(path.join(os.tmpdir(), 'r13c-'));
 
 (async () => {
 
-  // ── B router.js 每个链都要有 catch ──
+  // -- B router.js 每个链都要有 catch --
   console.log('== B router.js 异步链必须有 catch ==');
   {
     const src = fs.readFileSync(path.join(ROOT, 'src', 'api', 'domains', 'router.js'), 'utf8');
@@ -62,12 +62,12 @@ const TMP = fs.mkdtempSync(path.join(os.tmpdir(), 'r13c-'));
     check('B 存在实际的 catch 响应（500）',
       /catch\(\(e\) => send\(500/.test(src), '有');
 
-    // ── D catch 必须在链尾，不能误挂在 send() 上 ──
+    // -- D catch 必须在链尾，不能误挂在 send() 上 --
     check('D 反向：无「send(...).catch(...)」错误形态（catch 必须挂 Promise 链尾）',
       !/send\(r\.ok \? 200 : 400, r\)\.catch/.test(src), '已修正');
   }
 
-  // ── C 行为级：ctl 拒绝 → 恰好应答一次 500 ──
+  // -- C 行为级：ctl 拒绝 -> 恰好应答一次 500 --
   console.log('== C 行为：ctl 拒绝必须应答而不是挂起 ==');
   {
     const api = require(path.join(ROOT, 'src', 'api', 'domains', 'router.js'));

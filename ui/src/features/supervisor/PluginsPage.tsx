@@ -79,7 +79,7 @@ function MarketRefresh() {
 function MarketTab() {
   const [index, setIndex] = useState<{ plugins: MarketPlugin[]; indexedAt?: string; sources?: Record<string, number> } | null>(null);
   const [kw, setKw] = useState("");
-  // U1：Radix Select 值域 —— "all" 哨兵 = 全部（裸 <select> 的 "" 语义迁移）
+  // Radix Select 值域 —— "all" 哨兵 = 全部（裸 <select> 的 "" 语义迁移）
   const [cat, setCat] = useState("all");
   const [src, setSrc] = useState("all");
   const [loaded, setLoaded] = useState(0);
@@ -235,7 +235,7 @@ function InstalledTab() {
   const [data, setData] = useState<{ inventoryReachable?: boolean; targets?: Array<{ id: string; name: string }>; thirdParty?: InstalledPlugin[] } | null>(null);
   const [filter, setFilter] = useState("all");
   const [selected, setSelected] = useState<Set<string>>(new Set());
-  const [updatable, setUpdatable] = useState<Map<string, string>>(new Map()); // name → 最新版
+  const [updatable, setUpdatable] = useState<Map<string, string>>(new Map()); // name -> 最新版
   const [checking, setChecking] = useState(false);
   const { busy, run } = useSupervisorAction();
 
@@ -278,7 +278,7 @@ function InstalledTab() {
     const names = selRows.filter((p) => updatable.has(p.name)).map((p) => p.name);
     if (!names.length) { toast.info("所选插件均无可用更新"); return; }
     setSelected(new Set());
-    // 更新后这些插件不再是待更新项 → 从 updatable 移除（按钮回归「检查更新」态）
+    // 更新后这些插件不再是待更新项 -> 从 updatable 移除（按钮回归「检查更新」态）
     setUpdatable((prev) => { const n = new Map(prev); for (const x of names) n.delete(x); return n; });
     await run("upd-sel", async () => {
       // A2 断点修复：收集 jobId 后**统一轮询到终态**（原先只提示「已提交」）
@@ -409,7 +409,7 @@ function InstalledTab() {
                         {p.description ? <span className="truncate text-xs leading-tight text-muted-foreground">{p.description}</span> : null}
                       </span>
                     </span>
-                    {/* 版本：有更新 → 徽标 */}
+                    {/* 版本：有更新 -> 徽标 */}
                     <span className="min-w-0">
                       {latest ? (
                         <span className="inline-flex flex-wrap items-center gap-1.5">

@@ -1,10 +1,10 @@
 #!/usr/bin/env node
 'use strict';
 
-// 发布链路标准化回归（2026-09-10）：
+// 发布链路标准化回归：
 //   R1 认证解析**单源**（_npm-auth.sh 被 publish-core / configure-credentials 共同 source）
 //   R2 「真实 home」解析不受沙箱 $HOME 覆盖影响（这是「同一台机器上 A 沙箱能发版、B 沙箱 ENEEDAUTH」的根因）
-//   R3 NPM_TOKEN → 临时 userconfig（0600、退出即删、env 精确恢复）
+//   R3 NPM_TOKEN -> 临时 userconfig（0600、退出即删、env 精确恢复）
 //   R4 规范位置（真实 home/.npmrc）可被命中
 //   R5 发布脚本**不得**执行 npm config set（回归：曾永久改开发机 registry + 明文写入 ~/.npmrc）
 //   R6 CI 矩阵覆盖四平台（构建/发布一律经 CI）
@@ -16,7 +16,7 @@ const os = require('node:os');
 const cp = require('node:child_process');
 const ROOT = path.join(__dirname, '..');
 const S = path.join(ROOT, 'release', 'scripts');
-// 工作流解析必须行尾归一化（Windows CRLF 事故根因，2026-09-11）
+// 工作流解析必须行尾归一化
 const { readWorkflow, stripComments, jobSection } = require(path.join(__dirname, '_workflow.js'));
 const results = [];
 const check = (n, c, x) => { results.push(!!c); console.log((c ? 'PASS' : 'FAIL') + ' ' + n + (x !== undefined ? '  <- ' + x : '')); };
@@ -28,7 +28,7 @@ function runBash(script, env) {
   return cp.execFileSync('bash', [f], { encoding: 'utf8', env: Object.assign({}, process.env, env || {}) });
 }
 
-// ── R1 单源 ──
+// -- R1 单源 --
 console.log('== R1 认证解析单源 ==');
 {
   const lib = path.join(S, '_npm-auth.sh');
@@ -39,7 +39,7 @@ console.log('== R1 认证解析单源 ==');
   }
 }
 
-// ── R2 真实 home 解析 ──
+// -- R2 真实 home 解析 --
 console.log('== R2 真实 home 不受沙箱 HOME 影响 ==');
 {
   const lib = path.join(S, '_npm-auth.sh');
@@ -51,7 +51,7 @@ console.log('== R2 真实 home 不受沙箱 HOME 影响 ==');
   check('R2-c DSH_REAL_HOME 可显式覆盖（测试/特殊部署）', runBash('source "' + lib + '"' + String.fromCharCode(10) + 'dsh_real_home', { DSH_REAL_HOME: '/tmp' }).trim() === '/tmp');
 }
 
-// ── R3 NPM_TOKEN 临时 userconfig ──
+// -- R3 NPM_TOKEN 临时 userconfig --
 console.log('== R3 NPM_TOKEN 临时 userconfig ==');
 {
   const lib = path.join(S, '_npm-auth.sh');
@@ -65,13 +65,13 @@ console.log('== R3 NPM_TOKEN 临时 userconfig ==');
     'NPM_TOKEN=secret-xyz dsh_npm_auth_setup >/dev/null',
     'echo "SRC=$(dsh_npm_auth_describe)"',
     'echo "FILE=$DSH_NPM_AUTH_TMP"',
-    // ⚠ stat 的权限格式在 GNU 与 BSD 上不同：Linux 用 `-c %a`，macOS 用 `-f %Lp`。
-    //   旧写法只有 GNU 版，导致该断言在 macOS CI 上恒为空 → 失败（实测 CI #16）。
+    //  stat 的权限格式在 GNU 与 BSD 上不同：Linux 用 `-c %a`，macOS 用 `-f %Lp`。
+    //   旧写法只有 GNU 版，导致该断言在 macOS CI 上恒为空 -> 失败（实测 CI #16）。
     'echo "PERM=$(stat -c %a "$DSH_NPM_AUTH_TMP" 2>/dev/null || stat -f %Lp "$DSH_NPM_AUTH_TMP" 2>/dev/null)"',
     'echo "HAS=$(grep -c secret-xyz "$DSH_NPM_AUTH_TMP")"',
-    // ⚠ 大小写必须同时设置：npm 把两者都映射为 userconfig，**小写优先**。
+    //  大小写必须同时设置：npm 把两者都映射为 userconfig，**小写优先**。
     //   CI 中 `npm run` 会注入 npm_config_userconfig=$HOME/.npmrc，若我们只设大写就会被它顶掉
-    //   → npm 去读无 token 的文件 → **ENEEDAUTH**（mac/win 发布长期失败的真正根因）。
+    //   -> npm 去读无 token 的文件 -> **ENEEDAUTH**（mac/win 发布长期失败的真正根因）。
     //   注意：以下三项必须在 cleanup **之前**采样。
     'echo "LOWER=${npm_config_userconfig:-unset}"',
     'echo "BOTH_SAME=$([ "${NPM_CONFIG_USERCONFIG:-x}" = "${npm_config_userconfig:-y}" ] && echo yes || echo no)"',
@@ -82,7 +82,7 @@ console.log('== R3 NPM_TOKEN 临时 userconfig ==');
   ].join(String.fromCharCode(10));
   const out = runBash(script);
   check('R3-a 命中 NPM_TOKEN 路径', /SRC=NPM_TOKEN/.test(out), (out.match(/^SRC=(.*)$/m) || [])[1]);
-  // ⚠ POSIX-only 断言：Windows 的 NTFS ACL 不映射到 POSIX 权限位，`chmod 600` 实为无操作，
+  //  POSIX-only 断言：Windows 的 NTFS ACL 不映射到 POSIX 权限位，`chmod 600` 实为无操作，
   //   stat 报 644 —— 原断言在 Windows CI 上恒失败（且这并非产品缺陷：该文件的保护在
   //   Windows 上依赖用户目录 ACL，而非 0600 位）。
   if (process.platform === 'win32') {
@@ -103,7 +103,7 @@ console.log('== R3 NPM_TOKEN 临时 userconfig ==');
     'pre=' + preLower + ' after=' + afterLower);
 }
 
-// ── R4 规范位置命中 ──
+// -- R4 规范位置命中 --
 console.log('== R4 规范位置（真实 home/.npmrc）命中 ==');
 {
   const lib = path.join(S, '_npm-auth.sh');
@@ -118,8 +118,8 @@ console.log('== R4 规范位置（真实 home/.npmrc）命中 ==');
   ].join(String.fromCharCode(10));
   const out = runBash(script, { DSH_REAL_HOME: fakeHome });
   check('R4-a 命中真实 home 规范文件', /HIT=真实 home/.test(out), (out.match(/^HIT=(.*)$/m) || [])[1]);
-  // ⚠ 分隔符归一化：`dsh_canonical_npmrc` 用 "$(dsh_real_home)/.npmrc" 拼路径（硬编码 '/'），
-  //   而 path.join 在 Windows 上产出 '\\' → 原断言在 Windows 上必失败（仅分隔符差异）。
+  //  分隔符归一化：`dsh_canonical_npmrc` 用 "$(dsh_real_home)/.npmrc" 拼路径（硬编码 '/'），
+  //   而 path.join 在 Windows 上产出 '\\' -> 原断言在 Windows 上必失败（仅分隔符差异）。
   const sepNorm = (s) => String(s).replace(/[\\/]+/g, '/');
   check('R4-b 指向该规范文件',
     sepNorm(out).includes(sepNorm('CFG=' + path.join(fakeHome, '.npmrc'))),
@@ -128,7 +128,7 @@ console.log('== R4 规范位置（真实 home/.npmrc）命中 ==');
   check('R4-c 无 token 时不误报成功', /HIT=none/.test(noneOut), (noneOut.match(/^HIT=(.*)$/m) || [])[1]);
 }
 
-// ── R5 不污染开发机 npm 配置 ──
+// -- R5 不污染开发机 npm 配置 --
 console.log('== R5 发布脚本不得执行 npm config set ==');
 {
   for (const f of ['ci-core.sh', 'publish-core.sh', 'configure-credentials.sh']) {
@@ -139,17 +139,17 @@ console.log('== R5 发布脚本不得执行 npm config set ==');
   }
 }
 
-// ── R6 CI 平台分工 ──
+// -- R6 CI 平台分工 --
 console.log('== R6 CI 发布矩阵覆盖四平台 ==');
 {
   // 经 _workflow.js 读取（**行尾归一化**）：Windows 检出为 CRLF，直接读会让下面 `\n` 锚定的
-  // 正则全部失配 → 取到空段 → 5 个断言失败（2026-09-11 真实 Windows CI 事故）。
+  // 正则全部失配 -> 取到空段 -> 5 个断言失败。
   const y = readWorkflow('build.yml');
   const code = stripComments(y);
-  // ⚠ 2026-09-13 决策反转（按明确要求）：**四平台全部由 CI 产出**。
+  //  决策反转（按明确要求）：**四平台全部由 CI 产出**。
   //   旧断言「发布矩阵不含 ubuntu」编码的是**私有仓省额度**的旧决策
-  //   （linux-x64 由本地发布）；内核仓已于 2026-09-13 转为公开、Actions 免额度，
-  //   该决策随之作废 → 本条断言**反转为**「矩阵必须覆盖全部四平台」，
+  //   （linux-x64 由本地发布）；内核仓已于 转为公开、Actions 免额度，
+  //   该决策随之作废 -> 本条断言**反转为**「矩阵必须覆盖全部四平台」，
   //   以免 CI 悄悄退化成少平台而无人察觉。
   //   仍按 job 名切分：precheck 与 release 使用 ubuntu 是正当的。
   // job 段提取改用 _workflow.js 的实现（行尾无关，已由门禁以 CRLF 夹具实测）。
@@ -157,7 +157,7 @@ console.log('== R6 CI 发布矩阵覆盖四平台 ==');
   const buildSection = jobSectionOf('build');
   const releaseSection = jobSectionOf('release');
   const precheckSection = jobSectionOf('precheck');
-  // R6-a（2026-09-13 反转）：发布矩阵必须**覆盖全部四个平台**。
+  // 发布矩阵必须**覆盖全部四个平台**。
   //   用 indexOf 而非正则，避免在门禁源码里引入转义脆弱性。
   const osList = buildSection.split('os:').slice(1).map(function (x) { return x.split('\n')[0].trim(); }).join(', ');
   check('R6-a 发布矩阵含 ubuntu（四平台全由 CI 产出）', buildSection.indexOf('os: ubuntu') >= 0, osList);
@@ -179,7 +179,7 @@ console.log('== R6 CI 发布矩阵覆盖四平台 ==');
   check('R6-g precheck 用 ubuntu', /runs-on:\s*ubuntu/.test(precheckSection), 'ok');
 }
 
-// ── R7 硬标准：构建与发布均经 GitHub CI（2026-09-13）──
+// -- R7 硬标准：构建与发布均经 GitHub CI--
 //
 //   旧 R7 断言 release-core.sh 的「非 Linux 拒绝真发布」平台闸 —— 那是**本地发布时代**的防护。
 //   硬标准落地后本地发布路径整体移除，该闸失去对象。现断言：本地不得存在全平台构建/发布路径。

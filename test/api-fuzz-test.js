@@ -1,6 +1,6 @@
 'use strict';
 
-// API 安全与健壮性模糊测试（阶段①验证门）：
+// API 安全与健壮性模糊测试（阶段1)验证门）：
 //  1. 伪造 Host/Origin 头不能提升身份（P0-1：token/敏感数据只按 socket 事实下发）
 //  2. 畸形百分号编码/畸形 JSON 不产生 5xx/崩溃（RC3：请求级错误在分派器兜底）
 //  3. 任意输入 30 连发后守卫存活（uncaughtException 3 连崩机制不被触发）
@@ -68,7 +68,7 @@ async function main() {
     r = await request(28020, 'POST', '/lifecycle/dsh/stop', { Origin: 'http://evil.example.com' });
     check('伪造 Origin 的写请求被拒 403', r.code === 403, String(r.code));
 
-    // 伪造"本机面板 Origin" + 伪造 Host：socket 层仍非回环 → 身份层不误判（写动作是否放行由
+    // 伪造"本机面板 Origin" + 伪造 Host：socket 层仍非回环 -> 身份层不误判（写动作是否放行由
     // 身份/CSRF 层叠决定；此处断言伪造头组合不产生 token 泄露即达成 P0-1 目标）
     r = await request(28020, 'GET', '/instances', { Host: '127.0.0.1:28020', Origin: 'http://127.0.0.1:28020' });
     check('Host+Origin 双伪造仍不泄露令牌', !r.body.includes('/?token='), r.body.slice(0, 160));

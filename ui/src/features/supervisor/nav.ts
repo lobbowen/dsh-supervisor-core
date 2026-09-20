@@ -35,7 +35,7 @@ export const SUP_PHASE_META: Record<string, { label: string; tone: Tone }> = {
   OBSERVED: { label: "运行中（未守护）", tone: "ok" },
 };
 
-/** 实例生命周期 → 文本 + tone */
+/** 实例生命周期 -> 文本 + tone */
 export function instancePhaseMeta(lp?: string, running?: boolean): { label: string; tone: Tone } {
   if (running) return { label: "运行中", tone: "ok" };
   if (lp === "INSTALLING") return { label: "安装中…", tone: "warn" };
@@ -61,7 +61,7 @@ export const TASK_STATE_META: Record<string, { label: string; tone: Tone }> = {
   canceled: { label: "已取消", tone: "off" },
 };
 
-/** 最近故障 → 友好中文（对齐 FAILURE_META；绝不暴露内部码） */
+/** 最近故障 -> 友好中文（对齐 FAILURE_META；绝不暴露内部码） */
 const FAILURE_META: Record<string, string> = {
   manual: "手动重启", start_timeout: "启动超时", child_exit: "进程退出", adopted_exit: "实例退出",
   main_down: "原生实例未运行", systemd_start_failed: "启动失败", spawn_error: "启动失败",
@@ -78,7 +78,7 @@ export function friendlyFailure(reason?: string | null): string {
   return "异常";
 }
 
-/** 事件类型 → 中文标签（对齐 EVENT_META label；noise 已在 hook 过滤） */
+/** 事件类型 -> 中文标签（对齐 EVENT_META label；noise 已在 hook 过滤） */
 export const EVENT_LABELS: Record<string, string> = {
   guard_started: "守卫启动", guard_exit: "守卫退出", desired_changed: "期望变更",
   spawn: "拉起", spawned: "已拉起", spawn_failed: "拉起失败", spawn_error: "拉起错误",

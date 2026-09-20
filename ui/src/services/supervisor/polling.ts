@@ -1,9 +1,9 @@
 /**
  * ============================================================================
- * supervisor 运行态轮询中心（对齐老 UI unifiedTick 语义：单源快照 → 视图只读）
+ * supervisor 运行态轮询中心（对齐老 UI unifiedTick 语义：单源快照 -> 视图只读）
  * ============================================================================
  * - start() 并行拉运行态 + 增量事件（after=seq），写入快照并发给订阅者；一轮结束后
- *   自排下一轮：链路健康时 2s，连续失败按 2s→4s→8s…退避（封顶 30s，UI 条 6）
+ *   自排下一轮：链路健康时 2s，连续失败按 2s->4s->8s…退避（封顶 30s，UI 条 6）
  * - 任意写操作后可 refresh()（立即同步一次）
  * - 纯 JS 事件订阅（set 通知），页面用 useSyncExternalStore 或 useEffect 消费
  * ============================================================================
@@ -91,7 +91,7 @@ async function syncAll() {
   if (busy) return;
   busy = true;
   try {
-    // B8：401 单独记账——真离线（连接失败/超时）与鉴权被拒是两种病，不能都渲染成「离线」。
+    // 401 单独记账——真离线（连接失败/超时）与鉴权被拒是两种病，不能都渲染成「离线」。
     let authHit = false;
     const onReadError = (e: unknown) => {
       if ((e as { status?: number } | null)?.status === 401) authHit = true;
@@ -107,7 +107,7 @@ async function syncAll() {
       supervisorApi.ports().catch(onReadError),
     ]);
     const online = !!status;
-    // UI 条 6：退避只看「运行态是否读到」——status 读到即认为链路健康，个别域读失败
+    // 退避只看「运行态是否读到」——status 读到即认为链路健康，个别域读失败
     // 由快照的 null 字段如实呈现，不该拖慢整条心跳。
     failStreak = online ? 0 : failStreak + 1;
     // R4 修复：心跳不再附带 /tasks —— snap.tasks 无消费者（TasksPage 自管本地 state + 手动刷新），
@@ -127,7 +127,7 @@ async function refreshEvents() {
   try {
     const r = await supervisorApi.events(snap.eventsSeq, 60);
     if (r.events && r.events.length) {
-      // 后端增量升序 → 新批次在前（老 UI 语义：数组头 = 最新）。
+      // 后端增量升序 -> 新批次在前（老 UI 语义：数组头 = 最新）。
       // 按 seq 去重兜底：即使 in-flight 曾交叠/后端游标回退，也不让同 seq 双插。
       const seen = new Set<number>();
       const merged: EventsPage["events"] = [];
@@ -165,7 +165,7 @@ export const supervisorStore = {
     // 卸载后彻底清场：事件保留（宿主重挂载时可续看），但复位运行态守卫标记
     epoch += 1; busy = false; eventsBusy = false; failStreak = 0;
   },
-  /** 任意写操作后立即同步一次（操作 → 同步 → 渲染）；不参与退避，始终即时 */
+  /** 任意写操作后立即同步一次（操作 -> 同步 -> 渲染）；不参与退避，始终即时 */
   refresh() {
     void refreshEvents();
     void syncAll();

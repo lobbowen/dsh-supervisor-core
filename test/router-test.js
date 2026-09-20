@@ -37,7 +37,7 @@ const check = (n, c, x) => { results.push(!!c); console.log((c ? 'PASS' : 'FAIL'
   check('持久化后供应商存在', !!dp2);
   check('账号状态保留', dp2.accounts.length === 2 && dp2.accounts[0].status === 'ready');
 
-  // 3b. 额度恢复时间归一化（2026-09 审计修复）：ISO resetsAt 不得被 Number()=NaN → 30d 兜底吞掉
+  // 3b. 额度恢复时间归一化：ISO resetsAt 不得被 Number()=NaN -> 30d 兜底吞掉
   const { normalizeResetTs } = require(path.join(ROOT, 'src', 'domains', 'router', 'providers', 'base'));
   const nISO = normalizeResetTs('2026-09-21T05:54:32.950Z');
   check('normalizeResetTs ISO → epoch 毫秒', nISO === 1789970072950, String(nISO));
@@ -48,14 +48,14 @@ const check = (n, c, x) => { results.push(!!c); console.log((c ? 'PASS' : 'FAIL'
   const nr = dp2._nextResetAt(fullAcc.quota);
   check('_nextResetAt 精确解析 ISO → 不落 30d 兜底', nr.precise === true && nr.t === 1789970072950, JSON.stringify(nr));
 
-  // 3c. 锁定/在用派生统一（2026-09 审计修复）：activeAccount 在用而无手动锁定时列表 selected 仍亮
+  // 3c. 锁定/在用派生统一：activeAccount 在用而无手动锁定时列表 selected 仍亮
   dp2.activeAccount = dp2.accounts[0]; // 模拟自动在用（未手动锁）
   dp2.selectedAccountKeyId = null;
   const view2 = svc2.listProviders().find((p) => p.id === r1.id);
   const rowSel = view2.accounts.find((a) => a.keyId === 'k1');
   check('未锁定时 activeAccount 在用 → 行 selected=true（列表亮当前账号）', rowSel && rowSel.selected === true, JSON.stringify(rowSel && rowSel.selected));
   check('未锁定时 view.locked=false + activeKeyId=k1', view2.locked === false && view2.activeKeyId === 'k1', JSON.stringify({ locked: view2.locked, activeKeyId: view2.activeKeyId }));
-  // 显式锁定（2026-09 A 语义）：只可锁定可用账号——k1 可用 → 持久化 + locked=true
+  // 显式锁定：只可锁定可用账号——k1 可用 -> 持久化 + locked=true
   dp2.selectedAccountKeyId = 'k1';
   svc2._save();
   const svc3 = new RouterService({ config: {}, providerFile, portsFile: path.join(TMP, 'ports-router.json'), logger: { info(){}, warn(){}, error(){} }, events: null });
@@ -67,7 +67,7 @@ const check = (n, c, x) => { results.push(!!c); console.log((c ? 'PASS' : 'FAIL'
   const view3 = svc3.listProviders().find((p) => p.id === r1.id);
   const k1row = view3.accounts.find((a) => a.keyId === 'k1');
   const k2row = view3.accounts.find((a) => a.keyId === 'k2');
-  // 锁收敛（2026-09 A）：锁只对可用账号有意义——锁定可用账号(k1) locked+selected；满额冻结账号(k2) 无锁不亮
+  // 锁收敛：锁只对可用账号有意义——锁定可用账号(k1) locked+selected；满额冻结账号(k2) 无锁不亮
   check('锁收敛：锁定可用账号(k1) locked=true 且高亮', k1row && k1row.locked === true && k1row.selected === true, JSON.stringify({ locked: k1row && k1row.locked, selected: k1row && k1row.selected }));
   check('锁收敛：满额冻结账号(k2) 无锁不亮', k2row && k2row.locked === false && k2row.selected === false && view3.activeKeyId === 'k1', JSON.stringify({ l: k2row && k2row.locked, s: k2row && k2row.selected, activeKeyId: view3.activeKeyId }));
 
@@ -78,15 +78,15 @@ const check = (n, c, x) => { results.push(!!c); console.log((c ? 'PASS' : 'FAIL'
   check('一账号一实例：重复 ensure 返回同一实例', i1 === i2);
   check('实例列表只有一条', pp.instances.length === 1, 'len=' + pp.instances.length);
 
-  // 5. 实例四态词表（PROVIDER-GATEWAY-ARCHITECTURE §4.1 / PG-3）
-  //   ⚠ 实例级 freeze/unfreeze 已删除：它们是未接线的死代码，且"冻结"是**账号级**语义
+  // 5. 实例四态词表（PROVIDER-GATEWAY-ARCHITECTURE）
+  //    实例级 freeze/unfreeze 已删除：它们是未接线的死代码，且"冻结"是**账号级**语义
   //     （实例级只有 COLD/WARM/HOT/DEAD）。此处改验四态判定本身。
   check('实例态为四态词表之一', ['COLD', 'WARM', 'HOT', 'DEAD'].includes(i1.status), i1.status);
   check('无进程 → isServable=false', i1.isServable() === false, String(i1.isServable()));
   const insts = require(path.join(ROOT, 'src', 'domains', 'router', 'model'));
   check('四态常量已导出且唯一', Object.keys(insts.INSTANCE_STATES).length === 4, Object.keys(insts.INSTANCE_STATES).join(','));
 
-  // 6. B19（AUDIT-2026-09-19）：用量账本 byModel 键上限/截断 + 节流落盘 + flush。
+  // 6. B19：用量账本 byModel 键上限/截断 + 节流落盘 + flush。
   {
     const { UsageLedger } = require(path.join(ROOT, 'src', 'domains', 'router', 'store', 'usage'));
     const mkEntry = (model) => ({ ts: '', model, key: 'sk-x', promptTokens: 1, completionTokens: 1, totalTokens: 2, status: 200 });
@@ -100,7 +100,7 @@ const check = (n, c, x) => { results.push(!!c); console.log((c ? 'PASS' : 'FAIL'
       l.recordUsage(mkEntry('')); l.recordUsage(mkEntry(null));
       const ks = Object.keys(l.totals.byModel); return ks.length === 1 && ks[0] === 'unknown';
     })(), 'ok');
-    // 6b 上限：maxModelKeys=3 → 至多 3 个真实键 + 1 个 '(other)'，溢出并入 other。
+    // 6b 上限：maxModelKeys=3 -> 至多 3 个真实键 + 1 个 '(other)'，溢出并入 other。
     const ledC = new UsageLedger({ file: path.join(TMP, 'usage-c.json'), writeDelayMs: 0, maxModelKeys: 3 });
     for (const m of ['a', 'b', 'c', 'd', 'e', 'f']) ledC.recordUsage(mkEntry(m));
     const byC = ledC.totals.byModel;
@@ -110,8 +110,8 @@ const check = (n, c, x) => { results.push(!!c); console.log((c ? 'PASS' : 'FAIL'
     const ledR = new UsageLedger({ file: path.join(TMP, 'usage-r.json'), writeDelayMs: 0, maxModelKeys: 100 });
     for (const m of ['a', 'b', 'c', 'd', 'e', 'f']) ledR.recordUsage(mkEntry(m));
     check('B19 反向：宽上限下 6 个 model 各自建桶', Object.keys(ledR.totals.byModel).length === 6 && !ledR.totals.byModel['(other)'], JSON.stringify(Object.keys(ledR.totals.byModel)));
-    // 6b2 E-4（批 4）：model 名是**客户端 body 可控**的对象键。旧 _modelKey 只做截断，
-    //   `model:"__proto__"` 会让 byModel 的 [[Prototype]] 被赋值 → 桶从聚合视图/落盘里消失，
+    // 6b2 E-4：model 名是**客户端 body 可控**的对象键。旧 _modelKey 只做截断，
+    //   `model:"__proto__"` 会让 byModel 的 [[Prototype]] 被赋值 -> 桶从聚合视图/落盘里消失，
     //   且后续任意键的属性查找走原型链（静默错账）。现：违规键折进 (other)，计数不丢。
     const ledP = new UsageLedger({ file: path.join(TMP, 'usage-p.json'), writeDelayMs: 0, maxModelKeys: 100 });
     ledP.recordUsage(mkEntry('__proto__'));
@@ -132,7 +132,7 @@ const check = (n, c, x) => { results.push(!!c); console.log((c ? 'PASS' : 'FAIL'
     const naive = {}; naive['__proto__'] = { requests: 5 };
     check('E-4 反向：旧形态（裸 byModel[key]=…）确实改写原型',
       Object.getPrototypeOf(naive) !== Object.prototype && naive.requests === 5, '原型已被改写=判据非空转');
-    // 6c 节流落盘：writeDelayMs 很大 → recordUsage 不同步落盘；flush() 才落。
+    // 6c 节流落盘：writeDelayMs 很大 -> recordUsage 不同步落盘；flush() 才落。
     const fThrottle = path.join(TMP, 'usage-throttle.json');
     try { fs.rmSync(fThrottle, { force: true }); } catch {}
     const ledTh = new UsageLedger({ file: fThrottle, writeDelayMs: 600000 });
@@ -150,7 +150,7 @@ const check = (n, c, x) => { results.push(!!c); console.log((c ? 'PASS' : 'FAIL'
     check('B19 落盘仍过 canPersist 单闸（false 时不落盘）', !fs.existsSync(fGate), 'exists=' + fs.existsSync(fGate));
   }
 
-  // 7. B20（AUDIT-2026-09-19）：延后停止的有界期限——到期 force 落 kill，不再无限续命。
+  // 7. B20：延后停止的有界期限——到期 force 落 kill，不再无限续命。
   //    纯逻辑（instance.pid=null，不触发真实 kill）。
   {
     const life = require(path.join(ROOT, 'src', 'domains', 'router', 'providers', 'instance-lifecycle'));
@@ -171,7 +171,7 @@ const check = (n, c, x) => { results.push(!!c); console.log((c ? 'PASS' : 'FAIL'
     // 反向（防空转）：再次 stop（仍在期限内）仍延后——证明是「到期」才放行，非首拍即放行。
     life.stopInstance(a.p, a.inst);
     check('B20 反向：未到期重复 stop 仍延后', a.acc._stopPendingUntilIdle === true, String(a.acc._stopPendingUntilIdle));
-    // 越界：把起始时刻拨到期限之后 -> stop 不再延后，落 kill 分支（pid=null → 置 COLD）并清标记。
+    // 越界：把起始时刻拨到期限之后 -> stop 不再延后，落 kill 分支（pid=null -> 置 COLD）并清标记。
     const b = mkCase();
     life.stopInstance(b.p, b.inst); // 先置 since
     b.acc._stopPendingSince = Date.now() - (6 * 60 * 1000); // 超过 5min 期限

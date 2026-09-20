@@ -1,6 +1,6 @@
 /**
  * 远程控制（supervisor lan + frp）
- * - 每个实例行：远程控制开关（联动：实例运行中 ∧ remoteEnabled ∧ relay 监听）
+ * - 每个实例行：远程控制开关（联动：实例运行中 且 remoteEnabled 且 relay 监听）
  * - FRP 公网访问卡：状态 + 配置 + 安装/保存
  */
 import { useEffect, useState } from "react";
@@ -36,7 +36,7 @@ export function LanPage() {
   const [loaded, setLoaded] = useState(false);
   // 公网暴露：远端端口草稿（按实例 id）；未编辑时回显后端 frpRemotePort
   const [portDraft, setPortDraft] = useState<Record<string, string>>({});
-  // B28（AUDIT-2026-09-19）：高危「开启」动作统一二次确认 Dialog；令牌录入用脱敏输入框。
+  // 高危「开启」动作统一二次确认 Dialog；令牌录入用脱敏输入框。
   const [tokenFor, setTokenFor] = useState<{ id: string; name?: string; domain?: string } | null>(null);
   const [tokenInput, setTokenInput] = useState("");
   const [pendingOn, setPendingOn] = useState<{ title: string; desc: string; act: () => void } | null>(null);
@@ -44,7 +44,7 @@ export function LanPage() {
     if (!frp || loaded) return;
     setFrpAddr(frp.settings.serverAddr || "");
     setFrpPort(String(frp.settings.serverPort || 7000));
-    // B7：/lan/frp 不再回显 authToken（仅 authTokenSet 布尔）——不回填、不显示；
+    // /lan/frp 不再回显 authToken（仅 authTokenSet 布尔）——不回填、不显示；
     // 输入框留空 = 提交体省略 authToken 字段 = 服务端保留现值，填入新值 = 轮换。
     setLoaded(true);
   }, [frp, loaded]);
@@ -59,7 +59,7 @@ export function LanPage() {
     return p;
   }
 
-  // FRP 总闸（修复：此前 UI 从不提交 enabled → 后端 syncFromInstances 永远 stop → frpc 不运行）
+  // FRP 总闸（修复：此前 UI 从不提交 enabled -> 后端 syncFromInstances 永远 stop -> frpc 不运行）
   async function setFrpEnabled(v: boolean) {
     await run("frp-en", () => supervisorApi.frpSettings(frpPayload(v)),
       { success: v ? "已启用公网访问（frpc 将按已暴露实例启动）" : "已停用公网访问" });
@@ -83,7 +83,7 @@ export function LanPage() {
     if (!it) return;
     const v = tokenInput.trim();
     if (!v) { toast.error("令牌不能为空"); return; }
-    // C-3（批 4）：与守卫写入口同规（remoteToken ≥8 位），先行提示避免提交后才见服务端拒因
+    // 与守卫写入口同规（remoteToken >=8 位），先行提示避免提交后才见服务端拒因
     if (v.length < 8) { toast.error("远程访问令牌至少 8 位（公网暴露可被暴力枚举）"); return; }
     setTokenFor(null);
     // 公网暴露的安全前置；写入走 /native/settings 或 /instances/update。
@@ -127,8 +127,8 @@ export function LanPage() {
             const relayRunning = Boolean(proxy?.running);
             const proxyEnabled = Boolean(proxy?.enabled);
             const url = running && proxyEnabled && relayRunning && addr ? ("http://" + addr + ":" + proxy?.wanPort + "/") : null;
-            // 远程可用性单一标签（2026-09 简化）：只显示「远程就绪 / 远程停止」——
-            // 语义 = 实例运行 ∧ 代理启用 ∧ relay 监听 ∧ cookie 就绪 才算「就绪」，否则一律「停止」。
+            // 远程可用性单一标签：只显示「远程就绪 / 远程停止」——
+            // 语义 = 实例运行 且 代理启用 且 relay 监听 且 cookie 就绪 才算「就绪」，否则一律「停止」。
             // 不再分开展示 实例运行中/已停止、代理停止/未就绪/未启用、正在注入/令牌缺失 等多标签。
             const inj = relayRunning ? proxy?.inject : null;
             const remoteReady = Boolean(running && proxyEnabled && relayRunning && inj?.cookieReady);
@@ -186,8 +186,8 @@ export function LanPage() {
                       }}
                     />
                   </div>
-                  {/* 公网暴露（FRP）：驱动后端 /lan/frp/expose。此前**无任何 UI 入口** →
-                      buildConfig 永远 count=0 → frpc 不运行（本次修复的核心）。 */}
+                  {/* 公网暴露（FRP）：驱动后端 /lan/frp/expose。此前**无任何 UI 入口** ->
+                      buildConfig 永远 count=0 -> frpc 不运行（本次修复的核心）。 */}
                   <div className={cn("flex items-center gap-2", (!running || !it.remoteEnabled) && "opacity-50")}>
                     {/* 访问令牌（公网暴露安全前置；后端仅回传 tokenSet 布尔，不泄明文） */}
                     <Button

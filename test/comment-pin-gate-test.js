@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 'use strict';
 
-// ══════════════════════════════════════════════════════════════════════════
+// --------------------------------------------------------------------------
 // 注释钉子门禁（comment-pin，P3-B）
 //
 // ## 解决的问题（本仓已两次因此 CI 转红）
@@ -20,19 +20,19 @@
 //        不具区分度的小模式不参与判定；词法器不因未闭合注释/字符串而崩
 //   CP-3 非空转：抽取函数在**给定合成输入**上产出预期，不依赖真实数据总量
 //        （DG-12 教训：用真实总量做非空转判据，数据一缩就自锁）
-//   CP-4 已登记的真钉子（P2 §7.1 的 5 条）显式豁免；未登记的命中即判据失败
+//   CP-4 已登记的真钉子（P2 的 5 条）显式豁免；未登记的命中即判据失败
 //
 // ## 模式与诚实边界
-//   · 实盘判据默认 report-only（环境变量 CP_STRICT=1 转硬失败）。理由：「P 在运行时是否
+//   - 实盘判据默认 report-only（环境变量 CP_STRICT=1 转硬失败）。理由：「P 在运行时是否
 //     真的作用于 F」无法纯静态证明（测试可能引用多个文件而只对其中一个施加 P），
 //     故存在跨文件误报的可能；先报告、人工确认后再转硬。**假绿门禁比没有更坏**，
 //     故这里不假装它是硬的。
-//   · 反向自检**永远硬失败**（本文件自行决定退出码，不依赖 CP_STRICT）。
-//   · 覆盖面限于「内联正则字面量 + 具区分度（≥4 汉字 或 ≥6 字符 ASCII）」这一可静态提取子集。
+//   - 反向自检**永远硬失败**（本文件自行决定退出码，不依赖 CP_STRICT）。
+//   - 覆盖面限于「内联正则字面量 + 具区分度（>=4 汉字 或 >=6 字符 ASCII）」这一可静态提取子集。
 //     已知盲区（不在覆盖面内，见 design-notes/_p3-b-gates.md）：
 //       动态构造 new RegExp(A + B)、字符串 includes()/indexOf() 断言注释、
 //       以变量中转的正则常量、以及 P 只作用于 F 之一而 F 有二义的多目标场景。
-// ═══════════════════════════════════════════════════════════════════════════
+// ---------------------------------------------------------------------------
 
 const fs = require('node:fs');
 const path = require('node:path');
@@ -57,15 +57,15 @@ function record(name, ok, evidence, hard) {
 const judge = (n, c, e) => record(n, !!c, e, STRICT);
 const selfcheck = (n, c, e) => record(n, !!c, e, true);
 
-// ── 词法地基：走 `test/_strip.js` 的**单一字符级词法**（阶段六统一）──
+// -- 词法地基：走 `test/_strip.js` 的**单一字符级词法**（阶段六统一）--
 //   原先此处自持一份 scanText。现统一由 _strip.js 提供，避免 test/ 下并存多份注释剥离实现 ——
 //   本仓已三次因「正则剥注释」不准：CP 的 distinctive 阈值滤掉 2/5 登记钉子 / U-1b 的顺序错误 /
 //   阶段五 4 道门禁「先块后行」把行注释里的 glob 当块开符而吞掉代码（实测吞 174/80/47/29/17 行）。
 //   语义与原实现完全一致：字符串字面量原样保留（故断言命中字符串不算钉注释）；块注释以换行占位
 //   保行结构；正则与除号按「前一个有意义字符」启发式区分（标准做法）。
 
-/** 具区分度：≥4 个连续汉字，或 ≥6 字符的 ASCII 标识符。小模式不参与判定（防泛匹配噪音）。
- *  ★ 但**包含任一已登记钉子特征串**的模式必须始终参与判定 —— 否则登记表会静默失覆盖：
+/** 具区分度：>=4 个连续汉字，或 >=6 字符的 ASCII 标识符。小模式不参与判定（防泛匹配噪音）。
+ *   但**包含任一已登记钉子特征串**的模式必须始终参与判定 —— 否则登记表会静默失覆盖：
  *  实测「不再是 SEA」（SEA 仅 3 字符）与「所有者[^\n]{0,12}桌面壳」（桌面壳仅 3 字）都被
  *  基础阈值滤掉，导致 CP-4 的 5 条登记里有 2 条永不生效（本门禁首版即有此缺陷）。
  *  注意：此处引用 REGISTERED 是安全的 —— distinctive 只在 CP-2 之后被调用，那时常量已初始化。 */
@@ -73,12 +73,12 @@ function distinctive(body) {
   return /[\u4e00-\u9fff]{4,}/.test(body) || /[A-Za-z_][A-Za-z0-9_]{5,}/.test(body)
     || REGISTERED.some((p) => String(body).indexOf(p.needle) >= 0);
 }
-/** 高置信子集的更严阈值（≥6 连续汉字 或 ≥10 字符 ASCII）；配合「单目标测试」用于 CP-5。 */
+/** 高置信子集的更严阈值（>=6 连续汉字 或 >=10 字符 ASCII）；配合「单目标测试」用于 CP-5。 */
 function strictDistinctive(body) {
   return /[\u4e00-\u9fff]{6,}/.test(body) || /[A-Za-z_][A-Za-z0-9_]{9,}/.test(body);
 }
 
-// ── 从测试源码静态提取它引用的 src/ 目标 ──
+// -- 从测试源码静态提取它引用的 src/ 目标 --
 function extractSrcRefs(testSrc) {
   const refs = new Set();
   for (const m of String(testSrc || '').matchAll(/['"]((?:src\/)[A-Za-z0-9_./-]+)['"]/g)) refs.add(m[1]);
@@ -112,7 +112,7 @@ function expandTargets(refs) {
   return out;
 }
 
-// ── 判据本体（纯函数）：只吃 {rel, raw}，故合成样本与实盘共用同一路径 ──
+// -- 判据本体（纯函数）：只吃 {rel, raw}，故合成样本与实盘共用同一路径 --
 function commentPins(testName, testSrc, targets) {
   const lit = scanText(testSrc).regexes;
   const pats = [];
@@ -140,7 +140,7 @@ function commentPins(testName, testSrc, targets) {
   return uniq;
 }
 
-// ── CP-4：已登记的真钉子（P2 §7.1 五条；命中即豁免，不参与 CP-1）──
+// -- CP-4：已登记的真钉子（P2 五条；命中即豁免，不参与 CP-1）--
 const REGISTERED = [
   { src: 'src/platform/service/config.js', needle: '最小兜底', test: 'package-root-test.js' },
   { src: 'src/app/control/entry.js', needle: '静默丢弃', test: 'phase-vocabulary-test.js' },
@@ -150,7 +150,7 @@ const REGISTERED = [
 ];
 function isRegistered(f) { return REGISTERED.some((p) => f.src === p.src && f.pattern.indexOf(p.needle) >= 0); }
 
-// ─ CP-2 / CP-3：合成样本反向自检（永远硬失败）──
+// - CP-2 / CP-3：合成样本反向自检（永远硬失败）--
 console.log('== CP-2/CP-3 合成样本自检（门禁自身完整性）==');
 {
   const T = "check('x', /探测失败不阻断创建/.test(code));";
@@ -200,7 +200,7 @@ console.log('== CP-2/CP-3 合成样本自检（门禁自身完整性）==');
     commentPins('syn-test.js', '', []).length === 0 && commentPins('syn-test.js', T, at('src/syn.js', '')).length === 0, 'ok');
 }
 
-// ─ CP-1：实盘扫描（默认 report-only；CP_STRICT=1 硬失败）──
+// - CP-1：实盘扫描（默认 report-only；CP_STRICT=1 硬失败）--
 console.log('\n== CP-1 实盘扫描 ==');
 {
   // 自身排除：本文件含用于自检的正则字面量，自指扫描无意义（显式登记，非静默跳过）
@@ -234,7 +234,7 @@ console.log('\n== CP-1 实盘扫描 ==');
   if (unreg.length > 12) console.log('  · ...(其余 ' + (unreg.length - 12) + ' 条见报告)');
   // CP-4 复活检查（**硬自检**）：登记表的 5 条必须仍能在实盘被找到。
   //   若全部失配而只作 console.log，豁免表就静默失效（门禁不再豁免任何东西，也无人知道）——
-  //   故这里升级为硬失败。失配通常是「注释/断言被有意变更」→ 请在同一次改动里更新 REGISTERED。
+  //   故这里升级为硬失败。失配通常是「注释/断言被有意变更」-> 请在同一次改动里更新 REGISTERED。
   const missingReg = REGISTERED.filter((p) => !reg.some((f) => f.src === p.src && f.pattern.indexOf(p.needle) >= 0));
   selfcheck('CP-4 登记表 5 条真钉子仍在位（防豁免表静默腐化）',
     missingReg.length === 0,
@@ -243,7 +243,7 @@ console.log('\n== CP-1 实盘扫描 ==');
       : (reg.length + '/' + REGISTERED.length + ' 在位：' + reg.map((f) => f.test).join(', ')));
 
   // CP-5 高置信子集（主控要求评估「能否硬执行」）：
-  //   定义 = 「该测试静态引用的 src 目标**恰好 1 个**」且「模式更严（≥6 连续汉字 或 ≥10 字符 ASCII）」。
+  //   定义 = 「该测试静态引用的 src 目标**恰好 1 个**」且「模式更严（>=6 连续汉字 或 >=10 字符 ASCII）」。
   //   这类几乎没有跨文件二义空间，故误报率应远低于 CP-1 全量。
   //   **已实测**（用本文件自身的函数在当前树上跑，非门禁本体）：
   //     tests=136 / 含 src 引用=102 / 目标文件=1380 / 具区分度正则=633；
@@ -263,7 +263,7 @@ console.log('\n== CP-1 实盘扫描 ==');
     unreg.slice(0, 6).map((f) => f.test + ' -> ' + f.src + ' :: ' + f.pattern).join(' | ') || 'ok');
 }
 
-// ─ 退出码：自检永远硬失败；实盘判据仅 CP_STRICT=1 时参与 ──
+// - 退出码：自检永远硬失败；实盘判据仅 CP_STRICT=1 时参与 --
 // 注意：本文件**不**沿用 domain-structure-gate 的 if (!STRICT) exit(0)（那会让自检也失效）。
 console.log('\n结果: ' + passed.length + ' passed, ' + failedHard.length + ' failed(hard), ' + failedSoft.length + ' failed(soft/report-only)');
 if (failedHard.length) {

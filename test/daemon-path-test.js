@@ -1,11 +1,11 @@
 #!/usr/bin/env node
 'use strict';
 
-// ═══════════════════════════════════════════════════════════════════════════
-// 受管 daemon 路径回归（K1，2026-09-11）
+// ---------------------------------------------------------------------------
+// 受管 daemon 路径回归
 //
-// 生产级缺陷：§7.6 拆分后路径推导未更新 → `_daemonLifecycle()` 恒返回 null
-// → **守卫永远无法自起 router/lan daemon**。
+// 生产级缺陷：拆分后路径推导未更新 -> `_daemonLifecycle()` 恒返回 null
+// -> **守卫永远无法自起 router/lan daemon**。
 //
 // 本测试直接调用 **真实的原型方法**（而非重新实现一遍路径逻辑）：
 // 既有测试的问题正是「直接 new DaemonLifecycle / 自行 spawn」，
@@ -16,7 +16,7 @@
 //   K1-b `_daemonLifecycle('lan')` 必须构造成功
 //   K1-c 构造出的实例 script 指向**真实存在**的文件
 //   K1-d 无 configPath 时（测试/非守卫实例）仍必须返回 null（不越权管理）
-// ═══════════════════════════════════════════════════════════════════════════
+// ---------------------------------------------------------------------------
 
 const fs = require('node:fs');
 const os = require('node:os');
@@ -26,7 +26,7 @@ const results = [];
 const check = (n, c, x) => { results.push(!!c); console.log((c ? 'PASS' : 'FAIL') + ' ' + n + (x !== undefined && x !== '' ? '  ← ' + x : '')); };
 
 // 取真实 mixin 的 `_daemonLifecycle` 描述符。
-// ⚠ 2026-09-16 步骤7：_daemonLifecycle 已从 control-view.js 拆到 app/daemons/runtime.js；
+//  步骤7：_daemonLifecycle 已从 control-view.js 拆到 app/daemons/runtime.js；
 //   导出形态从属性描述符改为 { methods }。
 const mod = require(path.join(ROOT, 'src', 'app', 'daemons', 'runtime.js'));
 const { installCollaborators } = require(path.join(ROOT, 'src', 'app', 'assembly', 'collaborators'));
@@ -61,7 +61,7 @@ for (const kind of ['router', 'lan']) {
   }
 }
 
-// 无 configPath → 必须返回 null（不越权管理独立 daemon）
+// 无 configPath -> 必须返回 null（不越权管理独立 daemon）
 {
   let r = null;
   let e2 = null;

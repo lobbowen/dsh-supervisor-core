@@ -21,7 +21,7 @@ const check = (n, c, x) => { results.push(!!c); console.log((c ? 'PASS' : 'FAIL'
   const ep = require(path.join(ROOT, 'src', 'platform', 'os', 'exec-path'));
   const fp = require(path.join(ROOT, 'src', 'platform', 'os', 'file-protect'));
 
-  // ── P0 可执行解析 ──
+  // -- P0 可执行解析 --
   console.log('== P0 跨平台可执行解析 ==');
   const unixNames = ep.candidateNames('dsh-supervisor', 'linux');
   check('unix 候选名无扩展名', unixNames.length === 1 && unixNames[0] === 'dsh-supervisor', JSON.stringify(unixNames));
@@ -35,8 +35,8 @@ const check = (n, c, x) => { results.push(!!c); console.log((c ? 'PASS' : 'FAIL'
   const dm = ep.standardDirs('darwin', '/h');
   check('darwin 追加 Homebrew 路径', dm.includes('/opt/homebrew/bin') && dm.includes('/usr/local/bin'), JSON.stringify(dm));
   const dw = ep.standardDirs('win32', 'C:/U/X');
-  // ⚠ 旧写法 replace(/\\\\/g, '/') 匹配的是**两个**反斜杠，而 Windows 路径是单个反斜杠，
-  //   于是 replace 不生效 → 该断言在 Windows CI 上恒失败（Linux 因 standardDirs 返回正斜杠而侥幸通过）。
+  //  旧写法 replace(/\\\\/g, '/') 匹配的是**两个**反斜杠，而 Windows 路径是单个反斜杠，
+  //   于是 replace 不生效 -> 该断言在 Windows CI 上恒失败（Linux 因 standardDirs 返回正斜杠而侥幸通过）。
   //   改为归一化「任意连续的分隔符」，与平台无关。
   const norm = (d) => d.replace(/[\\/]+/g, '/');
   check('win 含 .local/bin 兼容目录', dw.some((d) => norm(d).endsWith('/.local/bin')), JSON.stringify(dw));
@@ -54,7 +54,7 @@ const check = (n, c, x) => { results.push(!!c); console.log((c ? 'PASS' : 'FAIL'
   const gc = autostart.guiCommand();
   check('guiCommand 返回绝对路径', path.isAbsolute(gc), gc);
 
-  // ── P1 文件保护 ──
+  // -- P1 文件保护 --
   console.log('== P1 跨平台文件保护 ==');
   const dir = path.join(TMP, 'priv');
   const pr = fp.ensurePrivateDir(dir);
@@ -73,28 +73,28 @@ const check = (n, c, x) => { results.push(!!c); console.log((c ? 'PASS' : 'FAIL'
   }
   check('protectFile 对不存在文件返回失败而非抛出', (() => { try { const r = fp.protectFile(path.join(TMP, 'nope')); return r.ok === false; } catch { return false; } })(), '');
 
-  // ── P2 无硬编码 PATH 连接符 ──
+  // -- P2 无硬编码 PATH 连接符 --
   console.log('== P2 PATH 连接符 ==');
-  // ⚠ 2026-09-16 步骤8a：instance 拆为 index/core/ops/upgrade 四文件，
-  //   判据须读**整域**（否则文件拆分即静默失去覆盖面）。见 DIRECTORY-STRUCTURE-DESIGN §4.5。
-  // ⚠ instance 域已拆为 8 文件；按目录聚合读取，新增/改名文件自动纳入覆盖面（不再硬编码文件名）。
+  //  步骤8a：instance 拆为 index/core/ops/upgrade 四文件，
+  //   判据须读**整域**（否则文件拆分即静默失去覆盖面）。见 DIRECTORY-STRUCTURE-DESIGN 。
+  //  instance 域已拆为 8 文件；按目录聚合读取，新增/改名文件自动纳入覆盖面（不再硬编码文件名）。
   const instSrc = fs.readdirSync(path.join(ROOT, 'src', 'domains', 'instance')).filter((f) => f.endsWith('.js')).sort()
     .map((f) => fs.readFileSync(path.join(ROOT, 'src', 'domains', 'instance', f), 'utf8'))
     .join(String.fromCharCode(10));
   check("instance 无 join(':') 拼 PATH", !/process\.env\.PATH[^\n]*\.join\(':'\)/.test(instSrc), '');
   check('instance 使用 path.delimiter', instSrc.includes('path.delimiter'), '');
 
-  // ── P1-2 bin 安装跨平台 ──
+  // -- P1-2 bin 安装跨平台 --
   console.log('== P1-2 bin 安装 ==');
   const binSrc = fs.readFileSync(path.join(ROOT, 'bin', 'dsh-supervisor'), 'utf8');
   check('bin 安装有 Windows 分支（.cmd 垫片）', /IS_WINDOWS/.test(binSrc) && binSrc.includes('.cmd'), '');
   check('bin 无裸 symlinkSync（受平台分支保护）', /if \(IS_WINDOWS\)/.test(binSrc), '');
 
-  // ── §7.1 分层不变量：平台命令不得出现在域层/编排层 ──
+  // -- 分层不变量：平台命令不得出现在域层/编排层 --
   console.log('== 分层不变量（平台命令收敛）==');
   {
     const forbidden = ['systemctl', 'systemd-run', 'launchctl', 'schtasks', 'taskkill', 'netstat', 'lsof', 'wmic', 'osascript', 'notify-send', 'xdg-open'];
-    // ⚠ 2026-09-16 步骤6：guard/ → app/（编排层重组，DIRECTORY-STRUCTURE-DESIGN §2.1）。
+    //  步骤6：guard/ -> app/（编排层重组，DIRECTORY-STRUCTURE-DESIGN）。
     //   平台命令收敛扫描须覆盖编排层新目录名，否则判据静默失去覆盖面。
     const scanDirs = ['domains', 'app', 'api'];
     const offenders = [];
@@ -119,7 +119,7 @@ const check = (n, c, x) => { results.push(!!c); console.log((c ? 'PASS' : 'FAIL'
     check('supervisor（编排层）无裸平台命令调用', supBad.length === 0, supBad.join(', ') || 'clean');
   }
 
-  // ── §7.1 服务管理器 Provider ──
+  // -- 服务管理器 Provider --
   console.log('== 服务管理器 Provider ==');
   const svc = require(path.join(ROOT, 'src', 'platform', 'os', 'service'));
   const cur = svc.current();
@@ -134,7 +134,7 @@ const check = (n, c, x) => { results.push(!!c); console.log((c ? 'PASS' : 'FAIL'
     check('Linux startTransient 可用', cur.supportsTransient === true, '');
   }
 
-  // ── 状态暴露 ──
+  // -- 状态暴露 --
   console.log('== 保护状态可观测 ==');
   const { Supervisor } = require(path.join(ROOT, 'src', 'supervisor'));
   const s = new Supervisor({
@@ -145,7 +145,7 @@ const check = (n, c, x) => { results.push(!!c); console.log((c ? 'PASS' : 'FAIL'
   });
   check('statusSummary 暴露 dataDirProtected', s.statusSummary().dataDirProtected === true, String(s.statusSummary().dataDirProtected));
 
-  // ── A1 断点修复：能力矩阵接线（后端暴露 → 前端类型 → UI 呈现）──
+  // -- A1 断点修复：能力矩阵接线（后端暴露 -> 前端类型 -> UI 呈现）--
   console.log('== A1 能力矩阵接线 ==');
   {
     const env = s.envStatus();
@@ -161,9 +161,9 @@ const check = (n, c, x) => { results.push(!!c); console.log((c ? 'PASS' : 'FAIL'
     const instTsx = fs.readFileSync(path.join(ROOT, 'ui', 'src', 'features', 'supervisor', 'InstancesPage.tsx'), 'utf8');
     check('A1-e UI 消费 capabilities 并前置提示', instTsx.includes('envStatus()') && instTsx.includes('multiInstance') && instTsx.includes('sandboxUnsupported'), 'ok');
     // 误导性错误指引已修正：不再指向不存在的裸字段路径
-    // ⚠ 2026-09-16 步骤8a：instance 拆为 index/core/ops/upgrade 四文件，
-  //   判据须读**整域**（否则文件拆分即静默失去覆盖面）。见 DIRECTORY-STRUCTURE-DESIGN §4.5。
-  // ⚠ instance 域已拆为 8 文件；按目录聚合读取，新增/改名文件自动纳入覆盖面（不再硬编码文件名）。
+    //  步骤8a：instance 拆为 index/core/ops/upgrade 四文件，
+  //   判据须读**整域**（否则文件拆分即静默失去覆盖面）。见 DIRECTORY-STRUCTURE-DESIGN 。
+  //  instance 域已拆为 8 文件；按目录聚合读取，新增/改名文件自动纳入覆盖面（不再硬编码文件名）。
   const instSrc = fs.readdirSync(path.join(ROOT, 'src', 'domains', 'instance')).filter((f) => f.endsWith('.js')).sort()
     .map((f) => fs.readFileSync(path.join(ROOT, 'src', 'domains', 'instance', f), 'utf8'))
     .join(String.fromCharCode(10));
@@ -172,7 +172,7 @@ const check = (n, c, x) => { results.push(!!c); console.log((c ? 'PASS' : 'FAIL'
       'ok');
   }
 
-  // ── A4 断点修复：changelog 入口 ──
+  // -- A4 断点修复：changelog 入口 --
   console.log('== A4 changelog 接线 ==');
   {
     const clientTs = fs.readFileSync(path.join(ROOT, 'ui', 'src', 'services', 'supervisor', 'client.ts'), 'utf8');
@@ -180,7 +180,7 @@ const check = (n, c, x) => { results.push(!!c); console.log((c ? 'PASS' : 'FAIL'
     check('A4-b client 实现 getText（text/plain 端点）', /async function getText/.test(clientTs), 'ok');
     const aboutTsx = fs.readFileSync(path.join(ROOT, 'ui', 'src', 'features', 'supervisor', 'settings', 'AboutCard.tsx'), 'utf8');
     check('A4-c AboutCard 提供更新日志入口', aboutTsx.includes('dshChangelog') && aboutTsx.includes('guardChangelog') && aboutTsx.includes('Dialog'), 'ok');
-    // 命名统一：后端话术指向「概览 · 版本与升级」
+    // 命名统一：后端话术指向「概览 - 版本与升级」
     const guardApi = fs.readFileSync(path.join(ROOT, 'src', 'api', 'domains', 'guard.js'), 'utf8');
     check('A4-d 后端话术命名与 UI 位置统一', guardApi.includes('概览 · 版本与升级'), 'ok');
   }

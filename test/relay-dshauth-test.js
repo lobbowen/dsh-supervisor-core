@@ -3,7 +3,7 @@
 // 远程控制 relay 的 DSH 浏览器会话桥测试：
 // 新版 DSH（0.1.2+）对根 URL 强制浏览器会话认证（401），relay 需持 DSH 启动令牌
 // 向回环 DSH 换取签名 cookie（dsh-auth-*）并注入转发请求，LAN 客户端才可访问。
-// 用 mock 上游模拟「令牌交换 → 种 cookie → 校验 cookie 后放行」的 DSH 行为，
+// 用 mock 上游模拟「令牌交换 -> 种 cookie -> 校验 cookie 后放行」的 DSH 行为，
 // 验证 createRelay 的 bootstrap / 注入 / setDshToken 热更新链路。
 
 const http = require('node:http');
@@ -29,9 +29,9 @@ function req(port, method, p, headers, body) {
 }
 
 async function main() {
-  // ── mock 上游：模拟新版 DSH 的浏览器会话认证 ──
-  // GET /?token=<launchToken> → 303 + Set-Cookie: dsh-auth-xxx=<sig>
-  // 其他路径：带 dsh-auth-xxx cookie → 200；无 → 401（"dsh web authentication required"）
+  // -- mock 上游：模拟新版 DSH 的浏览器会话认证 --
+  // GET /?token=<launchToken> -> 303 + Set-Cookie: dsh-auth-xxx=<sig>
+  // 其他路径：带 dsh-auth-xxx cookie -> 200；无 -> 401（"dsh web authentication required"）
   const LAUNCH = 'launch-token-abc123';
   const upstream = http.createServer((q, s) => {
     const url = new URL(q.url, 'http://127.0.0.1');
@@ -52,7 +52,7 @@ async function main() {
   await new Promise((r) => upstream.listen(0, '127.0.0.1', r));
   const targetPort = upstream.address().port;
 
-  // ── 场景 1：配置 dshToken → relay 自动换取并注入 cookie，根 URL 200 ──
+  // -- 场景 1：配置 dshToken -> relay 自动换取并注入 cookie，根 URL 200 --
   const relay = createRelay('127.0.0.1', targetPort, { dshToken: LAUNCH });
   await new Promise((r) => relay.listen(0, '127.0.0.1', r));
   const relayPort = relay.address().port;
@@ -66,11 +66,11 @@ async function main() {
   const r2 = await req(relayPort, 'GET', '/api/session/list');
   check('场景1: /api 路径同样放行（非 401）', r2.code === 200, String(r2.code));
 
-  // ── 场景 2：客户端自带同名 DSH cookie 时不重复注入 ──
+  // -- 场景 2：客户端自带同名 DSH cookie 时不重复注入 --
   const r3 = await req(relayPort, 'GET', '/', { Cookie: 'dsh-auth-mock=abcdef123' });
   check('场景2: 客户端自带 DSH cookie 仍 200', r3.code === 200, String(r3.code));
 
-  // ── 场景 3：remoteToken 门卫与 DSH 桥可并存 ──
+  // -- 场景 3：remoteToken 门卫与 DSH 桥可并存 --
   const relay3 = createRelay('127.0.0.1', targetPort, { token: 'lan-secret', dshToken: LAUNCH });
   await new Promise((r) => relay3.listen(0, '127.0.0.1', r));
   const p3 = relay3.address().port;
@@ -79,7 +79,7 @@ async function main() {
   const r3b = await req(p3, 'GET', '/?token=lan-secret');
   const sc3 = String((r3b.headers['set-cookie'] || []).join(';'));
   check('场景3: ?token=lan-secret → 302 种 lan cookie', r3b.code === 302 && /dsh_lan_token=/.test(sc3), r3b.code + ' ' + JSON.stringify(r3b.headers['set-cookie']));
-  // 批 4 令牌条 5：lan cookie 必须是派生会话值——门卫令牌原文不再有任何会话通道。
+  // lan cookie 必须是派生会话值——门卫令牌原文不再有任何会话通道。
   check('令牌条5: lan cookie 为派生 64hex 且不含门卫令牌明文', /^dsh_lan_token=[0-9a-f]{64}(;|$)/.test(sc3) && !sc3.includes('lan-secret'), sc3);
   const lanCk = 'dsh_lan_token=' + ((/dsh_lan_token=([^;]+)/.exec(sc3) || [])[1] || '');
   const r3c = await req(p3, 'GET', '/', { Cookie: lanCk });
@@ -88,7 +88,7 @@ async function main() {
   check('令牌条5: 门卫令牌原文冒充 cookie → 401（原文只容 ?token= 一次性出示）', r3d.code === 401, String(r3d.code));
   await new Promise((r) => relay3.close(r));
 
-  // ── 场景 4：setDshToken 热更新（模拟实例重启令牌轮换）──
+  // -- 场景 4：setDshToken 热更新（模拟实例重启令牌轮换）--
   relay.setDshToken('new-launch-xyz');
   // 新令牌下旧 cookie 失效：mock 换成用新令牌换取
   const upstream2 = http.createServer((q, s) => {

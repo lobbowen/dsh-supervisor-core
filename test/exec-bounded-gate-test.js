@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 'use strict';
 
-// ═══════════════════════════════════════════════════════════════════════════
-// G9：子进程调用必须**有界**（2026-09-11）
+// ---------------------------------------------------------------------------
+// 子进程调用必须**有界**
 //
 // ## 背景（一次未完成的修复）
 //
@@ -10,9 +10,9 @@
 // lsof 卡顿等即**无限期阻塞守卫事件循环**（API/探测/监督全部冻结，无超时自愈）。
 //
 // 于是建立了 `platform/util/exec.js` 并自称「同步 exec 的**唯一入口**」……
-// **但它从未被接入**。2026-09-11 复核实测：
-//   · 被引用次数 = 0；
-//   · 仍有 22 处 `execFileSync` 没有 timeout。
+// **但它从未被接入**。实测：
+//   - 被引用次数 = 0；
+//   - 仍有 22 处 `execFileSync` 没有 timeout。
 //
 // 这与「macOS 自启注释谎称由 LaunchAgent 代管」是**同一失效模式** ——
 // 文字声称的纪律，代码里没有；且因「看起来已经有了」，反而阻止了后续检查。
@@ -29,7 +29,7 @@
 //   否则「注释里提到 execFileSync」会被误报，
 //   而「调用跨多行、timeout 写在第三行」会被漏报。
 //
-// ## 覆盖缺口（E-2 制度化登记，AUDIT-2026-09-19 第 4 批）
+// ## 覆盖缺口
 //   G9 绿只证明「同步调用都进了执行器 + 执行器源码里有那四个字段」，不证明有界这件事成立：
 //   1. **零行为级验证**：没有任何测试真正起一个挂起子进程去证明 timeout 到点会 SIGKILL
 //      （全仓无 test require platform/util/exec）。G9-c/d 全是执行器源码的字面量判据。
@@ -43,7 +43,7 @@
 //      **调用方可覆盖**。killSignal 可被降成 SIGTERM；timeout 只能被改大（传 0 因 falsy 落回默认）。
 //      本闸只看默认值，不看逐次实参。
 //   5. 扫描面 = `src/**.js` + `bin/*`（P2 后补）；`release/scripts/`、`ui/`、插件 CLI 不在内。
-// ═══════════════════════════════════════════════════════════════════════════
+// ---------------------------------------------------------------------------
 
 const fs = require('node:fs');
 const path = require('node:path');
@@ -60,7 +60,7 @@ function stripComments(src) { return blankComments(src); }
 
 /** 收集 `src/` 下的 .js **以及 `bin/` 下的入口脚本**（排除测试与构建产物）。
  *
- *  ⚠ 2026-09-12（P2）：原先只扫 `src/` —— 于是 `bin/dsh-supervisor` 里的
+ *   （P2）：原先只扫 `src/` —— 于是 `bin/dsh-supervisor` 里的
  *    **7 处裸 `execFileSync`（全部无 timeout）**长期逃过门禁：
  *    systemctl/dbus 挂起时 CLI 会**无限阻塞**（用户看到命令卡死）。
  *  `bin/` 与会话/安装路径同属产品代码，必须同规。
@@ -106,10 +106,10 @@ function calls(src, fnNames) {
   return out;
 }
 
-// ── G9-a **只有执行器**可以调用 execFileSync/spawnSync ──
+// -- G9-a **只有执行器**可以调用 execFileSync/spawnSync --
 console.log('== G9-a 子进程调用只允许出现在执行器内 ==');
 {
-  // 2026-09-11 收紧：原先只断言「必须有 timeout」，于是 18 处调用虽然带 timeout
+  // 收紧：原先只断言「必须有 timeout」，于是 18 处调用虽然带 timeout
   // 却**绕过**统一执行器 —— 执行器头注释自称「唯一入口」，而实际不是。
   // 现全部调用点已迁入执行器，故可断言这条**绝对不变量**：
   //   `src/` 内除 `platform/util/exec.js` 外，不得出现 execFileSync / spawnSync。
@@ -130,7 +130,7 @@ console.log('== G9-a 子进程调用只允许出现在执行器内 ==');
   check('G9-a 仅 platform/util/exec.js 调用 execFileSync/spawnSync', offenders.length === 0,
     offenders.length ? (offenders.length + ' 处绕过执行器: ' + offenders.slice(0, 4).join(', ')) : 'ok');
 }
-// ── G9-b 统一执行器必须被实际引用 ──
+// -- G9-b 统一执行器必须被实际引用 --
 console.log('== G9-b 统一执行器被实际引用 ==');
 {
   let refs = [];
@@ -145,7 +145,7 @@ console.log('== G9-b 统一执行器被实际引用 ==');
     refs.length ? (refs.length + ' 个文件: ' + refs.slice(0, 3).join(', ')) : '❌ 0 引用（同 2026-09-11 发现的问题）');
 }
 
-// ── G9-c / G9-d 执行器必须具备三项保障 ──
+// -- G9-c / G9-d 执行器必须具备三项保障 --
 console.log('== G9-c/d 执行器保障 ==');
 {
   const exSrc = fs.readFileSync(path.join(ROOT, EXEC_MODULE), 'utf8');

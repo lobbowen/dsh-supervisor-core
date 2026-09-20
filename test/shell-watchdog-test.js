@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 'use strict';
 
-// ═══════════════════════════════════════════════════════════════════════════
+// ---------------------------------------------------------------------------
 // 桌面壳看护（domains/shell/watchdog.js）回归测试
 //
 // 背景：修复前 Linux/macOS **完全没有**壳自愈；Windows 的 watchdog 把壳检查嵌在
@@ -9,13 +9,13 @@
 // 本测试锁定新机制的四条边界：只在真缺失时动作 / 宽限 / 需图形会话 / 有界重试。
 //
 // 全部离线：不碰真实进程、不碰真实文件系统、不绑端口（注入 mock 与时钟）。
-// ═══════════════════════════════════════════════════════════════════════════
+// ---------------------------------------------------------------------------
 
 const path = require('node:path');
 const fs = require('node:fs');
 const ROOT = path.join(__dirname, '..');
 // 纯决策/谓词已下沉 core.js（域结构改造）；看护状态机仍在 watchdog.js。
-//   ⚠ 读取面必须随文件搬移同步更新，否则判据静默失去覆盖面（本仓已多次踩坑）。
+//    读取面必须随文件搬移同步更新，否则判据静默失去覆盖面（本仓已多次踩坑）。
 const { createShellWatchdog } = require(path.join(ROOT, 'src', 'domains', 'shell', 'watchdog'));
 const { decide, isShellProcess, DEFAULTS } =
   require(path.join(ROOT, 'src', 'domains', 'shell', 'core'));
@@ -23,7 +23,7 @@ const { decide, isShellProcess, DEFAULTS } =
 const results = [];
 const check = (n, c, x) => { results.push(!!c); console.log((c ? 'PASS' : 'FAIL') + ' ' + n + (x !== undefined && x !== '' ? '  ← ' + x : '')); };
 
-// ── W1 decide() 纯函数穷举 ──
+// -- W1 decide() 纯函数穷举 --
 console.log('== W1 decide() 决策穷举 ==');
 {
   const cfg = { graceMs: 1000, updateGraceMs: 5000, maxRestarts: 3 };
@@ -43,7 +43,7 @@ console.log('== W1 decide() 决策穷举 ==');
   check('W1-k wait 给出 needMs（便于诊断）', typeof d({ absentForMs: 10 }).needMs === 'number');
 }
 
-// ── W2 进程过滤 ──
+// -- W2 进程过滤 --
 console.log('== W2 isShellProcess 过滤 ==');
 {
   check('W2-a 匹配壳主程序', isShellProcess({ cmdline: '/usr/bin/dsh-supervisor-gui' }) === true);
@@ -53,7 +53,7 @@ console.log('== W2 isShellProcess 过滤 ==');
   check('W2-e 空 cmdline 不误判', isShellProcess({ cmdline: '' }) === false);
 }
 
-// ── W3 tick() 集成（注入 mock）──
+// -- W3 tick() 集成（注入 mock）--
 console.log('== W3 tick() 集成 ==');
 const mk = (opts) => {
   const o = opts || {};
@@ -131,7 +131,7 @@ const mk = (opts) => {
     check('W3-i status() 暴露可观测字段', st.enabled === true && typeof st.intervalMs === 'number' && st.session && typeof st.session.available === 'boolean', JSON.stringify(st).slice(0, 90));
   }
   {
-    // 2026-09-18：退出门下沉看护域 —— 退出中/已退出恒不拉起（退出管家后不再自愈）。
+    //：退出门下沉看护域 —— 退出中/已退出恒不拉起（退出管家后不再自愈）。
     const m = mk({ alive: false, halted: () => true });
     await m.w.tick();
     m.adv(5000);
@@ -147,11 +147,11 @@ const mk = (opts) => {
     check('W3-k 观测到壳在线 → 回调 onShellAlive（清除退出标记）', seen === 1, 'seen=' + seen);
   }
 
-  // ── W4 接线 ──
+  // -- W4 接线 --
   console.log('== W4 接线与声明 ==');
   {
-    // ⚠ 2026-09-16 步骤7（薄壳化）：看护的装配/接线已从 src/supervisor.js 下沉到
-    //   app/assembly/bootstrap.js（启动装配 :27,159-189）与 app/session/shutdown.js（关闭清理）。
+    //  步骤7（薄壳化）：看护的装配/接线已从 src/supervisor.js 下沉到
+    //   app/assembly/bootstrap.js（启动装配:27,159-189）与 app/session/shutdown.js（关闭清理）。
     //   判据改读真实接线点，否则文件一搬就静默失去覆盖面。
     const boot = fs.readFileSync(path.join(ROOT, 'src', 'app', 'assembly', 'bootstrap.js'), 'utf8');
     const shutdown = fs.readFileSync(path.join(ROOT, 'src', 'app', 'session', 'shutdown.js'), 'utf8');
@@ -170,18 +170,18 @@ const mk = (opts) => {
       check('W4-f ' + pl + ' shellSelfHeal 声称为 true（本次实现）',
         capabilityProfile(pl, 'x64').shellSelfHeal === true, String(capabilityProfile(pl, 'x64').shellSelfHeal));
     }
-    // darwin 原生自启已于 2026-09-11 补齐（独立 LaunchAgent）——
+    // darwin 原生自启已于 补齐（独立 LaunchAgent）——
     // 「原生自启」与「崩溃自愈」是两个独立字段，此处断言二者**同时**成立。
     check('W4-g darwin 原生自启与崩溃自愈**同时**成立（互补而非替代）',
       capabilityProfile('darwin', 'arm64').shellAutostart === true &&
       capabilityProfile('darwin', 'arm64').shellSelfHeal === true);
   }
 
-  // ── W5（已移除跨仓读）──
+  // -- W5（已移除跨仓读）--
   //   「壳写 identity.json 的 exe/lastSeenAt」是壳仓自身的产出契约，由壳仓测试负责
   //   （src-tauri/src/update.rs::t1 已断言 exe 必须存在）。
-  //   内核侧只验证**消费行为**：W1-i（无 exe → 不盲拉）、W3-c（用 identity.exe 拉起）、
-  //   W3-f（exe 为空 → 明确跳过）。内核不读壳仓源码。
+  //   内核侧只验证**消费行为**：W1-i（无 exe -> 不盲拉）、W3-c（用 identity.exe 拉起）、
+  //   W3-f（exe 为空 -> 明确跳过）。内核不读壳仓源码。
 
   const failed = results.filter((r) => !r);
   console.log(String.fromCharCode(10) + '结果: ' + (results.length - failed.length) + ' passed, ' + failed.length + ' failed');

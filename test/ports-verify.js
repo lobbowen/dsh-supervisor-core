@@ -41,11 +41,11 @@ const check = (name, cond, extra) => { results.push({ name, ok: !!cond, extra })
   fs.writeFileSync(cfgPath, JSON.stringify(cfg));
   const instancesFile = path.join(stateDir, 'instances.json');
   fs.writeFileSync(instancesFile, JSON.stringify({ instances: [
-    // 概念清分(2026-09-06)：main 不再存沙箱 instances——由守卫核心 dsh-main.json 持有（下方预置）
+    // 概念清分：main 不再存沙箱 instances——由守卫核心 dsh-main.json 持有（下方预置）
     { id: 'inst-down', name: '未运行', port: 28150, domain: 'sandbox', guardian: false, remoteEnabled: true },
     { id: 'inst-ok', name: '正常实例', port: okPort, domain: 'sandbox', guardian: false, remoteEnabled: true },
   ]}));
-  // main(原生主干)元数据：守卫核心存储 dsh-main.json（remoteEnabled=true → 允许远程）
+  // main(原生主干)元数据：守卫核心存储 dsh-main.json（remoteEnabled=true -> 允许远程）
   fs.writeFileSync(path.join(stateDir, 'dsh-main.json'), JSON.stringify({ guardian: false, remoteEnabled: true }));
   // 起 mock 在 targetPort（main 的目标）与 okPort（沙箱实例）上
   const mockMain = spawn('node', [MOCK, String(targetPort)], { stdio: 'ignore' });
@@ -76,7 +76,7 @@ const check = (name, cond, extra) => { results.push({ name, ok: !!cond, extra })
   sup._registerFixedPorts();
   check('固定端口已登记', ports.get('dsh-main') === targetPort && ports.get('supervisor-api') === apiPort);
   const relayPort = await ports.allocate('relay');
-  // 2026-09 池重构：动态池选址避开 OS 动态端口范围（Linux ip_local_port_range=32768-60999），
+  // 池重构：动态池选址避开 OS 动态端口范围（Linux ip_local_port_range=32768-60999），
   // 落 IANA User 段低位（默认 managed 池 20000-23999）。断言按「逻辑段所属池区间」而非旧硬编码。
   const relayPool = ports.rangeOf('relay');
   check('relay 端口落在其动态池区间内', relayPort >= relayPool.base && relayPort < relayPool.base + relayPool.count, JSON.stringify({ port: relayPort, pool: relayPool }));
@@ -84,11 +84,11 @@ const check = (name, cond, extra) => { results.push({ name, ok: !!cond, extra })
 
   // 3. syncProxy：只有目标在监听才建代理
   const lan = sup.lan;
-  await lan.syncProxy(instDown); // 未在监听 → 不建
+  await lan.syncProxy(instDown); // 未在监听 -> 不建
   check('未运行实例不建代理', !lan.lanInstances.some((p) => p.dshPort === 28150));
-  await lan.syncProxy(instOk); // 在监听 → 建
+  await lan.syncProxy(instOk); // 在监听 -> 建
   check('在运行实例建代理成功', !!lan.lanInstances.find((p) => p.dshPort === okPort));
-  await lan.syncProxy(instMain); // main 在监听 → 建（main 开远程是允许的）
+  await lan.syncProxy(instMain); // main 在监听 -> 建（main 开远程是允许的）
   check('main 在监听时建代理', !!lan.lanInstances.find((p) => p.dshPort === targetPort));
   // 代理端口互不冲突
   const wanPorts = lan.lanInstances.map((p) => p.wanPort);
@@ -105,7 +105,7 @@ const check = (name, cond, extra) => { results.push({ name, ok: !!cond, extra })
     check('远程控制可访问（relay 转发成功）', body.includes('ok'), body.slice(0, 50));
   }
 
-  // 5. 停止实例 → reconcile「暂停 relay、保留注册」（设计语义：目标恢复后同 wanPort 自动重接，
+  // 5. 停止实例 -> reconcile「暂停 relay、保留注册」（设计语义：目标恢复后同 wanPort 自动重接，
   //    绝不端口重建竞争）。原断言预期「代理被清理」与 reconcile 语义矛盾（过时断言），修正如下。
   mockOk.kill('SIGTERM');
   await new Promise((r) => setTimeout(r, 800));

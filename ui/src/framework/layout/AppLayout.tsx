@@ -8,8 +8,8 @@ import { cn } from "../utils";
  * 侧边栏 + 主内容区。
  *
  * 响应式行为（现代自适应，不做上下堆叠）：
- *  - ≥641px：侧边栏为常驻左列，主内容占剩余轨道。
- *  - ≤640px：侧边栏变为 fixed 左侧抽屉（CSS 控制 transform 滑入/出），
+ *  - >=641px：侧边栏为常驻左列，主内容占剩余轨道。
+ *  - <=640px：侧边栏变为 fixed 左侧抽屉（CSS 控制 transform 滑入/出），
  *    由 sidebarOpen 驱动；抽屉打开时渲染遮罩，点遮罩关闭。
  *    内容区始终独占主轨（grid 单列）。
  *
@@ -26,7 +26,7 @@ export type AppLayoutProps = {
   sidebar?: ReactNode;
   /** 宽侧边栏模式（如空间分析） */
   wideSidebar?: boolean;
-  /** 手机抽屉是否打开（≤640px 生效） */
+  /** 手机抽屉是否打开（<=640px 生效） */
   sidebarOpen?: boolean;
   /** 关闭抽屉回调（点遮罩 / 选完导航触发） */
   onCloseSidebar?: () => void;

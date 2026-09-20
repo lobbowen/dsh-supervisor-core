@@ -1,11 +1,11 @@
 #!/usr/bin/env node
 'use strict';
 
-// 实例升级链路回归（2026-09 修复两个「升级恒判失败」根因）：
-//   R1 startInstance 被升级作业自身挡住 → systemd 从未拉起 → 端口不就绪 → 判失败。
+// 实例升级链路回归（20复两个「升级恒判失败」根因）：
+//   R1 startInstance 被升级作业自身挡住 -> systemd 从未拉起 -> 端口不就绪 -> 判失败。
 //      修复：升级/回滚路径传 { fromUpgrade:true } 直通（本测试断言两条分支行为差异）。
 //   R2 waitPortHealthy 在「剩余时间 < stabilityMs」时直接 break 判失败——
-//      端口其实已就绪（只是探测晚）→ 慢启动实例被误判 → 触发不必要回滚。
+//      端口其实已就绪（只是探测晚）-> 慢启动实例被误判 -> 触发不必要回滚。
 //      修复：用剩余预算做缩短稳定期复检。
 // 自包含：不启动真实 systemd / 不装真实 npm。
 
@@ -25,15 +25,15 @@ const logger = { info() {}, warn() {}, error() {}, debug() {} };
   const { InstanceManager } = require(path.join(ROOT, 'src', 'domains', 'instance', 'index'));
   const { DistributionManager } = require(path.join(ROOT, 'src', 'platform', 'distribution', 'index'));
 
-  // ── R1：fromUpgrade 直通 ──
+  // -- R1：fromUpgrade 直通 --
   console.log('== R1 升级作业不得挡住自己的重启（升级恒失败根因）==');
   {
     // 模拟「升级作业进行中」：tasks.isBusy('instance', id) 恒 true
     const id = 'u1';
     const tasksStub = { isBusy: () => true, current: () => ({ action: 'upgrade' }) };
-    // ⚠ 迁移硬前置（DIRECTORY-STRUCTURE-DESIGN / DOMAIN-STRUCTURE-DESIGN §8）：
+    //  迁移硬前置（DIRECTORY-STRUCTURE-DESIGN / DOMAIN-STRUCTURE-DESIGN）：
     //   旧用法是「实例 owner 打补丁」（mgr._prepareSystemd/_systemdStart/_ensureSandboxDirs = () => {}）。
-    //   域内拆分后这些方法成为组装根的闭包委托，**实例上的补丁不再拦截内部调用** →
+    //   域内拆分后这些方法成为组装根的闭包委托，**实例上的补丁不再拦截内部调用** ->
     //   会真跑 `systemctl --user daemon-reload`（platform/os/service.js:52）与真 mkdir。
     //   故改为**构造期注入**假平台服务（本仓既有约定：显式注入而非 patch 模块导出），
     //   并把 systemd 目录指向临时目录，绝不触碰开发机的 systemd 配置。
@@ -76,7 +76,7 @@ const logger = { info() {}, warn() {}, error() {}, debug() {} };
     check('R1-b 升级调用：fromUpgrade=true → 真正启动 systemd', started.length === 1 && b.ok === true, 'started=' + started.length + ' ' + JSON.stringify(b));
 
     // C) 源码契约：升级与回滚两处调用均须带 fromUpgrade
-    // ⚠ 2026-09-16 步骤8a：instance 域已拆为 core/ops/upgrade + index 门面；
+    //  步骤8a：instance 域已拆为 core/ops/upgrade + index 门面；
     //   本断言的对象是「域」（升级/回滚两处调用都带 fromUpgrade），故按域聚合读取。
     const src = fs.readdirSync(path.join(ROOT, 'src', 'domains', 'instance')).filter((f) => f.endsWith('.js')).sort()
       .map((f) => fs.readFileSync(path.join(ROOT, 'src', 'domains', 'instance', f), 'utf8'))
@@ -86,11 +86,11 @@ const logger = { info() {}, warn() {}, error() {}, debug() {} };
     check('R1-c 升级/回滚两处均传 fromUpgrade', withFlag >= 2 && plainCall === 0, 'withFlag=' + withFlag + ' plain=' + plainCall);
   }
 
-  // ── R2：waitPortHealthy 稳定期预算 ──
+  // -- R2：waitPortHealthy 稳定期预算 --
   console.log('== R2 晚就绪端口不得被误判失败 ==');
   {
     const dist = new DistributionManager({ logger });
-    // 端口健壮性（2026-09-11 修复）：原先用固定端口 28091/28092，前一次运行的 socket
+    // 端口健壮性：原先用固定端口 28091/28092，前一次运行的 socket
     // 处于 TIME_WAIT 时会导致 EADDRINUSE 使整个测试链中断（实测发生过）。
     // 改为向内核申请空闲端口，彻底消除该 flake。
     const freePort = () => new Promise((resolve, reject) => {
@@ -103,12 +103,12 @@ const logger = { info() {}, warn() {}, error() {}, debug() {} };
     srv.on('error', () => {}); // 兜底：即使监听失败也不炸掉测试进程
     // 3s 后才监听：模拟慢启动实例
     setTimeout(() => { try { srv.listen(port, '127.0.0.1'); } catch {} }, 3000);
-    // 窗口 8s / 稳定期 15s：修复前 3000+15000 > 8000 → break 判失败；修复后按剩余预算复检 → 成功
+    // 窗口 8s / 稳定期 15s：修复前 3000+15000 > 8000 -> break 判失败；修复后按剩余预算复检 -> 成功
     const r = await dist.waitPortHealthy({ host: '127.0.0.1', port, timeoutMs: 8000, stabilityMs: 15000 });
     check('R2-a 端口晚于 (timeout-stability) 就绪 → 仍判成功', r.ok === true, JSON.stringify(r));
     try { srv.close(); } catch {} ; await new Promise((r) => setTimeout(r, 50));
 
-    // 对照组：端口始终不就绪 → 必须判失败（不掩盖真实失败）
+    // 对照组：端口始终不就绪 -> 必须判失败（不掩盖真实失败）
     const dead = await freePort();
     const r2 = await dist.waitPortHealthy({ host: '127.0.0.1', port: dead, timeoutMs: 2500, stabilityMs: 15000 });
     check('R2-b 端口始终不就绪 → 判失败（不误报成功）', r2.ok === false, JSON.stringify(r2));

@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 'use strict';
 
-// 生命周期健康视图同步契约（阶段一 2026-09 → C3-5b：观测镜像层移除后改由
+// 生命周期健康视图同步契约（阶段一 -> C3-5b：观测镜像层移除后改由
 //   _syncRouterLifecycleView 视图同步 + instances 聚合视图真实化）：
 //   healthy/lastProbeAt/error 只由观测(视图同步)写入；desired 只表达应运行；
 //   视图同步不读取/不写入任何资源内部业务状态（router 自治）。
@@ -48,14 +48,14 @@ const check = (n, c, x) => { results.push(!!c); console.log((c ? 'PASS' : 'FAIL'
     lc.wantStopped(); lc._monitoring = false;
     sup._syncRouterLifecycleView({ ok: true });
     check('M1 视图同步对期望停止项不置 running/healthy', lc.phase !== 'running' && lc.healthy === false, JSON.stringify({ phase: lc.phase, healthy: lc.healthy }));
-    // M2 期望运行 + 观测健康 → running/healthy/error=null/lastProbeAt
+    // M2 期望运行 + 观测健康 -> running/healthy/error=null/lastProbeAt
     lc.wantRunning(); lc._monitoring = true;
     sup._syncRouterLifecycleView({ ok: true });
     check('M2 视图同步 ok → running/healthy/error=null/lastProbeAt', lc.phase === 'running' && lc.healthy === true && lc.error === null && !!lc.lastProbeAt, JSON.stringify({ phase: lc.phase, healthy: lc.healthy, error: lc.error, probe: !!lc.lastProbeAt }));
-    // M3 观测异常 → healthy=false + error（守护介入依据）
+    // M3 观测异常 -> healthy=false + error（守护介入依据）
     sup._syncRouterLifecycleView({ ok: false, error: 'ctl 失联' });
     check('M3 视图同步 !ok → healthy=false error 记录', lc.healthy === false && lc.error === 'ctl 失联', JSON.stringify({ healthy: lc.healthy, error: lc.error }));
-    // M4 恢复 → healthy=true error 清空
+    // M4 恢复 -> healthy=true error 清空
     sup._syncRouterLifecycleView({ ok: true });
     check('M4 视图同步恢复 → healthy=true error=null', lc.healthy === true && lc.error === null, JSON.stringify({ healthy: lc.healthy, error: lc.error }));
     // M5 不污染 router 业务状态（只写统一状态机）
@@ -65,16 +65,16 @@ const check = (n, c, x) => { results.push(!!c); console.log((c ? 'PASS' : 'FAIL'
     check('M5 视图同步不污染 router 业务状态', before === after, 'len=' + before.length);
     // M6 缺省实然回退目录 router-daemon lastObserved：无目录项/未观测时 ok=false 且不抛
     sup.managedObjects.applyObservation('router-daemon', { ok: true });
-    sup._syncRouterLifecycleView({}); // 无显式实然 → 读目录
+    sup._syncRouterLifecycleView({}); // 无显式实然 -> 读目录
     check('M6 无显式实然时回退目录观测', lc.healthy === true, JSON.stringify({ healthy: lc.healthy, error: lc.error }));
-    // M6b 目录未观测（无 lastObserved）→ 安全降级不抛
+    // M6b 目录未观测（无 lastObserved）-> 安全降级不抛
     try { const e = sup.managedObjects.get('router-daemon'); e.lastObserved = null; sup._syncRouterLifecycleView({}); check('M6b 目录无观测安全降级', true, ''); } catch (err) { check('M6b 目录无观测安全降级', false, String(err)); }
   }
 
-  // M7 守护开关（契约 GUARD-DOMAIN-MODEL §2 域模型，2026-09-16 归位）：
+  // M7 守护开关：
   //   域 A（dsh/instances）guardian 跟用户开关走（默认关）；
   //   域 B 基础设施（router-daemon/lan-daemon）**不设 guardian**（无用户意图轴，由保活路径无条件拉起）。
-  //   ⚠ 旧断言为「router/lan 恒开」——那是把基础设施硬套用户意图模型的错位形态，已按 G-1 删除。
+  //    旧断言为「router/lan 恒开」——那是把基础设施硬套用户意图模型的错位形态，已按 G-1 删除。
   const gRouter = sup.lifecycleManager.get('router');
   const gLan = sup.lifecycleManager.get('lan');
   const gDsh = sup.lifecycleManager.get('dsh');
@@ -83,14 +83,14 @@ const check = (n, c, x) => { results.push(!!c); console.log((c ? 'PASS' : 'FAIL'
     gRouter.guardian !== true && gLan.guardian !== true && gDsh.guardian !== true && gInst.guardian !== true,
     JSON.stringify({ router: gRouter.guardian, lan: gLan.guardian, dsh: gDsh.guardian, instances: gInst.guardian }));
 
-  // M8 域 A 的真实守护计数链路（2026-09-16 域模型收口，替换旧 M8）。
-  //   ⚠ 旧 M8 直接调用 sup._guardianEvent(...) 断言「guardian_action 事件形状」。
+  // M8 域 A 的真实守护计数链路。
+  //    旧 M8 直接调用 sup._guardianEvent(...) 断言「guardian_action 事件形状」。
   //     断言对象本身是死代码：router/lan 归域 B 后该函数全仓 src/ 零调用者，事件无生产者
-  //     （详见 control-view.js 删除说明与 GUARD-DOMAIN-MODEL §2）——故旧块随函数一并删除。
-  //   代之以契约 §2 域 A 的**真实链路**（无需任何死代码）：
-  //     · dsh（原生）：崩溃/故障收敛走 _beginRestart(reason, {countCrash:true})
-  //       → 发 restart_triggered 事件 且 restartCount +1；
-  //     · 计划内重启（manual / countCrash:false）发事件但不计数。
+  //     （详见 control-view.js 删除说明与 GUARD-DOMAIN-MODEL）——故旧块随函数一并删除。
+  //   代之以契约 域 A 的**真实链路**（无需任何死代码）：
+  //     - dsh（原生）：崩溃/故障收敛走 _beginRestart(reason, {countCrash:true})
+  //       -> 发 restart_triggered 事件 且 restartCount +1；
+  //     - 计划内重启（manual / countCrash:false）发事件但不计数。
   //   本用例直接驱动 _beginRestart（最小 cfg，无定时器副作用），验证事件与计数成对。
   const evs = [];
   const origAppend = sup.events.append.bind(sup.events);

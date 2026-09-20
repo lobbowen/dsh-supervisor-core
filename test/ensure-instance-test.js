@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 'use strict';
 
-// 验证 _ensureProxyInstances：反序列化后 registered 实例自动拉起 → 探活拿到 version。
+// 验证 _ensureProxyInstances：反序列化后 registered 实例自动拉起 -> 探活拿到 version。
 // 用带 /health version 的 mock 反代（不触碰真实 commandcode 与外部服务）。
 
 const path = require('node:path');
@@ -37,14 +37,14 @@ fs.writeFileSync(mockApp, "const http = require('node:http');\nconst argv = proc
   svc.providers.push(pp);
   svc._save();
 
-  // 添加账号 → 启动 → 探活拿 version
+  // 添加账号 -> 启动 -> 探活拿 version
   const r1 = await pp.addAccount('sk-vm-1');
   check('A1 账号注册 ready', r1.ok && r1.account.status === 'ready', JSON.stringify(r1.account && r1.account.status));
   const inst = pp.instances[0];
   check('A2 实例运行且有 version', inst.pid && inst.version === '1.2.3', JSON.stringify({ pid: inst.pid, version: inst.version }));
 
-  // 模拟重启：重建 RouterService（进程态不落盘 → 实例 registered、version 丢失）
-  // 先停止第一个 RouterService 的实例：否则 28050 仍被旧进程监听，svc2 复用同端口 spawn → EADDRINUSE
+  // 模拟重启：重建 RouterService（进程态不落盘 -> 实例 registered、version 丢失）
+  // 先停止第一个 RouterService 的实例：否则 28050 仍被旧进程监听，svc2 复用同端口 spawn -> EADDRINUSE
   for (const pp0 of svc.providers) { if (pp0.kind !== 'proxy') continue; for (const ins of (pp0.instances || [])) { try { pp0.stopInstance(ins); } catch {} } }
   await new Promise((r) => setTimeout(r, 400));
   const svc2 = new RouterService({ config: {}, providerFile, port: 19180, usageTotalsFile: path.join(TMP, 't.json'), logger: { info() {}, warn() {}, error() {} }, events: null });
@@ -52,11 +52,11 @@ fs.writeFileSync(mockApp, "const http = require('node:http');\nconst argv = proc
   if (!pp2) { console.log('ERR pp2 not found'); process.exit(1); }
   const inst2 = pp2.instances[0];
   if (!inst2) { console.log('ERR inst2 not found; providers=' + JSON.stringify(svc2.providers.map((p) => ({ kind: p.kind, insts: (p.instances || []).length })))); process.exit(1); }
-  // ⚠ 四态词表（PROVIDER-GATEWAY-ARCHITECTURE §4.1 / PG-3）：无进程 = COLD（原 registered）。
+  //  四态词表（PROVIDER-GATEWAY-ARCHITECTURE）：无进程 = COLD（原 registered）。
   check('B1 重启后实例 COLD（进程态不落盘）', inst2.status === 'COLD' && !inst2.pid, JSON.stringify({ status: inst2.status, pid: inst2.pid }));
   check('B2 重启后 version 保留（供 UI 展示，探活后刷新）', inst2.version === '1.2.3', String(inst2.version));
 
-  // 调用 _ensureProxyInstances → 应拉起并探活拿 version
+  // 调用 _ensureProxyInstances -> 应拉起并探活拿 version
   await svc2._ensureProxyInstances();
   // 四态：有进程且就绪 = HOT（原 running）；启动中 = WARM（原 starting）。
   check('C1 ensure 后实例已拉起', inst2.pid && (inst2.status === 'HOT' || inst2.status === 'WARM'), JSON.stringify({ pid: inst2.pid, status: inst2.status }));
