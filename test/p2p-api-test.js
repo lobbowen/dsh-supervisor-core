@@ -60,6 +60,21 @@ registerDryRunApp();
     if (body) req.write(JSON.stringify(body)); req.end();
   });
 
+  // 轮询反代账号到终态，返回 {elapsedMs, polls}。capMs 只作失控守卫，不代表产品承诺时限。
+  async function waitProxyAccountsTerminal(capMs) {
+    const t0 = Date.now();
+    let polls = 0;
+    for (;;) {
+      polls++;
+      const rr = await api('GET', '/router/providers');
+      const pp = (rr.body.providers || []).find((x) => x.kind === 'proxy');
+      const aa = (pp && pp.accounts) || [];
+      if (aa.length >= 1 && aa.every((x) => x.status !== 'registering')) return { elapsedMs: Date.now() - t0, polls };
+      if (Date.now() - t0 >= capMs) return { elapsedMs: Date.now() - t0, polls };
+      await new Promise((res) => setTimeout(res, 250));
+    }
+  }
+
   // 1. status（未启动）
   let r = await api('GET', '/router/status');
   check('P1 /router/status', r.code === 200 && r.body.running === false, r.code + ' ' + JSON.stringify(r.body && r.body.running));
@@ -91,14 +106,18 @@ registerDryRunApp();
   r = await api('GET', '/router/status');
   check('P8 status running + usage', r.body.running === true && r.body.usage && typeof r.body.usage.requests === 'number', JSON.stringify({ running: r.body.running, req: r.body.usage && r.body.usage.requests }));
 
-  // 8. 反代账号异步注册（轮询到终态，替代固定 8s sleep——负载下会骑到
-  //    waitHealthy 6x1.5s~9s 边界造成 P9 偶发假失败）
-  await (async () => { const t0 = Date.now(); while (Date.now() - t0 < 20000) { const rr = await api('GET', '/router/providers'); const pp = (rr.body.providers || []).find((p) => p.kind === 'proxy'); const aa = (pp && pp.accounts) || []; if (aa.length >= 1 && aa.every((a) => a.status !== 'registering')) break; await new Promise((res) => setTimeout(res, 200)); } })();
+  // 8. 反代账号异步注册：轮询到终态。`registering -> ready` 由实例被拉起的那一刻驱动，
+  //    不是「启动后 N 秒内一定到终态」的产品保证，故这里只把上限当失控守卫；
+  //    到终态即退出，正常路径不额外等待。回显 elapsed/polls，让「慢」与「卡死」可分辨。
+  const w8 = await waitProxyAccountsTerminal(60000);
   r = await api('GET', '/router/providers');
   const proxyP = (r.body.providers||[]).find((p) => p.kind === 'proxy');
   const accs = (proxyP && proxyP.accounts) || [];
+  const w8e = '耗时=' + w8.elapsedMs + 'ms 轮询=' + w8.polls + ' 状态=' + JSON.stringify(accs.map((a) => a.status));
+  check('P9 反代账号已进入视图', accs.length >= 1, w8e);
   // 统一入库语义：检测完成即入终态——ready（正常）或 frozen（受限自动冻结，到点自动解冻）；review 闸门已移除
-  check('P9 反代账号注册完成（ready / 受限自动 frozen）', accs.length >= 1 && accs.every((a) => a.status === 'ready' || a.status === 'frozen'), JSON.stringify(accs.map((a) => a.status)));
+  check('P9 反代账号注册完成（ready / 受限自动 frozen）', accs.length >= 1
+    && accs.every((a) => a.status === 'ready' || a.status === 'frozen'), w8e);
   check('P10 反代实例信息在视图', accs.some((a) => a.instanceStatus), JSON.stringify(accs[0] && { st: accs[0].instanceStatus, h: accs[0].healthy }));
 
   // 8b. 供应商独立端点：默认停用 -> 激活分配端口 -> 列表地址下沉 -> 停用回收
