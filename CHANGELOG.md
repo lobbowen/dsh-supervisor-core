@@ -27,9 +27,20 @@
   `glibc_max: "2.35"`，打包后由壳仓 `ci/check-glibc.sh` 拦截，deb + rpm 双形态在产线
   （Linux arm64 runner 仍停用，未产线）；G1/G2 已收口，**G3 仍开** —— 自更新签名私钥至今未配置，
   「可自更新」只对非签名路径成立。§二 的发行版实测表标注为改造前的证据并保留（判据来源）。
+- `README.md` 索引表：`HANDOFF.md` 一行链的是**不入库**的会话过程物（`.gitignore` 有 `**/HANDOFF.md`，
+  故干净检出与 CI 都看不到该文件），而该行还写着「新会话接手先读此文件」——照着做会打开一个不存在的文件。
+  删该行：本机交接物按 `.gitignore` 既定约定本就只在本地存在，不该出现在入库索引里当必读项。
+  同表 `ARCHITECTURE-ACCEPTANCE.md` 行仍以现在时宣称「终验收记录 / 全部门禁严格模式结果 /
+  物理结构终态最大单文件 298 / DF-1..DF-9 逐条达成」，四条全与 3b 修正后的该文件正文矛盾
+  （实测最大单文件 324、`>300` 有 3 处、DF-2 不满足、两道结构门禁整体 report-only 且 CI 未设严格开关）。
+  改为标注复算口径、且不承载放行结论。
+- `release/runbooks/publish-and-verify.md`：`build-ui` 缺失的后果写成「直接跑 `npm test` 会得到 503」，
+  在本机禁跑测试的硬标准下这是对不存在的动作下判据。改为「链上缺这一步 → **CI 的** `npm test` 得到 503」。
 
-另核一条无需改动的：`RELEASE-CHANNEL-CONTRACT.md` §5.4 说 `@dsh-sup/canary-allowlist` 尚未发布 ——
-registry 实测 404，说法成立。
+另核三条无需改动的：`RELEASE-CHANNEL-CONTRACT.md` §5.4 说 `@dsh-sup/canary-allowlist` 尚未发布 ——
+registry 实测 404，说法成立；`release/README.md` 与两份标准文档里所有 `docs/*.md` 引用都带「壳仓」限定词，
+不是本仓断链；壳仓 `DESIGN-BOUNDARY.md` / `DESIGN-COMPLETE.md` 引用的 `shared/version-vectors.json`
+与 `shell-release/version-vectors.json` 两仓实测均存在。
 
 ### 第 3c 轮：一条「已排除」测试的假理由，以及它其实没在任何人手里跑过
 
