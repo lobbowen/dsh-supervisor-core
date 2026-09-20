@@ -947,6 +947,59 @@ dispatch（F5 行早已纠正，本段没跟着改），而**在命令行 export
 `release-spec-consistency` 各全绿，`comment-pin-gate` hard 0 失败）＋ `bash -n`；
 其余结论按常规由 CI 四平台矩阵裁决。
 
+## N. 发布链回归：B24 把「查不到」当成「已发布」（2026-09-21，0.1.5-BETA.11 首发四平台同红）
+
+### N-0 触发点
+
+tag `v0.1.5-BETA.11` 的发布轮：`precheck` 与 `test` 全绿，四个 `build` 腿**在同一步、以同一句判据全红**，
+`release` job 未跑。registry 该版本零上架（`npm view` 返回 E404），产物未发布成功。发布步尾部：
+
+```
+== @dsh-sup/dsh-core-linux-x64@0.1.5-BETA.11 已存在于 https://registry.npmjs.org/ → 内容强核对…==
+   ❌ 核对要素缺失（远端 size= sha= 本地 size=… sha=…）：无法证明同源，禁止幂等跳过。
+```
+
+四平台一致 ⇒ 与平台无关；`test` 绿 ⇒ 与被测代码无关。红点自证在发布脚本自身。
+
+### N-1 根因：B24 换实现时把存在性判据的语义换掉了（回归，不是历史缺陷）
+
+`publish-core.sh` 的存在性探测：
+
+```bash
+REMOTE_SPEC="$(npm view "$PKG_NAME@$VER" --json ... | tr -d '\r' || true)"
+if printf '%s' "$REMOTE_SPEC" | grep -q .; then   # 非空 => 判「已存在」
+```
+
+`npm view --json` 对**不存在**的版本会同时做两件事：往 stdout 打一个 `{"error":{"code":"E404",…}}`
+对象，并以非零退出。于是「输出非空」把「查不到」归到「已发布」，再由 fail-closed 的核对分支判红 ——
+**任何首次发布都必红**。脚本内注释把它的前提写成「npm view 对不存在版本返回非零 + 空输出」：
+那是不带 `--json` 时的行为（旧实现正是 `npm view … dist.unpackedSize` 取值、以「取到值」为存在）。
+
+`git log -S` 定位：`grep -q .` 形态唯一由第 3 批 B24 提交引入 —— B24 为拿 `dist.shasum` 而把两次
+`npm view` 合成一次 `--json` 调用，**顺带把存在性从「字段取到值」降级成「输出非空」**。BETA.10 及更早
+版本发布时跑的是旧实现，故此前未暴露。B24 修的「体积代内容」仍成立，坏的是它新引入的那半。
+
+### N-2 修法（根源，不加补偿）
+
+存在性交回工具自己的裁决 —— 退出码：
+
+```bash
+REMOTE_SPEC=''
+if REMOTE_SPEC="$(npm view "$PKG_NAME@$VER" --json … 2>/dev/null | tr -d '\r')"; then
+```
+
+`set -euo pipefail` 下 `if 赋值="$(…)"` 的成立条件即命令替换退出状态（pipefail 在子壳内生效，实测确认），
+因此原来的 `|| true` 与「首发布必中止」的顾虑一并消失。非零（E404/网络/权限）一律走发布分支：
+真发布若因网络或认证失败会自行非零退出，不存在「核对不了 → 视为成功」的旁路。
+体积 + sha1 双项强核对、缺要素即 `exit 1` 的语义**未动**。
+
+### N-3 判据与覆盖缺口（ACCEPTANCE-STANDARD §7）
+
+`test/release-spec-consistency-test.js` P-9 B24 补两条：正向锚在代码行
+`if REMOTE_SPEC="$(npm view `，反向识别旧「输出非空即已存在」形态（`grep -q .` 不得再现）。
+缺口如实登记：该判据是**源码形态**门禁，不执行 `publish-core.sh`；真正的裁决只来自 CI 的 tag 发布轮
+（非 tag 构建走 dry-run，不进这段分支）。故本条的产线证据 = 移动后的 tag 那一轮四平台发布步全绿。
+
 ## 附录：分域审计明细索引
 
 | 域 | 范围 | 规模 | 主要文件锚点 |

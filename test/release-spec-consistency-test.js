@@ -206,6 +206,9 @@ if (spec) {
   check('P-9 B24 本地真 pack 计 sha1 对账', pc.includes('sha1sum "$LOCAL_TGZ"'), 'ok');
   check('P-9 B24 缺要素/不一致均 fail-closed', /-z "\$REMOTE_SHA"[\s\S]{0,200}exit 1/.test(pc) && /\$REMOTE_SHA" != "\$LOCAL_SHA1"[\s\S]{0,300}exit 1/.test(pc), 'ok');
   check('P-9 B24 反向：旧「体积不一致仅警告」形态判缺', !pc.includes('请人工确认后再决定是否升版本重发'), 'ok');
+  // 存在性只认退出码：`--json` 下不存在的版本也会把 E404 对象写到 stdout，「输出非空」会判成已存在。
+  check('P-9 B24 存在性由 npm view 退出码定性', /if REMOTE_SPEC="\$\(npm view /.test(pc), 'ok');
+  check('P-9 B24 反向：旧「输出非空即已存在」形态判缺', !/grep -q \./.test(pc), 'ok');
   // 备份降级为尽力安全网（warn 继续），确认项仍硬闸
   //   段锚点取**代码行** `BK="$f.bak-` 而非相邻注释：注释会被精简/改措辞，锚点一丢判据就静默抓空。
   //   终点必须**向后**找：`umask 077` 在 put() 里出现两次（TMP_IN 读取段的 `( umask 077; mkdir… )`
