@@ -482,7 +482,8 @@
     - **登记尾账**：`DIRECTORY-STRUCTURE-DESIGN` §3 的 `shared/` 树状清单原只列 version/ip/guardian 三项，
       会被后来者读成「不含该模块的白名单」，已补 `credential.js` 一行并标回来历。
     - **合入与合入后复绿**：head `f0aaa76` 三次连续全绿后，PR #6 于 2026-09-20 以 **merge commit `c649c08`**
-      合入 master；master push-run `35490996571` 再次四平台全绿（`release` 按非 tag 规则 skipped）。
+      合入 master；master push-run `35490996571` 再次四平台全绿，合入后的纯文档收尾直推（`4ea2df3`）
+      也由 run `35491330422` 复绿确认（`release` 按非 tag 规则 skipped）。
       本批**不发布**：registry 仍 `0.1.5-BETA.10`，发版属第二段授权、另需确认。
       操作坑（本轮实测）：fine-grained PAT 走 `PATCH /pulls/{n} {"draft":false}` 返回 **200 却静默无效**
       （响应 `draft` 仍 true），随后 `PUT /merge` 以 405「still a draft」拒绝；正解是 GraphQL
