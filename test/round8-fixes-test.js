@@ -344,7 +344,10 @@ const readDomain = (dir) => fs.readdirSync(path.join(ROOT, dir)).filter((f) => f
     dm.registryConfig = { mode: 'auto', origins: ['https://registry.npmjs.org'], manualOrigin: 'https://registry.npmjs.org' };
     return dm;
   };
-  // manual 切换 + 私网手动源：同步段必须**不改配置**（早退分支，不触网、不落盘）
+  // manual 切换 + 私网手动源：**同步校验段零改动**（内存配置与磁盘都不动）。
+  //   异步段会经 registryInfo 回读实况（可能按既有选源逻辑复测），所以本例只断言同步段。
+  //   原缺陷：rc 曾是 state.registryConfig 的别名，mode 在校验前就被写进内存 → 拒后
+  //   UI 显示 manual 而磁盘仍是 auto，且下次自动重测按 manual 走旧手动源。
   {
     const dm = mkDm();
     dm.setRegistryConfig({ mode: 'manual', manualOrigin: 'http://169.254.169.254' });

@@ -221,9 +221,12 @@ async function registryInfo(state) {
 /** 保存全局镜像源配置（mode/手动源/候选），并立即重测。
  *  C-8（批 4）写入口闸：manualOrigin 与每条候选 origins 都要过 policies.registryOriginViolation
  *  （与探测端点同规的 SSRF 闸）——过不了的字面量一律不落盘，逐条原因经 error/errors 字段回传
- *  （不静默丢弃）。auto 模式下不预校验 manualOrigin（它此刻不参与选源），改为在 manual 分支闸。 */
+ *  （不静默丢弃）。auto 模式下不预校验 manualOrigin（它此刻不参与选源），改为在 manual 分支闸。
+ *  早退零改动（C-8 补严）：rc 是 registryConfig 的**副本**，只有全部校验通过才回写 state ——
+ *  直接在原对象上先落 mode 再校验，会让「切 manual + 私网源」被拒后内存里仍留着 mode=manual
+ *  （磁盘却没写），UI 与实然分叉，且下一次自动重测按 manual 走旧手动源。 */
 async function setRegistryConfig(state, cfg) {
-  const rc = state.registryConfig || {};
+  const rc = { ...(state.registryConfig || {}) };
   let rejected = [];
   if (cfg && typeof cfg === 'object') {
     if (cfg.mode === 'manual' || cfg.mode === 'auto') rc.mode = cfg.mode;
