@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 'use strict';
 
-// 冒烟测试：按设计文档 的核心用例验证 dsh-supervisor（全部针对 mock 目标，不触碰真实 DSH）。
+// 冒烟测试：按设计文档第 12 节的核心用例验证 dsh-supervisor（全部针对 mock 目标，不触碰真实 DSH）。
 // 用法: node test/smoke.js
 
 const fs = require('node:fs');

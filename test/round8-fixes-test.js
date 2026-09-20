@@ -487,10 +487,10 @@ const readDomain = (dir) => fs.readdirSync(path.join(ROOT, dir)).filter((f) => f
 }
 
 // -- J-o：静态门禁必须显式登记自己的覆盖缺口（制度化防复发）--
-//   审计 的病灶不是判据写错，而是**门禁的名字比判据大**：文件叫 xxx-gate-test，
+//   E-2 立项的病灶不是判据写错，而是**门禁的名字比判据大**：文件叫 xxx-gate-test，
 //   读者把绿当成「xxx 已被验证」，于是这道「看起来存在的防线」阻止了下一次检查
 //   （glibc 声称产线校验、CI 零调用；TK-G4 白名单放行；K-W2 只匹配 spawn(；发布包 README 违 RC-1）。
-//   规则落在 ACCEPTANCE-STANDARD.md ，本节是其执法点：缺口块必须存在、在头部、且是可核对的逐条清单。
+//   规则落在 ACCEPTANCE-STANDARD.md 第 7 节，本节是其执法点：缺口块必须存在、在头部、且是可核对的逐条清单。
 {
   const MARKER = '覆盖缺口（E-2 制度化登记';
   const GAP_GATES = [

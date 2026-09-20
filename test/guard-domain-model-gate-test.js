@@ -5,12 +5,12 @@
 // 守护域模型门禁（GD-1..GD-5）—— SSOT: GUARD-DOMAIN-MODEL.md
 //
 // ## 为什么需要它
-//   契约 记录了「模型错位」的真实后果：把基础设施（lan-daemon）硬塞进
+//   GUARD-DOMAIN-MODEL.md 记录了「模型错位」的真实后果：把基础设施（lan-daemon）硬塞进
 //   「用户意图模型」，于是代码里出现了自相矛盾的三件套——
 //     - 对恒 true 值的补丁判断（entry.guardian !== true，对基础设施无意义）；
 //     - A/B 平面 id 混乱：计数写 get('lan-daemon') 而读 get('lan')；
 //     - guardian_action 里 lan 的 restartCount 恒为 0（可观测性断裂）。
-//   本门禁把 的两域模型与 的 G-1..G-6 铁律变成**可执行断言**，防止错位回潮。
+//   本门禁把该文档第 2 节的两域模型与第 3 节的 G-1..G-6 铁律变成**可执行断言**，防止错位回潮。
 //
 // ## 断言
 //   GD-1 域 B 基础设施（**router-daemon 与 lan-daemon 两者**）的 entry 申报**不含** guardian 字段（G-1）

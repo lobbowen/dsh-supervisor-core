@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 'use strict';
 
-// Command Code 反代额度获取（detectInstanceQuota commandcode-billing 分支）回归测试。
-// 覆盖 的判定语义：
+// Command Code 反代额度获取回归测试。
+// 覆盖 detectInstanceQuota 的 commandcode-billing 判定语义：
 //   1) 窗口耗尽只由 used/cap 推导（>=100% -> rate-limited），不依赖上游可选的 exceeded 标志——
 //      实况 bug：上游 100% 窗口不返 exceeded 时旧实现存出 weekly.status=ok + percent=100 矛盾记录；
 //   2) 信封兼容：上游可能返 { data: { windowLimits, credits } } 或平铺；
