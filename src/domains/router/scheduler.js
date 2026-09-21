@@ -76,7 +76,7 @@ function createScheduler(deps) {
   /** 实例生命周期监控：只查进程/端口（生命周期层），不探业务（adopt 实例无 exit 事件）。 */
   async function monitorInstanceHealth() {
     for (const p of providers()) {
-      if (p.kind === 'proxy' && typeof p.monitorLifecycle === 'function') {
+      if (p.supports('instanceLifecycle') && typeof p.monitorLifecycle === 'function') {
         try { await p.monitorLifecycle(); } catch (e) { if (logger && logger.warn) logger.warn('monitorLifecycle: ' + (e && e.message)); }
       }
     }
@@ -84,8 +84,8 @@ function createScheduler(deps) {
 
   /** 单个供应商实例对账（幂等 reconcile）：期望运行集 = 常驻 1 + 至多 1 备胎。 */
   async function ensureProviderInstances(p) {
-    if (!p || p.kind !== 'proxy') return;
-    if (typeof p.reconcileInstances === 'function') {
+    if (!p || !p.supports('instanceLifecycle')) return;
+    if (p.supports('reconcile')) {
       await p.reconcileInstances().catch(() => {});
     }
   }
@@ -94,7 +94,7 @@ function createScheduler(deps) {
   async function ensureProxyInstances() {
     if (state.stopped) return; // 服务停止闸门：禁止异步对账复活实例
     for (const p of providers()) {
-      if (p.kind !== 'proxy' || p.activated !== true) continue;
+      if (!p.supports('instanceLifecycle') || p.activated !== true) continue;
       await ensureProviderInstances(p);
     }
   }
@@ -110,12 +110,12 @@ function createScheduler(deps) {
   async function probeAccountStatesInner() {
     if (state.stopped) return; // 服务停止闸门
     for (const p of providers()) {
-      if (p.kind === 'proxy' && p.activated !== true) continue; // 未激活供应商不探测/不临时起实例
+      if (p.supports('instanceLifecycle') && p.activated !== true) continue; // 未激活供应商不探测/不临时起实例
       for (const acc of (p.accounts || [])) {
         if (acc.status === 'registering' || acc.status === 'discarded') continue;
         try {
           let det;
-          if (p.kind === 'proxy') {
+          if (p.supports('instanceLifecycle')) {
             const inst = acc.instance || (p.instances || []).find((i) => i.keyId === acc.keyId);
             if (!inst) continue;
             // 是否期望运行账号（常驻/备胎，由 reconcile 期望集同源判定）
@@ -143,7 +143,7 @@ function createScheduler(deps) {
   /** 实例对账（启停唯一决策者）：对账 = 期望集实例拉起（幂等）+ 其余无在途实例停止（幂等）。 */
   function reconcileInstances() {
     for (const p of providers()) {
-      if (p.kind !== 'proxy' || p.activated !== true) continue;
+      if (!p.supports('instanceLifecycle') || p.activated !== true) continue;
       try { p.reconcileInstances().catch(() => {}); } catch {}
     }
   }
@@ -186,12 +186,12 @@ function createScheduler(deps) {
   async function refreshReadyAccountsInner() {
     if (state.stopped) return; // 服务停止闸门
     for (const p of providers()) {
-      if (p.kind === 'proxy' && p.activated !== true) continue; // 未激活供应商不轮询/不预热实例
+      if (p.supports('instanceLifecycle') && p.activated !== true) continue; // 未激活供应商不轮询/不预热实例
       for (const acc of (p.accounts || [])) {
         if (acc.status !== 'ready') continue;
         try {
           let det;
-          if (p.kind === 'proxy') {
+          if (p.supports('instanceLifecycle')) {
             const inst = acc.instance || (p.instances || []).find((i) => i.keyId === acc.keyId);
             if (!inst) continue;
             // 10min 刷新只探测「已在运行」的账号（不临时拉起全部 ready 账号做额度检测）
