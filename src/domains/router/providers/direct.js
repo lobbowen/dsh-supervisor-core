@@ -23,6 +23,9 @@ class DirectProvider extends ProviderBase {
   /** 能力声明：key-pool 无实例能力。显式声明「不支持」，使转发层不再靠 typeof 猜测，差异可静态校验。 */
   supports(_cap) { return false; }
 
+  /** 结算单价来源：直连=本供应商官方单价表（officialPricing，经单价同步刷新）。 */
+  pricingOf(_fallback) { return this.officialPricing || null; }
+
   async detectAccount(acc) {
     const quota = (this.adapter && this.adapter.quota) || {};
     const strategy = quota && getQuotaStrategy(quota.type);

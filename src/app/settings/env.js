@@ -40,6 +40,13 @@ module.exports = {
         catalog: (envCatalogSummary(this)),
         // 平台能力矩阵：三平台静态档位 x 实际工具探测；前端据此做能力感知呈现与降级提示。
         capabilities: (() => { try { return platform.capabilities(); } catch { return null; } })(),
+        // 沙箱资源预算总览（W2 governor）：占用/预算/可容纳实例数；非沙箱平台或未装配时为 null。
+        sandboxBudget: (() => {
+          try {
+            return this.instances && typeof this.instances.budgetSnapshot === 'function'
+              ? this.instances.budgetSnapshot() : null;
+          } catch { return null; }
+        })(),
         // 桌面壳看护的观测快照：expose enabled/intervalMs/graceMs/absentForMs/restartsInWindow/
         //   everSawAlive/lastSkipReason/expectedAbsence，使「壳反复拉起失败」在面板可见。
         shellWatchdog: (() => {

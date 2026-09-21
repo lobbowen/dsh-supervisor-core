@@ -189,8 +189,9 @@ console.log('== K-W2 src 下裸 spawn(/exec*() 调用点 ==');
   const read = (rel) => stripComments(fs.readFileSync(path.join(ROOT, rel), 'utf8'));
   check('条 6 killTree 的 taskkill 走 exec.runAsync（不再裸 execFile）',
     /ex\.runAsync\('taskkill'/.test(read('src/platform/os/process.js')), '有');
-  check('条 6 npx 预取走 exec.runOutAsync（不再裸 execFile）',
-    /ex\.runOutAsync\(npxBin\(\)/.test(read('src/domains/router/providers/pkg-cache.js')), '有');
+  check('条 6 npx 预取走 exec.runOutAsync + npxLauncher 成对形态（不再裸 execFile、不再直调 .cmd）',
+    /ex\.runOutAsync\(launcher\.program/.test(read('src/domains/router/providers/pkg-cache.js'))
+      && /npxLauncher\(\)/.test(read('src/domains/router/providers/pkg-cache.js')), '有');
   check('条 6 git fetch 走 exec.runOutAsync（不再裸 execFile）',
     /ex\.runOutAsync\('git'/.test(read('src/app/settings/versions.js')), '有');
 }

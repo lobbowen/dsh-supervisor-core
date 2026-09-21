@@ -119,7 +119,7 @@ function createDshInstall(deps) {
   function readInstalledVersion(inst) {
     if (!inst || inst.domain !== 'sandbox') return null;
     try {
-      const pkg = path.join(sandbox.installDir(instancesRoot, inst), 'lib', 'node_modules', '@deepseek-ai', 'dsh', 'package.json');
+      const pkg = path.join(sandbox.nodeModulesDir(instancesRoot, inst), '@deepseek-ai', 'dsh', 'package.json');
       if (!fs.existsSync(pkg)) return null;
       const j = JSON.parse(fs.readFileSync(pkg, 'utf8'));
       return (j && typeof j.version === 'string') ? j.version : null;

@@ -26,18 +26,18 @@ class SwitchEngine {
 
   /** 选号编排：预算 usable/running，调 S1 纯策略，再应用决策（清锁/写 cursor/标记在用/事件）。 */
   _pickIn(p, opts) {
-    const isProxy = p.kind === 'proxy';
+    const instancePool = p.supports('instanceLifecycle');
     const accounts = p.accounts || [];
     const state = {
       accounts: accounts.map((a) => ({
         key: a.key, keyId: a.keyId, maskedKey: a.maskedKey, status: a.status,
         usable: !!p.isAccountUsable(a),
-        running: !isProxy || !!(a.instance && a.instance.pid),
+        running: !instancePool || !!(a.instance && a.instance.pid),
       })),
       selectedAccountKeyId: p.selectedAccountKeyId || null,
       activeAccountKeyId: p.activeAccount ? p.activeAccount.keyId : null,
       cursor: p.cursor || 0,
-      kind: p.kind,
+      instancePool,
     };
     const d = pickAccount(state, opts);
     // 锁定失效清理：仅当 S1 判定「永久失效」才清锁并持久化（临时冻结保留锁定）。

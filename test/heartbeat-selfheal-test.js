@@ -11,7 +11,7 @@
 //   - `_heartbeatBusy` 只在 `.finally` 里释放 —— 若 heartbeat 返回的 promise
 //     **永不 settle**，`.finally` 永不执行 -> busy 永久 true -> **心跳永停**。
 //
-// 为什么致命：`managedObjects` 存在时**不创建 tick 定时器**（supervisor.js:455），
+// 为什么致命：`managedObjects` 存在时**不创建 tick 定时器**（supervisor.js 的 managedObjects 分支），
 //   故心跳是 main 收敛 / 沙箱监督 / daemon 监督的**唯一**周期驱动。
 //   心跳停摆后：main 即使 desired=running 也永不 spawn/adopt、沙箱挂了永不退避重试、
 //   router/lan daemon 失联永不被拉起 —— 而 /status 仍显示最后一次写入的 phase，

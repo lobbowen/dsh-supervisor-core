@@ -12,7 +12,7 @@ const logcore = require('../../platform/service/log/logcore');
 // 生命周期，守卫只做监测与按策略拉起；守卫重启/停止不影响本进程已有的 relay/frpc（只短暂影响
 // 新增/变更对账）。运行：node src/domains/relay/daemon.js -c <configPath>（config.lanDaemon=true 时
 // 由守卫 spawn detached，或手动调试）。数据流（松耦合）：守卫写 <stateDir>/lan-state.json（原子
-// 0600），本进程每 2s 轮询 diff，实例增删/启停/remoteEnabled 变化触发 reconcile，令牌变化经
+// 0600），本进程每 2s 轮询 diff，实例增删/启停/remoteMode 变化触发 reconcile，令牌变化经
 // lan.applyToken 热换 cookie；frp.json/frpc.toml 由本进程独占写，守卫经 ctl 委托读写；端口用独立
 // 注册表 <stateDir>/ports-lan.json，避免与 router/守卫并发写；ctl 在 127.0.0.1:43108，白名单只含本域方法。
 
@@ -26,7 +26,7 @@ const POLL_MS = 2000;
 // 否则本进程 ctl 端口能调到 router 的方法（反之亦然），既非必要也扩大攻击面（PG-5）。
 // eventsTail 须显式登记（dispatcher 内置特例，守卫 EventHub 增量拉事件）。
 const LAN_CTL_METHODS = Object.freeze([
-  'list', 'setFrp', 'frpStatus', 'frpAction', 'syncFrpc',
+  'list', 'frpStatus', 'frpAction', 'syncFrpc',
   'eventsTail',
 ]);
 
@@ -65,7 +65,7 @@ function main() {
   try { ports.configureFile(path.join(swDir, 'ports-lan.json')); } catch {}
 
   // 文件快照到 LanManager 的实例源：{ instances, save:noop }。wanPort 绑定权威在端口注册表
-  // （syncProxy 先查 byOwner），inst.wanPort 仅展示/兜底。
+  // （syncProxy 先查 byOwner），实例快照不含端口字段。
   let snapshot = { instances: [], tokens: {}, mtime: 0, textHash: '' };
   const lanSource = {
     instances: [],
@@ -106,11 +106,8 @@ function main() {
           id: inst.id,
           name: inst.name || inst.id,
           port: inst.port,
-          remoteEnabled: inst.remoteEnabled === true,
+          remoteMode: inst.remoteMode === 'lan' || inst.remoteMode === 'wan' ? inst.remoteMode : 'off',
           remoteToken: inst.remoteToken || '',
-          frpEnabled: inst.frpEnabled === true,
-          frpRemotePort: inst.frpRemotePort || null,
-          wanPort: inst.wanPort || null,
         });
       }
       // 令牌 diff：热换既有 relay cookie（无 relay 时仅刷新 tokenOf 供后续会话使用）

@@ -31,7 +31,9 @@
 //   X-1  exec-path：候选名 / 标准目录 / npmBin-npxBin 的**平台行为**可穷举
 //   X-2  **P1-C 复现**：在 Linux 上以注入 env 让 win32 解析命中 `npm.cmd`
 //        （即：Windows 上裸 `npm` 会 ENOENT 的那个缺陷类别，被本门禁钉死）
-//   X-3  service：四平台 kind 正确 + **方法集完全一致** + 不支持平台**显式抛错**
+//   X-3  service：W3 分派（linux 实测 systemd/portable、darwin/win32 portable、未知 none）
+//        + 三 Provider **方法集完全一致**（含 setLimits）+ 未知平台**显式抛错**
+//   X-3b portable provider 纯逻辑：锚点归属/ownGroup 宽严/isUnitActive 三态/stopUnit 幂等
 //   X-4  autostart：daemonCommand 平台差异（win 带 .exe）+ status().kind 与能力档位一致
 //   X-5  反向：判据能识别宿主泄漏与静默误声明（门禁非空转）
 // ---------------------------------------------------------------------------
@@ -138,47 +140,207 @@ const TMP = fs.mkdtempSync(path.join(os.tmpdir(), 'platport-'));
     ep.npxBin({ platform: 'win32', env }) === fakeNpx, ep.npxBin({ platform: 'win32', env }));
 }
 
-// -- X-3：service —— 四平台 kind + 方法集一致 + 不支持平台显式抛错 --
+// -- X-3：service —— W3 分派 kind + 方法集一致 + 未知平台显式抛错 --
 {
-  const kinds = { linux: 'systemd', darwin: 'launchd', win32: 'windows-service', freebsd: 'none' };
+  // 分派口径（见 ARCHITECTURE-PLAN-instance-sandbox-governor，实测不写死）：伪造 linux 且清空 PATH 下 systemd-run 必然测不到
+  // -> 必须落 portable（容器/WSL1 正是过去被整体判死、现被解锁的形状）；
+  // darwin/win32 恒 portable；未知平台恒 none。
+  const kinds = { linux: 'portable', darwin: 'portable', win32: 'portable', freebsd: 'none' };
   const sets = {};
   for (const [p, want] of Object.entries(kinds)) {
     const out = underFake(p, [
       "const svc = require('./src/platform/os/service.js');",
       "const c = svc.current();",
-      "process.stdout.write(JSON.stringify({ kind: c.kind, units: c.supportsUnits, keys: Object.keys(c).sort() }));",
+      "process.stdout.write(JSON.stringify({ kind: c.kind, units: c.supportsUnits, transient: c.supportsTransient, keys: Object.keys(c).sort() }));",
     ].join(String.fromCharCode(10)));
     let j = null;
     try { j = JSON.parse(out); } catch { /* EXECFAIL */ }
     check('X-3 ' + p + ' provider.kind = ' + want, !!j && j.kind === want, j ? j.kind : out.slice(0, 60));
-    check('X-3 ' + p + ' supportsUnits = ' + (p === 'linux'),
-      !!j && j.units === (p === 'linux'), j ? String(j.units) : '-');
+    check('X-3 ' + p + ' supportsUnits 与 kind 一致（仅 systemd 有用户单元）',
+      !!j && j.units === (j.kind === 'systemd'), j ? String(j.units) : '-');
+    check('X-3 ' + p + ' supportsTransient=' + (want === 'none' ? 'false' : 'true') + '（三平台跑舱解锁；仅未知平台不可）',
+      !!j && j.transient === (want !== 'none'), j ? String(j.transient) : '-');
     if (j) sets[p] = j.keys;
   }
-  const base = JSON.stringify(sets.linux || []);
-  const diff = Object.entries(sets).filter(([, k]) => JSON.stringify(k) !== base).map(([p]) => p);
-  check('X-3 四个 provider 与 NONE 的**方法集完全一致**（防"声明了却没实现"）',
-    diff.length === 0 && (sets.linux || []).length >= 10,
-    diff.length ? ('不一致: ' + diff.join(',')) : ((sets.linux || []).length + ' 个成员一致'));
+  // 方法集一致必须对**三个真实 Provider** 静态对账（_testProviders 缝）：伪造 linux 在任意宿主
+  // 都拿不到 systemd 键集，旧判据只比派发产物会静默失去覆盖面（假绿）。
+  const tp = require(path.join(ROOT, 'src', 'platform', 'os', 'service.js'))._testProviders;
+  const norm = (o) => Object.keys(o).sort();
+  const ref = JSON.stringify(norm(tp.systemd));
+  const bad = Object.keys(tp).filter((k) => JSON.stringify(norm(tp[k])) !== ref);
+  check('X-3 systemd/portable/NONE 三方**方法集完全一致**（含 setLimits，防"声明了却没实现"）',
+    bad.length === 0 && norm(tp.systemd).length >= 11 && JSON.stringify(sets.linux || []) === ref,
+    bad.length ? ('不一致: ' + bad.join(',')) : (norm(tp.systemd).length + ' 个成员一致'));
 
-  // 不支持平台：必须**显式抛错**（带平台标签），绝不静默 no-op
-  const thrown = underFake('darwin', [
+  // 未知平台：必须**显式抛错**（带档位标签），绝不静默 no-op。
+  // （旧判据打的是 darwin/launchd —— W3 起 darwin/win32 落 portable，不再抛是**能力解锁**，
+  //   显式抛错义务移交未知平台 NONE。）
+  const thrown = underFake('freebsd', [
     "const svc = require('./src/platform/os/service.js');",
     "const c = svc.current();",
     "const r = [];",
     "for (const m of ['stopUnit', 'startTransient']) {",
-    "  try { c[m]('x'); r.push(m + ':NO-THROW'); } catch (e) { r.push(m + ':' + (/launchd/.test(e.message) ? 'labeled' : 'unlabeled')); }",
+    "  try { c[m]('x'); r.push(m + ':NO-THROW'); } catch (e) { r.push(m + ':' + (/无服务管理器/.test(e.message) ? 'labeled' : 'unlabeled')); }",
     "}",
     "process.stdout.write(r.join(' '));",
   ].join(String.fromCharCode(10)));
-  check('X-3 不支持平台 stopUnit/startTransient 显式抛错且带平台标签',
+  check('X-3 未知平台 stopUnit/startTransient 显式抛错且带档位标签',
     /stopUnit:labeled/.test(thrown) && /startTransient:labeled/.test(thrown), thrown);
-  const inact = underFake('win32', [
+  const inact = underFake('freebsd', [
     "const svc = require('./src/platform/os/service.js');",
     "process.stdout.write(String(svc.current().isUnitActive('dsh-web@x')));",
   ].join(String.fromCharCode(10)));
-  check('X-3 不支持平台 isUnitActive(具名单元)=false（删除路径得以继续）',
+  check('X-3 未知平台 isUnitActive(具名单元)=false（无单元可言，删除路径得以继续）',
     inact === 'false', inact);
+  const inactP = underFake('win32', [
+    "const svc = require('./src/platform/os/service.js');",
+    "process.stdout.write(String(svc.current().isUnitActive('dsh-web@x')));",
+  ].join(String.fromCharCode(10)));
+  check('X-3 portable 无任何锚点时 isUnitActive=null（无从查询不得被当成已停止）',
+    inactP === 'null', inactP);
+
+  // 真实环境侧：分派结果必须**等于** systemd-run 可执行实测（写死平台的旧实现会在此露馅）。
+  const dis = underFake('linux', [
+    "const svc = require('./src/platform/os/service.js');",
+    "const ep = require('./src/platform/os/exec-path.js');",
+    "const ex = require('./src/platform/util/exec.js');",
+    "const has = !!ep.resolveExecutable('systemd-run') || ex.runOut('systemd-run', ['--version'], { timeoutMs: 3000 }) !== null;",
+    "process.stdout.write(JSON.stringify({ kind: svc.current().kind, has: has }));",
+  ].join(String.fromCharCode(10)), { realPath: true });
+  let dj = null;
+  try { dj = JSON.parse(dis); } catch { /* EXECFAIL */ }
+  check('X-3 linux 分派 = systemd-run 实测（有=systemd / 无=portable，不随宿主写死）',
+    !!dj && dj.kind === (dj.has ? 'systemd' : 'portable'), dis.slice(0, 60));
+}
+
+// -- X-3b：portable provider 纯逻辑（pidlookup 打桩，任意宿主确定） --
+{
+  const out = underFake('linux', [
+    "const fs=require('fs'), os=require('os'), path=require('path');",
+    "const tmp=fs.mkdtempSync(path.join(os.tmpdir(),'dsh-port-'));",
+    "const pf=path.join(tmp,'run.pid');",
+    "const CMD='node /opt/inst/install/lib/node_modules/@deepseek-ai/dsh/lib/bin.js web --port 8111';",
+    // stopUnit 会对 run.pid 命中的 pid 发真实信号——必须用一个探测出的**不存在**的 pid，
+    // 绝不能在 CI 宿主上误伤恰好占用 4242 之类的无关进程。
+    "let FP=null; for (let q=4194200;q>4190000;q--){ try { process.kill(q,0); } catch (e) { FP=q; break; } }",
+    "if (FP===null) { process.stdout.write('{\"FPFAIL\":true}'); process.exit(0); }",
+    "let alive=true, cmd=CMD, listen=null, calls=0, limit=1e9;",
+    // 加载期 require.cache 注入（test-safety 门禁 A 认可的构造期替换范式；patch 模块导出被禁）：
+    // portable 在其后首次 require 时绑到假 pidlookup，探测结果完全受控、宿主无关。
+    "const plPath=require.resolve('./src/platform/os/pidlookup');",
+    "require.cache[plPath]={ id: plPath, filename: plPath, loaded: true, exports: {",
+    "  isAlive: function(){ calls++; return alive && calls<=limit; },",
+    "  readCmdline: function(){ return cmd; },",
+    "  findListeningPid: function(){ return listen; },",
+    "} };",
+    "const { portable, _test } = require('./src/platform/os/portable.js');",
+    "const r={};",
+    "fs.writeFileSync(pf,'4242');",
+    "r.pidOk=_test.readPidFile(pf)===4242;",
+    "fs.writeFileSync(pf,'garbage'); r.pidBad=_test.readPidFile(pf)===null;",
+    "r.pidMissing=_test.readPidFile(path.join(tmp,'nope.pid'))===null;",
+    "fs.writeFileSync(pf,String(FP));",
+    "r.anchorHit=_test.matchesAnchors(4242,['--port 8111'])===true;",
+    "r.anchorMiss=_test.matchesAnchors(4242,['nope'])===false;",
+    "r.anchorEmpty=_test.matchesAnchors(4242,[])===false;",
+    "const ctx={port:8111,pidFile:pf,anchors:['/opt/inst/install/lib/node_modules/@deepseek-ai/dsh/lib/bin.js','--port 8111']};",
+    "const f1=_test.findOurs(ctx); r.pfOwn=!!f1&&f1.pid===FP&&f1.ownGroup===true;",
+    "cmd='unrelated process'; const f2=_test.findOurs(ctx); r.anchorMismatchNull=f2===null;",
+    "cmd=CMD; alive=false; listen=9999; const f3=_test.findOurs(ctx); r.portNotOwn=!!f3&&f3.pid===9999&&f3.ownGroup===false;",
+    "listen=FP; r.portEqPidfileSkipped=_test.findOurs(ctx)===null;",
+    "alive=true; listen=null;",
+    "r.activeTrue=portable.isUnitActive('dsh-web@x',ctx)===true;",
+    "r.noAnchorNull=portable.isUnitActive('dsh-web@x',{})===null;",
+    "cmd=null; r.aliveCmdUnknown=portable.isUnitActive('dsh-web@x',ctx)===null; cmd=CMD;",
+    "r.noAnchorAliveTrue=portable.isUnitActive('dsh-web@x',{port:8111,pidFile:pf,anchors:[]})===true;",
+    "alive=false;",
+    "r.noAnchorDeadFalse=portable.isUnitActive('dsh-web@x',{port:0,pidFile:pf,anchors:[]})===false;",
+    "r.noAnchorPortUnknown=portable.isUnitActive('dsh-web@x',{port:8111,pidFile:null,anchors:[]})===null;",
+    "r.stopNothingTrue=portable.stopUnit('dsh-web@x',{port:8111,pidFile:path.join(tmp,'nope.pid'),anchors:[]})===true;",
+    "fs.writeFileSync(pf,String(FP)); alive=true; calls=0; limit=1e9;",
+    "r.stopUnconfirmedFalse=portable.stopUnit('dsh-web@x',Object.assign({timeoutMs:0},ctx))===false;",
+    "calls=0; limit=2;",
+    "r.stopConfirmedTrue=portable.stopUnit('dsh-web@x',Object.assign({timeoutMs:200},ctx))===true;",
+    "r.pidFileCleaned=!fs.existsSync(pf);",
+    "r.cleanNothingOk=portable.cleanTransient('dsh-web@x',{port:8111,pidFile:path.join(tmp,'nope.pid'),anchors:[]}).ok===true;",
+    "try { portable.startTransient({ cmd: [] }); r.rejectEmptyCmd=false; } catch (e) { r.rejectEmptyCmd=/空命令/.test(e.message); }",
+    "r.setLimitsFalse=portable.setLimits('dsh-web@x',{memoryMax:'1G'})===false;",
+    "process.stdout.write(JSON.stringify(r));",
+  ].join(String.fromCharCode(10)));
+  let j = null;
+  try { j = JSON.parse(out); } catch { /* EXECFAIL */ }
+  const want = ['pidOk', 'pidBad', 'pidMissing', 'anchorHit', 'anchorMiss', 'anchorEmpty', 'pfOwn',
+    'anchorMismatchNull', 'portNotOwn', 'portEqPidfileSkipped', 'activeTrue', 'noAnchorNull',
+    'aliveCmdUnknown', 'noAnchorAliveTrue', 'noAnchorDeadFalse', 'noAnchorPortUnknown', 'stopNothingTrue',
+    'stopUnconfirmedFalse', 'stopConfirmedTrue', 'pidFileCleaned', 'cleanNothingOk', 'rejectEmptyCmd', 'setLimitsFalse'];
+  check('X-3b portable 纯逻辑 23 项全真（readPidFile/锚点归属/ownGroup 宽严/三态/幂等停止/清理）',
+    !!j && want.every((k) => j[k] === true), j ? want.filter((k) => j[k] !== true).join(',') : out.slice(0, 80));
+}
+
+// -- X-3c：portable 真实拉起/终止链（真实宿主，不伪造；CI 三 runner 各验本平台） --
+{
+  // 真 spawn 一个监听临时端口的 node 子进程，验「拉起写 run.pid -> 锚点归属 -> 停止确认并清 pidfile」。
+  // 这是 W3 验收标准第 1 条的内核侧落点：伪造平台验不了真进程，真实宿主验不了别家平台，
+  // 三端各自跑自己那段（ubuntu/mac/windows runner 各覆盖 POSIX 组信号或 taskkill 路径）。
+  const { portable } = require(path.join(ROOT, 'src', 'platform', 'os', 'portable.js'));
+  const tmpd = fs.mkdtempSync(path.join(os.tmpdir(), 'dsh-port-real-'));
+  const pf = path.join(tmpd, 'run.pid');
+  // 端口经 _ports.js 分段取（T1/T2 纪律）：真实 listen，必须落在安全段而非 ephemeral。
+  const port = require(path.join(__dirname, '_ports.js')).safePort('platform-layer-portability');
+  const entry = path.join(tmpd, 'entry.js');
+  fs.writeFileSync(entry, "require('net').createServer().listen(" + port + ",'127.0.0.1');setInterval(function(){},1000);");
+  const ctx = { port, pidFile: pf, anchors: [entry] };
+  let started = false;
+  let startErr = '';
+  try {
+    started = portable.startTransient({ cmd: [process.execPath, entry], pidFile: pf }) === true
+      && fs.existsSync(pf) && parseInt(fs.readFileSync(pf, 'utf8'), 10) > 0;
+  } catch (e) { startErr = e && e.message; }
+  check('X-3c startTransient 真拉起并落 run.pid', started, startErr || 'ok');
+  check('X-3c run.pid+cmdline 锚点命中即活跃（不等端口监听）',
+    started && portable.isUnitActive('dsh-web@x', ctx) === true, 'true');
+  const stopOk = started && portable.stopUnit('dsh-web@x', Object.assign({ timeoutMs: 5000 }, ctx)) === true;
+  check('X-3c stopUnit 确认终止（true 仅在端口与 pidfile 双锚点消失后）', stopOk, String(stopOk));
+  check('X-3c 停止后 run.pid 已清、再查=false（肯定证据，非未知）',
+    stopOk && !fs.existsSync(pf) && portable.isUnitActive('dsh-web@x', ctx) === false, 'false');
+  try { fs.rmSync(tmpd, { recursive: true, force: true }); } catch { /* 尽力清 */ }
+}
+
+// -- X-3d：systemd 档 setLimits 的 argv 实录（exec 打桩，绝不碰宿主 systemd） --
+//
+//   验收标准第 2 条要求「cgroup 限额可被 governor 运行时改动」被真实验证。真发
+//   `systemctl --user set-property` 会在 CI/开发机上留下真实单元属性副作用（且 transient
+//   单元不存在时命令本身就要失败），故在**执行器边界**打桩：断言 argv 逐字、有界超时、
+//   空 alloc 与非法名的 fail-closed。argv 是平台层在这条链上唯一的真产物；
+//   systemd 收到属性后是否真限流属其自身语义，不在本仓断言面内。
+{
+  const out = underFake('linux', [
+    "const calls = [];",
+    // 加载期 require.cache 注入（构造期替换范式；patch 模块导出被 test-safety 门禁 A 禁止）
+    "const exPath = require.resolve('./src/platform/util/exec.js');",
+    "require.cache[exPath] = { id: exPath, filename: exPath, loaded: true, exports: {",
+    "  run: function (c, a, o) { calls.push([c, a, o]); return ''; },",
+    "  runOut: function (c, a, o) { calls.push([c, a, o]); return ''; },",
+    "  runDetail: function (c, a, o) { calls.push([c, a, o]); return { ok: true, stdout: '' }; },",
+    "} };",
+    "const svc = require('./src/platform/os/service.js');",
+    "const t = svc._testProviders.systemd;",
+    "const ok = t.setLimits('dsh-web@a1', { memoryMax: '2G', memoryHigh: '1800M', cpuQuota: '150%' });",
+    "const argv = calls.length === 1 ? String(calls[0][1]) : 'CALLS=' + calls.length;",
+    "const to = calls[0] && calls[0][2] ? calls[0][2].timeoutMs : null;",
+    "calls.length = 0;",
+    "const empty = t.setLimits('dsh-web@a1', {}) === false && calls.length === 0;",
+    "const bad = t.setLimits('../evil', { memoryMax: '1G' }) === false && calls.length === 0;",
+    "process.stdout.write(JSON.stringify({ ok: ok === true, argv: argv, to: to, empty: empty, bad: bad }));",
+  ].join(String.fromCharCode(10)));
+  let j = null;
+  try { j = JSON.parse(out); } catch { /* EXECFAIL */ }
+  check('X-3d setLimits argv 逐字：--user set-property --runtime <unit> 三属性（--runtime 防陈旧下限黏住）',
+    !!j && j.ok && j.argv === ['--user', 'set-property', '--runtime', 'dsh-web@a1',
+      'MemoryMax=2G', 'MemoryHigh=1800M', 'CPUQuota=150%'].join(','), j ? j.argv : out.slice(0, 80));
+  check('X-3d setLimits 走有界超时（dbus 挂起不得冻结监督拍）', !!j && j.to === 10000, j ? String(j.to) : '-');
+  check('X-3d 空 alloc 不发命令且返 false（无值可下发时绝不发空调用）', !!j && j.empty === true, j ? String(j.empty) : '-');
+  check('X-3d 非法单元名 fail-closed（与 stopUnit 同闸，绝不进 systemctl argv）', !!j && j.bad === true, j ? String(j.bad) : '-');
 }
 
 // -- X-4：autostart —— daemonCommand 平台差异 + status().kind 与能力档位一致 --
@@ -342,35 +504,80 @@ const TMP = fs.mkdtempSync(path.join(os.tmpdir(), 'platport-'));
     && br.isSafeHttpUrl('') === false, 'ok');
   check('A4 反向：cmd 形态会被判据识别（旧计划含 /c start 即违规）',
     JSON.stringify({ cmd: 'cmd', args: ['/c', 'start', '', u] }).indexOf('start') >= 0, 'hit');
-  check('A4 findChromeWin：三根目录都不存在 → null（不抛）',
-    br.findChromeWin({ 'ProgramFiles': '/nonexistent-a', 'ProgramFiles(x86)': '/nonexistent-b', LOCALAPPDATA: '/nonexistent-c' }, () => false) === null, 'null');
-  check('A4 findChromeWin：命中 LOCALAPPDATA 且路径拼接正确',
-    br.findChromeWin({ LOCALAPPDATA: 'C:\\Users\\x\\AppData\\Local' }, (p) => p.indexOf('Google') >= 0 && p.endsWith('chrome.exe')) !== null, 'hit');
 
-  const dp = br.isolatedPlan('darwin', u, { antiArgs: ['--a', '--b'] });
-  check('X-8 darwin 隔离计划 = open -na "Google Chrome" --args <antiArgs>',
-    dp.kind === 'single' && dp.bin === 'open'
-    && JSON.stringify(dp.args) === JSON.stringify(['-na', 'Google Chrome', '--args', '--a', '--b']), JSON.stringify(dp.args));
-  const wp = br.isolatedPlan('win32', u, { profileDir: '/P', antiArgs: ['--a'], chromeBin: 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe' });
-  check('X-8 win32 隔离计划（有 chrome）= 直启 chrome.exe：incognito + user-data-dir + antiArgs + url，**无 cmd**',
-    wp.kind === 'single' && wp.bin === 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe'
-    && wp.isolated === true && wp.envKind === 'anti'
-    && JSON.stringify(wp.args) === JSON.stringify(['--incognito', '--user-data-dir=/P', '--a', u]),
-    JSON.stringify(wp.args));
-  const wf = br.isolatedPlan('win32', u, { profileDir: '/P', antiArgs: ['--a'] });
-  check('X-8 win32 隔离计划（无 chrome）= explorer.exe 兜底，isolated=false 明示不隔离',
-    wf.bin === 'explorer.exe' && wf.isolated === false && JSON.stringify(wf.args) === JSON.stringify([u]),
-    JSON.stringify(wf));
-  const lp = br.isolatedPlan('linux', u, { antiArgs: ['--a'] });
-  check('X-8 linux 候选链：首 Edge、尾 xdg-open、共 7 个（顺序即防风控强度）',
-    lp.kind === 'chain' && lp.candidates.length === 7
-    && lp.candidates[0].bin === 'microsoft-edge' && lp.candidates[6].bin === 'xdg-open',
-    lp.candidates.map((c) => c.bin).join('>'));
-  check('X-8 linux 候选链：xdg-open 兜底 isolated=false；其余前 5 个 isolated=true',
-    lp.candidates[6].isolated === false && lp.candidates.slice(0, 5).every((c) => c.isolated === true),
+  // —— 默认浏览器解析：纯函数侧（三端解析器的输入->输出可在任意宿主穷举）——
+  check('X-8 engineOf：chromium 派生系（chrome/chromium/msedge/brave/opera/vivaldi/thorium）',
+    ['google-chrome', '/usr/bin/chromium-browser', 'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe',
+     'brave-browser', 'opera', 'vivaldi-stable', 'thorium'].every((b) => br.engineOf(b) === 'chromium'), 'ok');
+  check('X-8 engineOf：firefox/librewolf=firefox；safari/snap/xdg-open=other',
+    br.engineOf('firefox') === 'firefox' && br.engineOf('/usr/lib/firefox/firefox') === 'firefox'
+    && br.engineOf('librewolf') === 'firefox'
+    && br.engineOf('/Applications/Safari.app/Contents/MacOS/Safari') === 'other'
+    && br.engineOf('snap') === 'other' && br.engineOf('xdg-open') === 'other', 'ok');
+  check('X-8 regValueOf：REG_SZ 值提取',
+    br.regValueOf('    (默认)    REG_SZ    Google Chrome') === 'Google Chrome', 'ok');
+  check('X-8 exeFromCmdLine：引号形态与裸 .exe 形态；非 exe 命令行 → null',
+    br.exeFromCmdLine('"C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe" -- "%1"') === 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe'
+    && br.exeFromCmdLine('C:\\Windows\\explorer.exe %1') === 'C:\\Windows\\explorer.exe'
+    && br.exeFromCmdLine('notepad') === null, 'ok');
+  check('X-8 parseExecLine：URL 字段码剔除 + env 去壳 + 引号分词',
+    JSON.stringify(br.parseExecLine('/usr/bin/firefox %u')) === JSON.stringify({ bin: '/usr/bin/firefox', baseArgs: [] })
+    && JSON.stringify(br.parseExecLine('env DISPLAY=:0 brave-browser --ozone-platform=x11 %U')) === JSON.stringify({ bin: 'brave-browser', baseArgs: ['--ozone-platform=x11'] })
+    && JSON.stringify(br.parseExecLine('"google chrome"  --incognito %u')) === JSON.stringify({ bin: 'google chrome', baseArgs: ['--incognito'] }),
     'ok');
-  check('X-8 linux Firefox 用 --private-window（不是 --incognito）',
-    JSON.stringify(lp.candidates[5].args) === JSON.stringify(['--private-window', u]), JSON.stringify(lp.candidates[5].args));
+  {
+    const fakeReg = (bin, args) => {
+      const key = args[1];
+      if (key === 'HKCU\\Software\\Clients\\StartMenuInternet') return '    (默认)    REG_SZ    MSEdgeRedirect\r\n';
+      if (key === 'HKCU\\Software\\Clients\\StartMenuInternet\\MSEdgeRedirect\\shell\\open\\command') return '    (默认)    REG_SZ    "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe" -- "%1"\r\n';
+      return null;
+    };
+    const dw = br.resolveDefaultWin(fakeReg);
+    check('X-8 resolveDefaultWin：HKCU ProgID -> open\\command -> 绝对 msedge.exe（Edge 装机即默认，不再是「产品挑内核」）',
+      dw && dw.bin === 'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe', JSON.stringify(dw));
+  }
+  {
+    const dl = br.resolveDefaultLinux(
+      (bin) => (bin === 'xdg-settings' ? 'firefox.desktop\n' : null),
+      () => '[Desktop Entry]\nName=Firefox\nExec=/usr/lib/firefox/firefox %u\n\n[Desktop Action new-window]\nExec=/usr/lib/firefox/firefox --new-window %u\n',
+      () => true, { XDG_DATA_HOME: '/fake/share' }, '/fake/home');
+    check('X-8 resolveDefaultLinux：desktop 主条目 Exec 还原真实命令（Desktop Action 段不取）',
+      dl && dl.bin === '/usr/lib/firefox/firefox' && JSON.stringify(dl.baseArgs) === '[]', JSON.stringify(dl));
+    check('X-8 resolveDefaultLinux：desktop 名不合白名单（路径穿越/控制字符）→ null（不读任意文件）',
+      br.resolveDefaultLinux(() => '../etc/passwd', () => '', () => true, {}, '/h') === null, 'null');
+  }
+  {
+    const dm = br.resolveDefaultMac(() => 'com.google.chrome\t/Applications/Google Chrome.app\tGoogle Chrome\n');
+    check('X-8 resolveDefaultMac：bundle id + app path + CFBundleExecutable -> 直启路径',
+      dm && dm.bin === '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome' && dm.bundleId === 'com.google.chrome', JSON.stringify(dm));
+    check('X-8 resolveDefaultMac：EMPTY/无输出 → null（降级非隔离 open）',
+      br.resolveDefaultMac(() => 'EMPTY') === null && br.resolveDefaultMac(() => null) === null, 'ok');
+  }
+
+  // —— 隔离计划（纯函数；输入 = 解析出的默认浏览器）——
+  const pc = br.isolatedPlan('linux', u, { defaultBrowser: { bin: 'google-chrome', baseArgs: [] }, profileDir: '/P', size: [1280, 800], lang: 'zh-CN' });
+  check('X-8 隔离计划（chromium）= 默认浏览器直启：incognito + user-data-dir + size/lang + url 收尾，无 cmd',
+    pc.bin === 'google-chrome' && pc.isolated === true && pc.watch === true && pc.envKind === 'anti'
+    && JSON.stringify(pc.args) === JSON.stringify(['--incognito', '--user-data-dir=/P', '--window-size=1280,800', '--lang=zh-CN',
+      '--no-first-run', '--no-default-browser-check', '--disable-session-crashed-bubble', u]),
+    JSON.stringify(pc.args));
+  const pf = br.isolatedPlan('linux', u, { defaultBrowser: { bin: '/usr/lib/firefox/firefox' }, profileDir: '/P' });
+  check('X-8 隔离计划（firefox）= --no-remote --profile <tmp> -private-window（新实例，退出可监听）',
+    pf.isolated === true && JSON.stringify(pf.args) === JSON.stringify(['--no-remote', '--profile', '/P', '-private-window', u]),
+    JSON.stringify(pf.args));
+  const ps = br.isolatedPlan('darwin', u, { defaultBrowser: { bin: '/Applications/Safari.app/Contents/MacOS/Safari' }, profileDir: '/P' });
+  check('X-8 Safari 默认 = open 非隔离兜底（isolated:false/watch:false），不再强拉其他内核',
+    ps.bin === 'open' && ps.isolated === false && ps.watch === false && JSON.stringify(ps.args) === JSON.stringify([u]), JSON.stringify(ps));
+  const pn = br.isolatedPlan('win32', u, { defaultBrowser: null, profileDir: '/P' });
+  check('X-8 解析不到默认浏览器 = explorer.exe 非隔离兜底（win32），明示 isolated=false',
+    pn.bin === 'explorer.exe' && pn.isolated === false, JSON.stringify(pn));
+  const pg = br.isolatedPlan('linux', u, { defaultBrowser: { bin: 'google-chrome' } });
+  check('X-8 反向：chromium 但缺 profileDir 不冒充隔离（退回非隔离，防并入既有实例后 onExit 恒误报）',
+    pg.isolated === false && pg.bin === 'xdg-open', JSON.stringify(pg));
+  const pb = br.isolatedPlan('linux', u, { defaultBrowser: { bin: 'brave-browser', baseArgs: ['--ozone-platform=x11'] }, profileDir: '/P' });
+  check('X-8 desktop baseArgs 原样带入（隔离参数在其后、url 收尾；无 size/lang 则不发对应参数）',
+    JSON.stringify(pb.args) === JSON.stringify(['--ozone-platform=x11', '--incognito', '--user-data-dir=/P',
+      '--no-first-run', '--no-default-browser-check', '--disable-session-crashed-bubble', u]), JSON.stringify(pb.args));
 }
 
 // -- X-5：反向（判据必须能识别宿主泄漏与静默误声明）--
@@ -409,55 +616,49 @@ const TMP = fs.mkdtempSync(path.join(os.tmpdir(), 'platport-'));
   check('X-9 条3 裸名候选保留交 execFile 的 PATH 解析（预检不扩大）',
     /candidates = \['ss',/.test(ssSrc), 'ok');
 
-  // launchIsolated spawn 前预检（binAvailable + spawn **双**注入 -> 宿主无关、零真实进程）
-  //   只注入 binAvailable 并比 `r1.bin === plan.bin` 不够：产品的上报形态按分支不同 ——
-  //   single 报 **plan.label**（darwin='Google Chrome'、win32='explorer'/'chrome'），
-  //   chain 才报 c.bin。只比等值时 linux 恰好相等，**darwin 与 win32 宿主必红**；
-  //   且未注入 spawn 时还会在 CI 机器上真起一次浏览器。
-  //   故注入 spawn 缝，断言「被真 spawn 的是哪个 bin」+「返回值与计划一致」。
+  // launchIsolated spawn 前预检（defaultBrowser + binAvailable + spawn **三注入** -> 宿主无关、
+  //   零真实进程、零注册表/LaunchServices/xdg-settings 真实查询）。
+  //   条 4 同源原则不变，输入从 chromeBin 换成 defaultBrowser：浏览器是谁由系统解析，
+  //   夹具注入的即解析结果本身，产品与夹具对同一输入出同一计划。
   const u9 = 'http://127.0.0.1:28999/x';
-  //   夹具规划必须与产品规划**同源**，且不能依赖「这台机器装了什么」：
-  //   若夹具自行假定「无 chrome」而产品内部去 findChromeWin()（装了 Chrome 时计划变成
-  //   chrome.exe 绝对路径、label='chrome'），注入的 binAvailable 对产品真正询问的 bin 恒 false
-  //   -> 一个进程都不起、返回 ok:false，看起来像产品缺陷。
-  //   故 chromeBin 是显式入参（缺省仍为运行期探测），夹具固定注入探测结果，
-  //   两侧规划同一入参即同一计划；Chrome 在/不在两种形态由 isolatedPlan 的纯函数用例覆盖。
-  const chromeBin9 = br.findChromeWin();
-  const plan9 = br.isolatedPlan(process.platform, u9, { profileDir: '/P', antiArgs: ['--a'], chromeBin: chromeBin9 });
-  const pick = plan9.kind === 'single' ? plan9 : plan9.candidates[5]; // 本例的可达候选只有一个
-  const wantSpawn = pick.bin;
-  const wantReport = plan9.kind === 'single' ? plan9.label : pick.bin;
+  const db9 = { bin: 'google-chrome', baseArgs: [] };
+  const plan9 = br.isolatedPlan(process.platform, u9, { defaultBrowser: db9, profileDir: '/P' });
   const spawned9 = [];
-  const fakeSpawn = (bin) => { spawned9.push(bin); return { on() {}, unref() {} }; };
+  const exits9 = [];
+  const fakeSpawn = (bin, args, env, onExit) => { spawned9.push(bin); exits9.push(onExit); return { on() {}, unref() {} }; };
   const asked9 = [];
   const r1 = br.launchIsolated(u9, {
-    antiArgs: ['--a'], chromeBin: chromeBin9,
-    binAvailable: (b) => { asked9.push(b); return b === wantSpawn; }, spawn: fakeSpawn,
+    defaultBrowser: db9, profileDir: '/P', onExit: () => {},
+    binAvailable: (b) => { asked9.push(b); return true; }, spawn: fakeSpawn,
   });
-  // 前提例：把「夹具规划 == 产品规划」本身变成可判事实。没有它，不同源只会表现为
-  //   「一个进程都不起 + ok:false」，读起来像产品缺陷（本次就是这样绕了一个 run）。
-  //    三次改判：chain 分支产品对**全部**候选做预检
-  //   （`filter` 语义，问完 7 个才挑第一个可用的），故「问的第一个 == 可达的第一个」恒假 ——
-  //   产品对、判据错。同源的正确表述是**序列逐位相同**，与可达位在哪一格无关。
-  const seq9 = plan9.kind === 'single' ? [plan9.bin] : plan9.candidates.map((c) => c.bin);
-  check('X-9 条4 前提：产品预检所问的 bin 序列与夹具规划逐位同源',
-    asked9.length > 0 && seq9.indexOf(wantSpawn) >= 0 && asked9.join('|') === seq9.join('|'),
-    '产品问=' + JSON.stringify(asked9) + ' 计划=' + JSON.stringify(seq9)
-    + ' 可达=' + wantSpawn + ' 形态=' + plan9.kind);
-  check('X-9 条4 首个可达候选真的被 spawn（宿主无关，三端同形）',
-    spawned9.length === 1 && spawned9[0] === wantSpawn, JSON.stringify(spawned9) + ' want=' + wantSpawn);
-  check('X-9 条4 返回值如实上报（single 报 label / chain 报 bin，皆取自计划）',
-    r1.ok === true && r1.bin === wantReport && r1.isolated === pick.isolated,
-    JSON.stringify(r1) + ' want=' + wantReport + '/' + pick.isolated);
-  const r2 = br.launchIsolated(u9, { antiArgs: ['--a'], binAvailable: () => false, spawn: fakeSpawn });
-  check('X-9 条4 全候选不可达 → ok:false/bin:null（旧实现先返回 ok:true/死 bin，error 异步才到）',
+  check('X-9 条4 前提：产品预检只问解析出的那一个浏览器（无候选链可问）',
+    asked9.length === 1 && asked9[0] === plan9.bin, JSON.stringify(asked9));
+  check('X-9 条4 默认浏览器真的被 spawn（宿主无关，三端同形）',
+    spawned9.length === 1 && spawned9[0] === plan9.bin, JSON.stringify(spawned9) + ' want=' + plan9.bin);
+  check('X-9 条4 返回值如实上报（ok/label/isolated 取自同一计划）',
+    r1.ok === true && r1.bin === plan9.label && r1.isolated === plan9.isolated,
+    JSON.stringify(r1) + ' want=' + plan9.label + '/' + plan9.isolated);
+  check('X-9 隔离形态接 onExit（关浏览器即取消登录），url 在 args 收尾',
+    typeof exits9[0] === 'function' && plan9.args[plan9.args.length - 1] === u9, 'ok');
+  const r1f = br.launchIsolated(u9, {
+    defaultBrowser: { bin: 'snap' }, profileDir: '/P', onExit: () => {},
+    binAvailable: () => true, spawn: fakeSpawn,
+  });
+  check('X-9 非隔离兜底（other 引擎/解析失败）= openCommand 的 bin、isolated:false、**不接 onExit**（其退出≠浏览器退出）',
+    r1f.ok === true && r1f.isolated === false && typeof exits9[1] !== 'function', JSON.stringify(r1f));
+  spawned9.length = 0;
+  const r2 = br.launchIsolated(u9, { defaultBrowser: db9, profileDir: '/P', binAvailable: () => false, spawn: fakeSpawn });
+  check('X-9 条4 预检不过 → ok:false/bin:null（旧实现先返回 ok:true/死 bin，error 异步才到）',
     r2.ok === false && r2.bin === null, JSON.stringify(r2));
   check('X-9 条4 反向：预检不过时**一个进程都不起**（"不 spawn 必死的 bin" 不再只是注释）',
-    spawned9.length === 1, '累计 spawn ' + spawned9.length + ' 次');
-  const r3 = br.launchIsolated('file:///c:/x', { binAvailable: () => true, spawn: fakeSpawn });
+    spawned9.length === 0, '累计 spawn ' + spawned9.length + ' 次');
+  const r3 = br.launchIsolated('file:///c:/x', { defaultBrowser: db9, binAvailable: () => true, spawn: fakeSpawn });
   check('X-9 条4 反向：非法 URL 依旧直接拒（预检不绕过 A4 闸门）',
-    r3.ok === false && spawned9.length === 1, JSON.stringify(r3));
+    r3.ok === false && spawned9.length === 0, JSON.stringify(r3));
   const brSrc = fs.readFileSync(path.join(ROOT, 'src', 'platform', 'os', 'browser.js'), 'utf8');
+  check('X-8 反向：平台层源码不再指定任何浏览器内核（无 Google Chrome 硬编码/无候选链/findChromeWin 已除名）',
+    !/Google Chrome/.test(brSrc) && !/microsoft-edge/.test(brSrc) && !/chromium-browser/.test(brSrc)
+    && !/findChromeWin/.test(brSrc), 'clean');
   check('X-9 条4 预检分形态：绝对路径判执行位、裸名走 PATH 解析',
     /if \(bin\.includes\('\/'\) \|\| bin\.includes\('\\\\'\) \|\| \/\^\[A-Za-z\]:\[\\\\\/\]\/\.test\(bin\)\) return isExecutableFile\(bin\);/.test(brSrc)
     && /return resolveExecutable\(bin\) !== null;/.test(brSrc), '有');

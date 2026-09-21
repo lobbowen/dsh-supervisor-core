@@ -18,21 +18,25 @@ DeepSeek Harness 生命周期监管工具：独立于 Harness 运行的系统级
 | [DSH-TOKEN-CONTRACT.md](DSH-TOKEN-CONTRACT.md) | 规范（契约） | **令牌唯一事实源**：7 类令牌各自策略；令牌是基础组件非域；令牌恒存在、不驱动生命周期（TK-1..8 + 门禁） |
 | [RELEASE-CHANNEL-CONTRACT.md](RELEASE-CHANNEL-CONTRACT.md) | **规范（唯一事实源）** | **发布通道与选版唯一事实源**：canary/beta/rc/latest/rollback 五通道；选版算法冻结；紧急回退用显式 rollback 标签（铁律 `RC-*` 全集见该文件 §3「关键不变量」表，**本索引不抄编号与条数**）。由 `test/release-channel-gate-test.js` 机器校验（RC-G3/G4/G5；RC-G1/G2 在壳仓） |
 | [DIRECTORY-STRUCTURE-DESIGN.md](DIRECTORY-STRUCTURE-DESIGN.md) | **规范（唯一事实源）** | **目录结构与分层唯一事实源**：五层（shared/platform/domains/app/api）+ 依赖矩阵 + 完整目录树 + 12 条不变量（DS-1..DS-12）+ 门禁升级（DS-G1..G8）+ 10 步迁移计划 + 10 项决策记录。由四路审计 + 三路设计交叉验证后定版 |
-| [DOMAIN-STRUCTURE-DESIGN.md](DOMAIN-STRUCTURE-DESIGN.md) | **规范（唯一事实源）** | **域内结构唯一事实源**（与上一份互补）：域内分层判据 DF-1..DF-7（门面 ≤150 / 单文件 ≤300 / 零隐式 this / DAG）+ 三消解手法 + 五域与 app 的**逐文件目标结构** + R1..R12 裁决 + 10 批迁移计划 + DG-1..DG-16 门禁 + **迁移时须同步改的 10 处门禁**。由 12 份设计文档（design-notes/，6085 行）合并定版。**状态：执行中（2026-09-17 起，12+ 子代理并行施工，批 0–10）** |
+| [DOMAIN-STRUCTURE-DESIGN.md](DOMAIN-STRUCTURE-DESIGN.md) | **规范（唯一事实源）** | **域内结构唯一事实源**（与上一份互补）：域内分层判据 DF-1..DF-7（门面 ≤150 / 单文件 ≤300 / 零隐式 this / DAG）+ 三消解手法 + 五域与 app 的**逐文件目标结构** + R1..R12 裁决 + 10 批迁移计划 + DG-1..DG-16 门禁 + **迁移时须同步改的 10 处门禁**。由 12 份设计文档（archive/design-notes/，6085 行）合并定版。**状态：执行中（2026-09-17 起，12+ 子代理并行施工，批 0–10）** |
 | [ACCEPTANCE-STANDARD.md](ACCEPTANCE-STANDARD.md) | **规范（唯一事实源）** | **验收与测试唯一事实源**：`硬标准` —— **所有测试不得在本机执行，验收只能由推送后的 CI 四平台矩阵裁决**；本机不得产生发布产物。含 CI 实际执行步骤、四平台矩阵、“逻辑门禁与原生行为的边界”、禁止/允许事项、违规判定。由 test/acceptance-standard-gate-test.js 机器校验 |
-| [ARCHITECTURE-ACCEPTANCE.md](ARCHITECTURE-ACCEPTANCE.md) | **结构复算报告（非终态承诺、非放行依据）** | 三轮架构归一化的**只读复算记录**（带复算日期）：物理结构当前实测（`src/` 260 文件、最大单文件 324、`>300` 行 3 处）+ DF-1..DF-9 逐条复算（**DF-2 当前不满足**）+ 未收口的结构债务与 report-only 开关事实（`DG_STRICT` / `GATE_STRICT` CI 未设）。**放行只由 CI 裁决** |
-| [EXECUTION-CONTRACT.md](EXECUTION-CONTRACT.md) | 执行契约（并行施工接口冻结书） | **域结构改造的执行契约**：DF-1..DF-7 判据 + 硬约束（禁 daemon / 公共导出面冻结 / 禁新跨层边）+ 冻结的内部接口契约（router 域逐文件导出面与依赖）+ 迁移纪律 + 子代理派生授权。所有执行子代理必须逐条遵守；权威依据仍是 `DOMAIN-STRUCTURE-DESIGN.md`（SSOT）与 `design-notes/*.md` |
-| [PROVIDER-GATEWAY-ARCHITECTURE.md](PROVIDER-GATEWAY-ARCHITECTURE.md) | **规范（唯一事实源）** | **供应商网关（原智能路由）架构唯一事实源**：正名与定位（不做跨供应商路由）、两类供应商本质不对称、四层职责、**有进程侧深度设计**（实例四态 / 热备池 maxHot·maxWarm / 双预算切换 / 预热规范化）、能力契约与 ctl 白名单（A1–A7 + B1–B7 决策记录）。由 `test/provider-gateway-gate-test.js` 机器校验（PG-1..PG-8）|
+| [HANDOFF.md](HANDOFF.md) | 过程文档（交接） | **会话交接文档**：现状、未完成清单（提交与 CI / 注释精简 / 死代码普查 / 规范收敛 / 第三波缺陷）、硬约束、已知陷阱、建议接手顺序。**新会话接手先读此文件** |
+| [PROVIDER-GATEWAY-ARCHITECTURE.md](PROVIDER-GATEWAY-ARCHITECTURE.md) | **规范（唯一事实源）** | **供应商网关（原智能路由）架构唯一事实源**：正名与定位（不做跨供应商路由）、两类供应商本质不对称、四层职责、**有进程侧深度设计**（实例四态；进程起停时机/期望集见 PROXY-LIFECYCLE-STANDARD，热备池/双预算旧语义已随 W1 废止）、能力契约与 ctl 白名单（A1–A7 + B1–B7 决策记录）。由 `test/provider-gateway-gate-test.js` 机器校验（PG-1..PG-12）|
+| [PROXY-ISOLATION-STANDARD.md](PROXY-ISOLATION-STANDARD.md) | **规范（唯一事实源）** | **反代进程隔离唯一事实源**：L0 平台事实 / L1 受管进程载体（carrier，identity={port,pidFile,anchors}，全仓唯一归属逻辑）/ L2 供应商纯声明 + 禁项表 + 新增供应商验收单。由 `test/cross-platform-architecture-gate-test.js` 机器校验（CP-5..CP-9）|
+| [PROXY-LIFECYCLE-STANDARD.md](PROXY-LIFECYCLE-STANDARD.md) | **规范（唯一事实源）** | **反代账号生命周期唯一事实源**（与隔离标准平级正交：那份管载体怎么起停，这份管何时/对谁起停）：L-A 引擎（期望集=在用1+预热1、等待区零进程零端口、状态事件表）/ L-B 供应商状态配置集 + LC 核心不变量 + W1–W4 分期。W1 牙齿由 `test/provider-gateway-gate-test.js`（PG-4）与 `test/reconcile-instance-test.js` 锁定，LC 专审门禁随 W4 落地 |
 | [GUARD-DOMAIN-MODEL.md](GUARD-DOMAIN-MODEL.md) | **规范（唯一事实源）** | **守护域模型唯一事实源**：两域（域 A 用户意图 / 域 B 基础设施）+ 铁律 G-1..G-6；§6 应然写权（目录四铁律 M-1..M-4、`desired` 唯一写口与 `keepDesired` 例外、生命周期视图直写违例基线）；基础设施保活无守护计数（`guardian_action` 事件已随其唯一生产者 `_guardianEvent` 删除）。由 `test/guard-domain-model-gate-test.js` 机器校验（GD-1..GD-5 + ML-2/ML-3 ratchet）、`test/app-ctor-injection-test.js`（ML-1）|
 | [NATIVE-DSH-TAKEOVER-CONTRACT.md](NATIVE-DSH-TAKEOVER-CONTRACT.md) | 规范（契约） | 原生 DSH 接管契约（N1–N5）：检测→绑定→单管线接管；配套 `test/native-dsh-binding-test.js` |
-| [PLATFORM-CAPABILITY-MATRIX.md](PLATFORM-CAPABILITY-MATRIX.md) | 规范（能力矩阵） | 跨平台能力矩阵（14 项 × 3 平台）+ 证据 + 缺口；配套 `test/platform-capability-audit-test.js` |
-| [RELEASE-AND-UPDATE-MECHANISM.md](RELEASE-AND-UPDATE-MECHANISM.md) | 论证（原理） | 发布与更新机制**为何这样设计**（流程见 RELEASE-STANDARD） |
+| [PLATFORM-CAPABILITY-MATRIX.md](PLATFORM-CAPABILITY-MATRIX.md) | 规范（能力矩阵） | 跨平台能力矩阵（15 项 × 3 平台）+ 证据 + 缺口 + 实例舱档位小节（launch/enforcement 两维 × 硬限/软限/无强制）；配套 `test/platform-capability-audit-test.js` |
 | [CROSS-PLATFORM-BUILD-AND-UPDATE.md](CROSS-PLATFORM-BUILD-AND-UPDATE.md) | 论证（方案） | 跨平台构建与自更新方案论证（流程见 RELEASE-STANDARD） |
+| [ARCHITECTURE-PLAN-instance-sandbox-governor.md](ARCHITECTURE-PLAN-instance-sandbox-governor.md) | 计划（W1–W4 已落地，待 CI 验收） | 实例沙箱跨平台化与动态资源治理（Governor）根因级计划：控制面收权 · portable provider · W1–W4 分期 · 不做什么裁决 |
 | [ARCHITECTURE-PLAN-session-lifecycle.md](ARCHITECTURE-PLAN-session-lifecycle.md) | 计划（历史） | 会话生命周期重构的根因级计划（已完成） |
-| [INCIDENT-2026-09-13-credential-overwrite.md](INCIDENT-2026-09-13-credential-overwrite.md) | 事故复盘 | 凭据被覆盖事故：时间线 / 根因四层 / 加固与重放验证 |
-| [INCIDENT-2026-09-18-exit-manager-relaunch.md](INCIDENT-2026-09-18-exit-manager-relaunch.md) | 事故复盘 | 退出管家后桌面壳被自动重新拉起：壳 /End 计划任务 + 内核看护门未持久化；修复与残留清单 |
-| [AUDIT-REPORT-2026-09-19.md](AUDIT-REPORT-2026-09-19.md) | 审计报告 | 全仓静态代码审计：P0×4（A1 读失败覆盖×3 / A2 frpc 校验降级 / A3 发布通道 / A4 win32 cmd 注入）+ P1×22 + 分批修复计划；第 1 批 A1/A2/A4 与第 2 批 A3（CI 令牌收敛 + rollback 下限 RC-7）已随本版修复（P0 清零）；第 3 批 B-1…B-28 + N2/B-21 + E-3 的逐条裁决与修复锚点登记于 §G（含 B-22(c) 失实结论与残留声明）；第 4 批 C 类 P2 全量（C-1…C-9 / 令牌 2…5 / 平台 1…7 / D-1…D-13 / 发布条 1…4 + UI 条 5…6）与 §E.1/§E.2/§E.4 立项收口登记于 **§H**（含 H-0 三套 `E-*` 编号消歧、H-7 链位序取证、H-8 诚实缺口） |
 | [CHANGELOG.md](CHANGELOG.md) | 记录 | 版本变更 |
+
+> 归档说明：历史与过程文档已移至 archive/，不再作为当前事实源。
+- archive/design-notes/：138 份设计文档（逐域设计、作业单、审计、FIX 工作笔记）
+- archive/history/：审计报告、事故复盘、结构复算报告（非放行依据）、执行契约、发布/更新机制论证
+
+> 当前事实源 = 文档索引中列出的规范/契约/记录。archive/ 内文件为历史归档，仅供回溯参考。
 
 > **文档可信度不变量**（2026-09-11 确立）：能力声明必须由**可执行断言**支撑；
 > 本仓的文字（注释/审计/文档）**不构成证据**。新增能力请同步 `test/platform-capability-audit-test.js`。
@@ -174,7 +178,7 @@ POST /native/check-update    触发一次版本检查
 POST /native/install {v?}    异步安装：前置拒绝 400 / 受理 202，进度经 /native/status 轮询
 POST /native/uninstall       异步卸载：受理 202，进度经 /native/status.state|lastUninstall 轮询
 POST /native/upgrade {v?}    一键升级（先停后装，失败自动回滚；异步 202，进度经 /native/status.upgrade 轮询）
-POST /native/settings         main 元数据补丁（guardian/remoteEnabled/frpEnabled）
+POST /native/settings         main 元数据补丁（仅 guardian；远程意图唯一入口在 /remote/*）
 # 版本与更新日志
 GET  /changelog              DSH 更新日志（text/plain）
 GET  /guard/changelog        管家自身更新日志（CHANGELOG.md）
@@ -199,9 +203,13 @@ POST /router/providers/{add|remove|refresh|activate|deactivate|keys/set|key/use|
 POST /router/proxy/login/{start|wait}   Command Code 一键登录
 POST /router/proxy/update/{check|apply}  反代版本检测/应用
 GET  /router/proxy/update/status         反代更新进度（前端轮询）
-# 局域网/公网访问
-GET  /lan-access             远程代理列表（令牌不下发公网）
-GET  /lan/frp + POST /lan/frp/{settings|install|toggle|expose}   FRP 公网暴露
+# 局域网/公网访问（远程控制唯一状态面）
+GET  /lan-access             远程代理列表 + remote 视图（mode/ready/accessUrl/reasons；令牌不下发）
+GET  /remote/frp             FRP 隧道状态（设置面只回显 authTokenSet，无总闸）
+POST /remote/set-mode {id,mode}      三态切换 off|lan|wan（wan 前置：remoteToken ≥8 位）
+POST /remote/set-token {id,token}    访问令牌唯一写入口（main 与沙箱同口；空串=清除）
+POST /remote/frp-server      frps 连接参数（patch 语义：authToken 留空=保留现值）
+POST /remote/frp-install     安装 frpc 二进制
 # 设置
 GET/POST /autostart          整条服务链开机自启
 GET/POST /settings/lan       面板局域网访问开关
@@ -275,12 +283,14 @@ POST /shutdown               已由 POST /session/stop 取代（保留供旧版�
   （`useSupervisorData()` = `useSyncExternalStore` 订阅）。后端是唯一事实源；页面不持有各自独立的状态副本，
   概览/实例/远程控制/智能路由读同一份快照，因此不存在「某页状态断链」。
   ⚠ 前端快照**不**承担后端联动：远程控制/中转的实际生效由守卫与 daemon 侧的落盘状态收敛决定
-  （见 `design-notes/relay.md`），不要按「页面刷新即联动」理解。
+  （见 `archive/design-notes/relay.md`），不要按「页面刷新即联动」理解。
 - **细节权威**：`ui/FRAMEWORK.md`（目录、数据流、令牌规范）。
 - **统一同步**：单源快照中心 `ui/src/services/supervisor/polling.ts` 一轮跑完再自排下一轮——
   链路健康时 2s 一拍，连续失败按 2s→4s→8s… 退避（封顶 30s，UI 条 6）；写操作后 `store.refresh()` 立即同步。
   （老 UI 的 `unifiedTick` 主循环与「页面可见时立即同步」已随 React 迁移移除，勿再按该模型理解面板。）
-- **联动语义**：远程控制开关 = 实例运行中 ∧ remoteEnabled ∧ relay 实际监听；实例未运行时开关禁用并明示「实例未运行」。
+- **联动语义**：远程状态是单一三态 `remoteMode: off|lan|wan`（每实例/main 各一份）。就绪判定零前端裁决：
+  后端 `projectRemoteView` 产出 `{mode, ready, accessUrl, reasons}`，UI 只在 ready 时出二维码；
+  wan 与 lan 复用同一个 relay 槽位（公网口 = relay 口同号），隧道由 frpc `remotePort=wanPort` 映射。
 
 ## 故障排查
 
@@ -336,6 +346,10 @@ POST /shutdown               已由 POST /session/stop 取代（保留供旧版�
 - 守卫只提供**只读**状态：`GET /self-update/status`；写端点 `POST /self-update/apply`、`POST /self-update/restart-guard`
   已下架（`410 KERNEL_UPDATE_SINGLE_WRITER`）。守卫重启（应用新内核）由壳经服务管理器完成（守卫从不重启自己）。
 - 旧 manifest 通道（`selfUpdateManifestUrl`/`selfUpdateDir` 与实现它的自更新模块）**已删除**。
+- 面板进度回传（2026-09-21）：壳把安装期间的 `install_progress` 经桥中继给面板（非终结、可多次），
+  并在首帧下发真实等待上界 `maxWaitMs`；面板 `AboutCard` 据此显示逐源/心跳进度，
+  等待上界取自壳而**不写死**（旧实现写死 6 分钟 < 壳预算 17 分钟 → 误报「壳无响应」→ 重试造成并发写入）。
+  判据见 `test/kernel-update-single-writer-test.js` 的 SW-9（含反向例）。
 - 内核发布：`npm run build:launcher` + `npm run publish:core`（Node launcher + npm 平台子包，见「内核发布」节；两者**只在 CI 内运行**，本机调用被脚本自身的 `GITHUB_ACTIONS` 守卫拒绝）。发布由 tag 触发 CI：`build` 矩阵四平台先跑不带令牌的验证步，再由 token-scoped 发布步执行 `ci-core.sh --publish-only`。
 - 环境状态：`GET /env/status`（node/npm/git 探针 + 壳写入的 runtime.json）、`GET /env/dsh`（DSH 本体安装/纳管判定）。
 

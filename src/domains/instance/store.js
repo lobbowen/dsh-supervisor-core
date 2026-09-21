@@ -8,6 +8,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const ports = require('../../platform/service/ports').shared;
 const { writeAtomic } = require('../../platform/util/fs');
+const fileProtect = require('../../platform/os/file-protect');
 const model = require('./model');
 const sandbox = require('./sandbox');
 
@@ -118,10 +119,14 @@ class InstanceStore {
     } catch {}
   }
 
-  /** 为沙箱实例建独立目录（数据目录 + 依赖目录；sessions/profiles 等由 DSH 自建）。 */
+  /** 为沙箱实例建独立目录（根 + 数据 + 依赖 + 临时）。实例根一次性收紧权限：
+   *  同机他用户的跨舱互读是隔离清单里唯一没被目录布局本身挡住的一格。 */
   ensureDirs(inst) {
+    const r = fileProtect.ensurePrivateDir(sandbox.root(this.instancesRoot, inst));
+    if (r && r.ok === false) this.logger && this.logger.warn && this.logger.warn('实例根权限收紧失败 ' + r.mode + ': ' + r.reason);
     fs.mkdirSync(sandbox.dataDir(this.instancesRoot, inst), { recursive: true });
     fs.mkdirSync(sandbox.installDir(this.instancesRoot, inst), { recursive: true });
+    fs.mkdirSync(sandbox.tmpDir(this.instancesRoot, inst), { recursive: true });
   }
 }
 

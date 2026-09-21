@@ -16,7 +16,7 @@
 //
 //   1) `platform/os/index.js::hasTool` —— `ex.run(name,...,{stdio:'ignore'}) !== null`
 //      -> hasTool('node')/('systemctl')/('systemd-run') **恒 false**（实测）
-//      -> capabilities() 把 multiInstance/desktopNotify/autostart 一律降 false
+//      -> capabilities() 把 sandboxLaunch/desktopNotify/autostart 一律降 false
 //      -> **Linux 上沙箱（多实例）功能对所有用户不可用**（UI 报「当前平台不支持」）。
 //   2) `platform/os/file-protect.js::hasIcacls` —— 同形 -> Windows 上敏感文件/目录的
 //      icacls 收紧**静默失效**（一律返回 mode:'none'）。
@@ -30,7 +30,9 @@
 //   A2  exec.run 失败（ENOENT）仍返回 null —— 不能为了修 A1 把失败也变成"成功"
 //   A3  hasTool 对**必然存在**的 node 返回 true（旧实现在此恒 false）
 //   A4  service Provider 的 run 包装**不得**再强制 stdio:'ignore'（否则读输出恒空）
-//   A5  Linux：capabilities().multiInstance 必须与「systemd-run 是否真的存在」一致
+//   A5  Linux：capabilities().sandboxLaunch 恒 true（W3 跑舱不依赖 systemd-run）；
+//       sandboxEnforcement 与 provider 分派必须与「systemd-run 是否真的存在」一致
+//       （有=cgroup/systemd，无=supervise/portable —— 实测不写死）
 //   A6  Linux：isUnitActive 对**确实 active** 的单元返回 true
 // ---------------------------------------------------------------------------
 
@@ -121,7 +123,7 @@ const check = (n, c, x) => {
   const raw = fs.readFileSync(path.join(ROOT, 'src', 'platform', 'os', 'service.js'), 'utf8');
   check('A4b 存在导出的 UNIT_NAME_RE/unitNameViolation（判定单一实现）',
     svcMod.UNIT_NAME_RE instanceof RegExp && typeof svcMod.unitNameViolation === 'function', 'ok');
-  for (const m of ['stopUnit', 'resetFailed', 'isUnitActive', 'transientUnitFile', 'cleanTransient', 'startTransient']) {
+  for (const m of ['stopUnit', 'resetFailed', 'isUnitActive', 'transientUnitFile', 'cleanTransient', 'startTransient', 'setLimits']) {
     const body = raw.match(new RegExp('\\n  ' + m + '\\([^)]*\\) \\{[\\s\\S]*?\\n  \\},'));
     check('A4b systemd.' + m + ' 体内先过 unitNameViolation 闸', !!body && /unitNameViolation/.test(body[0]), body ? '有' : '未定位');
   }
@@ -132,9 +134,10 @@ const check = (n, c, x) => {
     v('../../evil') !== null && v('a --user stop b') !== null && v('x\n.service') !== null
       && v('foo.timer') !== null && v('foo.service\x00.txt') !== null && v('') !== null, 'ok');
   {
-    // Linux 行为闸：非法名不得触达 systemctl（stopUnit=false、startTransient 抛、文件路径=null）
-    if (process.platform === 'linux') {
-      const svc = svcMod.current();
+    // Linux 行为闸：非法名不得触达 systemctl（stopUnit=false、startTransient 抛、文件路径=null）。
+    // W3 后 linux 无 systemd-run 时 current() 落 portable——单元名动词在那侧不适用，按档位分支。
+    const svc = svcMod.current();
+    if (process.platform === 'linux' && svc.kind === 'systemd') {
       check('A4b 行为：stopUnit(非法名)=false 且未执行命令', svc.stopUnit('../../evil') === false, 'false');
       check('A4b 行为：isUnitActive(非法名)=false（恒判不活跃，绝不删除路径放行）',
         svc.isUnitActive('../../evil') === false, 'false');
@@ -144,6 +147,15 @@ const check = (n, c, x) => {
         (() => { try { svc.startTransient({ unit: 'a b', cmd: ['node'] }); return false; } catch (e) { return /systemd-run 拒绝/.test(e.message); } })(), '已抛');
       check('A4b 行为：cleanTransient(非法名)={ok:false}（全链路拒）',
         svc.cleanTransient('a/b').ok === false, 'ok:false');
+      check('A4b 行为：setLimits(非法名)=false（非法名绝不进 systemctl argv）',
+        svc.setLimits('../../evil', { memoryMax: '1G' }) === false, 'false');
+    } else if (process.platform === 'linux' && svc.kind === 'portable') {
+      // portable 安全不变量（构造性）：动词不消费 unit 名、杀进程只认端口/cmdline 锚，
+      // 非法名无从进任何 argv 或路径；无锚时 stopUnit 幂等 true 且绝不触碰进程。
+      check('A4b 行为：portable 档无锚 stopUnit 幂等 true（不误杀、不抛）',
+        svc.stopUnit('../../evil', { port: 0, pidFile: null, anchors: [] }) === true, 'true');
+      check('A4b 行为：portable 档无锚 isUnitActive=null（无从查询，删除保护不得放行）',
+        svc.isUnitActive('../../evil', {}) === null, 'null');
     }
   }
   check('A4b 反向：字符集若漏掉合法字符会误杀既有单元名',
@@ -156,12 +168,17 @@ if (process.platform === 'linux') {
   // systemd-run 是否存在（用**可靠的** runOut 探测，而非本测试要验证的 hasTool）
   const hasRun = ex.runOut('systemd-run', ['--version'], { timeoutMs: 3000 }) !== null;
   const caps = osIdx.capabilities();
-  check('A5 capabilities().multiInstance 与 systemd-run 实际存在一致',
-    caps.multiInstance === hasRun,
-    JSON.stringify({ multiInstance: caps.multiInstance, systemdRunExists: hasRun }));
+  check('A5 Linux capabilities().sandboxLaunch 恒 true（W3：缺 systemd-run 落 portable 软档，不再判死）',
+    caps.sandboxLaunch === true, JSON.stringify({ sandboxLaunch: caps.sandboxLaunch, systemdRunExists: hasRun }));
+  check('A5 sandboxEnforcement 与 systemd-run 实际存在一致（有=cgroup / 无=supervise）',
+    caps.sandboxEnforcement === (hasRun ? 'cgroup' : 'supervise'),
+    JSON.stringify({ sandboxEnforcement: caps.sandboxEnforcement, systemdRunExists: hasRun }));
+  check('A5 provider 分派与实测一致（有 systemd-run=systemd / 无=portable，不写死平台）',
+    svc.kind === (hasRun ? 'systemd' : 'portable'),
+    svc.kind + ' vs hasRun=' + hasRun);
   if (hasRun) {
     check('A5 反向：systemd-run 存在时必须为 true（旧实现恒 false）',
-      caps.multiInstance === true, String(caps.multiInstance));
+      caps.sandboxLaunch === true, String(caps.sandboxLaunch));
   }
 
   // 找一个确实 active 的 --user 单元，isUnitActive 必须为 true

@@ -26,10 +26,16 @@ module.exports = {
     // 生命周期 + 探活 + 升级 + 定时
     'startInstance', 'stopInstance', 'supervise', 'probeInstance',
     'checkUpdate', 'upgradeInstance', 'upgradeStatus', 'startTimer',
+    // 资源预算总览（W2 观测面；/env/status 消费）
+    'budgetSnapshot',
+    // 实例身份锚（W3 启停同值：端口/run.pid/cmdline，systemd 档忽略、portable 档据此归属）
+    'launchCtx',
     // 沙箱布局（纯路径推导 + 平台能力）
     'sandboxRoot', 'sandboxDataDir', 'sandboxInstallDir', 'sandboxSupported',
     // 出站 hooks（app/assembly/compose/observers.js 注入）
     'onRemoteChange', 'onRemove', 'onInstanceStart', 'onInstanceStop', 'onCreate', 'onDestroy',
+    // 配置的 DSH 可执行名（api/domains/instances.js 的 commandShapeError 读，DG-10 消费面）
+    'dshBin',
   ],
 
   // 类方法面（文档；与 PUBLIC_API 同源，供端口实现者校验用）
@@ -39,6 +45,8 @@ module.exports = {
       'load', 'save', 'list', 'addInstance', 'removeInstance', 'updateInstance',
       'startInstance', 'stopInstance', 'supervise', 'probeInstance',
       'checkUpdate', 'upgradeInstance', 'upgradeStatus', 'startTimer',
+      'budgetSnapshot',
+      'launchCtx',
       'sandboxRoot', 'sandboxDataDir', 'sandboxInstallDir',
     ],
   },
@@ -50,11 +58,13 @@ module.exports = {
     events: '事件账本（可空）',
     dist: '统一分发（沙箱 npm 安装与 DSH 自升级共用镜像源）',
     dshBin: 'DSH 可执行名',
-    service: '平台服务控制器（平台抽象，禁直接 systemctl）',
+    service: '平台服务控制器（平台抽象，禁直接 systemctl；W3 起 provider 分档：systemd=内核强制 / portable=采样软档，动词三态契约同源）',
     tokenService: '令牌服务（只登记源，不持有/不转发令牌）',
     tasks: '统一安装/更新任务注册表',
     systemdDir: 'systemd user 单元目录',
     systemdTemplatePath: 'systemd 模板单元路径',
+    resstats: '进程树资源采样（platform/os/resstats；W2 行为测试注入缝，缺省用真实现）',
+    machineFacts: '机器事实供给函数（缺省 governor.machineFacts 读 os；测试注入定死预算）',
     hooks: {
       onRemoteChange: '实例远程配置变化（compose/observers.js 注入）',
       onRemove: '实例移除（compose/observers.js 注入）',

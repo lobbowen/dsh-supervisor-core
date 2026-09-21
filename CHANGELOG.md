@@ -6,6 +6,314 @@
 
 ## [未发布]
 
+## [0.1.6-BETA.1]（2026-09-22）
+
+本版主线：远程控制三态化收口、面板内核更新进度桥、反代生命周期 W1 + 进程隔离标准化、
+实例沙箱 W1–W4、判据统一专项清理与文档归档收敛；同批并入发布通道根因修复（`latest` 跟随每次发布）。
+内核运行时依赖仍为 0。
+
+### 远程控制三态化收口：remoteMode 单状态取代多布尔并行，访问视图单一事实源
+
+- **根因**：远程意图由 `remoteEnabled`/`frpEnabled`/`frpRemotePort` 三个布尔加 main 侧
+  `patchDshMain` 拼出，「局域网」与「公网」并行存在而非互斥；二维码与就绪态在前端按这些
+  开关自行推导，于是出现「开了远程但码还是局域网地址」。端口侧 `inst.wanPort` 镜像与
+  relay 槽位注册表构成 ghost 双族（历史写死值经 lan-state 传播给 daemon，两边各信一份）。
+- **模型**：每受管对象（main 与各沙箱）一份 `remoteMode: off|lan|wan`，是远程意图的唯一
+  落盘字段。`frp.json` 只剩 frps 连接参数（`enabled` 总闸随三态废止：frpc 生命周期单一
+  条件 = 是否存在 wan 意图）。legacy 磁盘态经 `legacyRemoteMode` 一次性推导（`true`+`true`
+  →wan、`true` →lan、其余 →off），首次写盘后旧键即消失，读侧不留双轨。
+- **端口**：公网口与 relay 口**恒同号**（`remotePort = wanPort`），不存在第二套端口分配，
+  也没有 override 字段。绑定权威只在注册表（`byOwner` 复用）——关远程只停 server 不
+  `releaseOwner`，重开自动复用同口；`inst.wanPort` 镜像字段删除，lan-state 协议不再带端口。
+- **判定收口**（`relay/core.js` 纯函数，零 IO）：`projectRemoteView` 产出
+  `{mode, ready, accessUrl, reasons}`，`ready` 当且仅当 `reasons` 空，未就绪逐条给因
+  （relay 未监听 / 未设令牌 / 会话注入中 / 未配 frps 地址 / 隧道未建立）；`accessUrl` 的
+  host 由 mode 选（wan→`serverAddr`、lan→局域网地址），前端不再自行拼。**唯一写入口**
+  `setRemoteMode` 对 wan 前置 `validateWanAccess`（令牌闸）：该函数只有令牌入参、没有
+  端口参数，端口无自由度由同号纪律在结构上保证。`frpRemotePort` 手填公网口一并删除。
+- **API**：意图面收为 `POST /remote/{set-mode|set-token|frp-server|frp-install}`
+  （`{ok:false}` 一律非 2xx，安全闸拒因如实回显）；状态面 `GET /lan-access`（remote 视图）
+  `GET /remote/frp`。旧 `/lan/frp/*` 五条路由**不留兼容直接删**。`/native/settings` 白名单
+  收窄为仅 `guardian`，`/instances` 不再装饰任何远程字段（此前它另算一套 `lanUrl`，与
+  `projectRemoteView` 构成第二处访问判定来源，判定不一致即由此产生）。
+- **UI（与后端同批改，无半成品中间态）**：`LanPage` 一行一状态一开关——模式开关只在
+  off/lan 间切换，wan 由「局域网 / 公网」分段控件选择，两者写同一 `remoteMode`；二维码
+  仅在 `remote.ready` 时出，指向 `remote.accessUrl`（开远程即换远程码）；`reasons` 原文
+  进状态药丸 title，不再 UI 自证「未运行」。FRP 卡去掉总闸，`authToken` 保持 patch 语义
+  （留空省略字段）。
+- **门禁与判据**：`round13-router-relay-gaps` ① 段改钉单一意图入口（`setRemoteMode` 写入
+  前过闸 + 行为用例断言无令牌/弱令牌被拒且**未落盘**）、`main.js` 整文件零远程字段；
+  `token-contract-gate` 的 `LAN_STATE_ROW_KEYS` 收为 `{id,name,port,remoteMode,remoteToken}`；
+  `token-boundary` 的 `listLan` 白名单换为现役非机密字段并加 remote 视图结构判据；
+  `domain-structure-gate` DG-14 写目标清单删 `setFrp`、增 `setRemoteMode`/`setRemoteToken`；
+  `frp-resilience` R1 加「非 wan 意图不出隧道」与同号反向例；`lan-daemon` 集成测试不再硬编码
+  期望端口，改由 `ctl list` 回读实测绑定口（注册表权威的必然结果）。
+- **事件**：`dsh_frp_changed`/`lan_frp_changed` 随总闸废止删除；新增
+  `dsh_remote_changed`/`inst_remote_changed`（载荷 `mode`）与 `dsh_remote_token_changed`，
+  令牌类事件只记 `tokenSet` 布尔（TK-5 零明文纪律）。
+
+### 面板点「更新内核」不再是黑箱：消费壳中继的进度，等待上界改由壳下发（配 B4b）
+
+- **根因**：面板→壳桥只有「一问一答」。`kernelUpdateBridge.ts` 收到 progress 帧直接 `return` 丢弃，
+  且等待上界写死 `6 * 60 * 1000`，而壳侧内核安装预算是 17 分钟（壳仓 `bridge.rs`）。
+  于是面板必然先报「桌面壳无响应（更新请求超时）」——那不是结论，是面板自己编的结论；
+  按钮随之解禁，用户重试 = 两个进程并发写同一个 npm 全局前缀（单写入者契约要消灭的形状）。
+- **修法（不新增协议，补齐半途的桥）**：progress 帧现在被消费为 `KernelUpdateProgress`
+  （`status` 文字 + `progress` 0..1 或 null，null = 该步无可测分母，UI 于是只显文字不画假百分比）；
+  首帧带 `maxWaitMs` 时按 `maxWaitMs - 已等时长` 重设上界，旧壳无此字段才退回 `FALLBACK_MAX_WAIT_MS`
+  （刻意**大于**后端预算：宁可晚报，不可早解禁）。超时文案带最后一次进度原文。
+  协议版本保持 1（旧面板忽略未知帧，递增反而打断新旧并存的升级期）。
+- **UI**：`AboutCard` 内核版本行下增进行中一行（逐源/心跳文字 + 可选百分比），
+  请求发出即有反馈，终结（成败皆然）随 `run` 的 `onDone` 清除。
+- **门禁**：`test/kernel-update-single-writer-test.js` 扩 **SW-9**（进度被回调、上界取自 `d.maxWaitMs`、
+  代码行里不得再出现 `6 * 60 * 1000`、AboutCard 真的渲染 status），
+  并配两个反向夹具：旧桥整段（两判据皆红）与「补了回调但超时仍写死」（只红超时判据）。
+  契约与壳侧接线见壳仓 `docs/DESIGN-SHELL-ARCHITECTURE.md` §3.2c（K6/K7）。
+
+### 反代账号生命周期引擎 W1：期望集纠偏 + 事件表落地 + 旧锁拆迁（PROXY-LIFECYCLE-STANDARD）
+
+- **根因**：进程起停时机散落在额度阈值（80% 备胎）、闲置宽限（markUsed/lastUsedAt）、
+  假配置面（proxyInstanceLimits 无任何注入方）三套旧语义里，坏账号退场后进程与端口仍
+  滞留（等待区不是零存在），且 DEAD 态与 pid 字段互相矛盾（probe 子进程 error 只清 pid
+  不改 status）。标准见 PROXY-LIFECYCLE-STANDARD.md（已入 README/standards 登记）。
+- **锁的旧形状 -> 新不变量**（拆迁逐项，判据同批落地）：
+  - `R1 常驻1+（>=80% 才补）备胎` -> **期望集恒为 在用1+预热1**，按 registeredAt 登记序
+    （裁决 2）；pool.js 纯决策（ACTIVE_SLOTS/PREWARM_SLOTS 引擎常量），restart.js 消费执行。
+  - `R2 selected/额度择优归属` -> **selected 提为在用、预热槽 sticky 留任**（裁决 4），
+    退位者走停止仲裁回收、下一拍端口归零。
+  - `R4 冻结后等周期对账` -> **状态事件表**：freeze.setStatus 回调 `_onStatusTransition`，
+    frozen/banned/discarded 同一轮 `reclaimAccount`（force kill + ports.unregister + port=null），
+    恢复回 ready 立即 `reconcileNow`（LC 核心-5）。
+  - `markUsed/lastUsedAt/IDLE_RECLAIM_GRACE 闲置宽限` -> **删除**（宽限期不存在，回收零延迟）；
+    请求路径改引擎门面 `ensureServable`（forward/admin 均不再裸编排 startInstance/_waitHealthy），
+    成功计数归 `markRequestOk`（R-a 熔断不变量迁移到 mixin 判据）。
+  - `prewarmAsync/needSpare/_switchBudgetMs/DEFAULT_MAX_HOT·WARM/proxyInstanceLimits/
+    createPoolPolicy/residentAccount/stopInstanceIfAny` -> **全部删除**，零消费方；
+    PG-4 判据从「maxHot/maxWarm 存在且被引用」反转为「假配置面零残留 + 门面 + 事件表」。
+  - `E6 DEAD 矛盾` -> probe 子进程 error 置 `pid=null + status=COLD`（COLD 可再拉起），
+    reconcile 对 DEAD 残留态收敛。`E11 孤儿记录` -> discard 钩子剪枝 instances + reconcile
+    对残余孤儿补剪。
+- **测试拆迁**：reconcile-instance-test R1–R4/R9 按新契约重写（registeredAt 显式化、
+  sticky/端口归零/事件表同步回收断言）；circuit-breaker R-a 改锁「markUsed/lastUsedAt 零残留」；
+  PG-1 契约表 markUsed -> ensureServable/reclaimAccount。本机静态门禁全绿；
+  运行时契约由 CI 矩阵裁决（本机严禁跑测试套件）。
+
+### 壳看护的无头模式清单收为单一事实源（跨仓契约 D-9，配 B3b）
+
+- **根因**：守卫靠 `isShellProcess(cmdline)` 区分「真壳」与「壳自己跑的无头进程」，排除表是一条
+  手写正则。壳侧每加一个无头入口（`--platform-matrix` 此前已漏；2026-09-21 看护 Rust 化新增
+  `--watchdog`；`--run-guard` 从未登记）都可能让一个瞬时进程被当成「壳在运行」——
+  `decide()` 里 `alive > 0` 直接短路，真壳**永不**被拉起；`restartShell` 共用同一谓词，漏项还会
+  让它把运维进程当壳 SIGKILL（同一缺陷此前已因内联弱过滤修过一次）。
+- **修法**：排除表提为 `domains/shell/core.js` 的 `HEADLESS_FLAGS`（冻结清单 + 由它生成正则），
+  与壳侧 `main.rs`「Tauri 初始化之前 exit」的分支一一对应；契约写进 `KERNEL-DAEMON-CONTRACT.md` D-9。
+  纯核心纪律不变（清单仍是零出度的无 IO 事实）。
+- **验证**：`test/shell-watchdog-test.js` 新增 W2-f/g/h（三个漏项各自被排除）、W2-i（清单可枚举
+  且逐项生效）、W2-j 反空转（未登记的同名 flag 仍判为壳 ⇒ 证明 false 来自排除表而非名字没匹配）。
+
+### 反代进程隔离标准化：平台事实上收 + 受管进程载体 + CP-5..9 牙齿（PROXY-ISOLATION-STANDARD）
+
+- **根因**：反代链绕过平台层、域内自带 POSIX 假设——裸 `process.kill(-pid)`（win32 只杀 .cmd 壳，
+  占端口子孙存活成孤儿）、`sameProcessGroup` 读 `/proc`（macOS 恒 false，自家进程误判外部占用）、
+  直 spawn `npx.cmd`（CVE-2024-27980 必 EINVAL）、硬编码 `~/.npm/_npx`（win 缓存实为
+  `%LOCALAPPDATA%\npm-cache\_npx`）。同类缺陷本仓已在别处修过三次，这次立标准断根。
+- **L0 平台事实上收**（`platform/os/npx-forms.js`，新；自 exec-path 分文件，使其不越 DG-2 ≤300 线）：
+  新增 `npxLauncher`（node-direct `npx-cli.js` 成对形态，探不到回退 PATH）与 `npxCacheDir`
+  （三平台正确缓存根）；`pidlookup` 补 `isZombie`
+  （win 恒 false / linux /proc / darwin ps），域内自读 `/proc` 的 waitAllStopped 改经门面；
+  macOS 恒 false 的 `sameProcessGroup` 随消费面清零**删除**（死代码不留）。
+- **L1 受管进程载体**（`platform/os/carrier.js`，新）：池式消费者拉起外部进程唯一通道——
+  `start`（detached+管道+run.pid）、`probe`（三态 ours/foreign/dead，归属判定复用
+  portable#findOurs 锚点引擎，全仓唯一一份）、`signalTermination`（SIGTERM+1.5s 台账升 SIGKILL）、
+  `stop`（确认式有界停止）。`portable.js` 导出 findOurs/matchesAnchors 供载体共用。
+- **router 反代链切换消费**：probe.js 拉起改走 carrier（identity={port,pidFile,anchors:[pkg,'--port N']}），
+  监控占用误判改 `probe().state==='foreign'`，幸存者回收/挂死强杀/全停等待改 `os/process#killTree`；
+  instance-lifecycle 裸 `kill(-pid)` 改 `carrier.signalTermination`；command.js npx 回退形
+  `[l.program,...l.args,...]` 成对形态；pkg-cache 收敛缓存扫描为 `invalidatePkgCache` 单一实现
+  （apps-registry 第二份删除），密钥仍只经 env（PG-6 不变）。
+- **机器牙齿**：CP-5..CP-8（域内零裸 process.kill、零 /proc 字面、负 pid 只在 os/process、
+  零 .cmd/_npx 字面，各带反向合成）+ CP-9（门禁真读标准正文，锁三层职责与条款编号防漂移）；
+  CI 契约冒烟 P3-a..f 并入 `cross-platform-test.js`（假供应商真 spawn/探活/锚点归属/foreign
+  不误杀/终止端口释放/确认停止，四平台矩阵裁决）；D-6 监控判据断言同步改 carrier 形状。
+- **标准成文**：`PROXY-ISOLATION-STANDARD.md` 入册（L0/L1/L2 职责 + 禁项表 + 新增供应商纯 L2
+  验收单），standards-uniqueness 登记（reads:true 经 CP-9 属实），README 索引与矩阵 C4 行同步。
+- 验证：node --check 全绿；静态门禁（cross-platform-architecture 23/23、no-console-window 12/12、
+  provider-gateway 35/35、layering 13/13）；运行时行为（P3 真进程冒烟、D-6）由 CI 四平台裁决。
+
+### 账号账本读写收口：usage-totals 单一实现 + 只读实例鲜度纪律（PG-12）
+
+- **缺陷（行为变更，内嵌只读模式）**：`UsageLedger.load()` 一次读盘后永久缓存；守卫/内嵌实例
+  无写权、从不记账，其 `status` 总量摘要因此冻结在进程启动时的旧快照，而同屏 `listProviders`
+  账号行走 `store.readUsage()` 新鲜读盘——两面板两个鲜度源。`views.status` 里
+  「loadTotals 确保用量缓存就绪」的注释与代码不符（返回值被丢弃，且并不填账本缓存）。
+- **读源统一**：`load()` 缓存命中改为以 `canPersist()` 为条件——写者内存为准（节流窗口内
+  盘落后于内存，重读丢在途账），只读实例每次新鲜读盘；views 两个用量消费面（status 摘要、
+  listProviders byKey）收敛到 `deps.getUsage()` 单一入口。
+- **第二读写口删除**：`RouterStore.readUsage/writeUsage`（writeUsage 全仓零消费）与
+  `usageFile` 字段整体删除，router-usage-totals.json 自此只由 `store/usage.js` 持有；
+  store.js 头注释同步为现状。
+- **防回潮**：provider-gateway 门禁新增 PG-12（router 域除 store/usage.js 外出现第二 usage
+  读写口即红 + 只读不得吃永久缓存 + 2 条反向自检）；SSOT §3.3 由「现状缺陷」改写为落地时点，
+  §6.2 补 PG-12 行，§7 Phase 5 与 README PG 范围同步。
+- 验证：node --check 全绿；静态门禁（provider-gateway 35/35、domain-structure 88 过/0 硬红、
+  probe-gate 36/36、circuit-breaker 58/58、round13-robustness 26/26、docs-reference 14/14）；
+  运行时行为（status/listProviders 鲜度）由 CI 裁决。
+
+### 判据统一改动专项清理：文档与注释中的假现状对齐（不含行为变更）
+
+- **注释残留**：base.js「process-pool 子类」措辞改「能力方（mixin ctor 装配钩子）」；
+  `usageOf` 基座 docstring 不再自称派生 warming（该派生已归 mixin 覆写）。
+  contract.js `exempt` 登记面收敛：基座只剩 detectAccount 一个抽象占位，proxy.js 的
+  「DG-5c 继承 SCC」条目随 DG-4 归零作废删除。
+- **测试面搬移补漏**：`router-circuit-breaker-test` 的 R-a/R-b/R-c/R-d 源码判据原读
+  proxy.js，池方法已迁 mixin 后会静默假红/假绿——改读 process-pool.js（含 4 空格缩进的
+  函数体闭合判据与沙箱求值取尾）；`probe-gate-and-ownership-test` 删除搬移后遗留的
+  base.js 死读取。
+- **SSOT 文档假现状对齐**：PROVIDER-GATEWAY-ARCHITECTURE §2.2/§5.1/§5.2/§5.3 的
+  「现状」列改为带 2026-09-21 复算时点的落地状态（预热已按 §4.4 恢复、ctl 白名单已落地、
+  direct 显式 unsupported）；§6.2 门禁表补 PG-9/PG-11；§7 从「Phase 0 ← 当前」改为逐
+  Phase 标注落地状态，并如实登记 **RouterService 标识符改名未执行**。
+  DOMAIN-STRUCTURE-DESIGN §10 合法继承豁免条目重写（原描述引用已删除的 11 个抛错占位
+  与硬编码行号）；provider-gateway 门禁头不再笼统宣称「Phase 1-5 全部落地」。README
+  规范索引 PG 范围更新。
+- 验证：node --check 全绿；静态门禁复跑（domain-structure DG-4=0、provider-gateway
+  31/31、circuit-breaker 58/58、probe-gate 36/36、round13 53/53）。
+
+### 实例沙箱 W4 呈现定版：前端类型补齐 + 行展示配额/占用 + 档位如实标注（ARCHITECTURE-PLAN-instance-sandbox-governor）
+
+- **前端类型滞后补齐**（tsc 不会报这类缺口，故必须机器把尺）：`types.ts` 的 `InstanceState` 增
+  `usage?: { memMb, cpuPct, at } | null`（后端 viewRow 自 W2 已产出）、新增 `SandboxBudget` 接口并挂到
+  `EnvStatus.sandboxBudget`（后端 `/env/status` 自 W2 已产出）。声明缺失的后果不是编译失败而是**静默少显示**。
+- **列表行呈现**：底栏改「配额 内存 X · CPU Y（软限）+ 占用 ZMB · CPU W%」；占用只在真有采样时显示
+  （停止/未采到不渲染，**绝不以零充数**），tooltip 说明配额来源与执行档位。
+- **档位语义落到呈现**：能力门仍只在 `sandboxLaunch=false` 时前置提示（W3 后仅未知平台命中），
+  另按 `sandboxEnforcement` 分档标注——`cgroup` 内核硬限 / `supervise` 采样式软限（守卫按超标拍数
+  收割重启）/ `none` 无内核级限额；能力尚未回读（`caps===null`）时**一句档位话都不说**，
+  防「未确认即断言硬限」。添加表单同步显示当前档位（填额框自 W1 已删，此处只补语义交代）。
+- **验收标准第 2 条口径修正**：原写「`systemctl show` 断言」，实改为**执行器边界 argv 实录**
+  （新增 X-3d：注入假 exec，逐字校验 `--user set-property --runtime <unit> MemoryMax= MemoryHigh=
+  CPUQuota=` + 有界超时 + 空 alloc/非法名 fail-closed）。理由：在 CI runner 上真改宿主 systemd
+  属性留副作用，且 transient 单元不存在时命令本身就得起不来——argv 是这条链**在平台层的**唯一真产物
+  （systemd 收到属性后是否真限流属其自身语义，不在本仓断言面内，故 §六 条 2 标「内核侧生效待 CI」）。
+- 门禁/文档同步：`cross-platform-test` 新增 A1-g/A1-g2（前端类型与页面同源消费 usage/SandboxBudget/
+  软限标注，反向判据防「软限伪装成硬限」）；`PLATFORM-CAPABILITY-MATRIX.md` 新增「实例舱档位小节」
+  （launch/enforcement × 五档运行环境 + 宽严分离与认领语义 + 已裁决不做项），矩阵头计数 14→15；
+  README 索引两行状态随动（能力矩阵描述、计划状态改「已落地待 CI 验收」）；计划 §六 改题为
+  「验收标准与达成口径」并逐条标注证据面，**依赖真机行为的条目（1/2/4/5）一律不预勾**；
+  §五 两条「一期不做 / 一期不留」改为**定案**（重开条件写成证据，不写成期次）。
+- 验证：本机 `node --check` 与静态门禁（comment-pin/domain-structure/test-safety/test-chain/
+  docs-reference/cross-platform-architecture/layering/exec-bounded）全绿；UI 类型改动**未本机 typecheck**
+  （`ui/node_modules` 不存在，安装依赖属重操作且占资源），由 CI 的 `cd ui && npm run verify`
+  （typecheck + lint + test + build）裁决；A1-g/A1-g2/X-3d 的行为面判定同样交 CI。
+
+### 实例沙箱 W3 执行面：portable provider + 实测分档 dispatch + 运行期动态限额（ARCHITECTURE-PLAN-instance-sandbox-governor）
+
+- **三平台实例舱拉平**：新增 `platform/os/portable.js`（179 行）——无服务管理器依赖的执行 provider，
+  动词与 systemd 档同形（11 键方法集，X-3 以 `_testProviders` 静态对账强制两档一致）。实例身份采用
+  无状态认领：端口反查 + cmdline 锚点（`--port` / 可执行入口）复核，`run.pid` 仅在「已拉起未监听」
+  窗口作停止兜底，PID 复用由 cmdline 锚点判死；停止走宽严分离——`isUnitActive` 查询降级宽松
+  （无锚点时仅凭端口，查询失败返回三态 `null` 而非谎报不活跃），`stopUnit` 杀进程必须锚点命中，
+  未确认不杀返 `false`；端口回退路径命中 `ownGroup=false`，不把他进程组当本实例。
+  `setLimits` 恒 `false` 是档位声明而非缺陷（supervise 软档无内核强制）。
+- **运行期限额动态化**：systemd 档新增 `setLimits` = `systemctl --user set-property --runtime`
+  下发 MemoryMax/MemoryHigh/CPUQuota（`--runtime` 防 drop-in 黏住陈旧下限）；`_governTick` 在配额
+  跨死区变更且 `phase==='RUNNING'` 时当拍下发，不再「下次启动生效」。portable 档违规处置与启停
+  经同一 provider 形状收敛，`start`/`stop`/违规收割三处 ctx（port/timeoutMs/anchors）同源。
+- **dispatch 实测不写死**：`service.current()` 分档为数据驱动——linux 探测 `systemd-run` 可达即
+  systemd 硬档、不可达（容器/WSL1）落 portable 软档；darwin/win32 portable；未知平台 NONE 显式抛错。
+  能力声明随动：`sandboxLaunch` 三平台翻正 `true`，`sandboxEnforcement` darwin/win32 = `supervise`
+  （未知平台仍 false/none，无任何虚报）。域层零 `process.platform` 分支，分档全部收在 provider 侧。
+- **残留收口**：`_prepareSystemd` 增 `supportsUnits` 闸（mac/win 不再 mkdir systemd 结构）；
+  门面 `launchCtx` 入 contract PUBLIC_API（DG-10），`dshBin` 补登记（消费面自 67072da 起存在）。
+- 门禁/测试同步：判定性测试并入既有文件、**未新增链条目**——`platform-layer-portability-test`
+  重写 X-3（dispatch 不变式 `kind === (hasSystemdRun ? 'systemd' : 'portable')` + `_testProviders`
+  方法集对账），新增 X-3b（require.cache 注入假 pidlookup、空闲 PID 探测防真实信号，23 项语义断言）、
+  X-3c（真实宿主拉起→监听→认领→停止闭环，每平台 runner 各跑一次）；`exec-return-contract` A4b/A5
+  扩 setLimits 与分档不变式；`instance-state-test` 7A 扩 stop ctx、新增 7E（启动 ctx 同源、
+  动态下发、不变不重复下发、supportsUnits 闸）；`capability-profile`、`four-platform-behavior-matrix`
+  P-5、`platform-capability-audit` A2/A3、`cross-platform` 判据随 W3 事实翻转。
+  行为裁决以 CI 三平台矩阵为准；本机仅静态门禁与 `node --check`。
+
+### 实例沙箱 W2 控制面：governor 完整决策策略 + 资源采样 + 监督拍接线（ARCHITECTURE-PLAN-instance-sandbox-governor）
+
+- **决策策略落地**（`governor.js#decide()` 纯函数，45 行预算推导扩为 206 行完整策略）：
+  两级配额——预留份额 = 机器预算(物理×0.7) / 活跃实例数（等权，无优先级档），突发池 = 物理内存减预算
+  的余量；占用达预留的 0.9 倍才按 `since`（启动时刻）先到先得领用突发，追加封顶 1 倍预留，
+  内存软顶 `MemoryHigh = 0.9×MemoryMax` 随 `unitProps` 落单元属性（CPU 可抢占、不设突发）。
+  目标值调整带迟滞：10% 死区内维持上轮值不动，跨死区单步最多增减 25%，防配额震荡。
+- **违规处置链**：内存连续 3 拍 / CPU 连续 5 拍超限判违规——先记事件 `inst_resource_violation`
+  （带实际值/目标值），再 `stopUnit` 收割，最后走既有状态机 `restart` 进 BACKOFF 自愈；
+  超限到重试上限仍归 FAILED（与崩溃链共用，不因放宽预算而静默清零）。采样缺失（探测失败、
+  进程未起）一律重置违规计数——**无证据不判违规**；每拍只处置本实例，他实例由其自身拍负责。
+- **准入闸**：`lifecycle.start()` 在任务占用检查后复算预算——若「现有活跃数 + 本实例」的等权份额
+  已低于 512M 保底，直接拒绝并给出「预算已满：K 实例已预留 X/YMB，停一个或等待释放」；
+  升级链（fromUpgrade）按既定裁决旁路（与任务闸同理）。BACKOFF 重试被拒不静默：
+  自然走 restart 计数直至重试超限 FAILED，故障原因可见。
+- **观测面新增** `platform/os/resstats.js`：进程树 rss / cpu-time 异步采样
+  （linux 直读 /proc、darwin `ps` 表、win32 `Get-CimInstance` JSON；解析器为纯函数、文本夹具可测），
+  单次采样 2s 有界且必须走 `exec.runOutAsync`（同步 execFileSync 会冻结监督拍整个 tick）；
+  cpuPct 为两拍间 delta（单核=100），采样失败保留上轮缓存、绝不当零。
+- **接线与展示**：supervise 的 RUNNING 分支同拍完成「观测→决策→下发/处置→展示值」——
+  配额变更写回 `state.allocation`（当前口径：展示值 + 下次启动生效；运行期 set-property 动态化属 W3，
+  该口径已被下方 W3 段取代），
+  实时占用写 `state.usage`（`viewRow` 透出）；`stop()` 清 usage 与运行期缓存。
+  新增门面 `InstanceManager.budgetSnapshot()`，`/env/status` 加 `sandboxBudget` 预算总览
+  （预算/已预留/可容纳实例数/CPU 份额）。
+- 门禁/测试同步：`governor-test` 增 G4 decide 矩阵（突发领用/池耗尽/上限封顶/迟滞步进/死区/
+  违规计数与重置/内存优先于 CPU）、G5 准入门限、G6 快照形态；resstats 解析夹具并入
+  `platform-parsers-and-commands-test`（Y-6 段）；违规处置链、突发展示、准入拒绝、采样空缺
+  永不处置四组行为测试并入 `instance-state-test`（第 7 段，端口段扩至 25）。
+  按 test-chain N-e 纪律全部并入既有宿主文件、**未新增链条目**（scripts.test 总长保持 Windows
+  cmd 8191 上限之内）。
+
+### 实例沙箱 W1 地基纠偏：能力字段拆分 + 动态限额 + win32 布局（ARCHITECTURE-PLAN-instance-sandbox-governor）
+
+- **能力单字段混装修正**：`multiInstance` 废止，拆为 `sandboxLaunch: boolean`（能否运行实例舱）与
+  `sandboxEnforcement: 'cgroup'|'supervise'|'none'`（限额由谁执行）两字段——合并声明会掩盖
+  「mac/win 可跑舱、仅缺内核强制」的真实形状（C11–C14 拆行教训）。W1 期间三平台取值不变形：
+  linux=launch/cgroup，darwin/win32/未知=false/none，无任何虚报。`sandbox.supported()`、
+  `/env/status`、面板能力门、不支持文案全部改问新字段。
+- **用户填额链废止**：`/instances/add`/`update` 不再接收 `memoryMax/cpuQuota`（传入即无副作用忽略，
+  盘上历史残留由 normalize 剔除）。限额定义权收归新增 `domains/instance/governor.js` 纯函数：
+  `机器预算(×HEADROOM 0.7) ÷ 活跃实例数` 等权推导，内存下限 512M、CPU 下限 100%，每次启动重算并
+  记入 `state.allocation`（视图行透出）。Linux 行为不回退：值仍经 `sandbox.unitProps` 落成
+  MemoryMax/CPUQuota 单元属性。
+- **win32 npm `-g --prefix` 布局修正**：依赖落点原硬编码 POSIX 形 `<install>/lib/node_modules`，
+  win32 实为 `<install>/node_modules`——新增 `sandbox.nodeModulesDir/dshEntry` 按平台分派，
+  启动命令、入口存在性检查、版本探测与测试夹具统一改走该推导（入口仍 node 直启 `lib/bin.js`，不经 `.cmd` 垫片）。
+- **隔离维度补齐**：沙箱实例独立 `TMPDIR=<根>/tmp`（win32 另设 `TMP/TEMP`；Linux 保留 PrivateTmp 双保险）；
+  实例根目录经 `fileProtect.ensurePrivateDir` 收紧（0700 / icacls），ensureDirs 一次到位。
+- 门禁/测试同步：`platform-capability-audit`（A1 枚举档位、A2 sandboxLaunch 实现产物含 governor、A3 显式 false+none）、
+  `four-platform-behavior-matrix`（14 键规范清单 + enforcement 档位穷举）、`capability-profile`、`cross-platform`、
+  `exec-return-contract` 判据改新字段；新增 `test/governor-test.js`（activeCount 拓扑 / allocation 平摊·下限·单调性 /
+  currentAllocation 形态）并入全量链。
+
+### 智能路由一键登录：浏览器选择权归还系统默认浏览器
+
+- **错误设计**：Command Code 一键登录的隔离打开不走系统默认浏览器，而是由产品指定浏览器内核 ——
+  darwin 硬编码 `open -na 'Google Chrome'`（默认浏览器是别的就被强拉 Chrome；没装 Chrome 直接打不开）、
+  win32 用 `findChromeWin` 在 Program Files 三根目录探测 `chrome.exe`、linux 按
+  `microsoft-edge→google-chrome→chromium…` 候选链择一。且 darwin 分支 spawn 的是 `open`，
+  它拉起浏览器后立即退出 —— 「关闭浏览器即取消登录」的 onExit 在 macOS 上语义本就是坏的。
+- **修法（能力零删减，方向反转）**：`platform/os/browser.js` 新增 `resolveDefaultBrowser`
+  （win32 注册表 `Clients\StartMenuInternet`→`shell\open\command`；darwin LaunchServices bundle id→
+  app 内真实可执行文件；linux `xdg-settings`+`.desktop` 主条目 `Exec` 行还原，env 包装去壳、
+  URL 字段码剔除），再按解析结果的**引擎族**（`engineOf`）展开隔离参数：chromium 系
+  `--incognito --user-data-dir=<随机 profile>`、firefox 系 `--no-remote --profile <tmp> -private-window`，
+  TZ/LANG/窗口尺寸随机化保留在策略层（`router/ops/browser.js` 改为传意图，不再自带 chromium 方言）。
+  Safari/包装器等无隔离能力的引擎如实 `isolated:false` 走 `open/xdg-open/explorer.exe` 非隔离打开，
+  由 180s 登录超时与「重新发起即取消」兜底。
+- **Safari 缺口的边界（实测 commandcode.ai 后认定可接受）**：auth 端点仅认 `callback/state`，
+  无 `select_account` 类参数；但已登录会话也必须显式点 Authorize，不存在静默复用旧账号签发。
+  非隔离引擎的真实损失仅「再添加其他账号需先在网页退出或用无痕」。
+- **onExit 由修复而非牺牲**：chromium 独立 profile / firefox `--no-remote` 均为新实例进程，
+  直启后可监听退出；三端语义一致（原 darwin 分支为假）。
+- 门禁同步：`platform-layer-portability-test` X-8/X-9 改为注入 `defaultBrowser` 解析结果
+  （夹具与产品同源原则不变），新增「平台层源码不再指定任何浏览器内核」反向判据；
+  `PLATFORM-CAPABILITY-MATRIX.md` C8 行按新实现改写。
+
+### 发布通道根因修复：`latest` 跟随每次发布（含 BETA 线）+ 无依据口径清障
+
 - 把两条**没有依据的规则**从口径里清除并写成明文（`RELEASE-STANDARD.md` §7 第 7 条、
   `RELEASE-CHANNEL-CONTRACT.md` §2「检测不到新版本」的排查顺序）：
   其一，「npm 同版本不可重发 → 保住版本号原地重发」—— 仓库里从来没有这条规则，各文档一直写的是

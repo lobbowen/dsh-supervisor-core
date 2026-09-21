@@ -1,10 +1,13 @@
 /**
- * 远程控制（supervisor lan + frp）
- * - 每个实例行：远程控制开关（联动：实例运行中 且 remoteEnabled 且 relay 监听）
- * - FRP 公网访问卡：状态 + 配置 + 安装/保存
+ * 远程控制（统一三态：关闭 / 局域网 / 公网）
+ * - 每实例一行一个远程控制状态：模式写入唯一经 /remote/set-mode；
+ *   就绪判定与访问 URL 零前端推导，直消费后端 remote 单一视图（projectRemoteView）。
+ * - 二维码恒跟随真实访问态：仅「就绪」时呈现 accessUrl（局域网=LAN IP，公网=frps 地址，端口同号）。
+ * - FRP 公网访问卡只管理 frps 连接配置（地址/端口/令牌 + 安装）；无总闸——
+ *   frpc 是否常驻由「是否存在公网模式实例」这一单一条件决定。
  */
 import { useEffect, useState } from "react";
-import { ExternalLink, KeyRound, Save, Wrench } from "lucide-react";
+import { ExternalLink, Globe, KeyRound, Landmark, Save, Wrench } from "lucide-react";
 import { toast } from "sonner";
 import QRCode from "react-qr-code";
 import { Button, Switch } from "../../framework/ui";
@@ -12,10 +15,15 @@ import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "
 import { Input } from "../../framework/ui/input";
 import { Label } from "../../framework/ui/label";
 import { supervisorApi, useSupervisorData } from "../../services/supervisor";
+import type { LanItem, RemoteMode, RemoteView } from "../../services/supervisor/types";
 import { useSupervisorAction } from "./useSupervisorAction";
 import { Card, CardTitle, DomainBadge, Pill } from "./widgets";
 
 import { cn } from "../../framework/utils";
+
+/** 后端视图条目缺失时的兜底（mode 非 off 但 relay 自愈未落拍）：如实呈现未就绪，不假装就绪。 */
+const fallbackView = (mode: RemoteMode): RemoteView =>
+  ({ mode, ready: false, accessUrl: null, reasons: ["远程服务未就绪"] });
 
 export function LanPage() {
   const { snap } = useSupervisorData();
@@ -26,7 +34,6 @@ export function LanPage() {
     ...(snap.instances?.instances ?? []),
   ];
   const lanItems = snap.lan?.items ?? [];
-  const addr = (snap.lan?.addresses ?? [])[0] || "";
   const frp = snap.frp;
 
   // FRP 表单（只在数据加载后填充一次）
@@ -34,49 +41,53 @@ export function LanPage() {
   const [frpPort, setFrpPort] = useState("7000");
   const [frpToken, setFrpToken] = useState("");
   const [loaded, setLoaded] = useState(false);
-  // 公网暴露：远端端口草稿（按实例 id）；未编辑时回显后端 frpRemotePort
-  const [portDraft, setPortDraft] = useState<Record<string, string>>({});
-  // 高危「开启」动作统一二次确认 Dialog；令牌录入用脱敏输入框。
-  const [tokenFor, setTokenFor] = useState<{ id: string; name?: string; domain?: string } | null>(null);
+  // 高危「开启/公网」动作统一二次确认 Dialog；令牌录入用脱敏输入框。
+  const [tokenFor, setTokenFor] = useState<{ id: string; name?: string } | null>(null);
   const [tokenInput, setTokenInput] = useState("");
   const [pendingOn, setPendingOn] = useState<{ title: string; desc: string; act: () => void } | null>(null);
   useEffect(() => {
     if (!frp || loaded) return;
     setFrpAddr(frp.settings.serverAddr || "");
     setFrpPort(String(frp.settings.serverPort || 7000));
-    // /lan/frp 不再回显 authToken（仅 authTokenSet 布尔）——不回填、不显示；
+    // /remote/frp 不回显 authToken（仅 authTokenSet 布尔）——不回填、不显示；
     // 输入框留空 = 提交体省略 authToken 字段 = 服务端保留现值，填入新值 = 轮换。
     setLoaded(true);
   }, [frp, loaded]);
 
-  /** 提交体组装（patch 语义，B7）：authToken 留空必须整体省略——显式提交 '' 会被后端当作清除落盘。 */
-  function frpPayload(enabled: boolean) {
-    const p: { serverAddr: string; serverPort: number; enabled: boolean; authToken?: string } = {
-      serverAddr: frpAddr, serverPort: parseInt(frpPort, 10) || 7000, enabled,
+  /** 提交体组装（patch 语义）：authToken 留空必须整体省略——显式提交 '' 会被后端当作清除落盘。 */
+  function frpPayload() {
+    const p: { serverAddr: string; serverPort: number; authToken?: string } = {
+      serverAddr: frpAddr, serverPort: parseInt(frpPort, 10) || 7000,
     };
     const t = frpToken.trim();
     if (t) p.authToken = t;
     return p;
   }
 
-  // FRP 总闸（修复：此前 UI 从不提交 enabled -> 后端 syncFromInstances 永远 stop -> frpc 不运行）
-  async function setFrpEnabled(v: boolean) {
-    await run("frp-en", () => supervisorApi.frpSettings(frpPayload(v)),
-      { success: v ? "已启用公网访问（frpc 将按已暴露实例启动）" : "已停用公网访问" });
+  /** 模式写入唯一动作（off|lan|wan）；安全闸拒因（如 wan 无令牌）由 run 统一 toast 呈现。 */
+  function setMode(it: { id: string; name?: string }, mode: RemoteMode, success: string) {
+    return run(it.id, () => supervisorApi.remoteSetMode(it.id, mode), { success });
   }
-  /** 该实例是否已设访问令牌（后端仅下发布尔）。 */
-  const tabSet = (it: { port: number }) => Boolean(lanItems.find((p) => p.dshPort === it.port)?.tokenSet);
-  /** 局域网远程控制开关（开启方向经确认框进入）。 */
-  function toggleRemote(it: { id: string; name?: string; domain?: string }, v: boolean) {
-    return run(it.id, () => (it.domain === "native"
-      ? supervisorApi.nativeSettings({ remoteEnabled: v }) // 概念清分：main 设置走主干 /native/settings
-      : supervisorApi.instanceUpdate(it.id, { remoteEnabled: v })
-    ), { success: v ? "已开启远程控制" : "已关闭远程控制" });
+  /** 开启远程控制（off->lan）：高危，经确认框。 */
+  function askOn(it: { id: string; name?: string }) {
+    setPendingOn({
+      title: "开启远程控制？",
+      desc: "「" + (it.name || it.id) + "」将开启局域网反向代理，同网段设备可访问该实例。确认开启？",
+      act: () => void setMode(it, "lan", "已开启远程控制（局域网）"),
+    });
+  }
+  /** 切公网：高危确认（互联网可触达）；令牌前置由后端 wan 闸裁决，拒因如实提示。 */
+  function askWan(it: { id: string; name?: string }) {
+    setPendingOn({
+      title: "切换到公网访问？",
+      desc: "「" + (it.name || it.id) + "」的访问端口将映射到公网（frps），互联网上任何人都可尝试触达（访问令牌已作为前置要求）。确认切换？",
+      act: () => void setMode(it, "wan", "已切换到公网访问"),
+    });
   }
   /** 打开「设置访问令牌」对话框（B28：替代 window.prompt——原生对话框明文回显、不可脱敏）。 */
-  function setToken(it: { id: string; name?: string; domain?: string }) {
+  function setToken(it: { id: string; name?: string }) {
     setTokenInput("");
-    setTokenFor(it);
+    setTokenFor({ id: it.id, name: it.name });
   }
   async function submitToken() {
     const it = tokenFor;
@@ -86,30 +97,10 @@ export function LanPage() {
     // 与守卫写入口同规（remoteToken >=8 位），先行提示避免提交后才见服务端拒因
     if (v.length < 8) { toast.error("远程访问令牌至少 8 位（公网暴露可被暴力枚举）"); return; }
     setTokenFor(null);
-    // 公网暴露的安全前置；写入走 /native/settings 或 /instances/update。
-    await run(it.id, () => (it.domain === "native"
-      ? supervisorApi.nativeSettings({ remoteToken: v })
-      : supervisorApi.instanceUpdate(it.id, { remoteToken: v })
-    ), { success: "访问令牌已设置" });
-  }
-  /** 实例公网暴露：开=先验端口再进确认框（act 带已验证端口）；关=直降无风险，立即执行。 */
-  function askExpose(it: { id: string; name?: string }) {
-    const p = parseInt(portDraft[it.id] ?? "", 10);
-    if (!Number.isInteger(p) || p <= 0 || p > 65535) { toast.error("请先填写有效的远端端口（1-65535）"); return; }
-    setPendingOn({
-      title: "暴露到公网？",
-      desc: "「" + (it.name || it.id) + "」的访问端口将映射到公网端口 " + p + "，互联网上任何人都可尝试触达（访问令牌已作为前置要求）。确认开启？",
-      act: () => void run(it.id, () => supervisorApi.frpExpose(it.id, true, p), { success: "已开启公网暴露（" + (it.name || it.id) + "）" }),
-    });
-  }
-  function setExposeOff(it: { id: string; name?: string }) {
-    void run(it.id, () => supervisorApi.frpExpose(it.id, false), { success: "已关闭公网暴露" });
-    setPortDraft((m) => { const n = { ...m }; delete n[it.id]; return n; });
+    await run(it.id, () => supervisorApi.remoteSetToken(it.id, v), { success: "访问令牌已设置" });
   }
   async function saveFrp() {
-    // 保存并应用：连 enabled 一起提交（保持当前总闸状态，避免「保存即静默停用」）
-    await run("frp-save", () => supervisorApi.frpSettings(frpPayload(frp?.settings?.enabled === true)),
-      { success: "已保存 FRP 配置" });
+    await run("frp-save", () => supervisorApi.remoteFrpServer(frpPayload()), { success: "已保存 FRP 配置" });
   }
 
   return (
@@ -117,30 +108,22 @@ export function LanPage() {
       <div className="grid items-start gap-4 @min-[900px]:grid-cols-[minmax(0,1fr)_420px]">
       {/* 实例远程控制列表 */}
       <Card>
-        <CardTitle title="局域网远程控制" subtitle="为本地 DSH 实例开启局域网反向代理访问（需实例运行中）" />
+        <CardTitle title="远程控制" subtitle="为本地 DSH 实例开启远程访问：局域网直连或经 FRP 公网（需实例运行中）" />
         <div className="grid">
           {!instances.length ? (
             <div className="px-5 py-8 text-center text-sm text-muted-foreground">暂无实例（在「实例管理」添加后将出现在这里）</div>
           ) : instances.map((it) => {
             const running = it.state?.running ?? false;
-            const proxy = lanItems.find((p) => p.dshPort === it.port);
-            const relayRunning = Boolean(proxy?.running);
-            const proxyEnabled = Boolean(proxy?.enabled);
-            const url = running && proxyEnabled && relayRunning && addr ? ("http://" + addr + ":" + proxy?.wanPort + "/") : null;
-            // 远程可用性单一标签：只显示「远程就绪 / 远程停止」——
-            // 语义 = 实例运行 且 代理启用 且 relay 监听 且 cookie 就绪 才算「就绪」，否则一律「停止」。
-            // 不再分开展示 实例运行中/已停止、代理停止/未就绪/未启用、正在注入/令牌缺失 等多标签。
-            const inj = relayRunning ? proxy?.inject : null;
-            const remoteReady = Boolean(running && proxyEnabled && relayRunning && inj?.cookieReady);
-            // 非就绪的具体原因放进 title（悬停可见），不占标签位
-            const remoteHint = !running ? '实例未运行'
-              : !proxyEnabled ? '远程未开启（点右侧开关开启）'
-              : !relayRunning ? '远程服务未就绪'
-              : !inj?.cookieReady ? (inj?.tokenSet ? (inj?.lastError || '正在注入…') : '令牌缺失')
-              : 'DSH 会话 cookie 已注入，远程访问已认证';
-            const remotePill = remoteReady
-              ? <Pill tone="ok">远程就绪</Pill>
-              : <span title={remoteHint}><Pill tone="off">远程停止</Pill></span>;
+            const proxy: LanItem | undefined = lanItems.find((p) => p.dshPort === it.port);
+            const mode: RemoteMode = it.remoteMode ?? "off";
+            const remote = mode === "off" ? null : (proxy?.remote ?? fallbackView(mode));
+            // 二维码/链接恒跟随真实访问态：仅就绪时呈现 accessUrl
+            const url = remote?.ready ? remote.accessUrl : null;
+            const remotePill = mode === "off"
+              ? <Pill tone="off">远程关闭</Pill>
+              : remote?.ready
+                ? <Pill tone={mode === "wan" ? "boot" : "ok"}>{mode === "wan" ? "公网就绪" : "局域网就绪"}</Pill>
+                : <span title={(remote?.reasons ?? []).join("；")}><Pill tone="off">远程停止</Pill></span>;
             return (
               <div key={it.id} className="grid grid-cols-[auto_minmax(0,1fr)_auto] items-stretch gap-4 border-b border-border/60 px-5 py-4 last:border-b-0">
                 {/* 二维码（左） */}
@@ -149,9 +132,11 @@ export function LanPage() {
                     <QRCode value={url} size={88} />
                   </div>
                 ) : (
-                  <div className="grid size-[96px] shrink-0 place-items-center rounded-lg border border-dashed border-border/70 text-[11px] leading-tight text-muted-foreground/60">{running ? "代理就绪后生成二维码" : "启动后可用"}</div>
+                  <div className="grid size-[96px] shrink-0 place-items-center rounded-lg border border-dashed border-border/70 text-center text-[11px] leading-tight text-muted-foreground/60">
+                    {running ? (mode === "off" ? "开启远程后生成二维码" : "远程就绪后生成二维码") : "启动后可用"}
+                  </div>
                 )}
-                {/* 中列：标题(右侧, 顶比二维码略低) 在上；端口/IP 贴二维码底 */}
+                {/* 中列：标题 + 远程标签 在上；端口/访问地址 贴底 */}
                 <div className="flex min-w-0 flex-col">
                   <div className="pt-2.5 flex flex-wrap items-center gap-2">
                     <DomainBadge domain={it.domain} />
@@ -159,97 +144,81 @@ export function LanPage() {
                     {remotePill}
                   </div>
                   <div className="mt-auto grid content-end gap-1.5 pb-1">
-                    <div className="text-xs text-muted-foreground">端口 {it.port}{it.remoteEnabled ? " · 远程已开" : " · 远程未开"}</div>
+                    <div className="text-xs text-muted-foreground">
+                      端口 {it.port}{mode !== "off" && proxy?.wanPort ? " · 访问端口 " + proxy.wanPort + (mode === "wan" ? "（公网同号）" : "") : ""}
+                    </div>
                     {url ? (
                       <a className="inline-flex max-w-full items-center gap-1 truncate text-xs text-primary hover:underline" href={url} target="_blank" rel="noreferrer">
                         <ExternalLink className="size-3 shrink-0" />{url}
                       </a>
                     ) : (
-                      <div className="text-xs text-muted-foreground/70">{running ? "等待代理就绪…" : "实例未运行，启动后可开启远程"}</div>
+                      <div className="text-xs text-muted-foreground/70">
+                        {!running ? "实例未运行，启动后可开启远程"
+                          : mode === "off" ? "远程未开启"
+                          : (remote?.reasons ?? []).slice(0, 2).join("；") || "等待代理就绪…"}
+                      </div>
                     )}
                   </div>
                 </div>
-                {/* 开关列（右，整行垂直居中）：局域网远程控制 + 公网暴露（FRP） */}
+                {/* 控制列（右，垂直居中）：统一远程开关 + 局域网/公网模式切换 + 访问令牌 */}
                 <div className="flex flex-col items-end justify-center gap-2">
                   <div className={cn("flex items-center gap-2", !running && "pointer-events-none opacity-50")}>
                     <span className="text-xs font-medium text-muted-foreground">远程控制</span>
                     <Switch
-                      checked={it.remoteEnabled ?? false}
-                      disabled={!running}
+                      checked={mode !== "off"}
+                      disabled={!running || busy === it.id}
                       onCheckedChange={(v) => {
-                        if (!v) { void toggleRemote(it, false); return; }
-                        setPendingOn({
-                          title: "开启远程控制？",
-                          desc: "「" + (it.name || it.id) + "」将开启局域网反向代理，同网段设备可访问该实例。确认开启？",
-                          act: () => void toggleRemote(it, true),
-                        });
+                        if (!v) { void setMode(it, "off", "已关闭远程控制"); return; }
+                        askOn(it);
                       }}
                     />
                   </div>
-                  {/* 公网暴露（FRP）：驱动后端 /lan/frp/expose。此前**无任何 UI 入口** ->
-                      buildConfig 永远 count=0 -> frpc 不运行（本次修复的核心）。 */}
-                  <div className={cn("flex items-center gap-2", (!running || !it.remoteEnabled) && "opacity-50")}>
-                    {/* 访问令牌（公网暴露安全前置；后端仅回传 tokenSet 布尔，不泄明文） */}
-                    <Button
-                      className="h-7 px-1.5"
-                      disabled={!running || busy === it.id}
-                      onClick={() => void setToken(it)}
-                      size="chip"
-                      title={tabSet(it) ? "访问令牌已设置（点击修改）" : "未设访问令牌——公网暴露将被安全闸拒绝，点击设置"}
-                      variant="outline"
-                    >
-                      <KeyRound className={cn("size-3.5", tabSet(it) ? "text-status-ok" : "text-amber-500")} />
-                    </Button>
-                    <span className="text-xs font-medium text-muted-foreground" title={it.remoteEnabled ? "暴露到公网（需 frps + 访问令牌）" : "请先开启远程控制（需访问令牌）"}>公网暴露</span>
-                    <Input
-                      className="h-7 w-[76px] text-xs"
-                      inputMode="numeric"
-                      placeholder="远端端口"
-                      disabled={!running || !it.remoteEnabled || busy === it.id}
-                      value={portDraft[it.id] ?? String(proxy?.frpRemotePort ?? "")}
-                      onChange={(e) => setPortDraft((m) => ({ ...m, [it.id]: e.target.value.replace(/[^0-9]/g, "") }))}
-                    />
-                    <Switch
-                      checked={proxy?.frpEnabled === true}
-                      disabled={!running || !it.remoteEnabled || busy === it.id}
-                      onCheckedChange={(v) => { if (v) askExpose(it); else setExposeOff(it); }}
-                    />
-                  </div>
+                  {/* 模式切换（开态才出现）：同一 relay 监听同号端口，局域网<->公网仅差一条 frpc 隧道 */}
+                  {mode !== "off" && (
+                    <div className={cn("flex items-center gap-1", (!running || busy === it.id) && "pointer-events-none opacity-50")}>
+                      <Button
+                        className="h-7 px-2 text-xs" size="chip"
+                        variant={mode === "lan" ? "default" : "outline"}
+                        title="局域网反向代理访问（同网段）"
+                        onClick={() => { if (mode !== "lan") void setMode(it, "lan", "已切换到局域网访问"); }}
+                      >
+                        <Landmark className="size-3.5" />局域网
+                      </Button>
+                      <Button
+                        className="h-7 px-2 text-xs" size="chip"
+                        variant={mode === "wan" ? "default" : "outline"}
+                        title={frp?.settings?.serverAddr ? "经 FRP 暴露到公网（需访问令牌）" : "需先在右侧配置 frps 服务器地址"}
+                        onClick={() => { if (mode !== "wan") askWan(it); }}
+                      >
+                        <Globe className="size-3.5" />公网
+                      </Button>
+                    </div>
+                  )}
+                  {/* 访问令牌（公网的安全前置；后端仅回传 tokenSet 布尔，不泄明文） */}
+                  <Button
+                    className="h-7 px-1.5"
+                    disabled={!running || busy === it.id}
+                    onClick={() => void setToken(it)}
+                    size="chip"
+                    title={proxy?.tokenSet ? "访问令牌已设置（点击修改）" : "未设访问令牌——公网模式将被安全闸拒绝，点击设置"}
+                    variant="outline"
+                  >
+                    <KeyRound className={cn("size-3.5", proxy?.tokenSet ? "text-status-ok" : "text-amber-500")} />
+                  </Button>
                 </div>
               </div>
             );
           })}
         </div>
       </Card>
-      {/* FRP 卡 */}
+      {/* FRP 卡：只管 frps 连接配置，无总闸（frpc 生命周期 = 是否存在公网模式实例） */}
       <Card>
         <CardTitle
           title="公网访问（FRP 内网穿透）"
-          subtitle="通过 frpc 暴露本机端口到公网"
+          subtitle="存在「公网」模式的实例时 frpc 自动常驻并建立隧道"
           actions={<Pill tone={frp?.running ? "ok" : frp?.installed ? "warn" : "off"}>{frp?.running ? "frpc 运行中" : frp?.installed ? "已安装 · 未运行" : "未安装"}</Pill>}
         />
         <div className="grid grid-cols-1 gap-3 px-5 py-4">
-          {/* 总闸：frpc 是否常驻（后端 syncFromInstances 的硬条件之一） */}
-          <div className="flex items-center justify-between gap-4 border-b border-border/60 pb-3">
-            <div className="min-w-0">
-              <strong className="block text-sm font-medium text-foreground">启用公网访问</strong>
-              <p className="mt-0.5 text-xs leading-relaxed text-muted-foreground">
-                开启后 frpc 常驻；需至少一个实例已开启「公网暴露」才会建立隧道。
-              </p>
-            </div>
-            <Switch
-              checked={frp?.settings?.enabled === true}
-              disabled={busy === "frp-en"}
-              onCheckedChange={(v) => {
-                if (!v) { void setFrpEnabled(false); return; }
-                setPendingOn({
-                  title: "启用公网访问（FRP）？",
-                  desc: "frpc 将常驻并连往 frps 服务器；已开启「公网暴露」的实例会立即建立隧道、暴露到互联网。确认启用？",
-                  act: () => void setFrpEnabled(true),
-                });
-              }}
-            />
-          </div>
           <div className="grid gap-1.5"><Label>frps 地址</Label><Input placeholder="如 1.2.3.4" value={frpAddr} onChange={(e) => setFrpAddr(e.target.value)} /></div>
           <div className="grid gap-1.5"><Label>frps 端口</Label><Input inputMode="numeric" placeholder="7000" value={frpPort} onChange={(e) => setFrpPort(e.target.value)} /></div>
           {/* B7：服务端不回显 token 明文——输入框恒为空；留空提交=省略字段=保留现值 */}
@@ -259,10 +228,10 @@ export function LanPage() {
         </div>
         <div className="flex flex-wrap items-center justify-between gap-2 px-5 pb-4">
           <span className="text-xs text-muted-foreground">
-            {frp?.installed ? "" : "需安装 frpc"}{(frp?.instancesExposed?.length ?? 0) > 0 ? " · 公网暴露 " + frp?.instancesExposed?.length + " 个实例" : " · 无公网暴露实例"}
+            {frp?.installed ? "" : "需安装 frpc"}{(frp?.instancesExposed?.length ?? 0) > 0 ? " · 公网实例 " + frp?.instancesExposed?.length + " 个" : " · 无公网模式实例"}
           </span>
           <div className="flex items-center gap-2">
-            <Button disabled={busy === "frp-inst"} onClick={() => void run("frp-inst", () => supervisorApi.frpInstall(), { success: "frpc 安装完成" })} variant="outline"><Wrench className="size-4" />安装 frpc</Button>
+            <Button disabled={busy === "frp-inst"} onClick={() => void run("frp-inst", () => supervisorApi.remoteFrpInstall(), { success: "frpc 安装完成" })} variant="outline"><Wrench className="size-4" />安装 frpc</Button>
             <Button disabled={busy === "frp-save"} onClick={() => void saveFrp()}><Save className="size-4" />保存并应用</Button>
           </div>
         </div>
@@ -272,7 +241,7 @@ export function LanPage() {
       </Card>
       </div>
 
-      {/* B28：高危「开启」统一二次确认（远程控制 / 公网暴露 / FRP 总闸共用） */}
+      {/* B28：高危「开启/公网」统一二次确认（远程开关 / 公网切换共用） */}
       <Dialog open={!!pendingOn} onOpenChange={(o) => !o && setPendingOn(null)}>
         <DialogContent className="max-w-[420px]">
           <DialogHeader><DialogTitle>{pendingOn?.title}</DialogTitle></DialogHeader>
@@ -288,7 +257,7 @@ export function LanPage() {
       <Dialog open={!!tokenFor} onOpenChange={(o) => !o && setTokenFor(null)}>
         <DialogContent className="max-w-[420px]">
           <DialogHeader><DialogTitle>设置访问令牌{tokenFor?.name ? " · " + tokenFor.name : ""}</DialogTitle></DialogHeader>
-          <p className="text-sm text-muted-foreground">公网暴露的安全前置：远程访问必须携带此令牌，否则 DSH 特权接口对公网完全开放。建议使用 16 位以上随机串。</p>
+          <p className="text-sm text-muted-foreground">公网模式的安全前置：远程访问必须携带此令牌，否则 DSH 特权接口对公网完全开放。建议使用 16 位以上随机串。</p>
           <Input type="password" autoComplete="new-password" placeholder="输入访问令牌"
             value={tokenInput} onChange={(e) => setTokenInput(e.target.value)}
             onKeyDown={(e) => { if (e.key === "Enter") void submitToken(); }} />

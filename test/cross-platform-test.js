@@ -5,6 +5,7 @@
 //   P0 可执行解析：Windows 扩展名/PATHEXT、标准目录跨平台差异、PATH 连接符
 //   P1 文件保护：Unix chmod / Windows icacls（平台条件断言）
 //   P2 无硬编码 ':' 连接 PATH
+//   P3 反代载体真进程冒烟：carrier 拉起->真监听->锚点归属->真终止（CI 三 runner 各验本平台）
 // 自包含，不触碰生产文件。
 
 const path = require('node:path');
@@ -17,7 +18,7 @@ const TMP = fs.mkdtempSync(path.join(os.tmpdir(), 'xplat-'));
 const results = [];
 const check = (n, c, x) => { results.push(!!c); console.log((c ? 'PASS' : 'FAIL') + ' ' + n + (x !== undefined ? '  ← ' + x : '')); };
 
-(function () {
+(async function () {
   const ep = require(path.join(ROOT, 'src', 'platform', 'os', 'exec-path'));
   const fp = require(path.join(ROOT, 'src', 'platform', 'os', 'file-protect'));
 
@@ -123,15 +124,21 @@ const check = (n, c, x) => { results.push(!!c); console.log((c ? 'PASS' : 'FAIL'
   console.log('== 服务管理器 Provider ==');
   const svc = require(path.join(ROOT, 'src', 'platform', 'os', 'service'));
   const cur = svc.current();
-  const expectedKind = process.platform === 'linux' ? 'systemd' : process.platform === 'darwin' ? 'launchd' : process.platform === 'win32' ? 'windows-service' : 'none';
-  check('provider kind 匹配平台', cur.kind === expectedKind, cur.kind + ' vs ' + expectedKind);
-  const iface = ['daemonReload', 'stopUnit', 'resetFailed', 'isUnitActive', 'transientUnitFile', 'cleanTransient', 'startTransient'];
-  check('provider 接口完整', iface.every((m) => typeof cur[m] === 'function'), iface.filter((m) => typeof cur[m] !== 'function').join(',') || 'ok');
+  const pl = process.platform;
+  // W3 分派：darwin/win32 恒 portable；未知平台恒 none；linux 按 systemd-run **实测**（容器/WSL1 落 portable）。
+  const expectedKind = pl === 'darwin' || pl === 'win32' ? 'portable' : pl === 'linux' ? null : 'none';
+  check('provider kind 匹配 W3 分派（linux 实测 systemd/portable，不写死）',
+    expectedKind === null ? (cur.kind === 'systemd' || cur.kind === 'portable') : cur.kind === expectedKind,
+    cur.kind + ' vs ' + expectedKind);
+  const iface = ['daemonReload', 'stopUnit', 'resetFailed', 'isUnitActive', 'transientUnitFile', 'cleanTransient', 'startTransient', 'setLimits'];
+  check('provider 接口完整（含 W3 setLimits）', iface.every((m) => typeof cur[m] === 'function'), iface.filter((m) => typeof cur[m] !== 'function').join(',') || 'ok');
   check('provider 声明能力', typeof cur.supportsUnits === 'boolean' && typeof cur.supportsTransient === 'boolean', '');
-  if (process.platform !== 'linux') {
-    check('非 Linux startTransient 抛 CapabilityError', (() => { try { cur.startTransient({ unit: 'x', cmd: ['node'] }); return false; } catch (e) { return e.name === 'CapabilityError' || e.code === 'CAPABILITY_UNSUPPORTED'; } })(), '');
+  if (cur.kind === 'none') {
+    check('未知平台 startTransient 抛 CapabilityError（显式失败，绝不静默）', (() => { try { cur.startTransient({ unit: 'x', cmd: ['node'] }); return false; } catch (e) { return e.name === 'CapabilityError' || e.code === 'CAPABILITY_UNSUPPORTED'; } })(), '');
   } else {
-    check('Linux startTransient 可用', cur.supportsTransient === true, '');
+    // 真宿主上**绝不调用** startTransient（会真拉进程）——档位声明即该侧解锁证据，
+    // 真实 spawn/kill 链由 platform-layer-portability X-3c 在各自 runner 上承担。
+    check('三平台 startTransient 能力声明为可拉起（supportsTransient=true）', cur.supportsTransient === true, '');
   }
 
   // -- 状态暴露 --
@@ -152,14 +159,25 @@ const check = (n, c, x) => { results.push(!!c); console.log((c ? 'PASS' : 'FAIL'
     check('A1-a envStatus 暴露 capabilities', env.capabilities && typeof env.capabilities === 'object', JSON.stringify(env.capabilities));
     const c = env.capabilities || {};
     check('A1-b capabilities 含平台/能力字段',
-      typeof c.platform === 'string' && typeof c.multiInstance === 'boolean' && typeof c.pidAdoption === 'boolean' && typeof c.hostService === 'string',
+      typeof c.platform === 'string' && typeof c.sandboxLaunch === 'boolean' && typeof c.sandboxEnforcement === 'string' && typeof c.pidAdoption === 'boolean' && typeof c.hostService === 'string',
       JSON.stringify(c));
     check('A1-c capabilities 与 capabilityProfile 一致', c.hostService === require(path.join(ROOT, 'src', 'platform', 'os', 'index')).capabilityProfile().hostService, String(c.hostService));
     // 前端类型 + UI 消费（静态契约）
     const typesTs = fs.readFileSync(path.join(ROOT, 'ui', 'src', 'services', 'supervisor', 'types.ts'), 'utf8');
     check('A1-d 前端声明 PlatformCapabilities 且 EnvStatus 引用', /interface PlatformCapabilities/.test(typesTs) && /capabilities\?:\s*PlatformCapabilities/.test(typesTs), 'ok');
     const instTsx = fs.readFileSync(path.join(ROOT, 'ui', 'src', 'features', 'supervisor', 'InstancesPage.tsx'), 'utf8');
-    check('A1-e UI 消费 capabilities 并前置提示', instTsx.includes('envStatus()') && instTsx.includes('multiInstance') && instTsx.includes('sandboxUnsupported'), 'ok');
+    check('A1-e UI 消费 capabilities 并前置提示', instTsx.includes('envStatus()') && instTsx.includes('sandboxLaunch') && instTsx.includes('sandboxUnsupported'), 'ok');
+    // A1-g（W4 呈现定版）：后端产出的新观测字段必须在**前端类型**里存在，否则 tsc 不会报错、
+    //  UI 只是静默少显示（本仓同类失效：EnvStatus.npm 三段字段声明滞后）。判据两端同时把尺：
+    //  后端 viewRow 有 usage / env.js 有 sandboxBudget 时，types.ts 与页面必须同源消费。
+    check('A1-g 前端类型声明 usage 与 SandboxBudget 且被消费',
+      /usage\?:\s*\{[^}]*memMb[^}]*cpuPct/.test(typesTs)
+        && /export interface SandboxBudget/.test(typesTs)
+        && /sandboxBudget\?:\s*SandboxBudget/.test(typesTs)
+        && instTsx.includes('state?.usage') && instTsx.includes('sandboxEnforcement'),
+      'ok');
+    check('A1-g2 反向：软限档位不伪装成硬限（页面须分档标注）',
+      /softTier/.test(instTsx) && /supervise/.test(instTsx) && /软限/.test(instTsx), '有');
     // 误导性错误指引已修正：不再指向不存在的裸字段路径
     //  步骤8a：instance 拆为 index/core/ops/upgrade 四文件，
   //   判据须读**整域**（否则文件拆分即静默失去覆盖面）。见 DIRECTORY-STRUCTURE-DESIGN 。
@@ -168,7 +186,7 @@ const check = (n, c, x) => { results.push(!!c); console.log((c ? 'PASS' : 'FAIL'
     .map((f) => fs.readFileSync(path.join(ROOT, 'src', 'domains', 'instance', f), 'utf8'))
     .join(String.fromCharCode(10));
     check('A1-f 沙箱错误指引指向真实端点/字段',
-      instSrc.includes('GET /env/status') && instSrc.includes('capabilities.multiInstance'),
+      instSrc.includes('GET /env/status') && instSrc.includes('capabilities.sandboxLaunch'),
       'ok');
   }
 
@@ -267,6 +285,67 @@ const check = (n, c, x) => { results.push(!!c); console.log((c ? 'PASS' : 'FAIL'
         && !/\.filter\(\(\[, it\]\) => it\.required\)/.test('  const n = node.current;'), '已抓到');
     check('A5-q LTS 线提示仍取 /env/node-lts（工具链清单与 LTS 建议不互相顶替）',
       /supervisorApi\.nodeLts\(\)/.test(ovCode) && /ltsLine === false/.test(ovCode), 'ok');
+  }
+
+  // -- P3 反代载体契约冒烟（PROXY-ISOLATION-STANDARD 的 CI 实机牙齿）--
+  //   反代链跨平台缺陷全部住在「真 spawn->真监听->真终止」段：单元面把 spawn 打桩后
+  //   四平台 CI 恒绿（win32 组信号缺失/EINVAL、macOS 归属误判都在用户机器上才红）。
+  //   假供应商（纯 node 入口 + --port 监听）走 carrier 全生命周期；新增真实反代供应商
+  //   不需要改本段（载体与供应商无关），载体契约一旦变化这里必改。
+  {
+    console.log('\n== P3 反代载体真进程冒烟 ==');
+    const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+    const carrier = require(path.join(ROOT, 'src', 'platform', 'os', 'carrier'));
+    const pidlookup = require(path.join(ROOT, 'src', 'platform', 'os', 'pidlookup'));
+    const PORT = safePort('cross-platform', 0);
+    const PKG_MARKER = 'fakeproxy-demo-pkg';
+    const dir = path.join(TMP, PKG_MARKER);
+    fs.mkdirSync(dir, { recursive: true });
+    // 30s 硬保险：本测试进程中途死掉也不留孤儿（全局作业规则）；SIGTERM 速退。
+    const entry = path.join(dir, 'entry.js');
+    fs.writeFileSync(entry, "'use strict';\n"
+      + "const http = require('node:http');\n"
+      + "const argv = process.argv.slice(2);\n"
+      + "const port = Number(argv[argv.indexOf('--port') + 1]);\n"
+      + "const srv = http.createServer((req, res) => { if (req.url === '/health') { res.writeHead(200); res.end('{\"ok\":true}'); } else { res.writeHead(404); res.end(); } });\n"
+      + "srv.listen(port, '127.0.0.1');\n"
+      + "setTimeout(() => process.exit(0), 30000).unref();\n"
+      + "process.on('SIGTERM', () => process.exit(0));\n");
+    const pidFile = path.join(dir, 'run.pid');
+    const identity = { port: PORT, pidFile, anchors: [PKG_MARKER, '--port ' + PORT] };
+    const spawnFake = () => carrier.start({
+      cmd: [process.execPath, entry, PKG_MARKER, '--host', '127.0.0.1', '--port', String(PORT)],
+      identity,
+    });
+    let h = spawnFake();
+    check('P3-a start 正 pid + run.pid 落盘一致',
+      Number.isInteger(h.pid) && h.pid > 0 && parseInt(String(fs.readFileSync(pidFile, 'utf8')), 10) === h.pid, String(h.pid));
+    let health = false;
+    const dl = Date.now() + 10000;
+    while (Date.now() < dl && !health) {
+      try { health = (await fetch('http://127.0.0.1:' + PORT + '/health', { signal: AbortSignal.timeout(1000) })).ok; } catch { await sleep(250); }
+    }
+    check('P3-b 真监听：/health 200（本平台 spawn→端口全链可用）', health, health ? 'ok' : '10s 超时');
+    const st1 = carrier.probe(identity);
+    check('P3-c 归属 ours（pidFile+锚点）', st1.state === 'ours' && st1.pid === h.pid, JSON.stringify(st1));
+    // 删 run.pid 只剩端口反查：npx 形态里载体进程与监听子孙不同 pid，锚点必须仍认领（同语义面）。
+    fs.unlinkSync(pidFile);
+    check('P3-c 无 run.pid 时端口锚点仍 ours（npx 子孙监听形态）', carrier.probe(identity).state === 'ours', JSON.stringify(carrier.probe(identity)));
+    const stF = carrier.probe({ port: PORT, pidFile: null, anchors: ['no-such-vendor-pkg'] });
+    check('P3-d 错锚点判 foreign（绝不误认领他人进程——孤儿误杀类反例锁）', stF.state === 'foreign', JSON.stringify(stF));
+    carrier.signalTermination(h.pid);
+    let gone = false;
+    const dl2 = Date.now() + 6000;
+    while (Date.now() < dl2 && !gone) { gone = !pidlookup.isAlive(h.pid); if (!gone) await sleep(200); }
+    check('P3-e signalTermination 后真退', gone, gone ? 'ok' : '6s 未退');
+    let freed = false;
+    const dl3 = Date.now() + 4000;
+    while (Date.now() < dl3 && !freed) { freed = pidlookup.findListeningPid(PORT) === null; if (!freed) await sleep(200); }
+    check('P3-e 端口释放（无占端口孤儿）+ probe 收敛 dead', freed && carrier.probe(identity).state === 'dead', freed ? 'ok' : '仍被监听');
+    check('P3-e pidlookup.isZombie 门面可用（域内 /proc 读取的合法替代）', typeof pidlookup.isZombie(h.pid) === 'boolean', 'ok');
+    h = spawnFake();
+    check('P3-f 同端口重拉 + 确认式 stop true 且清 run.pid',
+      carrier.stop(identity, { timeoutMs: 3000 }) === true && !fs.existsSync(pidFile), 'ok');
   }
 
   const failed = results.filter((r) => !r);

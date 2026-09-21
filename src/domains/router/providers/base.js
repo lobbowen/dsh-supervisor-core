@@ -48,23 +48,20 @@ class ProviderBase {
   async detectAccount(acc) {
     throw new Error('detectAccount must be implemented by subclass');
   }
-  // 能力契约声明（PG-1）
+  // 能力契约声明（PG-1）。process-pool 能力面（startInstance/stopInstance/restartInstance/
+  // _waitHealthy/instanceOf/ensureServable/reclaimAccount/markRequestOk/markInstanceNetFail/
+  // _retryPendingStop/flushRestartPending/reconcileInstances 及其 this 图所需的
+  // accountOf/markInstanceProblem/_doStart）
+  // 由 providers/process-pool.js 的 mixin 实现并并入 supports 词表——契约在能力方声明，
+  // 基座不再携带实现不了的抛错占位；调用方一律以 supports(cap) 守卫。
   /** 本 provider 是否具备某项能力；缺省为无 process 能力（最保守）。 */
   supports(_cap) { return false; }
-  // process-pool 能力面的契约占位（默认抛错，避免被误当 no-op 使用）
-  async startInstance() { throw new Error('startInstance must be implemented by process-pool provider'); }
-  async stopInstance() { throw new Error('stopInstance must be implemented by process-pool provider'); }
-  async restartInstance() { throw new Error('restartInstance must be implemented by process-pool provider'); }
-  async _waitHealthy() { throw new Error('_waitHealthy must be implemented by process-pool provider'); }
-  instanceOf() { throw new Error('instanceOf must be implemented by process-pool provider'); }
-  markUsed() { throw new Error('markUsed must be implemented by process-pool provider'); }
-  markRequestOk() { throw new Error('markRequestOk must be implemented by process-pool provider'); }
-  markInstanceNetFail() { throw new Error('markInstanceNetFail must be implemented by process-pool provider'); }
-  _retryPendingStop() { throw new Error('_retryPendingStop must be implemented by process-pool provider'); }
-  flushRestartPending() { throw new Error('flushRestartPending must be implemented by process-pool provider'); }
-  reconcileInstances() { throw new Error('reconcileInstances must be implemented by process-pool provider'); }
 
   accountQuotaSummary(acc) { return quota.accountQuotaSummary(acc); }
+
+  /** 结算单价来源（转发收口按此多态分派，取代 kind 字面量分支）：
+   *  缺省=调用方注入的全局单价 fallback；直连覆写为官方单价。 */
+  pricingOf(fallback) { return typeof fallback === 'function' ? fallback() : null; }
 
   async addAccount(key, extra) {
     const existing = this.accounts.find((a) => a.key === key);
@@ -92,7 +89,8 @@ class ProviderBase {
     const idx = this.accounts.findIndex((a) => a.keyId === keyId);
     if (idx < 0) return { ok: false, error: '账号不存在' };
     const acc = this.accounts[idx];
-    // 实例/端口清理属 process-pool 子类：经 ctor 注入的钩子执行（打破 base 到 proxy 的反向边）
+    // 实例/端口清理属 process-pool 能力方（钩子由 process-pool.js 的 mixin ctor 装配）：
+    // 经钩子执行以打破 base 到池的 this 反向边（DG-4）。
     if (this._hooks && typeof this._hooks.onDiscardAccount === 'function') {
       try { this._hooks.onDiscardAccount(acc); } catch {}
     }
@@ -166,14 +164,11 @@ class ProviderBase {
     }
   }
 
-  /** 使用状态纯派生：in-use=activeAccount 指向；warming=实例在跑但非在用；idle=其余。 */
+  /** 使用状态纯派生：in-use=activeAccount 指向；idle=其余。warming 由 process-pool mixin 覆写派生。 */
   usageOf(acc) {
     if (!acc) return 'idle';
     if (this.activeAccount && this.activeAccount.keyId === acc.keyId) return 'in-use';
-    if (this.supports('instanceLifecycle')) {
-      const inst = this.instanceOf(acc);
-      if (inst && inst.pid) return 'warming';
-    }
+    // warming（实例已热但未在用）由 process-pool mixin 覆写派生；基座只认在用一个事实。
     return 'idle';
   }
 

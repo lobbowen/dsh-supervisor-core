@@ -60,7 +60,7 @@
 客户端（壳 `core.rs::latest_pick`、内核 `install.js::fetchNpmLatest`）只做匿名 HTTPS GET
 包级 packument，代码里既没有 `Authorization` 也没有 `_authToken`；整条链上唯一的凭据是
 **CI 发布步的 `NPM_TOKEN`**（经临时 userconfig 注入、不落盘，解析单源
-`release/scripts/_npm-auth.sh`，见 `RELEASE-AND-UPDATE-MECHANISM.md` §2.2「认证」）。
+`release/scripts/_npm-auth.sh`，见 `archive/history/RELEASE-AND-UPDATE-MECHANISM.md` §2.2「认证」）。
 所以「换了 GitHub 令牌 / npm 令牌」与「客户端检测不到新版本」**没有因果关系** —— 把它当成
 凭据问题会让真正的成因（通道 tag）多活一轮发布。
 

@@ -313,7 +313,7 @@ const readDomain = (dir) => fs.readdirSync(path.join(ROOT, dir)).filter((f) => f
 }
 
 // -- J-j：内核写 registry.json 时必须保留壳的 v2 字段（P2 双写）--
-//   该文件所有权在壳（registry-contract.js 声明），壳也会读回（core.rs:150）；
+//   该文件所有权在壳（registry-contract.js 声明），跨仓 .shell-work 也会读回（行号跨仓不可核验）；
 //   内核若整份覆盖，会抹掉 catalog/probe/selected，削弱壳的镜像解析。
 {
   const dmSrc = readDomain('src/platform/distribution');

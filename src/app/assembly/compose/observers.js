@@ -8,9 +8,9 @@
 const { registerAll } = require('../../../app/control/adapters');
 
 function composeObservers(host) {
-    // 桥接：实例 remoteEnabled 变化时同步远程代理
+    // 桥接：实例 remoteMode 变化时同步远程代理
     // 实例事件 -> 远程代理对账。config.lanDaemon 下守卫不再本地建 relay，只把实例清单写入
-    // lan-state.json（daemon 轮询收敛：新增/启停/remoteEnabled 变化均经 reconcile 处理）。
+    // lan-state.json（daemon 轮询收敛：新增/启停/remoteMode 变化均经 reconcile 处理）。
     host.instances.onRemoteChange = (inst) => {
       if (host.lanDaemonEnabled()) { host._syncLanState(); return; }
       host.lan.syncProxy(inst).catch((e) => host.logger.warn && host.logger.warn('lan syncProxy: ' + e.message));

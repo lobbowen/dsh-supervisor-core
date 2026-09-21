@@ -1,0 +1,90 @@
+'use strict';
+
+// 受管进程载体（managed process carrier）：反代进程池这类「需要管道读输出、长驻管理」的
+// 池式消费者拉起外部进程的唯一通道。
+//
+// 为什么要有它（PROXY-ISOLATION-STANDARD L1）：归属/终止语义全仓只允许一套——
+//   portable LaunchProvider 的锚点身份引擎（findOurs/matchesAnchors/run.pid + 端口反查，
+//   防 PID 复用误杀；win32 无进程组语义，整树终止走 killTree）。此前反代域绕过该引擎，
+//   自带 `process.kill(-pid)` 与 sameProcessGroup 判定，在 Windows（EINVAL/无组语义）与
+//   macOS（无 /proc，sameProcessGroup 恒 false -> 误判孤儿）上系统性失效。
+// 与 portable.startTransient 的分工：startTransient 服务守卫式拉起（stdio ignore、无句柄、
+//   systemd 动词同形）；载体服务池式拉起（detached 自成进程组 + pipe 句柄 + 停止确认），
+//   两者的身份判定同为 portable.findOurs，不存在第二份归属逻辑。
+// 平台事实全部下沉 L0：spawn 经 os/spawn（windowsHide/detached 固定），终止经 os/process#killTree，
+//   pid/端口/cmdline 经 os/pidlookup。本模块不含任何 process.platform 分支。
+
+const fs = require('node:fs');
+const spawner = require('./spawn');
+const procOS = require('./process');
+const pidlookup = require('./pidlookup');
+const { findOurs, portable } = require('./portable');
+
+/** 终止在途台账：pid -> 升级定时器。SIGTERM 后到期未退自动 SIGKILL 整树。
+ *  1.5s 与反代既有停止预算一致；定时器 unref，绝不因滞留台账钉住事件循环。 */
+const ESCALATE_MS = 1500;
+
+function escalateKill(pid) {
+  setTimeout(() => {
+    if (!pidlookup.isAlive(pid)) return;
+    try { procOS.killTree(pid, 'SIGKILL', undefined, { ownGroup: true }); } catch { /* 已退出 */ }
+  }, ESCALATE_MS).unref();
+}
+
+/**
+ * 拉起并纳管：detached（POSIX 自成进程组，ownGroup 组信号前提）+ 管道句柄。
+ * @param {{cmd:string[], env?:object, cwd?:string, identity:{port?:number,pidFile?:string,anchors?:string[]},
+ *          onOutput?:(child:import('node:child_process').ChildProcess)=>void}} spec
+ *        identity.anchors 必含能同时出现在「载体进程」与「其子孙监听者」cmdline 的特征串
+ *        （约定为包名 + '--port <端口>'）；onOutput 由调用方接线 stdout/stderr（落盘/过滤进事件）。
+ * @returns {{pid:number, child:import('node:child_process').ChildProcess, identity:object}}
+ */
+function start(spec) {
+  const o = spec || {};
+  const cmd = o.cmd || [];
+  if (!cmd.length) throw new Error('carrier.start 拒绝：空命令');
+  const identity = o.identity || {};
+  const child = spawner.piped(cmd[0], cmd.slice(1), {
+    detached: true,
+    cwd: o.cwd || undefined,
+    env: o.env,
+  });
+  if (!child.pid) throw new Error('carrier.start 失败：spawn 未产生进程');
+  if (identity.pidFile) {
+    // run.pid 是「监听前窗口」的停止兜底；写失败不构成启动失败（端口+锚点仍可判定归属）。
+    try { fs.writeFileSync(identity.pidFile, String(child.pid)); } catch { /* ignore */ }
+  }
+  if (typeof o.onOutput === 'function') o.onOutput(child);
+  return { pid: child.pid, child, identity };
+}
+
+/** 归属快照（三态语义与 portable.isUnitActive 同口径）：
+ *  'ours'=锚点命中的我方进程（{pid,ownGroup}）；'dead'=无归属进程；
+ *  'foreign'=端口被 cmdline 不匹配锚点的进程占住（绝不据 pid 相等/进程组臆断）。 */
+function probe(identity) {
+  const ours = findOurs(identity || {});
+  if (ours) return { state: 'ours', ...ours };
+  const port = Number(identity && identity.port);
+  const listening = Number.isInteger(port) && port > 0 ? pidlookup.findListeningPid(port) : null;
+  if (listening !== null) return { state: 'foreign', pid: listening };
+  return { state: 'dead' };
+}
+
+/** 发 SIGTERM 整树（fire-and-forget，1.5s 自动升级 SIGKILL）+ 台账。
+ *  只用于「我们刚拉起的组长 pid」——ownGroup:true 的前提是本方 detached 创建，
+ *  外来 pid 的终止一律走 stop()（锚点复核）或调用方显式 killTree(ownGroup:false)。 */
+function signalTermination(pid) {
+  if (!Number.isInteger(pid) || pid <= 0) return false;
+  try { procOS.killTree(pid, 'SIGTERM', undefined, { ownGroup: true }); } catch { return false; }
+  escalateKill(pid);
+  return true;
+}
+
+/** 确认式停止（有界同步复核，语义 = portable.stopUnit）：锚点复核后才动手，
+ *  true=已确认消失 / false=未确认（调用方保持原相位，不得当成功）。
+ *  注意：预算内 Atomics.wait 阻塞调用线程，只可在关停/低频路径用；请求路径用 signalTermination。 */
+function stop(identity, opts) {
+  return portable.stopUnit(null, Object.assign({}, identity || {}, opts || {}));
+}
+
+module.exports = { start, probe, signalTermination, stop };

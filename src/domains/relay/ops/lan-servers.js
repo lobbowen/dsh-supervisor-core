@@ -35,7 +35,6 @@ function startLanServer(host, inst) {
   });
   server.listen(inst.wanPort, '0.0.0.0', () => {
     host._lanServers[inst.id] = server;
-    inst.localPort = inst.wanPort;
     if (host.events) host.events.append('lan_instance_started', { id: inst.id, wanPort: inst.wanPort, dshPort: inst.dshPort });
     host.logger.info && host.logger.info('lan ' + inst.name + ' on 0.0.0.0:' + inst.wanPort + ' -> 127.0.0.1:' + inst.dshPort);
   });
@@ -50,11 +49,9 @@ function handleRelayListenFail(host, inst) {
   if (now - last < 60000) return; // 60s 节流：不每 tick 迁移
   host._relayFailThrottle[inst.id] = now;
   portsvc.releaseOwner('relay:' + inst.id);
-  // 清缓存条目与实例的 wanPort 绑定，交由 syncProxy 重新分配新端口。
+  // 清派生缓存条目的 wanPort（条目即 inst 本体），交由 syncProxy 重新分配新端口。
   const proxy = host.lanInstances.find((p) => p.id === inst.id);
   if (proxy) proxy.wanPort = null;
-  inst.wanPort = null;
-  host._saveAll();
   if (host.logger && host.logger.warn) host.logger.warn('[relay] ' + inst.id + ' 端口监听失败，已释放绑定，将迁移新端口');
   if (host.events) host.events.append('lan_relay_listen_failed', { id: inst.id });
 }

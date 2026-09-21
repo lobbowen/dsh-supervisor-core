@@ -7,9 +7,9 @@ const stateRoot = require('../service/state-root');
 // 能力矩阵为纯函数 + 工具探测；service 是 Provider 分派（linux->systemd / darwin->launchd /
 // win32->windows-service / 未知->none，未实现能力抛 CapabilityError）；其余模块函数内按平台
 // 分支、三端接口一致。
-// 历史 TODO（已撤销，勿据以派单）：原记「servicehost/sandbox 的完整 Provider 化」。核验：**无 servicehost 模块**；
-//   service 早已是 PROVIDERS[PLATFORM] 真 Provider 分派；sandbox 属 domains/instance（非 os 层）。其余 os 模块
-//   按平台分支、三端接口一致，是**有意设计**而非待办。
+// **无 servicehost 模块**；service 已是 PROVIDERS[PLATFORM] 真 Provider 分派；
+// sandbox 属 domains/instance（非 os 层）。其余 os 模块按平台分支、三端接口一致，
+// 是**有意设计**而非待办。
 
 const os = require('node:os');
 const path = require('node:path');
@@ -45,7 +45,7 @@ function hasTool(name, args) {
   // 兜底实测（门禁 A3' 亦要求保留 runOut 形态）：解析器覆盖不到的落点（如仅 shell 感知的 PATH
   // 变体）仍可用显式 args 实测；失败按可执行缺失记负。
   // 必须用 runOut：execFileSync 在 stdio ignore 下成功也返回 null，用 !== null 判存在会恒 false，
-  // 导致 capabilities() 把 multiInstance/desktopNotify/autostart 全部误降为 false。
+  // 导致 capabilities() 把 sandboxLaunch/desktopNotify/autostart 全部误降为 false。
   const ok = ex.runOut(name, args || ['--version'], { timeoutMs: 3000 }) !== null;
   _toolCache[name] = ok ? true : { at: Date.now() };
   return ok;
@@ -80,7 +80,9 @@ function capabilities() {
   const p = capabilityProfile();
   const pl = p.platform;
   if (pl === 'linux') {
-    p.multiInstance = hasTool('systemd-run');
+    // W3：跑舱不再依赖 systemd-run（缺它落 portable 软档）；实测只决定限额执行档位。
+    p.sandboxLaunch = true;
+    p.sandboxEnforcement = hasTool('systemd-run') ? 'cgroup' : 'supervise';
     p.desktopNotify = hasTool('notify-send');
     p.autostart = hasTool('systemctl');
   } else if (pl === 'darwin') {

@@ -9,9 +9,9 @@
 // 把 `src/supervisor.js` 拆成 `src/guard/supervisor/*.js` 后，
 // **两处**路径推导没有跟着更新：
 //
-//   control-view.js:216   path.join(__dirname, '..') + 'src/domains/router/daemon.js'
+//   control-view   path.join(__dirname, '..') + 'src/domains/router/daemon.js'
 //                         -> src/guard/src/domains/router/daemon.js（不存在）
-//   registry-view.js:185  path.join(__dirname, 'domains', 'router', 'daemon.js')
+//   registry-view  path.join(__dirname, 'domains', 'router', 'daemon.js')
 //                         -> src/guard/supervisor/domains/...（不存在）
 //
 // 后果是**生产级**的：`_daemonLifecycle()` 的 existsSync 恒为假 -> 恒返回 null ->

@@ -84,7 +84,8 @@ module.exports = {
 
   // DG-4 合法例外（门禁以 abstractPlaceholders / extends SCC 实际豁免；此处登记出处）
   exempt: {
-    'providers/base.js': '12 个抽象契约占位（throw ... must be implemented by process-pool provider）',
-    'providers/proxy.js': 'extends ProviderBase 的合法继承（DG-5c 继承 SCC，非 mixin）',
+    // base 调 this.detectAccount（addAccount 内）由该抽象占位自动豁免；池能力面契约在
+    // providers/process-pool.js mixin 声明并实现，基座无其他占位。
+    'providers/base.js': '1 个抽象契约占位（detectAccount，must be implemented by subclass）',
   },
 };

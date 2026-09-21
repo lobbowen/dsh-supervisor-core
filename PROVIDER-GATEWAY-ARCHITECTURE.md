@@ -5,7 +5,8 @@
 >
 > **立此文件的背景（必读）**：本域**从未被真正设计过**——13 个文件在同一初始提交（`6a40b1d`，
 > 整个内核一次性导入）中随仓搬入，此后仅有零星修补（`switch.js` 全程 1 次提交）。
-> 因此`RouterService` 累积了 **69 个方法**（26 个下划线内部），职责重叠、抽象靠运行时猜测。
+> 因此 `RouterService` 累积了 **69 个方法**（26 个下划线内部），职责重叠、抽象靠运行时猜测。
+> （以上为**立文时点 2026-09-16 的状态**；四层拆分、契约收口与判据统一已在此后落地，见 §6.2 门禁。）
 > 本文不是"给既存代码补文档"，而是**第一次给出该域的设计**。
 
 ---
@@ -71,7 +72,7 @@
 资源节制   ←要求→   冷启（不能全量拉起）
 ```
 
-**现状解法与缺陷**（实测）：
+**现状解法与缺陷**（立文时点实测）：
 
 | 现状 | 缺陷 |
 |---|---|
@@ -80,6 +81,9 @@
 | **预热机制已被整体废除** | ③ 因旧实现死循环而**因噎废食** → 连"提前准备"都没了 |
 
 **结论：现状不是"没做好"，而是这个矛盾从未被正面设计过。** §4 正面解它。
+**落地进展（2026-09-21 复算）**：§4.2 的 `maxHot`/`maxWarm` 资源闸、§4.3 的 `switchBudgetMs`
+双预算、§4.4 的预热恢复（`prewarmAsync`，Reconciler 统一决策）均已在
+`providers/pool.js` / `providers/proxy.js` / `providers/restart.js` 落地。
 
 ---
 
@@ -117,13 +121,17 @@ ProviderGateway（编排）
 ### 3.3 写权唯一性（决策 **A3 的推论**）
 
 ```
-设计：任一时刻，一个域的持久化文件只能有【一个写入者】。
-  providers.json           ← daemon 独占（守卫内嵌实例彻底只读）
-  router-usage-totals.json  ← daemon 独占（★ 当前不受写闸约束，见 P1-3）
+设计：任一时刻，一个域的持久化文件只能有【一个写入者】+【一个读写实现】。
+  providers.json            ← daemon 独占（守卫内嵌实例彻底只读）
+  router-usage-totals.json  ← daemon 独占（写闸与 providers 同源：canPersist 单闸）
   ports-router.json         ← daemon 独占
 ```
 
-**现状缺陷**：`_save()` 受 `_persistEnabled` 约束，但 `_writeTotals()` **不受** → "守卫只读"仅成立于 providers.json。
+**落地时点（2026-09-21 账本读写收口，取代立文时的缺陷描述）**：
+
+- 立文时缺陷「`_writeTotals()` 不受 `_persistEnabled` 约束」已修：`store/usage.js` 落盘前问注入的 `canPersist()`（闸由 `RouterStore.canPersist` 提供，PG-7 判据锁）。
+- **读写实现唯一**：`RouterStore` 上的第二读写面 `readUsage/writeUsage`（零消费）已删除，usage-totals.json 只由 `UsageLedger` 一处持有（PG-12 机器校验：router 域内除 store/usage.js 外不得再出现 usage 读写口）。
+- **鲜度纪律**：写者以内存为准（节流窗口内盘落后于内存，重读会丢在途账）；只读实例（守卫/内嵌）从不记账、盘上是别人的活账，`load()` 必须每次新鲜读盘——永久缓存会把面板冻结在进程启动时的旧快照。
 
 **设计**：**统一写权闸**——所有落盘经同一入口校验写权，而非每处自行判断。
 
@@ -250,21 +258,23 @@ pattern: 'process-pool'（有进程）
   resource:     maxHot / maxWarm
 ```
 
+**落地形态（2026-09-21）**：capability 以 `supports(cap)` 声明与守卫——词表 =
+`providers/process-pool.js` 的 `POOL_CAPS`（instanceLifecycle / warmPool / switchBudget /
+reconcile / prewarm / processPool / gracefulStop）；key-pool 侧基座 `supports()` 恒 false。
+上面的 `pattern:`/`capabilities:` 块是设计记法，不是代码字段。
+
 ### 5.2 契约的两个硬要求
 
-| 要求 | 理由 |
+| 要求 | 状态（2026-09-21 复算） |
 |---|---|
-| **抽象方法必须显式声明**，构造期校验，缺失即失败 | 现状：基类只声明 `detectAccount` 1 个；Forwarder 依赖 proxy 的 **13 个未声明方法**，全靠 `typeof` 猜测 |
-| **不支持的能力必须显式拒绝**，不得静默降级 | 现状：direct 对 `official-billing` 配额面**静默返回 null** |
+| **抽象方法必须显式声明**，构造期可校验 | 已落地：基座仅保留 `detectAccount` 抽象占位；process-pool 的 11 个契约方法在 `providers/process-pool.js` mixin **声明即实现**（PG-1 按数量判据校验），调用方一律 `supports(cap)` 守卫，`typeof` 猜测已清（PG-2 锁定转发层） |
+| **不支持的能力必须显式拒绝**，不得静默降级 | 已落地：direct 对 `official-billing` 配额面显式返回 `unsupported`（`providers/direct.js`），静默返回 null 已废除 |
 
 ### 5.3 ctl 白名单（安全面）
 
 ```
-❌ 现状：ctl.js 反射调用 router[method].apply —— 26 个下划线内部方法全部可达
-        （含 _save / _stopAll），仅靠 127.0.0.1 保护。
-
-✅ 设计：显式白名单——各层声明自己的可远程调用面；
-        下划线内部方法默认不可达。（门禁见 §6 PG-5）
+✅ 已落地：显式白名单——各层声明自己的可远程调用面，下划线内部方法默认不可达
+   （判据见 §6.2 PG-5；通用 dispatcher 在 platform/ctl/server.js，白名单按域注入 daemon）。
 ```
 
 ---
@@ -301,27 +311,35 @@ pattern: 'process-pool'（有进程）
 | **PG-6** | 凭证只经 env 注入，**不得出现在 spawn 命令行** |
 | **PG-7** | 写权：所有落盘函数都经统一写权闸（无绕过）|
 | **PG-8** | 反向：判据能识别旧形态（门禁非空转）|
+| **PG-9** | daemon 入口必须有 `require.main === module` 守卫（require 不得拉起真实 daemon）|
+| **PG-11** | router 域 `kind === 'proxy'/'direct'` 字面量比较仅允许 B 类白名单逐文件精确配额（持久化/视图/注册表鉴别/裸 JSON）；能力判据一律 `supports()`。（编号 PG-10 已由 stripComments 词法自检占用）|
+| **PG-12** | 用量账本读写实现唯一（router 域除 `store/usage.js` 外不得出现第二 usage 读写口）；`UsageLedger.load()` 缓存命中以 `canPersist()` 为条件——只读实例不得吃永久缓存 |
 
 ---
 
 ## §7 实施阶段（不一次性重写）
 
 ```
-Phase 0  设计冻结（本文）                      ← 当前
+Phase 0  设计冻结（本文）                          ← 2026-09-16 完成
 Phase 1  正名 + 层边界（无行为变更）
-           · ports/probe 上游化到 platform/    （先做，解 P1-5，是后续前提）
-           · 四层文件边界建立（骨架，旧代码暂留）
+           · ports/probe 上游化到 platform/         ← 已落地（platform/service/ports、
+                                                      platform/os/pidlookup，CP-1 判据锁定）
+           · 四层文件边界建立                       ← 已落地（providers/handlers/ops/policies 拆分）
+           · RouterService 标识符改名               ← 未执行（§1.2 正名目前仅落在文档与域称谓）
 Phase 2  契约显式化
-           · PROVIDER-CONTRACT.md + 构造期校验
-           · ctl 白名单
-Phase 3  逐层迁移（可独立验证）
-           · 账号状态机合一（风险最低，先做）
-           · EndpointMgr 分离（解 P1-1）
-           · Forwarder 接口收口
-Phase 4  有进程侧深化（§4）
-           · 实例三态 + WarmPool + 双预算切换
-Phase 5  收口
-           · 死代码/未接线清理；门禁全覆盖
+           · 契约显式声明 + 可校验                  ← 以 supports() 判据 + PG-1 数量判据落地
+                                                      （未另立 PROVIDER-CONTRACT.md，契约面在
+                                                      providers/process-pool.js 与域 contract.js）
+           · ctl 白名单                             ← 已落地（PG-5 判据绿）
+Phase 3  逐层迁移                                  ← applyDetection 唯一投影入口；端点层独立
+                                                      （endpoint.js）；转发接口以 supports 收口
+Phase 4  有进程侧深化（§4）                        ← 已落地（pool.js maxHot/maxWarm、
+                                                      switchBudgetMs 双预算、prewarmAsync）
+Phase 5  收口                                      ← 判据统一 + 账本读写收口 2026-09-21
+                                                      （PG-1..PG-12 全绿，以门禁运行为准；
+                                                      usage-totals 读写归一 store/usage.js）；
+                                                      DG 域结构门禁的 report-only 红（行数超限）
+                                                      随后续批次收敛
 ```
 
 ---

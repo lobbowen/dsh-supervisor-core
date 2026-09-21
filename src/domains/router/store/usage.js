@@ -117,9 +117,11 @@ class UsageLedger {
     this._writeTotals();
   }
 
-  /** 读盘（缓存于 this.totals；兼容旧格式补默认字段，防 undefined 崩溃）。 */
+  /** 读盘。读源纪律：写者以内存为准（节流窗口内盘落后于内存，重读会丢在途账）；
+   *  只读实例（守卫/内嵌，无写权）从不记账，盘上是别人的活账，必须每次新鲜读盘——
+   *  永久缓存会让面板冻结在进程启动时的旧快照。兼容旧格式补默认字段，防 undefined 崩溃。 */
   load() {
-    if (this.totals) return this.totals;
+    if (this.totals && this._canPersist()) return this.totals;
     let t;
     try { t = JSON.parse(fs.readFileSync(this.file, 'utf8')); } catch {}
     if (!t || typeof t !== 'object') t = {};

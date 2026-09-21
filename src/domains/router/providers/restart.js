@@ -2,12 +2,12 @@
 
 // 重启编排（B13）+ 实例对账编排 —— IO 编排，经 provider 显式入参（零 this 跨文件）。
 // 重启后的「kill -> 延迟 -> 拉起 -> 探活」重拉段、以及 reconcile 单飞回路。
-// 在途延后/退避/停进程（restartInstance 主体）仍留在 proxy.js —— 那部分被源码门禁钉住。
+// 对账 = 生命周期引擎期望集（pool.js）的执行面：拉起缺口 + 回收非期望实例，
+// 一律走停止仲裁（在途 drain 补刀），无闲置宽限（PROXY-LIFECYCLE-STANDARD 事件表）。
+// 在途延后/退避/停进程（restartInstance 主体）仍留在池 mixin —— 那部分被源码门禁钉住。
 
 const { INSTANCE_STATES } = require('../model');
-
-/** 实例回收闲置宽限期（ms）：非期望集实例若在宽限期内被使用过，本轮不回收。 */
-const IDLE_RECLAIM_GRACE_MS = 90 * 1000;
+const ports = require('../../../platform/service/ports').shared;
 
 /** 重启重拉编排：kill 后短延迟（端口释放）-> 拉起 -> 探活。
  *  @param deps { startInstance, waitHealthy, isAlive, logger, isStopping } */
@@ -46,50 +46,54 @@ function createRestartOrchestrator(deps) {
   return { respawn };
 }
 
-/** 后台异步预置：把某账号实例不等候地拉向 HOT（受资源闸约束，幂等）。 */
-function prewarmAsync(provider, acc) {
-  if (!acc) return;
-  const inst = provider.instanceOf(acc);
-  if (!inst || inst.status === INSTANCE_STATES.HOT || inst.status === INSTANCE_STATES.WARM) return;
-  const lim = provider._limits();
-  const counts = provider._stateCounts();
-  if (counts.HOT + counts.WARM >= lim.maxHot + lim.maxWarm) return; // 资源闸
-  provider.startInstance(inst)
-    .then((sr) => (sr && sr.ok ? provider._waitHealthy(inst) : null))
-    .catch(() => {});
-}
-
-/** 对账单轮（幂等）：拉起 desired 缺口 + （可选）回收非期望集实例。 */
+/** 对账单轮（幂等）：拉起期望集缺口 + 回收非期望实例进程（允许停止时）+ 收敛残留态。
+ *  等待区（非期望集）的进程回收零闲置宽限：此刻起该账号不该再有进程；
+ *  在途请求走停止仲裁的 drain 补刀（retryPendingStop），不是宽限。 */
 async function runReconcile(provider, allowStop) {
   const out = { started: [], stopped: [], desired: [] };
   const desired = provider.desiredRunningAccounts();
-  out.desired = desired.map((a) => a.keyId);
-  const desiredIds = new Set(desired.map((a) => a.keyId));
-  for (const acc of desired) {
+  const list = desired.list || [];
+  out.desired = list.map((a) => a.keyId);
+  const desiredIds = new Set(out.desired);
+  for (const acc of list) {
     const inst = provider.instanceOf(acc);
     if (!inst || inst.pid || inst.startingPromise) continue; // 已在跑/启动中跳过（幂等）
+    if (inst.status === INSTANCE_STATES.DEAD && !inst.pid) inst.status = INSTANCE_STATES.COLD; // 残留态收敛（LC 核心-2）
     try {
       const r = await provider.startInstance(inst);
       if (r && r.ok) {
         await provider._waitHealthy(inst).catch(() => {});
         out.started.push(acc.keyId);
-        const res = provider.residentAccount();
-        if (provider.logger && provider.logger.info) provider.logger.info('[reconcile] 拉起实例 key=' + acc.maskedKey + (res && acc.keyId === res.keyId ? '（常驻）' : '（备胎）'));
+        if (provider.logger && provider.logger.info) {
+          const role = desired.active && acc.keyId === desired.active.keyId ? '在用' : '预热';
+          provider.logger.info('[reconcile] 拉起实例 key=' + acc.maskedKey + '（' + role + '）');
+        }
       }
     } catch {}
   }
   if (!allowStop) return out;
-  const graceCut = Date.now() - IDLE_RECLAIM_GRACE_MS;
-  for (const inst of (provider.instances || [])) {
-    if (!inst.pid) continue;
+  for (const inst of (provider.instances || []).slice()) {
+    if (!inst.pid) {
+      // 零进程记录：在用账号可留绑定端口待拉起；非期望集即等待区，端口必须一并归零（LC 核心-3）
+      if (!desiredIds.has(inst.keyId) && inst.port) {
+        try { ports.unregister('proxy:' + inst.keyId); } catch {}
+        inst.port = null; inst.status = INSTANCE_STATES.COLD; inst.healthy = false;
+        provider._persist();
+      } else if (inst.status === INSTANCE_STATES.DEAD) {
+        inst.status = INSTANCE_STATES.COLD; inst.healthy = false; provider._persist();
+      }
+      continue;
+    }
     const acc = provider.accountOf(inst);
     if (acc && desiredIds.has(acc.keyId)) continue;
-    if (acc && inst.lastUsedAt && inst.lastUsedAt > graceCut) continue; // 刚用过：给闲置宽限
-    try {
-      provider.stopInstance(inst);
-      if (acc) out.stopped.push(acc.keyId);
-      else out.stopped.push(inst.keyId || 'orphan');
-    } catch {}
+    provider.stopInstance(inst); // 走仲裁：有在途标记待停（drain 补刀），无在途立即终止
+    out.stopped.push(acc ? acc.keyId : 'orphan:' + inst.keyId);
+    if (!acc) { // E11 残余孤儿（旧版本落盘/钩子前崩溃）：端口随之释放，记录不保留
+      provider.instances = (provider.instances || []).filter((i) => i !== inst);
+      try { ports.unregister('proxy:' + inst.keyId); } catch {}
+      inst.port = null;
+      provider._persist();
+    }
   }
   return out;
 }
@@ -108,10 +112,10 @@ async function reconcileInstances(provider, opts) {
   try { return await p; } finally { if (provider._reconcileBusy === p) provider._reconcileBusy = null; }
 }
 
-/** 事件驱动即时对账（冻结 mark* 后）：仅补起 desired 缺口，不中途杀实例。 */
+/** 事件驱动即时对账（冻结/切换/恢复后）：期望集收敛（拉起缺口 + 非期望回收，在途走仲裁补刀）。 */
 function reconcileNow(provider) {
   if (provider._stopping) return;
-  reconcileInstances(provider, { stop: false }).catch(() => {});
+  reconcileInstances(provider).catch(() => {});
 }
 
-module.exports = { createRestartOrchestrator, prewarmAsync, runReconcile, reconcileInstances, reconcileNow };
+module.exports = { createRestartOrchestrator, runReconcile, reconcileInstances, reconcileNow };

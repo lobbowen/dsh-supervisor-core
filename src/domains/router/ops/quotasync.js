@@ -12,7 +12,7 @@ function createQuotaSyncOps(deps) {
 
   async function refreshOfficialUsageAll() {
     for (const p of getProviders()) {
-      if (p.kind !== 'direct') continue;
+      if (p.supports('instanceLifecycle')) continue; // 额度探测按账号=无实例池的形态（process-pool 走实例面）
       for (const acc of p.accounts || []) {
         if (!acc.key) continue;
         try { const det = await p.detectAccount(acc); p.applyDetection(acc, det); } catch {}
@@ -23,7 +23,7 @@ function createQuotaSyncOps(deps) {
   async function refreshProviderQuota(providerId) {
     const p = findProvider(providerId);
     if (!p) return { ok: false, error: '供应商不存在' };
-    if (p.kind === 'direct') {
+    if (!p.supports('instanceLifecycle')) {
       for (const acc of p.accounts || []) { if (!acc.key) continue; try { const det = await p.detectAccount(acc); p.applyDetection(acc, det); } catch {} }
     } else {
       for (const inst of p.instances || []) {
@@ -40,7 +40,6 @@ function createQuotaSyncOps(deps) {
   async function refreshOfficialPricingAll() {
     const sources = new Map();
     for (const pr of getProviders()) {
-      if (pr.kind !== 'direct') continue;
       const ps = pr.adapter && pr.adapter.pricing;
       if (ps && ps.type === 'models-dev' && ps.provider) sources.set(ps.provider, ps.provider);
     }
@@ -59,7 +58,6 @@ function createQuotaSyncOps(deps) {
           }
         }
         for (const pr of getProviders()) {
-          if (pr.kind !== 'direct') continue;
           const ps = pr.adapter && pr.adapter.pricing;
           if (ps && ps.type === 'models-dev' && ps.provider === provKey) pr.officialPricing = pricing;
         }

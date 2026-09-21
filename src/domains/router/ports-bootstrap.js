@@ -30,6 +30,8 @@ function ensurePorts({ swDir, logger }) {
       let changed = false;
       const push = (owner, port, role) => { if (port && byOwner[owner] === undefined) { target.records.push({ port, role, owner, createdAt: Date.now() }); byOwner[owner] = port; changed = true; } };
       for (const p of (provs.providers || [])) {
+        // 此处遍历的是 providers.json 的**落盘原始记录**（无原型方法），kind 是持久化鉴别器、
+        // 唯一可用判据（supports 能力面只存在于运行期 provider 对象上）。
         if (p.kind !== 'proxy') continue;
         for (const inst of (p.instances || [])) push('proxy:' + (inst.keyId || inst.key), inst.port, 'proxyInstance');
         push('providerApi:' + p.id, p.apiPort, 'providerApi');

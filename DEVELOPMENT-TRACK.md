@@ -186,7 +186,7 @@ const frp = matrix.frpTag();            // 第三方命名 'windows_amd64'
 - **注入验证优先选非破坏性注入点**；
 - 轮换/迁移期保留旧值副本，直到新值验证通过。
 
-> 血泪案例（务必读）：`INCIDENT-2026-09-13-credential-overwrite.md` ——
+> 血泪案例（务必读）：`archive/history/INCIDENT-2026-09-13-credential-overwrite.md` ——
 > 我用「破坏隔离」去证明门禁有效，而那道隔离保护的正是不可逆操作，结果覆盖了真令牌。
 
 ### 5.3 运行时禁区（**源码开发绝不触碰系统安装版**）
@@ -373,8 +373,8 @@ git switch master && git pull --ff-only
 | 文件 | 角色 |
 |---|---|
 | `DOMAIN-STRUCTURE-DESIGN.md` | **域内结构唯一权威（SSOT）**：DF-1..DF-7 + R1..R12 + 五域/app 逐文件目标结构 + DG-1..DG-16 + §8 须同步改的门禁 |
-| `EXECUTION-CONTRACT.md` | **并行施工接口冻结书**：判据 + 硬约束 + 冻结的内部导出面/依赖 + 迁移纪律（所有执行子代理逐条遵守） |
-| `design-notes/*.md` | 逐域详细设计（router / relay / instance / plugin / shell / app / gates） |
+| `archive/history/EXECUTION-CONTRACT.md` | **并行施工接口冻结书**：判据 + 硬约束 + 冻结的内部导出面/依赖 + 迁移纪律（所有执行子代理逐条遵守） |
+| `archive/design-notes/*.md` | 逐域详细设计（router / relay / instance / plugin / shell / app / gates） |
 
 ### 8.2 判据（取严值，与 DS-9 一致）
 
@@ -415,7 +415,7 @@ git switch master && git pull --ff-only
 |---|---|
 | `DIRECTORY-STRUCTURE-DESIGN.md` DS-9 | 已取严为 **门面 ≤150 / 单文件 ≤300**（R3/R11），与 DF-1/DF-2 逐字一致 |
 | `DIRECTORY-STRUCTURE-DESIGN.md` DS-G3 | 除 `Object.defineProperties` 外，**同时禁 `Object.assign(X.prototype, ...)`**（R6；右值不限、须先剥注释） |
-| README 文档索引 | 根级 md **全部登记**（`standards-uniqueness-test` U-4）；`EXECUTION-CONTRACT.md` 已登记 |
+| README 文档索引 | 根级 md **全部登记**（`standards-uniqueness-test` U-4）；`archive/history/EXECUTION-CONTRACT.md` 已登记 |
 | `CROSS_LAYER`（`layering-and-dependency-gate-test.js`）| 域改造**只在同层内搬文件**，理论不新增跨层边；确因新边（如 `app/domain-actions/*` → 域）报 L-2 失败时**按 CI 实跑报错补登记**（本机不得跑门禁，见 ACCEPTANCE-STANDARD），**不得放宽判据**、不得凭猜测预登记 |
 | 源内容钉死的门禁 | SSOT §8 列出的 10 处随方法与家园同步改指向（否则静默失效） |
 

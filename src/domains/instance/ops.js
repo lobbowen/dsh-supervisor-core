@@ -13,7 +13,7 @@ const model = require('./model');
 const sandbox = require('./sandbox');
 
 function createOps(deps) {
-  const { store, lifecycle, upgrade, service, logger, events, tokens, tasks, hooks, instancesRoot } = deps;
+  const { store, lifecycle, upgrade, service, logger, events, tokens, tasks, hooks, instancesRoot, dshBin } = deps;
   let timer = null;
 
   /** 单实例映射到前端契约行（IO 结果由 upgrade/lifecycle 解析后传入纯 model.viewRow）。 */
@@ -77,13 +77,16 @@ function createOps(deps) {
     // 放行条件 = 停止成功；停止失败（含 is-active 查询因 dbus 挂起超时而失败）一律按未停止处理，
     // 保守保留数据，绝不因「查询失败被当成不活跃」而删除可能仍在运行的实例数据。
     const unit = 'dsh-web@' + id;
+    // portable 档的归属锚（端口/run.pid/cmdline）；systemd 档忽略。删除保护问「是不是我们的还活着」，
+    // 与 stop 用同一份 ctx，两侧语义才对称。
+    const ctx = sandbox.launchCtx(instancesRoot, dshBin, inst);
     let stopOk;
-    try { stopOk = service.stopUnit(unit) !== false; } catch { stopOk = true; }
+    try { stopOk = service.stopUnit(unit, ctx) !== false; } catch { stopOk = true; }
     let stillActive = !stopOk;
     if (stopOk) {
       try {
         // 停止已确认后二次复核：仅显式 false 视为已停；true / null / undefined（查询失败）一律按活跃处理。
-        const active = service.isUnitActive(unit);
+        const active = service.isUnitActive(unit, ctx);
         stillActive = active !== false;
       } catch { stillActive = true; }
     }
@@ -109,7 +112,7 @@ function createOps(deps) {
     const inst = store.instances.find((i) => i.id === id);
     if (!inst) return { ok: false, error: '实例不存在' };
     // 令牌强度校验前置到**任何**字段变更之前 —— 放在 remoteToken 赋值点处会造成
-    //   guardian/remoteEnabled 已改而令牌被拒的半改状态（与本文件 removeInstance 的互斥检查同理）。
+    //   guardian/remoteMode 已改而令牌被拒的半改状态（与本文件 removeInstance 的互斥检查同理）。
     //   空串=清除（放行），非空但过短=拒绝整次补丁。
     if (patch.remoteToken !== undefined) {
       const next0 = String(patch.remoteToken || '');
@@ -120,13 +123,14 @@ function createOps(deps) {
       inst.guardian = !!patch.guardian;
       if (gChanged && events) events.append('inst_guardian_changed', { id: inst.id, name: inst.name, enabled: inst.guardian === true });
     }
-    // 远程暴露意图（remoteEnabled/remoteToken）任一变化都必须触发 onRemoteChange（AUDIT B-1）：
-    // 只换令牌不换开关时，旧实现不触发任何同步 -> 运行中的 relay 继续放行旧令牌、frpc 不收敛。
+    // 远程暴露意图（remoteMode/remoteToken）任一变化都必须触发 onRemoteChange（AUDIT B-1）：
+    // 只换令牌不换模式时，旧实现不触发任何同步 -> 运行中的 relay 继续放行旧令牌、frpc 不收敛。
     let remoteChanged = false;
-    if (patch.remoteEnabled !== undefined) {
-      const changed = inst.remoteEnabled !== !!patch.remoteEnabled;
-      inst.remoteEnabled = !!patch.remoteEnabled;
-      if (changed && events) events.append('inst_remote_changed', { id: inst.id, name: inst.name, enabled: inst.remoteEnabled === true });
+    if (patch.remoteMode !== undefined) {
+      const next0m = patch.remoteMode === 'lan' || patch.remoteMode === 'wan' ? patch.remoteMode : 'off';
+      const changed = inst.remoteMode !== next0m;
+      inst.remoteMode = next0m;
+      if (changed && events) events.append('inst_remote_changed', { id: inst.id, name: inst.name, mode: next0m });
       if (changed) remoteChanged = true;
     }
     if (patch.remoteToken !== undefined) {
@@ -139,11 +143,6 @@ function createOps(deps) {
       }
     }
     if (remoteChanged && hooks.onRemoteChange) hooks.onRemoteChange(inst);
-    // 历史/原生记录可能没有 sandbox 对象（model.normalizeInstance 只补 guardian 与 state，不建 sandbox）：
-    // 直接写 inst.sandbox.memoryMax 会抛 TypeError，而此处 guardian 与 remoteEnabled 可能已被改 -> 半改状态。
-    if (patch.memoryMax !== undefined || patch.cpuQuota !== undefined) inst.sandbox = inst.sandbox || {};
-    if (patch.memoryMax !== undefined) inst.sandbox.memoryMax = String(patch.memoryMax);
-    if (patch.cpuQuota !== undefined) inst.sandbox.cpuQuota = String(patch.cpuQuota);
     store.save();
     return { ok: true, instance: inst };
   }

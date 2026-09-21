@@ -47,25 +47,29 @@ async function main() {
     const sup = buildSupervisor();
     // 本地模式：覆写 lan.list() 返回带 token/dshToken 的伪造项（模拟 relay 缓存内字段）
     sup.lan = {
-      list: () => ({ items: [{ id: 'inst-x', name: 'x', dshPort: 3081, wanPort: 28213, token: 'lan-gate-key', dshToken: 'SECRETSESSIONTOKEN', enabled: true, localPort: 1, running: true }], addresses: ['192.168.3.64'] }),
+      list: () => ({ items: [{ id: 'inst-x', name: 'x', dshPort: 3081, wanPort: 28213, token: 'lan-gate-key', dshToken: 'SECRETSESSIONTOKEN', running: true }], addresses: ['192.168.3.64'] }),
     };
     const r = sup.listLan();
     const it = r.items && r.items[0];
     check('listLan 保留结构字段', !!it && it.id === 'inst-x' && it.wanPort === 28213);
     check('listLan 剔除 remoteToken', !!it && !Object.prototype.hasOwnProperty.call(it, 'token'));
     check('listLan 剔除 dshToken', !!it && !Object.prototype.hasOwnProperty.call(it, 'dshToken'));
-    // 白名单：新增 frpEnabled/frpRemotePort/tokenSet —— 均为**非机密**
-    //   （布尔与端口号；tokenSet 只表明「令牌已设」，绝不含明文），用于 UI 呈现公网暴露开关。
-    //   机密字段（token/dshToken/remoteToken）仍被剔除（上方两条断言继续守护）。
-    const ALLOWED = ['dshPort','enabled','frpEnabled','frpRemotePort','id','localPort','name','running','tokenSet','wanPort'].sort().join(',');
+    // 白名单（三态化收口后）：tokenSet 与 remote 视图均为**非机密**
+    //   （tokenSet 只表明「令牌已设」；remote = projectRemoteView 产物 {mode,ready,accessUrl,reasons}，
+    //   accessUrl 是给用户访问的地址而非凭据）。旧并行开关字段 enabled/frpEnabled/frpRemotePort/localPort
+    //   已从数据模型删除，出现即为残留回流。机密字段（token/dshToken/remoteToken）仍被剔除。
+    const ALLOWED = ['dshPort','id','name','remote','running','tokenSet','wanPort'].sort().join(',');
     check('listLan 白名单恰为已知非机密字段', Object.keys(it).sort().join(',') === ALLOWED, Object.keys(it).sort().join(','));
+    check('listLan 输出 remote 视图（tokenSet 已设 → ready 判定归后端）',
+      !!it.remote === false || (typeof it.remote.ready === 'boolean' && Array.isArray(it.remote.reasons)),
+      JSON.stringify(it.remote));
   }
 
   console.log('== 令牌边界：注入状态 inject 透传（不含令牌）==');
   {
     const sup = buildSupervisor();
     sup.lan = {
-      list: () => ({ items: [{ id: 'inst-r', name: 'r', dshPort: 3081, wanPort: 28213, token: 'k', dshToken: 'SECRET', enabled: true, localPort: 1, running: true, inject: { tokenSet: true, cookieReady: true, lastOkAt: 1, lastError: null, lastErrorAt: null } }], addresses: [] }),
+      list: () => ({ items: [{ id: 'inst-r', name: 'r', dshPort: 3081, wanPort: 28213, token: 'k', dshToken: 'SECRET', running: true, inject: { tokenSet: true, cookieReady: true, lastOkAt: 1, lastError: null, lastErrorAt: null } }], addresses: [] }),
     };
     const it = sup.listLan().items[0];
     check('inject 透传 cookieReady', !!it.inject && it.inject.cookieReady === true && it.inject.tokenSet === true);

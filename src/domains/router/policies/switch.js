@@ -7,7 +7,7 @@
 /**
  * 在单个供应商的账号池内选号。
  * state = { accounts:[{key,keyId,maskedKey,status,usable,running}],
- *           selectedAccountKeyId, activeAccountKeyId, cursor, kind }
+ *           selectedAccountKeyId, activeAccountKeyId, cursor, instancePool }
  * opts  = { excludeKeys?:Set } 本请求内瞬时故障账号直接排除（强制轮换不粘滞）
  * -> { keyId|null, nextCursor, clearSelected, reason }
  *   reason: 'selected' | 'sticky' | 'rotate' | null
@@ -39,8 +39,8 @@ function pickAccount(state, opts) {
     const sticky = usable.find((a) => a.keyId === s.activeAccountKeyId);
     if (sticky) return { keyId: sticky.keyId, nextCursor: cursor, clearSelected, reason: 'sticky' };
   }
-  // 轮换仅优先选「实例已运行」的账号（反代）；无就绪账号时降级全可用池（请求侧按需激活）。
-  const ready = (a) => s.kind !== 'proxy' || a.running;
+  // 轮换仅优先选「实例已运行」的账号（process-pool 池）；无就绪账号时降级全可用池（请求侧按需激活）。
+  const ready = (a) => s.instancePool !== true || a.running;
   const readyUsable = usable.filter(ready);
   const pool = readyUsable.length ? readyUsable : usable;
   const picked = pool[cursor % pool.length];

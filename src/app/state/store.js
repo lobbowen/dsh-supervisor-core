@@ -87,11 +87,8 @@ function createStore(deps) {
       if (f && !fs.existsSync(f)) {
         mainStore.writeDshMain({
           guardian: main.guardian === true,
-          remoteEnabled: main.remoteEnabled === true,
+          remoteMode: main.remoteEnabled === true ? (main.frpEnabled === true ? 'wan' : 'lan') : 'off',
           remoteToken: String(main.remoteToken || ''),
-          frpEnabled: main.frpEnabled === true,
-          frpRemotePort: main.frpRemotePort || null,
-          wanPort: main.wanPort || null,
         });
       }
       im.instances.splice(idx, 1);

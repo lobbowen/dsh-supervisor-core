@@ -42,11 +42,11 @@ const check = (name, cond, extra) => { results.push({ name, ok: !!cond, extra })
   const instancesFile = path.join(stateDir, 'instances.json');
   fs.writeFileSync(instancesFile, JSON.stringify({ instances: [
     // 概念清分：main 不再存沙箱 instances——由守卫核心 dsh-main.json 持有（下方预置）
-    { id: 'inst-down', name: '未运行', port: 28150, domain: 'sandbox', guardian: false, remoteEnabled: true },
-    { id: 'inst-ok', name: '正常实例', port: okPort, domain: 'sandbox', guardian: false, remoteEnabled: true },
+    { id: 'inst-down', name: '未运行', port: 28150, domain: 'sandbox', guardian: false, remoteMode: 'lan' },
+    { id: 'inst-ok', name: '正常实例', port: okPort, domain: 'sandbox', guardian: false, remoteMode: 'lan' },
   ]}));
-  // main(原生主干)元数据：守卫核心存储 dsh-main.json（remoteEnabled=true -> 允许远程）
-  fs.writeFileSync(path.join(stateDir, 'dsh-main.json'), JSON.stringify({ guardian: false, remoteEnabled: true }));
+  // main(原生主干)元数据：守卫核心存储 dsh-main.json（remoteMode=lan -> 允许局域网远程）
+  fs.writeFileSync(path.join(stateDir, 'dsh-main.json'), JSON.stringify({ guardian: false, remoteMode: 'lan' }));
   // 起 mock 在 targetPort（main 的目标）与 okPort（沙箱实例）上
   const mockMain = spawn('node', [MOCK, String(targetPort)], { stdio: 'ignore' });
   const mockOk = spawn('node', [MOCK, String(okPort)], { stdio: 'ignore' });
@@ -69,7 +69,7 @@ const check = (name, cond, extra) => { results.push({ name, ok: !!cond, extra })
   // main 为守卫核心服务：视图经 dshMainView()（不再在沙箱数组）
   const instMain = sup.dshMainView();
   check('沙箱实例按配置加载', !!instDown && !!instOk);
-  check('main(守卫核心视图)存在且 remoteEnabled', !!instMain && instMain.remoteEnabled === true && insts.every((i) => i.id !== 'main'), JSON.stringify(instMain && { id: instMain.id, remoteEnabled: instMain.remoteEnabled }));
+  check('main(守卫核心视图)存在且远程模式为 lan', !!instMain && instMain.remoteMode === 'lan' && insts.every((i) => i.id !== 'main'), JSON.stringify(instMain && { id: instMain.id, remoteMode: instMain.remoteMode }));
 
   // 2. 端口注册表：固定端口登记 + 动态分配避开
   const ports = require(path.join(ROOT, 'src', 'platform', 'service', 'ports')).shared;

@@ -44,7 +44,7 @@ const DOMAIN_DEPS = {
   native: [
     'config',         // 写动作 CSRF 闸
     'nativeManager',  // status/versionInfo/upgradeStatus/install/upgrade/uninstall
-    'patchDshMain',   // /native/settings：main 元数据补丁（guardian/remoteEnabled/frp）——实现：app/domain-actions/main.js（R7 写动作下沉）
+    'patchDshMain',   // /native/settings：main 元数据补丁（guardian）——实现：app/domain-actions/main.js（R7 写动作下沉）
   ],
 
   // 守卫/设置域：changelog / 版本 / autostart / settings / self-update / env / ports / shutdown。
@@ -82,13 +82,12 @@ const DOMAIN_DEPS = {
     'config',
     'instances',    // 沙箱实例管理对象（list/addInstance/startInstance/...）
     'dshMainView',  // 原生主干 main 的守卫核心视图（只读条目）
-    'listLan',      // 局域网 relay 条目（authUrl/lanUrl 装饰）
   ],
 
-  // 远程控制/中继（lan frp / lan-access）。
+  // 远程控制/中继（lan-access / remote）。
   // 读写分层（R7）：只读 frpStatus/listLan 在 app/facade/lan.js；
-  //   写动作 setLanFrp/lanFrpc/syncFrpc 在 app/domain-actions/lan.js（本地经 lifecycle 'lan' 登记项唯一入口）。
-  relay: ['config', 'frpStatus', 'lanFrpc', 'setLanFrp', 'listLan'],
+  //   写动作 setRemoteMode/setRemoteToken/lanFrpc 在 app/domain-actions/lan.js（本地经 lifecycle 'lan' 登记项唯一入口）。
+  relay: ['config', 'frpStatus', 'listLan', 'setRemoteMode', 'setRemoteToken', 'lanFrpc'],
 
   // 桌面壳更新安全网（/shell/*）——内核仅做安全网，非更新源。
   shell: [

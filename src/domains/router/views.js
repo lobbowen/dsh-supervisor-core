@@ -4,9 +4,8 @@
 // 纯聚合——入参显式（state + deps），零 this 跨文件、零 IO（端口 list/探活经 deps 注入）。
 // 契约导出：{ status, listProviders, domainSummary }（另含 portsView）。
 
-/** 服务状态总览（含用量摘要）。deps={ loadTotals, getUsage }。 */
+/** 服务状态总览（含用量摘要）。deps={ getUsage }。 */
 function status(state, deps) {
-  deps.loadTotals(); // 确保用量缓存就绪（getUsage 读同一缓存）
   let keysTotal = 0;
   const provs = (state.providers || []).map((p) => {
     const accounts = (p.accounts || []);
@@ -59,11 +58,10 @@ async function portsView(state, deps) {
 }
 
 /** 供应商列表视图（账号/实例/额度/用量/锁定全量投影）。
- *  deps={ loadTotals, quotaOverallStatus, semverCompare }。 */
+ *  deps={ getUsage, quotaOverallStatus, semverCompare }。 */
 function listProviders(state, deps) {
   // 配额总览标签单源：与 proxy 检测端同一 quotaOverallStatus
-  const t = deps.loadTotals();
-  const byKey = (t && t.byKey) || {};
+  const byKey = deps.getUsage().byKey || {};
   const quotaOverallStatus = deps.quotaOverallStatus;
   const semverCompare = deps.semverCompare;
   const proxyUpdateCache = state.proxyUpdateCache || {};

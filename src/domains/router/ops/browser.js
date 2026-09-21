@@ -44,8 +44,10 @@ function graphicalEnv() {
   return out;
 }
 
-/** 防风控调起浏览器（OAuth 一键登录）：无痕 + 随机 profile + 屏幕/语言/时区指纹随机化。
- *  @param {function} [onExit] 浏览器进程退出回调（用户关闭 -> 取消登录）。
+/** 调起系统默认浏览器做 OAuth 一键登录；引擎支持时叠加无痕 + 随机 profile + 语言/时区/窗口尺寸
+ *  随机化（策略在此，引擎方言在平台层）。Safari 等无隔离引擎由平台层降级为非隔离打开，
+ *  换账号场景靠登录超时/重新发起与 UI 上的 authUrl 手动兜底。
+ *  @param {function} [onExit] 浏览器进程退出回调（隔离形态下用户关闭 -> 取消登录）。
  *  @returns {string|null} 临时 profile 路径（供登录后清理）；失败 null。 */
 function openInBrowser(url, onExit) {
   try {
@@ -55,21 +57,11 @@ function openInBrowser(url, onExit) {
     const LANG_POOL = ['zh-CN', 'en-US', 'en-GB', 'ja-JP', 'ko-KR', 'de-DE', 'fr-FR', 'zh-TW'];
     const SIZE_POOL = [[1280, 800], [1366, 768], [1440, 900], [1536, 864], [1600, 900], [1680, 1050], [1920, 1080], [1024, 768], [1152, 864], [1280, 720]];
     const pick = (arr) => arr[Math.floor(Math.random() * arr.length)];
-    const [w, h] = pick(SIZE_POOL);
+    const size = pick(SIZE_POOL);
     const lang = pick(LANG_POOL);
     const tz = pick(TZ_POOL);
-    const antiArgs = [
-      '--incognito',
-      '--user-data-dir=' + tmpProfile,
-      '--window-size=' + w + ',' + h,
-      '--lang=' + lang,
-      '--no-first-run',
-      '--no-default-browser-check',
-      '--disable-session-crashed-bubble',
-      url,
-    ];
     const antiEnv = Object.assign({}, sysEnv, { TZ: tz, LANG: lang });
-    const r = platform.browser.launchIsolated(url, { profileDir: tmpProfile, antiArgs, antiEnv, sysEnv, onExit });
+    const r = platform.browser.launchIsolated(url, { profileDir: tmpProfile, size, lang, antiEnv, sysEnv, onExit });
     if (!r || !r.ok) return null;
     if (r.isolated) {
       // unref：清理定时器最长 30 分钟，不得拖住进程退出。

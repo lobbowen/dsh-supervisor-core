@@ -6,11 +6,11 @@
 //
 // ## 缺陷（全部为失效模式 g，兼 b/e）
 //
-// 1) P1 公网暴露安全闸（必须先设 remoteToken）只在 setFrp 一处执行
-//    manager.js::setFrp 有令牌闸 + 端口合法性 + 端口占用校验；
-//    而 registry-view.js::patchDshMain **同样能开启 frpEnabled** 却无闸 ——
-//    /native/settings 把 body 原样透传（api/domains/native.js）-> 可绕过令牌闸开公网暴露。
-//    frpc 以回环身份连 relay，来源闸放行；relay token 为空时 tokenGate 恒放行 -> 公网零认证。
+// 1) P1 公网（wan）安全闸（必须先设 remoteToken）历史上只在 setFrp 一处执行
+//    旧设置面 patchDshMain 同样能开启 frpEnabled 却无闸 -> 可绕过令牌闸开公网暴露。
+//    三态化收口后：意图唯一写入口 setRemoteMode（lan 模式同闸口），wan 前置闸
+//    = core.validateWanAccess（单一事实源）；patchDshMain 白名单只剩 guardian，绕道物理消失；
+//    frpc 执行边界（syncFrpc）再复判一次，冷启动只落盘路径也绕不过。
 //
 // 2) P1 remoteToken 变更永远到不了已在运行的 relay
 //    syncProxy 的「已存在则 return」快路径不重读 remoteToken；applyToken 只处理 dshToken。
@@ -43,85 +43,71 @@ const read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8');
 /** 剥离整行注释（本仓多次被自己的说明文字骗过）。 */
 const strip = (s) => s.split('\n').filter((l) => !l.trim().startsWith('//')).join('\n');
 
-// -- 1) 公网暴露令牌闸必须两条路径同规 --
-console.log('== ① frp 令牌闸两条路径同规 ==');
+// -- 1) wan 前置闸唯一事实源 + 唯一写入口 + 设置面无绕道 --
+console.log('== ① 远程控制 wan 安全闸收口 ==');
 {
-  //  步骤7：patchDshMain/dshMainView 已从 registry-view.js 拆到 app/facade/main.js。
-  //  写动作 patchDshMain 再下沉 app/domain-actions/main.js（facade 只读）；
-  //   安全闸收敛到 domains/relay/core.validateFrpExposure（app 侧与 relay 侧同一份纯函数）。
-  const act = strip(read('src/app/domain-actions/main.js'));
+  //  判据统一：意图写入（main 与沙箱同口）唯一在 app/domain-actions/lan.js#setRemoteMode；
+  //  前置闸唯一事实源 domains/relay/core.validateWanAccess（令牌强度；端口无自由度，
+  //  公网口与 relay 口恒同号，合法性由槽位注册表保证）。app/domain-actions/main.js 白名单
+  //  只剩 guardian —— 旧「/native/settings 绕闸开 frp」的旁路面已物理删除。
+  const lanAct = strip(read('src/app/domain-actions/lan.js'));
+  const mainAct = strip(read('src/app/domain-actions/main.js'));
   const mgr = strip(read('src/domains/relay/ops.js'));
   const mgrCore = strip(read('src/domains/relay/core.js'));
-  const gateMsg = '开启公网暴露前请先为该实例设置远程访问令牌';
-  check('① setFrp 令牌闸经 core.validateFrpExposure（单一事实源，基线）',
-    mgrCore.indexOf(gateMsg) >= 0 && /\.validateFrpExposure\(|validateFrpExposure\(/.test(mgr), '有');
-  check('① 安全闸有唯一事实源 core.validateFrpExposure（含端口合法性/占用）',
-    /function validateFrpExposure\s*\(/.test(mgrCore) && /无效的公网端口/.test(mgrCore) && /已被实例「/.test(mgrCore), '有');
-  check('① patchDshMain 调用同一份安全闸（消除重复实现，旧实现无 → 可绕过）',
-    /validateFrpExposure\s*\(/.test(act), '有');
-  // 反向：闸必须在落盘 **之前**（否则已落盘半改状态）。
-  //  P6-B-3：判据改为**形态无关** —— 实现已由 { methods }+this 改为真 ctor 工厂
-  //   （createMainActions(deps)，不再读 this），故不再要求 `this.state.` 前缀，只锁「该写入发生」。
-  //   同时把闸的定位由**导入行**改为**调用行**（`validateFrpExposure(`）：原写法 `indexOf('validateFrpExposure')`
-  //   命中的是文件头的 require（恒在落盘之前），判据近乎恒真；改为调用行后才是真正的顺序判定。
-  const WRITE_MAIN_META = 'writeMainMeta(meta)';
-  const iGate = act.indexOf('validateFrpExposure(');
-  const iWrite = act.indexOf(WRITE_MAIN_META);
-  check('① 闸在落盘之前（不产生半改状态）', iGate > 0 && iWrite > 0 && iGate < iWrite,
-    'gate@' + iGate + ' write@' + iWrite);
-  // 反向自检（合成样本，不依赖真实数据）：带前缀/裸两形态都命中，缺失时不命中。
-  check('① 反向：形态无关判据识别带前缀形态', 'this.state.writeMainMeta(meta);'.indexOf(WRITE_MAIN_META) >= 0, 'hit');
-  check('① 反向：形态无关判据识别裸形态', 'state.writeMainMeta(meta);'.indexOf(WRITE_MAIN_META) >= 0, 'hit');
-  check('① 反向：缺失该写入时不命中', 'const x = 1;'.indexOf(WRITE_MAIN_META) < 0, 'miss');
+  check('① wan 闸唯一事实源 core.validateWanAccess（令牌强度语义）',
+    /function validateWanAccess\s*\(/.test(mgrCore) && /至少 8 位/.test(mgrCore), '有');
+  check('① setRemoteMode 写入前过闸（单一意图入口，旧为 setFrp/patchDshMain 双入口）',
+    /setRemoteMode\(id, mode\)[\s\S]{0,600}validateWanAccess\(/.test(lanAct), '有');
+  check('① frpc 执行边界复判同一份纯函数（冷启动只落盘不绕闸）',
+    /validateWanAccess\(/.test(mgr), '有');
+  check('① 反向：patchDshMain 不再消费任何远程/frp 字段（绕道消失，白名单=guardian）',
+    !/remoteMode|remoteEnabled|remoteToken|frp/i.test(mainAct), 'clean');
+  // 反向自检（合成样本）：绕道字段一旦出现即命中，判据不是恒真。
+  check('① 反向：污染样本会被识别', /remoteMode|remoteEnabled|remoteToken|frp/i.test('meta.remoteToken = p.remoteToken'), 'hit');
 
-  // 行为：真实构造一个 patchDshMain 上下文，断言「无令牌开 frp」被拒
-  //  P6-B-3：导出形态改为真 ctor 工厂 createMainActions(deps)（原地去 this）；本处按 deps
-  //   注入构造，判据本意（安全闸行为）不变。R7 后模块位于 app/domain-actions/main.js。
-  const { createMainActions } = require(path.join(ROOT, 'src', 'app', 'domain-actions', 'main.js'));
-  const { installCollaborators } = require(path.join(ROOT, 'src', 'app', 'assembly', 'collaborators'));
-  const inst = {};
-  installCollaborators(inst);
+  // 行为：注入假 deps 构造 setRemoteMode/setRemoteToken 全链（main 路径），断言闸与落盘次序
+  const { createLanActions } = require(path.join(ROOT, 'src', 'app', 'domain-actions', 'lan.js'));
   const written = [];
-  // 级 2：state 已真 ctor 注入——注入点改为协作方方法（不再是 host._readDshMain 薄壳）。
-  inst.state.readMainMeta = () => ({ guardian: false, remoteEnabled: false, remoteToken: '', frpEnabled: false, frpRemotePort: null, wanPort: null });
-  inst.state.writeMainMeta = (m) => written.push(m);
-  inst.dshMainView = () => ({ ok: true });
-  // 冲突清单改为注入的只读投影（不再直读 instances.instances）
-  inst.exposurePeers = () => [];
-  inst.config = { stateFile: '/tmp/x.json' };
-  inst.logger = { warn() {} };
-  inst.events = { append() {} };
-  // daemon 用**字面 stub**（非 installCollaborators 的转发器）：与本用例无关，
-  //   且不会随 daemons 切面的装配形态（P6-B-1 进行中）漂移。
-  const daemons = { enabled: () => false, syncLanState: () => {} };
-  const actions = createMainActions({
-    getState: () => inst.state, getViews: () => inst.views, getDaemons: () => daemons,
-    getEvents: () => inst.events, getLogger: () => inst.logger,
+  const meta = { guardian: false, remoteMode: 'off', remoteToken: '' };
+  const eventsSeen = [];
+  const evData = [];
+  const actions = createLanActions({
+    getDaemons: () => ({ enabled: () => false, syncLanState: () => {} }),
+    getCtl: () => null,
+    getLifecycleManager: () => null,
+    getLan: () => ({ syncProxy: () => Promise.resolve() }),
+    getState: () => ({
+      readMainMeta: () => ({ ...meta }),
+      writeMainMeta: (m) => { Object.assign(meta, m); written.push(m); },
+    }),
+    getViews: () => ({ dshMain: () => ({ id: 'main' }) }),
+    getInstances: () => null,
+    getEvents: () => ({ append: (t, d) => { eventsSeen.push(t); evData.push(d); } }),
+    getLogger: () => ({ warn() {} }),
   });
-  const bad = actions.patchDshMain({ frpEnabled: true, frpRemotePort: 7001 });
-  check('① 行为：无令牌开 frp → 被拒（ok:false）', bad && bad.ok === false, JSON.stringify(bad));
+  const bad = actions.setRemoteMode('main', 'wan');
+  check('① 行为：无令牌开 wan → 被拒（ok:false）', bad && bad.ok === false, JSON.stringify(bad));
   check('① 行为：被拒时**未落盘**（不产生半改状态）', written.length === 0, String(written.length));
-  const badPort = actions.patchDshMain({ remoteToken: 'remote-tok-0123', frpEnabled: true, frpRemotePort: 99999 });
-  check('① 行为：令牌已设但端口非法 → 被拒', badPort && badPort.ok === false, JSON.stringify(badPort));
-  const good = actions.patchDshMain({ remoteToken: 'remote-tok-0123', frpEnabled: true, frpRemotePort: 7001 });
-  check('① 行为：令牌+合法端口 → 通过', good && good.ok === true, JSON.stringify(good));
-  check('① 行为：通过时**确实落盘一次**', written.length === 1, String(written.length));
-  // 关闭 frp 不应被闸拦（关是安全方向）
-  const wBeforeOff = written.length;
-  const off = actions.patchDshMain({ frpEnabled: false });
-  check('① 行为：关闭 frp 不被闸拦', off && off.ok === true, JSON.stringify(off));
-  check('① 行为：关闭 frp 属于合法写（正常落盘一次）',
-    written.length === wBeforeOff + 1, 'before=' + wBeforeOff + ' after=' + written.length);
-  // 弱令牌在**写入口**即拒（与暴露闸同规；此前仅 '非空白' 一票闸）
-  //   断言必须是**相对**的（被拒前后写次数不变）：绝对值 `written.length === 1` 会漏算
-  //   上一条 off 的那次合法落盘（走到这里已写 2 次），产品判得对而夹具的账算错。
-  //   相对断言既保住「拒且未落盘」的牙，也不钉死前面用例的条数。
-  //   判据回显把 `weak` 与 `written` 一并带出，定位时不必再猜是哪个数错了。
+  const off = actions.setRemoteMode('main', 'off');
+  check('① 行为：off 是安全方向，不被闸拦（且与现值同则不重复落盘）',
+    off && off.ok === true && written.length === 0, JSON.stringify(off));
+  const lan = actions.setRemoteMode('main', 'lan');
+  check('① 行为：lan 模式无令牌前置（局域网侧有来源闸），正常落盘',
+    lan && lan.ok === true && written.length === 1 && written[0].remoteMode === 'lan', JSON.stringify(written));
+  // 弱令牌在**写入口**即拒（与 wan 闸同一强度下限；此前设置面仅 '非空白' 一票闸）
   const wBefore = written.length;
-  const weak = actions.patchDshMain({ remoteToken: 'tok', frpEnabled: true, frpRemotePort: 7001 });
-  check('C-3 行为：4 位令牌 patch main → 写入口即拒（ok:false）', weak && weak.ok === false, JSON.stringify(weak));
-  check('C-3 行为：被拒后未再多落一次盘（写次数不变）',
-    written.length === wBefore, 'before=' + wBefore + ' after=' + written.length);
+  const weak = actions.setRemoteToken('main', 'tok');
+  check('C-3 行为：4 位令牌写 main → 写入口即拒（ok:false）', weak && weak.ok === false, JSON.stringify(weak));
+  check('C-3 行为：被拒后未再多落一次盘（写次数不变）', written.length === wBefore, 'before=' + wBefore + ' after=' + written.length);
+  const good = actions.setRemoteToken('main', 'remote-tok-0123');
+  check('① 行为：合规令牌写入通过（写入口 ok:true 且落盘）',
+    good && good.ok === true && meta.remoteToken === 'remote-tok-0123', JSON.stringify(good));
+  check('① 行为：TK-5 事件脱敏 —— 全部事件载荷零令牌明文',
+    eventsSeen.includes('dsh_remote_token_changed') && !JSON.stringify(evData).includes('remote-tok-0123'),
+    JSON.stringify(evData));
+  const wan2 = actions.setRemoteMode('main', 'wan');
+  check('① 行为：令牌已设 → wan 放行并落盘（dsh_remote_changed 携带 mode）',
+    wan2 && wan2.ok === true && meta.remoteMode === 'wan' && eventsSeen.includes('dsh_remote_changed'), JSON.stringify(wan2));
 }
 
 // -- 2) relay 门卫令牌必须可热换 --
@@ -153,7 +139,7 @@ console.log('== ② relay 门卫令牌热换 ==');
   // 行为：真实 createOps 断言「只改令牌」一条链走通
   const { createOps } = require(path.join(ROOT, 'src', 'domains', 'instance', 'ops.js'));
   const seen = [];
-  const it2 = { id: 'i1', name: 'n', port: 29051, guardian: true, remoteEnabled: true, remoteToken: 'tok-a-01234567' };
+  const it2 = { id: 'i1', name: 'n', port: 29051, guardian: true, remoteMode: 'lan', remoteToken: 'tok-a-01234567' };
   const ops2 = createOps({
     store: { instances: [it2], save() {} },
     logger: { warn() {} },
@@ -213,7 +199,9 @@ console.log('== ③ 删除路径 force 停实例 ==');
 // -- 4) 重启必须真正停掉进程 --
 console.log('== ④ 重启真正停进程 ==');
 {
-  const px = strip(read('src/domains/router/providers/proxy.js'));
+  //  restartInstance 等 process-pool 契约方法已抽入 mixin（判据统一阶段 3）——按整组读。
+  const px = strip(read('src/domains/router/providers/proxy.js') + String.fromCharCode(10)
+    + read('src/domains/router/providers/process-pool.js'));
   check('④ restartInstance 用 force 停实例（旧为不带 force）',
     /this\.stopInstance\(inst, true\)/.test(px), '有');
   // 失败可观测：未能停掉时重新武装待重启并清退避（不静默黑洞 2 分钟）

@@ -8,19 +8,23 @@
 //   PG-1 两类 pattern 的抽象方法必须显式声明（构造期可校验）
 //   PG-2 转发层不得用 `typeof === 'function'` 猜测能力（应为 supports()）
 //   PG-3 实例态只用 COLD/WARM/HOT/DEAD 四态
-//   PG-4 资源上限 maxHot/maxWarm 必须存在且被 Reconciler 引用
+//   PG-4 生命周期引擎：槽位预算（在用1+预热1）+ 请求路径走引擎门面 + 状态事件表
 //   PG-5 ctl 只能调用白名单内方法（内部方法不可达）
 //   PG-6 凭证只经 env 注入，绝不进 spawn 命令行
 //   PG-7 写权：所有落盘经统一写权闸
 //   PG-8 反向：判据能识别旧形态（门禁非空转）
+//   PG-9 daemon 入口必须有 require.main 守卫（require 不得拉起 daemon）
+//   PG-11 router 域 kind 字面量比较收敛于 B 类白名单（能力判据一律 supports()）
+//   PG-12 用量账本读写实现唯一（仅 store/usage.js）；只读实例每次新鲜读盘
 //
 // ## 为什么有本门禁
 //   本域从未被真正设计过（13 文件同日随初始提交搬入），累积了大量
 //   「隐式契约 + 无白名单 + 双事实源」。本文档类规范都配机器校验（一域一规范），
 //   本门禁即该设计的可执行部分。
 //
-//  Phase 1-5 尚未落地：PG-1/2/3/4/5/7 预期 FAIL（如实报告，不掩盖）。
-//   PG-6 当前已成立，PG-8 证明判据非空转。
+//  PG 判据回潮即如实报 FAIL，不掩盖（收口过程与历史现状在 git log，不在此写时点）。
+//   设计阶段推进状态见 PROVIDER-GATEWAY-ARCHITECTURE.md（RouterService 改名尚未执行）。
+//   PG-8 与各处反向自检保证每条判据能命中旧形态样本（防空转）。
 // ---------------------------------------------------------------------------
 
 const fs = require('node:fs');
@@ -71,7 +75,7 @@ const proxySrc = read(PROXY);
 const directSrc = read(DIRECT);
 //  providers 已按功能切分（base/model/policies/store/command/pool/restart/probe）——
 //   本组判据（PG-6 凭证剔除 / PG-4 资源闸与预算）必须读**整组**，否则文件一搬即静默假绿。
-const providerSrc = proxySrc + String.fromCharCode(10) + read('src/domains/router/providers/command.js') + String.fromCharCode(10) + read('src/domains/router/providers/pool.js') + String.fromCharCode(10) + read('src/domains/router/providers/probe.js') + String.fromCharCode(10) + read('src/domains/router/providers/restart.js') + String.fromCharCode(10) + read('src/domains/router/providers/base.js') + String.fromCharCode(10) + read('src/domains/router/providers/model.js');
+const providerSrc = proxySrc + String.fromCharCode(10) + read('src/domains/router/providers/process-pool.js') + String.fromCharCode(10) + read('src/domains/router/providers/command.js') + String.fromCharCode(10) + read('src/domains/router/providers/pool.js') + String.fromCharCode(10) + read('src/domains/router/providers/probe.js') + String.fromCharCode(10) + read('src/domains/router/providers/restart.js') + String.fromCharCode(10) + read('src/domains/router/providers/base.js') + String.fromCharCode(10) + read('src/domains/router/providers/model.js');
 //  转发 IO 已拆到 handlers/forward.js（SSOT：forward-core.js 收敛为门面）——
 //   本组判据（PG-2 能力猜测 / PG-4 双预算使用）必须读**整组**，否则文件一搬即静默假绿。
 const forwardSrc = read(FORWARD) + String.fromCharCode(10) + read('src/domains/router/handlers/forward.js');
@@ -111,16 +115,22 @@ const idxSrc = read(IDX);
 // ---------------------------------------------------------------------------
 {
   const baseSrc = read('src/domains/router/providers/base.js');
-  // 统计"契约占位抛错"的总数（含 detectAccount 的 by subclass 与 process-pool 能力面的 by process-pool provider）。
-  const throwsNotImpl = (stripComments(baseSrc).match(/must be implemented by (subclass|process-pool provider)/g) || []).length;
-  // 设计要求：process-pool 的能力方法也应在基类声明（当前一个都没有 -> 本项应 FAIL）。
-  //    判据不能是">=1"（恒真，等于空转）——必须是"达到设计要求的数量"。
-  // 设计要求：process-pool 的能力面（11 个）都应在基类显式声明 + detectAccount = 12。
-  check('PG-1 基类显式声明全部抽象能力方法（detectAccount + 11 个 process-pool 能力）',
-    throwsNotImpl >= 12,
-    '当前声明 ' + throwsNotImpl + ' 个（应 ≥12）');
+  const ppSrc = read('src/domains/router/providers/process-pool.js');
+  // 设计更新（判据统一阶段3）：process-pool 契约的显式声明**迁出基座、落在能力方 mixin**——
+  //   基座携带实现不了的抛错占位会诱导调用方退回 typeof 猜测；契约面与实现面同文件收口。
+  // 判据仍是"达到设计要求的数量"：detectAccount 基座抛错 1 个 + process-pool 契约 12 个在 mixin 定义。
+  //   markUsed 已随闲置宽限废止；生命周期引擎门面（ensureServable/reclaimAccount）入列（W1）。
+  const baseThrows = (stripComments(baseSrc).match(/must be implemented by subclass/g) || []).length;
+  const POOL_CONTRACT = ['startInstance', 'stopInstance', 'restartInstance', '_waitHealthy', 'instanceOf',
+    'ensureServable', 'reclaimAccount', 'markRequestOk', 'markInstanceNetFail', '_retryPendingStop', 'flushRestartPending', 'reconcileInstances'];
+  const ppDefs = POOL_CONTRACT.filter((n) => new RegExp('^\\s*(?:async\\s+)?' + n + '\\s*\\(', 'm').test(stripComments(ppSrc)));
+  check('PG-1 契约显式声明：基座 detectAccount + mixin 的 12 个 process-pool 能力方法',
+    baseThrows >= 1 && ppDefs.length === POOL_CONTRACT.length,
+    'base=' + baseThrows + ' mixin=' + ppDefs.length + '/' + POOL_CONTRACT.length);
   // 能力声明 supports() 必须存在（两类 pattern 的差异靠它表达）
-  const proxySrc2 = read('src/domains/router/providers/proxy.js');
+  //  能力声明随 process-pool mixin 走（判据统一阶段 3）——按整组读，文件一搬判据不失覆盖面。
+  const proxySrc2 = read('src/domains/router/providers/proxy.js') + String.fromCharCode(10)
+    + read('src/domains/router/providers/process-pool.js');
   const directSrc2 = read('src/domains/router/providers/direct.js');
   check('PG-1 两类 provider 均声明 supports()（能力可静态校验）',
     /supports\s*\(/.test(stripComments(proxySrc2)) && /supports\s*\(/.test(stripComments(directSrc2)),
@@ -161,28 +171,41 @@ const idxSrc = read(IDX);
 }
 
 // ---------------------------------------------------------------------------
-// PG-4 资源上限 maxHot/maxWarm（Phase 4 目标）
+// PG-4 生命周期引擎（W1）：槽位预算常量 + 请求路径走引擎门面 + 状态事件表
+//   旧的 maxHot/maxWarm 假配置面与 80%-备胎/双预算切换语义随 PROXY-LIFECYCLE-STANDARD 废止。
 // ---------------------------------------------------------------------------
 {
+  const poolOnly = stripComments(read('src/domains/router/providers/pool.js'));
+  const restartOnly = stripComments(read('src/domains/router/providers/restart.js'));
+  const freezeOnly = stripComments(read('src/domains/router/providers/policies/freeze.js'));
   const code = stripComments(providerSrc);
-  // 资源闸：常量存在 + 被 _limits()/desiredRunningAccounts 实际引用（不能只是定义了不用）。
-  const hasCaps = /DEFAULT_MAX_HOT|DEFAULT_MAX_WARM/.test(code);
-  const usedInGate = /maxHot/.test(code) && /desiredRunningAccounts/.test(code);
-  check('PG-4 存在 maxHot/maxWarm 资源上限且被 reconcile 引用',
-    hasCaps && usedInGate,
-    (hasCaps ? '有常量' : '无常量') + ' / ' + (usedInGate ? '已被引用' : '未被引用'));
-  // 双预算切换：同步预算存在 + 异步预置存在
-  const hasBudget = /_switchBudgetMs/.test(code) && /DEFAULT_SWITCH_BUDGET_MS/.test(code);
-  const hasPrewarm = /prewarmAsync/.test(code);
+  // 资源闸：期望集槽位常量必须存在**且被 computeDesired 引用**（不能只是定义了不用）。
+  const hasCaps = /ACTIVE_SLOTS\s*=\s*1/.test(poolOnly) && /PREWARM_SLOTS\s*=\s*1/.test(poolOnly);
+  const computeBody = (poolOnly.match(/function computeDesired[\s\S]*?\n\}/) || [''])[0];
+  const usedInGate = /ACTIVE_SLOTS/.test(computeBody) && /PREWARM_SLOTS/.test(computeBody);
+  // 假配置面（proxyInstanceLimits / DEFAULT_MAX_HOT / DEFAULT_MAX_WARM / needSpare）零残留。
+  const fakeGone = !/proxyInstanceLimits|DEFAULT_MAX_HOT|DEFAULT_MAX_WARM|needSpare/.test(code);
+  check('PG-4 槽位预算（在用1+预热1）定义于 pool.js 且被 computeDesired 引用，假配置面零残留',
+    hasCaps && usedInGate && fakeGone,
+    '常量=' + hasCaps + ' computeDesired引用=' + usedInGate + ' 假配置面残留=' + !fakeGone);
+  // 请求路径经引擎门面：forward 只调 ensureServable，不得再裸编排 startInstance/prewarmAsync。
   const fwd = stripComments(forwardSrc);
-  const budgetUsed = /_switchBudgetMs/.test(fwd) && /prewarmAsync/.test(fwd);
-  check('PG-4 双预算切换（同步预算 ≤ switchBudgetMs + 后台 prewarmAsync）',
-    hasBudget && hasPrewarm && budgetUsed,
-    '预算方法=' + hasBudget + ' 预置方法=' + hasPrewarm + ' 转发层使用=' + budgetUsed);
-  // 预热规范化：触发条件扩展（不再是单一 80%）
-  const multiTrigger = /故障前兆|时间维度|资源允许|_unhealthyCount/.test(code);
-  check('PG-4 预热触发条件已扩展（不再是单一额度阈值）',
-    multiTrigger, multiTrigger ? 'ok（含故障前兆/时间维度/资源闸）' : '仍只有单一 80% 阈值');
+  const usesFacade = /ensureServable\(/.test(fwd);
+  const noRawOrchestration = !/\.startInstance\(/.test(fwd) && !/prewarmAsync/.test(fwd);
+  check('PG-4 请求路径走引擎门面 ensureServable（裸 startInstance / prewarmAsync 零残留）',
+    usesFacade && noRawOrchestration,
+    '门面=' + usesFacade + ' 裸编排残留=' + !noRawOrchestration);
+  // 反向：判据能识别 W1 前"转发层裸编排启动"的旧形态
+  const OLD_RAW = "const sr = await prov.startInstance(inst); await prov._waitHealthy(inst); prov.prewarmAsync(acc);";
+  check('PG-8 反向：PG-4 门面判据能识别裸编排旧形态',
+    /\.startInstance\(/.test(OLD_RAW) && /prewarmAsync/.test(OLD_RAW), 'hit');
+  // 事件表落地：冻结/封禁/删除即时回收 + 恢复回池（freeze 钩子），等待区端口随回收释放（restart）。
+  const hasHook = /_onStatusTransition\s*\(/.test(freezeOnly) && /_onStatusTransition\(acc/.test(freezeOnly);
+  const hasPrewarmReclaim = /reclaimAccount/.test(code) && /_prewarmKeyId/.test(code);
+  const portReleaseInReconcile = /ports\.unregister\(/.test(restartOnly);
+  check('PG-4 状态事件表：冻结即时回收（_onStatusTransition）+ 期望集消费与端口释放（reconcile）',
+    hasHook && hasPrewarmReclaim && portReleaseInReconcile,
+    '钩子=' + hasHook + ' 回收门面=' + hasPrewarmReclaim + ' reconcile端口释放=' + portReleaseInReconcile);
 }
 
 // ---------------------------------------------------------------------------
@@ -277,6 +300,89 @@ const idxSrc = read(IDX);
   const m = /_writeTotals\s*\(\s*\)\s*\{([\s\S]*?)\n  \}/.exec(OLD_TOTALS);
   check('PG-8 反向：写闸判据能识别未过闸形态',
     !!m && !/_persistEnabled|_canPersist|writeGate/.test(m[1]), 'hit');
+}
+
+// ---------------------------------------------------------------------------
+// PG-11 判据统一（方向 3）防回潮：router 域能力判据不得退回 kind 字面量分支。
+//   运行时「能不能做 X」一律 supports(cap)（PG-2 锁 typeof 猜测，本条锁 kind 分支）。
+//   B 类保留场景 = 持久化字段 / 视图行渲染 / 同类注册表鉴别 / 无原型裸 JSON 记录，
+//   按文件精确配额登记；新增文件或配额增减不匹配都红（配额精确=逼同步，防沉淀）。
+// ---------------------------------------------------------------------------
+{
+  const CLASS_B_BUDGET = {
+    'src/domains/router/store.js': 2,             // 序列化/反序列化持久化 kind 字段
+    'src/domains/router/views.js': 1,             // 视图行按身份渲染反代字段
+    'src/domains/router/ops.js': 3,               // 注册表 CRUD 查找的同类鉴别条件
+    'src/domains/router/ports-bootstrap.js': 1,   // 裸 providers.json 记录（无原型，supports 不可用）
+  };
+  const KIND_CMP = /kind\s*[!=]==\s*['"](proxy|direct)['"]/g;
+  const files = [];
+  (function walk(dir) {
+    for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+      const f = path.join(dir, e.name);
+      if (e.isDirectory()) walk(f); else if (e.name.endsWith('.js')) files.push(f);
+    }
+  })(path.join(ROOT, 'src/domains/router'));
+  const hits = {};
+  for (const f of files) {
+    const rel = path.relative(ROOT, f).split(path.sep).join('/');
+    const n = (stripComments(fs.readFileSync(f, 'utf8')).match(KIND_CMP) || []).length;
+    if (n) hits[rel] = n;
+  }
+  const viol = [];
+  for (const [rel, n] of Object.entries(hits)) {
+    if (CLASS_B_BUDGET[rel] === undefined) viol.push(rel + '=' + n + ' 未登记');
+    else if (n !== CLASS_B_BUDGET[rel]) viol.push(rel + '=' + n + '≠配额' + CLASS_B_BUDGET[rel]);
+  }
+  const total = Object.values(hits).reduce((a, b) => a + b, 0);
+  check('PG-11 kind 字面量比较收敛于 B 类白名单（逐文件精确配额）',
+    viol.length === 0, viol.length ? viol.join(', ') : total + ' 处均在配额内');
+  // 反向（防空转）：A 类旧形态必须命中；supports 形态与异名 kind（limit.kind 等）不误伤。
+  check('PG-11 反向：旧形态 kind 分支命中',
+    (stripComments("if (p.kind === 'proxy') { this.startInstance(i); }").match(KIND_CMP) || []).length === 1, 'hit');
+  check('PG-11 反向：supports 形态不命中',
+    !KIND_CMP.test("if (p.supports('instanceLifecycle')) { p.startInstance(i); }"), 'miss');
+  check('PG-11 反向：异名 kind（额度限流种类）不误伤',
+    !/kind\s*[!=]==\s*['"](proxy|direct)['"]/.test("if (acc.limit.kind === 'rpm') {}"), 'miss');
+}
+
+// ---------------------------------------------------------------------------
+// PG-12 用量账本读写实现唯一（防第二读写口回潮）。
+//   router-usage-totals.json 的持有者只能有 store/usage.js 一处：旧形态是 store.js 自带
+//   readUsage/writeUsage 第二口（与 UsageLedger 同文件双实现），且 views 走盘、getUsage 走
+//   内存缓存，两面板鲜度不一致。收口后：写口唯一（PG-7 已过闸），读口唯一（UsageLedger.load），
+//   并锁死鲜度纪律——写者以内存为准（节流落后），只读实例必须每次读盘（缓存即冻结旧账）。
+//   接线面豁免：usageTotalsFile（deps 键名）只是路径传递，不触碰文件 IO，与本判据的
+//   /usageFile/ 不冲突（大小写敏感：usageTotalsFile 与 usageFile 不是同一键）。
+// ---------------------------------------------------------------------------
+{
+  const LEDGER = 'src/domains/router/store/usage.js';
+  const SECOND_PORT = /usageFile|readUsage\s*\(|writeUsage\s*\(|_writeTotals\s*\(/;
+  const files = [];
+  (function walk(dir) {
+    for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+      const f = path.join(dir, e.name);
+      if (e.isDirectory()) walk(f); else if (e.name.endsWith('.js')) files.push(f);
+    }
+  })(path.join(ROOT, 'src/domains/router'));
+  const viol = [];
+  for (const f of files) {
+    const rel = path.relative(ROOT, f).split(path.sep).join('/');
+    if (rel === LEDGER) continue;
+    if (SECOND_PORT.test(stripComments(fs.readFileSync(f, 'utf8')))) viol.push(rel);
+  }
+  check('PG-12 账本读写实现唯一（router 域除 store/usage.js 外无第二 usage 读写口）',
+    viol.length === 0, viol.length ? '第二口: ' + viol.join(', ') : '唯一实现 ' + LEDGER);
+  // 鲜度纪律：UsageLedger.load 的缓存命中必须以「本实例是写者」为条件（只读必落回读盘）。
+  const ledgerCode = stripComments(read(LEDGER));
+  check('PG-12 只读实例不得吃永久缓存（load 缓存命中以 canPersist 为条件）',
+    /if\s*\(\s*this\.totals\s*&&\s*this\._canPersist\(\)\s*\)\s*return\s+this\.totals/.test(ledgerCode),
+    'ok');
+  // 反向（防空转）：旧 store.js 第二口样本必须命中；usageTotalsFile 接线不误伤。
+  check('PG-12 反向：旧第二读写口命中',
+    SECOND_PORT.test(stripComments('this.usageFile = f; readUsage() { return 1; } writeUsage(t) { return 2; }')), 'hit');
+  check('PG-12 反向：usageTotalsFile 路径接线不误伤',
+    !SECOND_PORT.test(stripComments("opts.usageTotalsFile; this.usageTotalsFile = x")), 'miss');
 }
 
 // ---------------------------------------------------------------------------

@@ -4,8 +4,9 @@ const parseModule = require('./parse');
 const { readUpstreamBody, trackUpstreamBody } = require('./upstream-body');
 
 // 转发 IO 层（网络）：上游响应读取 + 重试循环 + 流式透传。依赖经 ctor 注入
-// （deps={log,logger,readBody,parse,usage,inflight,switcher,events,getPricing,agents,maskKey}）；
-// 本文件只 require ./parse 与 ./upstream-body（纯）。
+// （deps={log,logger,readBody,canPersist,parse,usage,inflight,switcher,events,getPricing,agents,maskKey}）；
+// 本文件只 require ./parse 与 ./upstream-body（纯）。每次 begin 恰有一次结束：
+// 各显式结束路径 + 异常/提前返回路径统一走 endInflight() 的 effects（attempt-end 幂等收口）。
 
 const crypto = require('node:crypto');
 const http = require('node:http');
@@ -27,11 +28,11 @@ function createForwarder(deps) {
   const getPricing = d.getPricing || (() => null);
   const readBody = d.readBody || parse.readBody;
   const agents = d.agents || {};
-  // 测试缝：单次上游请求实现可注入（默认为本文件的 forwardOnce）。
+  // D-1 测试缝：单次上游请求实现可注入（默认为本文件的 forwardOnce）。
   //   注入名用别名 forwardOnceImpl，避免遮蔽下方 forwardOnce 的定义与既有源码判据。
   const callUpstream = d.forwardOnceImpl || ((...a) => forwardOnce(...a));
 
-  /** 唯一在途结束执行器：所有结束路径共用，全部 effects 都要执行。 */
+  /** 唯一在途结束执行器：所有结束路径共用，**全部** effects 都执行（修复漏补重启）。 */
   function endInflight(acc, prov) {
     const inst = parse.instOf(prov, acc);
     const lifecycle = !!(prov && prov.supports && prov.supports('instanceLifecycle'));
@@ -72,9 +73,11 @@ function createForwarder(deps) {
     const attempts = Math.max((prov.accounts || []).length, 1);
     let stripInjectionRetried = false, injectedThisAttempt = false;
     const triedKeys = new Set();
-    // 一次 begin 只结束一次：endAttempt 幂等，漏调由 finally 兜底。任何跳出（writeThrough/writeHead
-    //   抛错、await 中断、上游 reader 事件冒泡）都不许留在途计数 —— canStopInstance/stopInstance 与
-    //   pendingStop 都以 inflight>0 为「不可停」判据，计数不归零则实例悬挂、restartPending 永不补做。
+    // inflight.begin 之后任何跳出（writeThrough 抛错、
+    //   writeHead 抛错、await 中断、上游 reader 事件里抛错冒泡）都不许留在途计数。
+    //   一次 begin 只结束一次：endAttempt 幂等，漏调由 finally 兜底。
+    //   泄漏后果：instance-lifecycle 的 canStopInstance/arbitrateStop 与 proxy 的 pendingStop
+    //   都以 inflight>0 为「不可停」判据，计数永不归零 => 实例悬挂、restartPending 永不补做。
     let attemptEnded = true;
     let activeProv = prov;
     const endAttempt = () => {
@@ -88,30 +91,15 @@ function createForwarder(deps) {
       acc = switcher.pickFor(prov, { excludeKeys: triedKeys });
       if (!acc || triedKeys.has(acc.key)) break;
       triedKeys.add(acc.key);
-      // 按需激活必须在 resolveTarget 之前（实例未启动 port=null，否则死锁）
+      // 按需可服务化必须在 resolveTarget 之前（实例未就绪 port=null，否则死锁）。
+      // 进程动作经引擎门面 ensureServable（LC 核心-1）：请求路径不再自发 start/kill。
       activeProv = prov;
       const curInst = parse.instOf(activeProv, acc);
-      if (activeProv && activeProv.kind === 'proxy' && curInst) {
-        activeProv.markUsed(curInst);
-        if (!curInst.pid || curInst.status !== 'HOT') {
-          const sr = await activeProv.startInstance(curInst).catch((e) => ({ ok: false, error: e && e.message }));
-          const ok = sr && sr.ok;
-          const budgetMs = activeProv.supports('switchBudget') ? activeProv._switchBudgetMs() : 2000;
-          const healthy = ok
-            ? await Promise.race([
-                activeProv._waitHealthy(curInst).catch(() => false),
-                new Promise((r) => setTimeout(() => r(false), budgetMs)),
-              ])
-            : false;
-          if (!healthy) {
-            log('INST-START-FAIL key=' + maskKey(acc.key) + ' err=' + ((sr && sr.error) || ('未在 ' + budgetMs + 'ms 内就绪')));
-            if (curInst && curInst.pid && activeProv.supports('prewarm')) {
-              try { activeProv.prewarmAsync(acc); } catch {}
-            } else if (curInst && curInst.pid) {
-              try { activeProv.stopInstance(curInst); } catch {}
-            }
-            continue;
-          }
+      if (activeProv && activeProv.supports && activeProv.supports('instanceLifecycle') && curInst) {
+        const sv = await activeProv.ensureServable(acc).catch((e) => ({ ok: false, error: e && e.message }));
+        if (!sv || !sv.ok) {
+          log('INST-START-FAIL key=' + maskKey(acc.key) + ' err=' + ((sv && sv.error) || '实例未在等待期内就绪'));
+          continue;
         }
       }
       const rt = parse.resolveTarget(acc, prov);
@@ -130,8 +118,10 @@ function createForwarder(deps) {
         endAttempt();
         const inst = parse.instOf(rt.prov, acc);
         const isTimeout = typeof out.error === 'string' && /timeout/i.test(out.error);
+        // 失败归属在下方按 activeProv + inst 收口。此处原有一处 rt.prov.markInstanceNetFail(acc)：
+        // proxy 实现要求实参带 pid（acc 无 pid -> 无操作），base 实现直接抛错 —— 冗余死调用，删除。
         log('ERR net fail key=' + maskKey(acc.key) + ' err=' + out.error);
-        if (activeProv && activeProv.kind === 'proxy' && inst) {
+        if (activeProv && activeProv.supports && activeProv.supports('instanceLifecycle') && inst) {
           if (isTimeout && activeProv.supports && activeProv.supports('instanceLifecycle')) {
             try { activeProv.restartInstance(inst, 'upstream-timeout'); } catch {}
           } else if (activeProv.supports && activeProv.supports('instanceLifecycle')) {
@@ -139,12 +129,13 @@ function createForwarder(deps) {
           }
         }
         if (!isTimeout) {
-          // 先停实例再清 pid：stopInstance 的 kill 段以 inst.pid 为判据，先抹掉 pid 等于让唯一 kill
-          //   路径恒不可达，本地反代进程留存并继续占端口。endAttempt 已在上方执行，inflight 归零后
-          //   stopInstance 不会走 pendingStop 延后分支。
+          // 先停实例再清 pid。原先只置 pid=null，
+          //   而 arbitrateStop 的 kill 段以 inst.pid 为判据（instance-lifecycle.js）——
+          //   先把 pid 抹掉等于让唯一 kill 路径恒不可达，本地反代进程留存并继续占端口。
+          //   endAttempt() 已在上方执行，inflight 归零后 stopInstance 不会走 pendingStop 延后分支。
           try {
             const inst2 = parse.instOf(activeProv, acc);
-            if (activeProv && activeProv.kind === 'proxy' && inst2 && inst2.pid
+            if (activeProv && inst2 && inst2.pid
                 && activeProv.supports && activeProv.supports('instanceLifecycle')) {
               activeProv.stopInstance(inst2);
             } else if (inst2 && inst2.pid) { inst2.pid = null; inst2.healthy = false; }
@@ -185,7 +176,7 @@ function createForwarder(deps) {
       }
       // 2xx 才清零失败计数（请求级熔断）
       const okInst = parse.instOf(activeProv, acc);
-      if (activeProv && activeProv.kind === 'proxy' && okInst
+      if (activeProv && okInst
           && activeProv.supports && activeProv.supports('instanceLifecycle')) {
         try { activeProv.markRequestOk(okInst); } catch {}
       }
@@ -202,7 +193,7 @@ function createForwarder(deps) {
     }
   }
 
-  /** 上游->客户端透传：头复制 + 流式转发 + 用量记账。 */
+  /** 上游->客户端透传：头复制 + 流式转发 + 用量统计（按账号 byKey/byModel）。 */
   function writeThrough(req, res, out, acc, prov, meta) {
     const ur = out.res;
     const status = meta.status;
@@ -233,15 +224,15 @@ function createForwarder(deps) {
           logger.warn('[stream] SHORT-OUTPUT key=' + maskKey(acc.key) + ' completionTokens=' + comp + ' bytes=' + bytes + ' tail=...' + t);
         }
       } catch {}
-      usage.recordUsage({ ts: new Date().toISOString(), model: meta.model, key: acc.key, promptTokens: usageRec ? usageRec.promptTokens : 0, completionTokens: usageRec ? usageRec.completionTokens : 0, totalTokens: usageRec ? usageRec.totalTokens : 0, cacheMiss: usageRec ? usageRec.cacheMiss : 0, cacheHit: usageRec ? usageRec.cacheHit : 0, durationMs: Date.now() - meta.started, status, streamed: meta.streamRequested, usageMissing: !usageRec, pricing: (prov && prov.kind === 'direct') ? ((prov.officialPricing || null)) : getPricing() });
+      usage.recordUsage({ ts: new Date().toISOString(), model: meta.model, key: acc.key, promptTokens: usageRec ? usageRec.promptTokens : 0, completionTokens: usageRec ? usageRec.completionTokens : 0, totalTokens: usageRec ? usageRec.totalTokens : 0, cacheMiss: usageRec ? usageRec.cacheMiss : 0, cacheHit: usageRec ? usageRec.cacheHit : 0, durationMs: Date.now() - meta.started, status, streamed: meta.streamRequested, usageMissing: !usageRec, pricing: (prov && prov.pricingOf) ? prov.pricingOf(getPricing) : getPricing() });
     };
     const finishAborted = () => {
       if (completed) return;
       completed = true;
       endInflight(acc, prov);
       log('STREAM_ABORTED key=' + maskKey(acc.key) + ' bytes=' + bytes);
-      // 归属必须是实例而非账号对象：proxy.markInstanceNetFail 只在实参带 pid 时计数，
-      //   传 acc 等于不计数 —— 流式中断就永不进入熔断。取实例与 net-error 分支同一解析。
+      // 归属必须是**实例**而非账号对象：proxy.markInstanceNetFail 只在实参带 pid 时计数，
+      // 传 acc 等于不计数 —— 流式中断因此从不进入熔断（P3-F #5）。与 net-error 分支同一解析取实例。
       if (prov && prov.supports && prov.supports('instanceLifecycle')) {
         const inst = parse.instOf(prov, acc);
         if (inst) { try { prov.markInstanceNetFail(inst); } catch {} }
@@ -257,9 +248,10 @@ function createForwarder(deps) {
       onAbort: () => finishAborted(),
     });
     res.on('close', () => {
-      // 收口判据只用 completed（已覆盖 finishOK/abort 两条正常路径）：上游读完而 onEnd 未跑（或
-      //   永不跑：res 已关闭，write 回调链断裂）时在途计数会永久泄漏，故不按 readableEnded 早退，
-      //   它只作为诊断信息写进日志。
+      // 原先此处 `if (ur.readableEnded) return;` 早退——上游读完了但 onEnd 尚未跑
+      //   （或永不跑：res 已关闭，write 回调链断裂）时在途计数就永久泄漏。
+      //   收口判据只用 completed（它已覆盖 finishOK/abort 两条正常路径），readableEnded
+      //   只作为诊断信息写进日志。
       if (completed) return;
       completed = true;
       body.cancel(); // 其它结束路径须清掉非流式体守卫的定时器

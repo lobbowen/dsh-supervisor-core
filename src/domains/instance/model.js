@@ -19,11 +19,23 @@ function taskStateToView(s) {
 
 /** 磁盘文档实例记录映射到运行时记录（纯迁移，不落盘）。
  *  - 令牌收敛：历史遗留的 dshToken 列一律剔除（内存即刻断行，下次 save 落盘即清）；
+ *  - 远程控制三态化：legacy 布尔对（remoteEnabled/frpEnabled）推导为 remoteMode，
+ *    frp 手填口（frpRemotePort）与 wanPort 镜像字段一并剔除（端口权威在 relay 槽位注册表）；
  *  - guardian 缺省为关；
  *  - 重启后 FAILED 一律重置为「停止」（失败是一次性状态）。
  *  说明：令牌**源登记**（tokens.attach）是 IO，留在 store.load()，不进本函数。 */
 function normalizeInstance(inst) {
   if (Object.prototype.hasOwnProperty.call(inst, 'dshToken')) delete inst.dshToken;
+  if (inst.remoteMode !== 'lan' && inst.remoteMode !== 'wan') {
+    inst.remoteMode = inst.remoteEnabled === true ? (inst.frpEnabled === true ? 'wan' : 'lan') : 'off';
+  }
+  delete inst.remoteEnabled;
+  delete inst.frpEnabled;
+  delete inst.frpRemotePort;
+  delete inst.wanPort;
+  // 用户填额链已废止：历史盘上记录残留的 memoryMax/cpuQuota 一律剔除，
+  // 否则「删了入口但旧值仍被读」会造成静默的配额漂移（视图行同批不再暴露这两字段）。
+  if (inst.sandbox) { delete inst.sandbox.memoryMax; delete inst.sandbox.cpuQuota; }
   if (inst.guardian === undefined) inst.guardian = false;
   if (inst.state && inst.state.phase === 'FAILED') {
     inst.state.phase = 'STOPPED';
@@ -47,15 +59,14 @@ function createRecord(payload, id) {
     createdBy: 'user',
     command: Array.isArray(payload.command) ? payload.command : [],
     guardian: !!payload.guardian, // 进程守护(自动拉起)开关默认关（架构红线：未显式开启绝不自动拉起）
-    remoteEnabled: !!payload.remoteEnabled,
+    remoteMode: payload.remoteMode === 'lan' || payload.remoteMode === 'wan' ? payload.remoteMode : 'off',
     remoteToken: String(payload.remoteToken || ''),
     unitName: 'dsh-web@' + id,
     sandbox: {
       privateTmp: true,
       // node/dsh 位于 /home（nvm），ProtectHome=yes 会使其 exec 失败(203/EXEC)；默认关闭，可用 payload.protectHome 覆盖
       protectHome: payload.protectHome === undefined ? false : !!payload.protectHome,
-      memoryMax: String(payload.memoryMax || '4G'),
-      cpuQuota: String(payload.cpuQuota || '150%'),
+      // 资源配额不接收户输入：启动时由 governor 按机器预算与活跃实例数推导（见 ARCHITECTURE-PLAN-instance-sandbox-governor）。
     },
     state: { phase: 'STOPPED', restartCount: 0, backoffLevel: 0, lastProbeOk: null },
     createdAt: new Date().toISOString(),
@@ -73,7 +84,7 @@ function viewRow(inst, resolved) {
     domain: inst.domain || 'native',
     kind: inst.kind || inst.domain || 'native',
     guardian: inst.guardian,
-    remoteEnabled: inst.remoteEnabled,
+    remoteMode: inst.remoteMode || 'off',
     unitName: inst.unitName,
     sandbox: inst.sandbox,
     // 沙箱实例版本与更新（每实例独立 DSH 安装；native 无独立安装，返回 null 不显示）
@@ -85,6 +96,10 @@ function viewRow(inst, resolved) {
       // 沙箱生命周期（可观测）：lifecyclePhase 为内部状态机相位，lastError 暴露失败原因
       lifecyclePhase: inst.state ? inst.state.phase : 'STOPPED',
       lastError: inst.state ? inst.state.lastError : null,
+      // 当次启动生效的动态配额（governor 推导；未启动过为 null）
+      allocation: inst.state ? (inst.state.allocation || null) : null,
+      // 实测占用（W2 监督拍回填 { memMb, cpuPct, at }；未采到/已停止为 null，与 allocation 成对展示）
+      usage: inst.state ? (inst.state.usage || null) : null,
       // 稳定性统计（与原生卡一致）：重启次数 / 最近故障原因（BACKOFF/FAILED 由状态机记录）
       restartCount: inst.state ? (inst.state.restartCount || 0) : 0,
       lastFailure: inst.state ? (inst.state.lastFailure || null) : null,

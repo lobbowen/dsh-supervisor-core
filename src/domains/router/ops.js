@@ -103,7 +103,7 @@ function createOps(deps) {
     // 删除路径必须 force 停实例：不带 force 时，若账号被 selected/activeAccount 指向，proxy.js
     // 只置 _stopPendingUntilIdle 就返回、不 kill；紧接着 provider 被摘除后该标记不可达，补刀无从
     // 触发，持用户 API Key 的反代进程永不被回收。故删除语义统一 force=true（与「删除即回收」一致）。
-    if (removed.kind === 'proxy') { for (const i of removed.instances || []) { try { removed.stopInstance(i, true); } catch {} } }
+    if (removed.supports('instanceLifecycle')) { for (const i of removed.instances || []) { try { removed.stopInstance(i, true); } catch {} } }
     // 端口登记级联释放（「删除对象即释放端口」契约）：否则 owner 永久累积、池最终耗尽。
     try { releaseProviderPorts(removed, ports); } catch (e) { if (logger && logger.warn) logger.warn('release provider ports ' + id + ': ' + (e && e.message)); }
     save();
@@ -115,7 +115,7 @@ function createOps(deps) {
     if (state.running) return Promise.resolve({ ok: true, already: true });
     state.running = true;
     state.stopped = false;
-    for (const p of state.providers) { if (p && p.kind === 'proxy') p._stopping = false; }
+    for (const p of state.providers) { if (p && p.supports('processPool')) p._stopping = false; }
     scheduler.start();
     return endpoint.startActivatedProviders().then(() => {
       if (events) events.append('router_started', { providers: state.providers.length });
@@ -126,7 +126,7 @@ function createOps(deps) {
   function stopAll() {
     state.running = false;
     state.stopped = true; // 先置闸：在途/后续的 ensure/预热/探测不得再拉起实例
-    for (const p of state.providers) { if (p && p.kind === 'proxy') p._stopping = true; } // 预启动拒绝 + spawn 完成即自清
+    for (const p of state.providers) { if (p && p.supports('processPool')) p._stopping = true; } // 预启动拒绝 + spawn 完成即自清
     scheduler.stop();
     stopAllInstances(); // 服务停止 = 实例一并停止（防孤儿进程残留占用动态端口段）
     for (const id of Object.keys(state.providerServers)) endpoint.stopProviderServer(id); // 供应商独立端点一并关闭
@@ -142,7 +142,7 @@ function createOps(deps) {
   async function stopAndWait(timeoutMs) {
     stopAll();
     for (const p of state.providers) {
-      if (p && p.kind === 'proxy' && typeof p.waitAllStopped === 'function') {
+      if (p && p.supports('gracefulStop')) {
         try { await p.waitAllStopped(timeoutMs || 3000); } catch {}
       }
     }
@@ -153,7 +153,7 @@ function createOps(deps) {
   function stopAllInstances() {
     // force=true：服务停服/优雅退出，无视在用/在途仲裁强制停。
     for (const p of state.providers) {
-      if (p.kind !== 'proxy') continue;
+      if (!p.supports('instanceLifecycle')) continue;
       for (const i of (p.instances || [])) { try { p.stopInstance(i, true); } catch {} }
     }
   }

@@ -176,41 +176,38 @@ function handle(ctx) {
     if (req.method === 'GET' && pathname === '/open') return handleOpen(ctx);
 
     if (req.method === 'GET' && pathname === '/instances') {
-      // 附加打开链接：本机直连（带 DSH 认证 token）与局域网 relay（免认证）。
+      // 附加打开链接：仅本机直连 authUrl（带 DSH 会话 token，回环 Host 才附带）。
       // token 一律从唯一令牌节点按实例解析（见 tokOf）：原生与沙箱同源。
-      // sup.listLan() 在 lan-daemon 监督模式为异步（ctl 委托），统一 Promise.resolve 兼容。
+      // 远程可用性（模式/就绪/访问 URL）不在此装饰——单一来源是 /lan-access 的 remote 视图。
       // 概念清分：
       //   instances[] = 沙箱实例（管理对象：CRUD/启停/升级全属沙箱 API）
       //   native      = 原生主干 main（唯一；其生命周期/升级不属 /instances 沙箱 API：
       //                 启停 /lifecycle/dsh/*、安装/升级/卸载 /native/*。此处仅提供只读条目
       //                 供横切视图取端口/开关，不带沙箱 CRUD 语义）
-      const decorate = (it, lanItems, lanAddrs) => {
-        const lan = lanItems.find((x) => x.id === it.id) || null;
+      const decorate = (it) => {
         const tok = tokOf(it.id);
-        const lanAddr = lanAddrs[0] || '127.0.0.1';
         const out = Object.assign({}, it);
+        // API 边界令牌剔除：main 视图含 remoteToken（进程内供 LanManager mainOf 消费），绝不外传。
+        delete out.remoteToken;
         const loopback = identity.loopback;
         out.authUrl = (tok && loopback)
           ? ('http://127.0.0.1:' + it.port + '/?token=' + encodeURIComponent(tok))
           : ('http://127.0.0.1:' + it.port + '/');
         out.tokenPresent = loopback && !!tok;
-        const wan = lan && lan.wanPort;
-        out.lanUrl = wan ? ('http://' + lanAddr + ':' + wan + '/') : null;
-        out.lanRunning = !!(lan && lan.running);
+        // 远程可用性/访问 URL 的单一来源是 /lan-access 的 remote 视图（projectRemoteView）；
+        // 本列表只携带原始字段（remoteMode 等），不重复推导。
         return out;
       };
-      const render = (ll) => {
-        const lanItems = (ll && ll.items) || [];
-        const lanAddrs = (ll && ll.addresses) || [];
+      const render = () => {
         // 概念清分：沙箱来自 InstanceManager；原生主干(main)来自守卫核心 dshMainView()（不再混存沙箱数组）
         const sandboxes = (sup.instances.list() || []).filter((i) => i.domain === 'sandbox');
         const main = (sup.dshMainView && typeof sup.dshMainView === 'function') ? sup.dshMainView() : null;
         return send(200, {
-          instances: sandboxes.map((it) => decorate(it, lanItems, lanAddrs)),
-          native: main ? decorate(main, lanItems, lanAddrs) : null,
+          instances: sandboxes.map((it) => decorate(it)),
+          native: main ? decorate(main) : null,
         });
       };
-      return Promise.resolve(sup.listLan()).then(render).catch(() => render({ items: [], addresses: [] }));
+      return render();
     }
     if (req.method === 'POST' && pathname.startsWith('/instances/')) {
       if (!originAllowed(req, sup.config.apiPort)) { req.resume(); return send(403, {}); }

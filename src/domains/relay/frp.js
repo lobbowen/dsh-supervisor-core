@@ -4,7 +4,7 @@ const platform = require('../../platform/os/index');
 const pidlook = require('../../platform/os/pidlookup');
 
 // frpc 进程托管 + settings 持久化 + status + syncFromInstances（frp 安装/校验/解压在 frp-install.js）。
-// 由受管清单里开启 frpEnabled 的实例动态生成 frpc.toml，并托管 frpc 进程生命周期
+// 由受管清单里 remoteMode==='wan' 的实例动态生成 frpc.toml，并托管 frpc 进程生命周期
 // （启动/停止/崩溃退避重启/孤儿清理/权限加固）。
 
 const fs = require('node:fs');
@@ -52,14 +52,13 @@ class FrpManager {
     try {
       const s = JSON.parse(fs.readFileSync(this.settingsFile, 'utf8'));
       return {
-        enabled: !!s.enabled,
         serverAddr: String(s.serverAddr || ''),
         serverPort: Number(s.serverPort) || 7000,
         authToken: String(s.authToken || ''),
         user: String(s.user || 'dsh'),
       };
     } catch {}
-    return { enabled: false, serverAddr: '', serverPort: 7000, authToken: '', user: 'dsh' };
+    return { serverAddr: '', serverPort: 7000, authToken: '', user: 'dsh' };
   }
 
   saveSettings(s) {
@@ -77,18 +76,19 @@ class FrpManager {
       pid: this.child ? this.child.pid : null,
       // API 面绝不回显 authToken 明文（与 access.js「只报 configured」同规）。
       // UI 需要改动令牌时显式提交新值；normalizeFrpSettings 是 patch 归并——
-      // **字段缺省（undefined）= 保留现值**，显式提交 '' = 清除（UI 留空时必须省略字段，见 LanPage frpPayload）。
-      settings: { enabled: !!s.enabled, serverAddr: s.serverAddr, serverPort: s.serverPort, user: s.user, authTokenSet: !!s.authToken },
+      // **字段缺省（undefined）= 保留现值**，显式提交 '' = 清除（UI 留空时必须省略字段）。
+      settings: { serverAddr: s.serverAddr, serverPort: s.serverPort, user: s.user, authTokenSet: !!s.authToken },
       logTail: this.logTail.slice(-20),
     };
   }
 
-  /** instances 里开启 frpEnabled 的映射到远程端口（纯文本生成委托 core.buildFrpcToml）。 */
+  /** instances 里 remoteMode==='wan' 的映射到远程端口（纯文本生成委托 core.buildFrpcToml）。 */
   buildConfig(settings, instances) {
     return buildFrpcToml(settings, instances);
   }
 
-  /** 由守卫在实例变化时调用：重写配置并在运行中时平滑重启。 */
+  /** 由受管清单变化时调用：重写配置并在运行中时平滑重启。
+   *  frpc 生命周期单一条件 = 是否存在 wan 隧道（count>0）；无全局总闸。 */
   syncFromInstances(instances) {
     const settings = this.loadSettings();
     const { text, count } = this.buildConfig(settings, instances);
@@ -96,7 +96,7 @@ class FrpManager {
     // frpc.toml 含 auth.token 明文：与 frp.json 同级 0600。
     writeAtomic(this.configFile, text, { mode: 0o600 });
     this._lastCount = count; // 供兜底重启判定「是否还有代理值得拉起」
-    if (!settings.enabled || count === 0) {
+    if (count === 0) {
       this.stop();
       return { ok: true, proxies: count, running: false };
     }
@@ -167,8 +167,7 @@ class FrpManager {
   /** 非预期退出后的有界退避重启。 */
   _scheduleRestart() {
     if (this._restartTimer) return;
-    const settings = this.loadSettings();
-    if (!settings.enabled || !this._lastCount) return; // 已停用或无代理：不重启
+    if (!this._lastCount) return; // 已无代理应运行：不重启
     if (this._restartAttempts >= 5) {
       if (this.events) this.events.append('frpc_restart_gaveup', { attempts: this._restartAttempts });
       this.logger.warn && this.logger.warn('[frpc] 连续重启 ' + this._restartAttempts + ' 次仍失败，停止重试（等待下次配置变更触发）');

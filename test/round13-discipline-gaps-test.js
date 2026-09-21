@@ -140,14 +140,15 @@ const TMP = fs.mkdtempSync(path.join(os.tmpdir(), 'r13-'));
     check('② 反向：不存在的实例报「实例不存在」', r3 && r3.ok === false && /不存在/.test(r3.error || ''), JSON.stringify(r3));
   }
 
-  // -- 2)-b：stopUnit 抛「平台不支持」时，删除**不得崩溃**（macOS/Windows 的真实情形）--
+  // -- 2)-b：stopUnit 抛「平台不支持」时，删除**不得崩溃** --
   //
   //    （P1）：这条是本轮**由 macOS runner 逼出来**的缺陷 ——
-  //     platform/os/service.js 的 makeUnsupported（macOS launchd / Windows 服务 / 未知平台）
+  //     当时 platform/os/service.js 的 makeUnsupported（macOS launchd / Windows 服务 / 未知平台）
   //     其 stopUnit() **直接 throw CapabilityError**，而 removeInstance 原先假定它「不抛」->
   //     在 mac/win 上**每次删除都抛未捕获异常**（删除整体失败）。
-  //   这里显式注入一个「会抛的 stopUnit」，于是**在 Linux 上也能拦住**该回归，
-  //   不必等到 mac/win runner。（service 是模块级单例：patch 同一对象再还原。）
+  //   W3 起 mac/win 落 portable（不抛），但「会抛的 stopUnit」仍是未知平台 NONE 与嵌入方的
+  //   真实形状，该回归拦截保留。这里显式注入一个「会抛的 stopUnit」，
+  //   于是**在 Linux 上也能拦住**该回归，不必等到 mac/win runner。
   console.log('== ②-b stopUnit 抛能力异常时删除不崩 ==');
   {
     const { InstanceManager } = require(path.join(ROOT, 'src', 'domains', 'instance'));
@@ -158,14 +159,14 @@ const TMP = fs.mkdtempSync(path.join(os.tmpdir(), 'r13-'));
       logger: { info() {}, warn() {}, error() {} },
       tasks: { isBusy: () => false },
       service: {
-        stopUnit() { throw new Error('CapabilityError: 测试注入（模拟 macOS/Windows 不支持用户单元）'); },
+        stopUnit() { throw new Error('CapabilityError: 测试注入（模拟无服务管理器的平台形状）'); },
         isUnitActive() { return false; },
       },
     });
     m2.instances = [{ id: 'i9', name: 'x', domain: 'sandbox', port: 0, state: { phase: 'STOPPED' } }];
     let threw = null; let out = null;
     try { out = m2.removeInstance('i9'); } catch (e) { threw = e; }
-    check('②-b stopUnit 抛能力异常时删除不得崩溃（macOS/Windows 真实情形）',
+    check('②-b stopUnit 抛能力异常时删除不得崩溃（未知平台/嵌入方真实情形）',
       threw === null && out && out.ok === true,
       threw ? ('崩溃: ' + threw.message) : JSON.stringify(out));
   }

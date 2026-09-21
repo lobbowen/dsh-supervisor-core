@@ -16,7 +16,7 @@ import { RefreshCw } from "lucide-react";
 import { Button } from "../../../framework/ui";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "../../../framework/ui/dialog";
 import { supervisorApi } from "../../../services/supervisor";
-import { hasShellHost, requestKernelUpdate } from "../../../services/supervisor/kernelUpdateBridge";
+import { hasShellHost, requestKernelUpdate, type KernelUpdateProgress } from "../../../services/supervisor/kernelUpdateBridge";
 import { useSupervisorAction } from "../useSupervisorAction";
 import { Card, CardTitle, Pill } from "../widgets";
 import { cn } from "../../../framework/utils";
@@ -57,6 +57,9 @@ export function AboutCard() {
   const [logOpen, setLogOpen] = useState(false);
   const [logKind, setLogKind] = useState<"dsh" | "guard">("dsh");
   const [logText, setLogText] = useState("");
+  // 壳中继回来的安装进度（B4b）。内核安装可长达十几分钟，没有这一行时界面在数分钟内
+  // 完全静止，用户只能判定「卡死」并重试 —— 重试即两个进程并发写同一个 npm 全局包。
+  const [coreProg, setCoreProg] = useState<KernelUpdateProgress | null>(null);
   const { busy, run } = useSupervisorAction();
 
   // 更新日志（A4）：按需拉取文本，失败给出明确提示而非静默。
@@ -155,12 +158,13 @@ export function AboutCard() {
     if (!hasShellHost()) { toast.error("内核更新由桌面壳执行：请在桌面壳面板中操作。"); return; }
     if (!window.confirm("发现内核新版本 " + fmt(ver?.latest) + "，是否立即更新？\n\n内核将由桌面壳安装，并自动重启守卫。")) return;
     await run("upd", async () => {
-      const r = await requestKernelUpdate();
+      setCoreProg({ status: "已向桌面壳发出更新请求，等待响应…" });
+      const r = await requestKernelUpdate(setCoreProg);
       if (!r.ok) { toast.error(r.error || "更新失败"); return; }
       const v = fmt(r.version || ver?.latest);
       if (r.restartUncertain) toast.warning("内核已更新至 " + v + "，但守卫可能未自动重启，请手动确认。");
       else toast.success("内核已更新至 " + v + "，守卫已重启。");
-    }, { refresh: true });
+    }, { refresh: true, onDone: () => setCoreProg(null) });
   };
 
   // 桌面壳更新：壳的自更新发生在**启动时**（门 0：查清单 -> 下载 -> 验签 -> 安装 -> 重启）。
@@ -229,6 +233,17 @@ export function AboutCard() {
             ) : null}
           </span>
         </div>
+        {/* 内核更新进行中：壳中继的逐源/心跳进度（B4b）。progress 为 null = 该步无可测分母，
+            此时只显示文字，不画假百分比。 */}
+        {coreProg ? (
+          <div className="flex flex-wrap items-center gap-2 text-xs leading-relaxed text-muted-foreground">
+            <RefreshCw className="size-3 shrink-0 animate-spin" />
+            <span className="min-w-0 flex-1 break-words">{coreProg.status || "桌面壳处理中…"}</span>
+            {typeof coreProg.progress === "number"
+              ? <span className="tabular-nums font-medium text-foreground">{Math.round(coreProg.progress * 100)}%</span>
+              : null}
+          </div>
+        ) : null}
         <p className="border-t border-border/60 pt-3 text-xs leading-relaxed text-muted-foreground">
           {PRODUCT_DESC}
         </p>

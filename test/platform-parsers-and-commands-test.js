@@ -49,6 +49,8 @@ const check = (n, c, x) => {
 
 const LF = String.fromCharCode(10);
 const CRLF = String.fromCharCode(13) + String.fromCharCode(10);
+// 异步判据登记表：汇总前统一 await（Y-6 起新增行为断言不再自开独立文件，N-e 链条长度纪律）。
+const pendingChecks = [];
 
 // -- Y-1：三平台监听者解析 --
 {
@@ -238,6 +240,67 @@ function underFakeEnv(platform, env, body) {
     underFakeEnv('win32', {}, "process.stdout.write(process.platform)") === 'win32', 'ok');
 }
 
-const failed = results.filter((r) => !r);
-console.log(LF + '结果: ' + (results.length - failed.length) + ' passed, ' + failed.length + ' failed');
-process.exit(failed.length ? 1 : 0);
+// -- Y-6：resstats 进程树采样解析（W2 观测面；解析纯函数按三平台真实形态文本 fixture 穷举）--
+//    数据源分叉只在 sampleAsync 一步；/proc、ps、Get-CimInstance 三种输出离线可验。
+{
+  const resstats = require(path.join(ROOT, 'src', 'platform', 'os', 'resstats'));
+  const { aggregate } = resstats;
+  const { parseProcStat, parseProcStatusRss, parseCpuTimeMs, parsePsTable, parseCimJson } = resstats._parse;
+  console.log(LF + '== Y-6 resstats 解析与树聚合 ==');
+  const line = '8421 (strange (x) proc) S 5 8421 8421 0 -1 4194304 200 0 0 0 250 125 0 0 20 0 3 0 12345';
+  const ps = parseProcStat(line);
+  check('Y-6 /proc stat：comm 含空格/括号仍取末个 ")" 后字段', ps && ps.pid === 8421 && ps.ppid === 5, JSON.stringify(ps));
+  check('Y-6 /proc stat：utime+stime（USER_HZ=100）换算毫秒 (250+125)*10=3750', ps && ps.cpuMs === 3750, ps && String(ps.cpuMs));
+  check('Y-6 /proc stat：无括号垃圾行 -> null（不抛）', parseProcStat('no paren here') === null, '');
+  check('Y-6 /proc stat：字段不足 -> null', parseProcStat('1 (a) S 0 0') === null, '');
+  check('Y-6 /proc status：VmRSS 1234 kB -> 1263616 B', parseProcStatusRss('Name:\tnode' + LF + 'VmRSS:\t  1234 kB' + LF) === 1234 * 1024, '');
+  check('Y-6 /proc status：无 VmRSS（内核线程）-> null', parseProcStatusRss('Name:\tkworker' + LF) === null, '');
+  check('Y-6 ps cputime mm:ss.cc -> 303210ms', parseCpuTimeMs('05:03.21') === 303210, String(parseCpuTimeMs('05:03.21')));
+  check('Y-6 ps cputime h:mm:ss -> 3723000ms', parseCpuTimeMs('1:02:03') === 3723000, String(parseCpuTimeMs('1:02:03')));
+  check('Y-6 ps cputime dd-hh:mm:ss -> 183845000ms', parseCpuTimeMs('2-03:04:05') === 183845000, String(parseCpuTimeMs('2-03:04:05')));
+  check('Y-6 ps cputime 00:00 -> 0（零是合法值，不得当失败）', parseCpuTimeMs('00:00') === 0, '');
+  check('Y-6 ps cputime 垃圾输入 -> null', parseCpuTimeMs('junk') === null, '');
+  const psTable = '  PID  PPID    RSS      TIME' + LF + '  100     1  10240    01:00' + LF + '  101   100   5120  00:30.5' + LF + '  102   999   2048    00:01' + LF;
+  const procs = parsePsTable(psTable);
+  check('Y-6 ps 表：表头/短行跳过，只留数据行', procs.length === 3, String(procs.length));
+  const p100 = procs.find((p) => p.pid === 100);
+  check('Y-6 ps 表：rss kB->字节 且 cputime->毫秒', p100 && p100.rssBytes === 10240 * 1024 && p100.cpuMs === 60000, JSON.stringify(p100));
+  check('Y-6 ps 表：父子链保真（101 的 ppid=100）', procs.find((p) => p.pid === 101).ppid === 100, '');
+  const cim = parseCimJson('[{"ProcessId":10,"ParentProcessId":1,"WorkingSetSize":2048,"UserModeTime":1000,"KernelModeTime":2000}]');
+  check('Y-6 CIM JSON：100ns->毫秒（3000/1e4=0.3）且 rss 取字节', cim.length === 1 && cim[0].cpuMs === 0.3 && cim[0].rssBytes === 2048, JSON.stringify(cim));
+  const cimSingle = parseCimJson('{"ProcessId":7,"ParentProcessId":0,"WorkingSetSize":10,"UserModeTime":0,"KernelModeTime":0}');
+  check('Y-6 CIM JSON：单对象（非数组）也归一为表', cimSingle.length === 1 && cimSingle[0].pid === 7, JSON.stringify(cimSingle));
+  check('Y-6 CIM JSON：非法 JSON -> 空表不抛', parseCimJson('not json').length === 0, '');
+  const tree = [
+    { pid: 1, ppid: 0, rssBytes: 100, cpuMs: 10 },
+    { pid: 2, ppid: 1, rssBytes: 200, cpuMs: 20 },
+    { pid: 3, ppid: 2, rssBytes: 50, cpuMs: 5 },
+    { pid: 4, ppid: 9, rssBytes: 999, cpuMs: 99 },
+  ];
+  const agg = aggregate(1, tree);
+  check('Y-6 树聚合：沿父子链求和（350B/35ms），无关进程不计', agg && agg.rssBytes === 350 && agg.cpuMs === 35, JSON.stringify(agg));
+  check('Y-6 树聚合：root 不在表内（已退出）-> null（不是零占用谎报）', aggregate(12345, tree) === null, '');
+  check('Y-6 树聚合：竞态数据成环不死循环、每 pid 只计一次',
+    (() => { const c = aggregate(1, [{ pid: 1, ppid: 2, rssBytes: 10, cpuMs: 1 }, { pid: 2, ppid: 1, rssBytes: 20, cpuMs: 2 }]); return c && c.rssBytes === 30; })(), '');
+  // 异步段（sampleAsync 契约）：必须等它落账再收尾，防汇总先跑造成假绿跳过。
+  pendingChecks.push((async () => {
+    check('Y-6 sampleAsync：pid 非法（0/负/小数/字符串）-> null 不抛',
+      (await resstats.sampleAsync(0)) === null && (await resstats.sampleAsync(-2)) === null &&
+      (await resstats.sampleAsync(1.5)) === null && (await resstats.sampleAsync('x')) === null, '');
+    const platform = require(path.join(ROOT, 'src', 'platform', 'os', 'index'));
+    if (platform.isLinux) {
+      const self = await resstats.sampleAsync(process.pid);
+      check('Y-6 Linux 真机自采：本进程树 rss>0 且 cpuMs>=0', !!self && self.rssBytes > 0 && self.cpuMs >= 0, JSON.stringify(self));
+      check('Y-6 不存在的极大 pid -> null', (await resstats.sampleAsync(2147483646)) === null, '');
+    } else {
+      check('Y-6 非 Linux：子进程数据源由 CI 对应 runner 裁决（本宿主只断契约形态）',
+        typeof resstats.sampleAsync === 'function', '');
+    }
+  })());
+}
+
+Promise.all(pendingChecks).then(() => {
+  const failed = results.filter((r) => !r);
+  console.log(LF + '结果: ' + (results.length - failed.length) + ' passed, ' + failed.length + ' failed');
+  process.exit(failed.length ? 1 : 0);
+});

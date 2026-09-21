@@ -18,6 +18,7 @@
 //   SW-6  面板经消息桥请壳代执行（kernelUpdateBridge + AboutCard），不再调内核写端点
 //   SW-7  反向：判据能识别旧的写实现（门禁非空转）
 //   SW-8  面板侧消息来源校验：收方向只认 ev.source === window.parent
+//   SW-9  面板消费壳中继的进度帧，且等待上界来自壳下发的预算（禁止写死 6 分钟）
 // ---------------------------------------------------------------------------
 
 const fs = require('node:fs');
@@ -114,6 +115,39 @@ check('SW-8 反向非空转：无来源校验的旧形态判为违规',
   !hasSourceGuard('const onMessage = (ev) => {\n      if (d.requestId !== requestId) return;\n    };'),
   '旧形态确实不含 ev.source 判定');
 
-const failed = results.filter((r) => !r);
-console.log(String.fromCharCode(10) + '结果: ' + (results.length - failed.length) + ' passed, ' + failed.length + ' failed');
+// -- SW-9：面板消费进度帧 + 等待上界取自壳下发的预算 --
+//   内核安装单源上限 15 分钟、总预算 17 分钟，都在**壳**侧定义；面板原先写死 6 分钟，
+//   于是几乎必然先报「桌面壳无响应」，用户重试 = 两个进程并发写同一个 npm 全局包。
+//   现契约：壳在首帧进度里下发 maxWaitMs，面板据此重设上界；进度文字必须交给 UI。
+//   判据一律只看代码行（注释里复述旧写法不算违规，也不该算通过）。
+const forwardsProgress = (src) => {
+  const c = codeOnly(src);
+  return c.includes('d.type === PROGRESS')
+    && /onProgress\s*\??\.\s*\(/.test(c)          // 非终结分支回调 UI
+    && !/=== PROGRESS\)\s*return;/.test(c);        // 旧的「丢弃进度帧」写法
+};
+const waitsForShellBudget = (src) => {
+  const c = codeOnly(src);
+  return c.includes('d.maxWaitMs') && !c.includes('6 * 60 * 1000');
+};
+check('SW-9 桥把进度帧回调给 UI', forwardsProgress(bridge), '要求 onProgress 调用且不得丢弃 PROGRESS');
+check('SW-9 桥的等待上界来自壳（无写死 6 分钟）', waitsForShellBudget(bridge), '要求消费 d.maxWaitMs');
+check('SW-9 AboutCard 传入进度回调', /requestKernelUpdate\(\s*setCoreProg/.test(about), 'ok');
+check('SW-9 AboutCard 呈现进度文字', /coreProg\??\.status/.test(about), 'ok');
+// 反向：两条判据各自必须会「咬人」，否则等于空转。
+const legacyBridge = 'export function requestKernelUpdate(timeoutMs = 6 * 60 * 1000) {\n'
+  + '  if (d.type === PROGRESS) return; // 进度消息不终结请求\n'
+  + '}\n';
+check('SW-9 反向 A：旧桥整段两判据皆违规',
+  !forwardsProgress(legacyBridge) && !waitsForShellBudget(legacyBridge),
+  'gate=' + JSON.stringify([forwardsProgress(legacyBridge), waitsForShellBudget(legacyBridge)]));
+// 只补了进度回调、超时仍写死 —— 这是最容易「改一半」留下的形态，必须被单独抓到。
+const halfFixedBridge = legacyBridge
+  .replace('timeoutMs = 6 * 60 * 1000', 'onProgress')
+  .replace('if (d.type === PROGRESS) return;', 'if (d.type === PROGRESS) onProgress?.({}); setTimeout(f, 6 * 60 * 1000);');
+check('SW-9 反向 B：消费进度但仍写死 6 分钟上界 -> 超时判据违规',
+  forwardsProgress(halfFixedBridge) === true && waitsForShellBudget(halfFixedBridge) === false,
+  'gate=' + JSON.stringify([forwardsProgress(halfFixedBridge), waitsForShellBudget(halfFixedBridge)]));
+
+const failed = results.filter((r) => !r);console.log(String.fromCharCode(10) + '结果: ' + (results.length - failed.length) + ' passed, ' + failed.length + ' failed');
 process.exit(failed.length ? 1 : 0);

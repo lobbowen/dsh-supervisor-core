@@ -19,7 +19,7 @@ function owns(pathname) {
  *       保留段 0/8 与 224+/4 / localhost 与 .local .internal .home.arpa / IPv6::1:: ULA fc00::/7 与
  *       链路本地 fe80::/10。UI 的「添加自定义镜像前先测活」流程仍然可用（公网地址不受限）。
  *
- *  保留 ^https?: 字面校验作为协议层第一道闸（且 test/round13-csp-probe-test.js:72 以源码形态钉住它）。
+ *  保留 ^https?: 字面校验作为协议层第一道闸（且 test/round13-csp-probe-test.js 以源码形态钉住它）。
  *
  *  重定向（原「已知未覆盖」**已闭环**）：platform/distribution/registry.js 的 probeRegistry 已改为
  *    `redirect: 'manual'` + 显式「非 2xx 即失败」，故公网主机 302 到内网地址不再绕回本策略。

@@ -1,12 +1,15 @@
 #!/usr/bin/env node
 'use strict';
 
-// 实例对账（reconcile）契约测试：
-// 验证启停唯一决策者 reconcileInstances 的不变量：
-//  R1 常驻：有可用账号 -> 常驻（selected/activeAccount/首个可用）实例在跑
-//  R2 备胎：仅当常驻将耗尽（>=80%）-> 至多 1 备胎（最低占用可用账号），否则无备胎
+// 实例对账（reconcile）契约测试（PROXY-LIFECYCLE-STANDARD W1 形态）：
+// 验证生命周期引擎（pool.js 期望集 + restart.js 执行面）的不变量：
+//  R1 期望集恒为「在用1+预热1」：可用账号按 registeredAt 登记顺序取前 2，存活进程数=|期望集|；
+//    非期望集（等待区）零进程且端口随之归零（LC 核心-3）；对账幂等不重复 spawn
+//  R2 在用归属与 sticky：selectedAccountKeyId 提为在用；预热槽 sticky 留任；
+//    退位者走停止仲裁回收，下一拍其端口释放；|期望集| <= 2
 //  R3 绝不为不可用账号（ready+满额/冻结）保活实例——旧预热-回收死循环的回归防线
-//  R4 幂等：重复对账不重复 spawn；非期望集实例被回收
+//  R4 状态事件表：冻结即即时回收（进程+端口零宽限，_onStatusTransition 钩子），
+//    恢复回池（reconcileNow），满额账号不被拉起
 //  R5 usage 纯派生：in-use=activeAccount 指向；warming=实例在跑非在用；idle=其余
 //  R6 序列化守卫：ready+满额矛盾落盘前自我归位 frozen（不再产生预热燃料）
 //  R11 重启幸存者一律弃用重拉（禁 adopt：幸存进程 stdio 归属已死 daemon -> EPIPE 楔死，/health 探针盲区），同端口全新实例无幽灵不漂移
@@ -60,57 +63,68 @@ process.on('SIGTERM', () => { killSpawnedSync(); process.exit(143); });
   const app = { id: 'vm', name: 'VM', command: ['node', mockApp, '--port', '{{port}}', '--api-key', '{{key}}'], healthPath: '/health', upstream: 'http://127.0.0.1:0', real: false, quota: { type: 'commandcode-billing', apiBase: 'http://127.0.0.1:9' } };
 
   // 构造账号+实例映射（与 addAccount 同构：实例 keyId = keyFingerprint(key)）
-  const addAcc = async (p, key, pct, status, extraQ) => {
+  // registeredAt 显式传入：期望集顺序判据（登记序）不能建立在 Date.now() 并列之上。
+  const addAcc = async (p, key, pct, status, extraQ, regAt) => {
     const inst = await p.ensureInstance(key);
     const quota = Object.assign({ weekly: { status: 'ok', percent: pct }, monthly: { status: 'ok', percent: pct }, monthlyRemaining: 10 }, extraQ || {});
-    const acc = { key, keyId: inst.keyId, maskedKey: '...' + key.slice(-6), status: status || 'ready', quota, registeredAt: Date.now() };
+    const acc = { key, keyId: inst.keyId, maskedKey: '...' + key.slice(-6), status: status || 'ready', quota, registeredAt: regAt || Date.now() };
     p.accounts.push(acc);
     return acc;
   };
 
-  // R1 常驻 + 无备胎：全部低占用可用账号 -> 只有常驻在跑
+  // R1 期望集 = 在用1+预热1（registeredAt 登记序）+ 等待区零进程零端口 + 幂等
   {
     const p = new ProxyProvider({ id: 'p1', name: 'P1', kind: 'proxy', proxyAppId: 'vm', app, logger: log, events: null, dist: null, onPersist: () => {} });
     p.activated = true;
-    await addAcc(p, 'sk-a1', 10);
-    await addAcc(p, 'sk-a2', 20);
-    await addAcc(p, 'sk-a3', 30);
+    const A = await addAcc(p, 'sk-a1', 10, 'ready', null, 1000);
+    const B = await addAcc(p, 'sk-a2', 20, 'ready', null, 2000);
+    const C = await addAcc(p, 'sk-a3', 30, 'ready', null, 3000);
     const r = await p.reconcileInstances();
-    check('R1a 期望集 = 仅常驻 1（无备胎）', r.desired.length === 1, JSON.stringify(r.desired));
-    const running = (p.instances || []).filter((i) => i.pid).length;
-    check('R1b 对账后实例在跑数 = 1（常驻）', running === 1, 'running=' + running);
+    check('R1a 期望集 = 登记序前 2（在用 A + 预热 B），C 在等待区',
+      r.desired.length === 2 && r.desired[0] === A.keyId && r.desired[1] === B.keyId, JSON.stringify(r.desired));
+    const running = (p.instances || []).filter((i) => i.pid);
+    check('R1b 存活进程数 = |期望集| = 2（在用+预热各 1）', running.length === 2, 'running=' + running.length);
+    const cInst = p.instanceOf(C);
+    check('R1c 等待区账号零进程且端口归零（LC 核心-3）', !cInst.pid && !cInst.port && !ports.byOwner('proxy:' + C.keyId), 'pid=' + cInst.pid + ' port=' + cInst.port);
+    check('R1d 期望集账号保留绑定端口（防漂移，冷账号可再拉起）',
+      !!p.instanceOf(A).port && !!p.instanceOf(B).port, '');
     // 第二次对账幂等
     const r2 = await p.reconcileInstances();
-    check('R1c 对账幂等（不重复 spawn）', r2.started.length === 0, JSON.stringify(r2.started));
+    check('R1e 对账幂等（不重复 spawn）', r2.started.length === 0, JSON.stringify(r2.started));
     // 清理
     for (const i of p.instances) { if (i.pid) p.stopInstance(i); }
     await new Promise((res) => setTimeout(res, 400));
   }
 
-  // R2 备胎：常驻额度 >=80% -> 补 1 个最低占用可用备胎；不可用满额账号绝不保活
+  // R2 在用归属 + 预热 sticky：selected 提为在用后预热留任；退位者回收、下一拍端口释放
   {
     const p = new ProxyProvider({ id: 'p2', name: 'P2', kind: 'proxy', proxyAppId: 'vm', app, logger: log, events: null, dist: null, onPersist: () => {} });
     p.activated = true;
-    const resident = await addAcc(p, 'sk-r', 88); // 将耗尽
-    const low = await addAcc(p, 'sk-low', 5); // 低占用备胎
-    const full = await addAcc(p, 'sk-full', 100, 'ready', { weekly: { status: 'rate-limited', percent: 100 } }); // ready 但满额（不可用）
-    p.selectedAccountKeyId = resident.keyId;
+    const A = await addAcc(p, 'sk-b1', 10, 'ready', null, 1000);
+    const B = await addAcc(p, 'sk-b2', 20, 'ready', null, 2000);
+    const C = await addAcc(p, 'sk-b3', 30, 'ready', null, 3000);
+    await p.reconcileInstances(); // 在用 A + 预热 B（sticky 记录进 _prewarmKeyId）
+    check('R2a 预热槽 sticky 记录 = B', p._prewarmKeyId === B.keyId, String(p._prewarmKeyId));
+    p.selectedAccountKeyId = C.keyId; // 用户显式切换：C 提为在用
     const r = await p.reconcileInstances();
-    check('R2a 期望集 = 常驻 + 1 备胎（low）', r.desired.length === 2 && r.desired.includes(resident.keyId) && r.desired.includes(low.keyId), JSON.stringify(r.desired));
+    check('R2b selected 提为在用，预热 sticky 留任（期望集 = C,B 而非 C,A）',
+      r.desired.length === 2 && r.desired.includes(C.keyId) && r.desired.includes(B.keyId) && !r.desired.includes(A.keyId), JSON.stringify(r.desired));
+    const aInst = p.instanceOf(A);
+    check('R2c 退位者进程被回收（停止仲裁，无在途即终止）', !aInst.pid, 'pid=' + aInst.pid);
+    await p.reconcileInstances(); // 第二拍：零进程非期望记录端口归零
+    check('R2d 退位者端口下一拍释放（等待区零存在）', !aInst.port && !ports.byOwner('proxy:' + A.keyId), 'port=' + aInst.port);
     const running = (p.instances || []).filter((i) => i.pid);
-    const runKeys = running.map((i) => i.keyId);
-    check('R2b 在跑 = {常驻, 备胎}（不含满额账号）', runKeys.includes(resident.keyId) && runKeys.includes(low.keyId) && !runKeys.includes(full.keyId), JSON.stringify(runKeys));
-    check('R2c 实例数 ≤2（资源最低）', running.length === 2, 'running=' + running.length);
+    check('R2e 存活进程 ≤ 2（在用1+预热1 资源最低）', running.length === 2, 'running=' + running.length);
     for (const i of p.instances) { if (i.pid) p.stopInstance(i); }
     await new Promise((res) => setTimeout(res, 400));
   }
 
-  // R3 满额账号（ready+rate-limited）绝不被拉起：对账后其实例 stopped
+  // R3 满额账号（ready+rate-limited）绝不被拉起/保活：对账后其实例回收、端口归零
   {
     const p = new ProxyProvider({ id: 'p3', name: 'P3', kind: 'proxy', proxyAppId: 'vm', app, logger: log, events: null, dist: null, onPersist: () => {} });
     p.activated = true;
-    const ok = await addAcc(p, 'sk-ok', 10);
-    const bad = await addAcc(p, 'sk-bad', 100, 'ready', { weekly: { status: 'rate-limited', percent: 100 } }); // ready 但满额
+    const ok = await addAcc(p, 'sk-ok', 10, 'ready', null, 1000);
+    const bad = await addAcc(p, 'sk-bad', 100, 'ready', { weekly: { status: 'rate-limited', percent: 100 } }, 2000); // ready 但满额
     // 先把 bad 的实例手动拉起（模拟旧 bug 残留：满额账号已被预热）-> 对账应收敛停掉
     const badInst = p.instanceOf(bad);
     const sr = await p.startInstance(badInst);
@@ -118,31 +132,31 @@ process.on('SIGTERM', () => { killSpawnedSync(); process.exit(143); });
     await new Promise((res) => setTimeout(res, 800));
     const r = await p.reconcileInstances();
     check('R3b 对账后 bad（不可用）实例被回收', !badInst.pid, 'pid=' + badInst.pid);
-    check('R3c ok（常驻）实例在跑', p.instanceOf(ok).pid ? true : false, '');
+    check('R3c ok（在用）实例在跑且期望集不含不可用账号',
+      !!p.instanceOf(ok).pid && !r.desired.includes(bad.keyId), JSON.stringify(r.desired));
     for (const i of p.instances) { if (i.pid) p.stopInstance(i); }
     await new Promise((res) => setTimeout(res, 400));
   }
 
-  // R4 冻结 mark* -> reconcileNow 补备胎（无感切换），且不为不可用账号预热
+  // R4 状态事件表：冻结即时回收（进程+端口零宽限）+ 恢复回池，满额账号不被拉起
   {
     const p = new ProxyProvider({ id: 'p4', name: 'P4', kind: 'proxy', proxyAppId: 'vm', app, logger: log, events: null, dist: null, onPersist: () => {} });
     p.activated = true;
-    const resident = await addAcc(p, 'sk-r4', 85);
-    const spare = await addAcc(p, 'sk-s4', 10);
-    const full = await addAcc(p, 'sk-f4', 100, 'ready', { weekly: { status: 'rate-limited', percent: 100 } });
+    const resident = await addAcc(p, 'sk-r4', 85, 'ready', null, 1000);
+    const spare = await addAcc(p, 'sk-s4', 10, 'ready', null, 2000);
+    const full = await addAcc(p, 'sk-f4', 100, 'ready', { weekly: { status: 'rate-limited', percent: 100 } }, 3000);
     p.selectedAccountKeyId = resident.keyId;
-    // 先对账出 常驻+备胎
-    await p.reconcileInstances();
-    // 冻结常驻（模拟上游 400/429 响应驱动 markQuotaExhausted）
+    await p.reconcileInstances(); // 在用 resident + 预热 spare
+    const rInst = p.instanceOf(resident);
+    // 冻结常驻（模拟上游 400/429 响应驱动 markQuotaExhausted）——事件表要求**同步**回收，不等对账
     p.markQuotaExhausted(resident, 3600000);
-    await new Promise((res) => setTimeout(res, 800));
-    // resident 已冻结：期望集应落在新的常驻（备胎晋升）+ 冻结账号实例应已停
-    const r = await p.reconcileInstances();
+    check('R4a 冻结即同步回收：进程与端口零宽限归零（_onStatusTransition→reclaimAccount）',
+      !rInst.pid && !rInst.port && !ports.byOwner('proxy:' + resident.keyId), 'pid=' + rInst.pid + ' port=' + rInst.port);
+    await new Promise((res) => setTimeout(res, 1500)); // reconcileNow（恢复/收敛回池）异步收敛
     const runningKeys = (p.instances || []).filter((i) => i.pid).map((i) => i.keyId);
-    check('R4a 冻结后新常驻在跑（备胎晋升）', runningKeys.includes(spare.keyId), JSON.stringify(runningKeys));
-    check('R4b 冻结账号（resident）实例已回收', !p.instanceOf(resident) || !p.instanceOf(resident).pid, '');
+    check('R4b 冻结后 spare 晋升在用在跑（reconcileNow 由 mark* 触发）', runningKeys.includes(spare.keyId), JSON.stringify(runningKeys));
     check('R4c 满额账号（full）不被拉起', !runningKeys.includes(full.keyId), JSON.stringify(runningKeys));
-    check('R4d 实例数 ≤ 期望集大小（资源最低）', runningKeys.length <= r.desired.length, runningKeys.length + ' vs ' + r.desired.length);
+    check('R4d 存活进程 ≤ 期望集大小（资源最低）', runningKeys.length <= 2, runningKeys.length + '');
     for (const i of p.instances) { if (i.pid) p.stopInstance(i); }
     await new Promise((res) => setTimeout(res, 400));
   }
@@ -225,25 +239,23 @@ process.on('SIGTERM', () => { killSpawnedSync(); process.exit(143); });
     await new Promise((res) => setTimeout(res, 300));
   }
 
-  // R9 交替请求不启停追逐（sticky resident + reconcile）：资源稳定
+  // R9 交替切换不启停追逐（selected 锚定期望集 + sticky 预热）：资源稳定
   {
     const p = new ProxyProvider({ id: 'p9', name: 'P9', kind: 'proxy', proxyAppId: 'vm', app, logger: log, events: null, dist: null, onPersist: () => {} });
     p.activated = true;
-    const addA = async (key, pct) => { const inst = await p.ensureInstance(key); const acc = { key, keyId: inst.keyId, maskedKey: '...' + key.slice(-6), status: 'ready', quota: { weekly: { status: 'ok', percent: pct }, monthly: { status: 'ok', percent: pct }, monthlyRemaining: 10 }, registeredAt: Date.now() }; p.accounts.push(acc); return acc; };
-    const a1 = await addA('sk-alt1', 10);
-    const a2 = await addA('sk-alt2', 12);
+    const addA = async (key, pct, at) => { const inst = await p.ensureInstance(key); const acc = { key, keyId: inst.keyId, maskedKey: '...' + key.slice(-6), status: 'ready', quota: { weekly: { status: 'ok', percent: pct }, monthly: { status: 'ok', percent: pct }, monthlyRemaining: 10 }, registeredAt: at }; p.accounts.push(acc); return acc; };
+    const a1 = await addA('sk-alt1', 10, 1000);
+    const a2 = await addA('sk-alt2', 12, 2000);
     let starts = 0, stops = 0;
     const osi = p.startInstance.bind(p); const ost = p.stopInstance.bind(p);
     p.startInstance = function (i) { starts++; return osi(i); };
     p.stopInstance = function (i) { stops++; return ost(i); };
     for (let rr = 0; rr < 10; rr++) {
       const a = (rr % 2 === 0) ? a1 : a2;
+      // 真实请求路径：forward 选定账号后经引擎门面 ensureServable 保证可服务（W1 门面）
+      await p.ensureServable(a);
       p.markInUse(a.keyId);
-      const i = p.instanceOf(a);
-      if (!i.pid) await p.startInstance(i);
-      p.markUsed(i); // 真实请求路径 forward-core pick 后调用 markUsed -> lastUsedAt 新鲜 -> 闲置宽限保护
-      a.inflight = 1;
-      if (rr % 2 === 1) { a1.inflight = 0; a2.inflight = 0; await p.reconcileInstances(); }
+      if (rr % 2 === 1) { await p.reconcileInstances(); }
     }
     check('R9a 10 次交替请求启停有界（≤3 次 spawn）', starts <= 3, 'starts=' + starts + ' stops=' + stops);
     for (const i of p.instances) if (i.pid) p.stopInstance(i);
@@ -351,11 +363,19 @@ process.on('SIGTERM', () => { killSpawnedSync(); process.exit(143); });
     await new Promise((res) => setTimeout(res, 600));
     check('R12b 前置：进程存活、台账为空', pidlook.isAlive(pid) && p._terminatingPids.size === 0, 'alive=' + pidlook.isAlive(pid));
     p.stopInstance(inst); // SIGTERM -> 被 stub 忽略
-    // Windows 无 POSIX 信号语义：process.kill(pid,'SIGTERM') 实际等同强杀（TerminateProcess），
-    // stub 的 process.on('SIGTERM') handler 不生效 -> 进程被直接终止。产品 waitAllStopped 杀净的
-    // 行为在 Windows 上同样正确，仅"SIGTERM 被忽略"前提不存在——断言按平台区分。
+    // Windows 无 POSIX 信号语义：stub 的 process.on('SIGTERM') handler 根本不生效，
+    // carrier L1 的终止经 killTree 落为 `taskkill /T /F`（强杀，等价 SIGKILL）——进程必死。
+    // 但 taskkill 是**异步** spawn（platform/os/process.js），落刀有几十~几百 ms 窗口，
+    // 紧跟 stopInstance 判 isAlive 会输在时序上。故在升级 SIGKILL 预算（ESCALATE_MS=1500）
+    // 之前给 1200ms 有界等待：窗口内死亡只可能来自第一刀 taskkill，判据不空转。
     const winNoSig = process.platform === 'win32';
-    check('R12c stopInstance 后进程处理（POSIX：仍在=TERM 被忽略；Windows：已终止=无 SIGTERM 语义）',
+    if (winNoSig) {
+      const deadline = Date.now() + 1200;
+      while (pidlook.isAlive(pid) && Date.now() < deadline) {
+        await new Promise((res) => setTimeout(res, 50));
+      }
+    }
+    check('R12c stopInstance 后进程处理（POSIX：仍在=TERM 被忽略；Windows：taskkill 强杀在升级预算内杀净=无 SIGTERM 语义可抗）',
       winNoSig ? !pidlook.isAlive(pid) : pidlook.isAlive(pid), 'alive=' + pidlook.isAlive(pid));
     check('R12d pid 已入停服台账', p._terminatingPids.has(pid), '');
     // /proc 仅 Linux 有；Windows/macOS 无 zombie 概念（无回收滞后）-> 进程死即算死，statOf 恒 'GONE'

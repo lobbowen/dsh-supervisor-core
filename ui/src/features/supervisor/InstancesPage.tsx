@@ -30,21 +30,27 @@ export function InstancesPage({ onRegisterActions }: { onRegisterActions?: (a: {
   const [fName, setFName] = useState("");
   const [fPort, setFPort] = useState("");
   const [fCmd, setFCmd] = useState("");
-  const [fMem, setFMem] = useState("4G");
-  const [fCpu, setFCpu] = useState("150%");
 
   // 概念清分：后端 /instances 已把沙箱与原生拆分——instances[] 即沙箱（原生主干在 native 字段，
   // 由 Overview 主干卡呈现）。此处不再需要 domain 过滤。
   const items = snap.instances?.instances ?? [];
-  // 平台能力（A1 断点修复）：沙箱实例仅 Linux + systemd-run 可用——能力经 /env/status.capabilities 暴露。
+  // 平台能力（A1 断点修复）：跑舱能力与限额档位经 /env/status.capabilities 分字段暴露
+  //（sandboxLaunch=能否跑舱，sandboxEnforcement=限额由谁执行，两者不得混装）。
   // 不支持时**前置提示**（而非等用户点「添加」后被后端 400 拒绝才知道）。
-  const [caps, setCaps] = useState<{ multiInstance?: boolean; platform?: string } | null>(null);
+  const [caps, setCaps] = useState<{ sandboxLaunch?: boolean; sandboxEnforcement?: string; platform?: string } | null>(null);
   useEffect(() => {
     let alive = true;
     supervisorApi.envStatus().then((r) => { if (alive) setCaps(r.capabilities ?? null); }).catch(() => undefined);
     return () => { alive = false; };
   }, []);
-  const sandboxUnsupported = caps !== null && caps.multiInstance === false;
+  const sandboxUnsupported = caps !== null && caps.sandboxLaunch === false;
+  // W3 档位翻转：三平台均可跑舱；supervise 软限（采样式治理、无内核强制）不拦功能，只如实标注语义。
+  // 能力未回读（caps=null）时档位句一律不说——宁可少讲，不谎报硬限。
+  const softTier = caps?.sandboxEnforcement === "supervise";
+  const tierLabel = caps == null ? null
+    : caps.sandboxEnforcement === "cgroup" ? "cgroup 内核硬限"
+      : softTier ? "采样式软限（超限由守卫按拍数收割重启，非内核级强制）"
+        : "无内核级限额";
 
   // 顶部 Toolbar 动作注册（对齐原版：页面动作按钮渲染在置顶行，点击打开本页 dialog）
   useEffect(() => {
@@ -56,16 +62,16 @@ export function InstancesPage({ onRegisterActions }: { onRegisterActions?: (a: {
   const act = (key: string, fn: () => Promise<unknown>) => run(key, fn);
 
   async function addInstance() {
-    if (sandboxUnsupported) { toast.error("当前平台不支持沙箱实例（需 Linux + systemd-run）"); return; }
+    if (sandboxUnsupported) { toast.error("当前平台不支持沙箱实例（见 /env/status 能力矩阵）"); return; }
     const port = parseInt(fPort, 10);
     if (!Number.isFinite(port) || port <= 0) { toast.error("请填写有效端口"); return; }
     const command = fCmd ? fCmd.split(/\n/).map((x) => x.trim()).filter(Boolean) : [];
     try {
-      const r = await supervisorApi.instanceAdd({ name: fName.trim() || ("沙箱 " + port), port, command, memoryMax: fMem || "4G", cpuQuota: fCpu || "150%" });
+      const r = await supervisorApi.instanceAdd({ name: fName.trim() || ("沙箱 " + port), port, command });
       if (r && r.ok === false) { toast.error(r.error || "添加失败"); return; }
       toast.success("已添加实例");
       setAddOpen(false);
-      setFName(""); setFPort(""); setFCmd(""); setFMem("4G"); setFCpu("150%");
+      setFName(""); setFPort(""); setFCmd("");
       supervisorStore.refresh();
     } catch (e) { toast.error(String(e)); }
   }
@@ -92,8 +98,12 @@ export function InstancesPage({ onRegisterActions }: { onRegisterActions?: (a: {
     const pm = instancePhaseMeta(lp, running);
     const upd = it.updateJob;
     const updating = upd?.state === "running";
-    const mem = it.sandbox?.memoryMax || "—";
-    const cpu = it.sandbox?.cpuQuota || "—";
+    const mem = it.state?.allocation?.memoryMax || "—";
+    const cpu = it.state?.allocation?.cpuQuota || "—";
+    // 实测占用（监督拍采样回填；停止/未采到为 null，与配额成对展示，绝不以零充数）
+    const usage = it.state?.usage;
+    const uMem = usage && typeof usage.memMb === "number" ? usage.memMb : null;
+    const uCpu = usage && typeof usage.cpuPct === "number" ? usage.cpuPct : null;
     const busy = busyId === it.id;
     return (
       <Card className="overflow-visible">
@@ -162,8 +172,15 @@ export function InstancesPage({ onRegisterActions }: { onRegisterActions?: (a: {
           {/* 左信息(沙箱/远程/内存CPU)——窄屏(内容区<860px)隐藏, 位置让给右侧操作按钮 */}
           <span className="hidden min-w-0 items-center lg:inline-flex gap-2 text-xs text-muted-foreground">
             <DomainBadge domain="sandbox" />
-            <Pill tone={it.remoteEnabled ? "boot" : "off"}>{it.remoteEnabled ? "远程开启" : "远程关闭"}</Pill>
-            <span className="whitespace-nowrap">内存 {mem} · CPU {cpu}</span>
+            <Pill tone={it.remoteMode && it.remoteMode !== "off" ? "boot" : "off"}>{it.remoteMode === "wan" ? "远程·公网" : it.remoteMode === "lan" ? "远程·局域网" : "远程关闭"}</Pill>
+            <span className="whitespace-nowrap" title={"配额由守卫按机器预算与活跃实例数动态推导" + (tierLabel ? "；执行档位：" + tierLabel : "")}>
+              配额 内存 {mem} · CPU {cpu}{softTier ? "（软限）" : ""}
+            </span>
+            {uMem === null && uCpu === null ? null : (
+              <span className="whitespace-nowrap" title="监督拍实测值（最近一次采样；停止或未采到不显示）">
+                占用 {uMem === null ? "—" : `${uMem}MB`}{uCpu === null ? "" : ` · CPU ${Math.round(uCpu)}%`}
+              </span>
+            )}
           </span>
           <div className="ml-auto flex flex-wrap items-center gap-2">
             <Button disabled={!running} onClick={() => void act(it.id, () => supervisorApi.instanceOpenWeb(it.id))} size="sm" title="打开 DSH Web（自动带认证连接）" variant="outline" className="hidden md:inline-flex">
@@ -195,7 +212,7 @@ export function InstancesPage({ onRegisterActions }: { onRegisterActions?: (a: {
         <div className="flex items-start gap-2 rounded-lg border border-amber-500/30 bg-amber-500/5 px-3 py-2.5 text-xs text-muted-foreground">
           <TriangleAlert className="mt-0.5 size-3.5 shrink-0 text-amber-500" />
           <span>
-            当前平台（{caps?.platform || "未知"}）不支持沙箱实例：需 Linux + systemd-run（独立 cgroup 隔离）。
+            当前平台（{caps?.platform || "未知"}）不支持沙箱实例（能力矩阵见 /env/status 的 capabilities.sandboxLaunch；限额执行档位见 capabilities.sandboxEnforcement）。
             原生 DSH 主实例不受影响。
           </span>
         </div>
@@ -236,16 +253,10 @@ export function InstancesPage({ onRegisterActions }: { onRegisterActions?: (a: {
                 onChange={(e) => setFCmd(e.target.value)}
               />
             </div>
-            <div className="grid grid-cols-2 gap-3">
-              <div className="grid gap-1.5">
-                <Label>内存限额</Label>
-                <Input placeholder="如 4G" value={fMem} onChange={(e) => setFMem(e.target.value)} />
-              </div>
-              <div className="grid gap-1.5">
-                <Label>CPU 配额</Label>
-                <Input placeholder="如 150%" value={fCpu} onChange={(e) => setFCpu(e.target.value)} />
-              </div>
-            </div>
+            <p className="text-xs text-muted-foreground">
+              内存/CPU 配额无需填写：启动时由守卫按机器预算与活跃实例数自动推导，实例增减后动态重分配。
+              {tierLabel ? ` 执行档位：${tierLabel}。` : ""}
+            </p>
           </div>
           <DialogFooter>
             <Button onClick={() => setAddOpen(false)} variant="outline">取消</Button>

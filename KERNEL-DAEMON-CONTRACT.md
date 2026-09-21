@@ -19,7 +19,7 @@
 | D2 | 不依赖 shebang | 必须能被 `node <bin> daemon` 直接执行（launcher 的 `require('../core.cjs')` 形态） |
 | D3 | **对外声明实际端口** | 绑定后把 `supervisor-api` 的实际端口写入 `ports.json`（`<stateDir>/ports.json`），供壳/其他进程发现 |
 | D4 | `GET /healthz` 可用 | 2xx 即就绪；壳以它作为唯一就绪判据 |
-| D5 | **不安装/不升级自己** | 内核包写入者是壳（见 `RELEASE-AND-UPDATE-MECHANISM.md` §6） |
+| D5 | **不安装/不升级自己** | 内核包写入者是壳（见 `archive/history/RELEASE-AND-UPDATE-MECHANISM.md` §6） |
 | D6 | **不建立/不启动/不停止自己的服务定义** | 服务定义与启停的所有者是壳；内核的 `install` 不再部署 systemd/launchd/schtasks |
 | D7 | **不依赖 HOME 隔离以外的全局状态** | 状态目录、锁、端口、日志都必须落在 `stateDir`（由 config 决定），不得散落到 `os.homedir()/` 固定路径 |
 | D8 | 版本可自报 | `--version` 与 `/guard/version` 与实际运行版本一致（壳用于 P3 对齐校验） |
@@ -72,4 +72,5 @@ P6 healthz  ── GET /healthz ────────────►  2xx
 | D-5 | 单实例：第二个 daemon 因 `guard.lock` 退出非零 |
 | D-6 | `ports.json` 的 `supervisor-api` 端口 == 实际监听端口：绑定后登记实际值，顺延时以同一 owner 释放旧登记 |
 | D-7 | 数据/日志路径经注入的 `stateDir`：proxy 不直拼 `os.homedir()`，router 向 provider 注入自 `config.stateFile` 派生的 `stateDir` |
-| D-8 | Windows 看护（watchdog）所有者 = 桌面壳：内核不再创建 watchdog 任务、不再写 `watchdog.ps1` |
+| D-8 | Windows 看护（watchdog）所有者 = 桌面壳：内核不再创建 watchdog 任务、不再写 `watchdog.ps1`。2026-09-21 反向收口：壳侧看护任务的动作也不再是内嵌 PowerShell，而是稳定入口的无头模式 `<壳> --watchdog`；**桌面壳进程自愈的唯一所有者是守卫**（`domains/shell/watchdog`，三平台一套），因为壳的监督者会随壳一起死（F3） |
+| D-9 | 壳的**无头模式清单**双仓同步：`domains/shell/core.js` 的 `HEADLESS_FLAGS` 必须逐一对应壳侧 `main.rs` 里「在 Tauri 初始化之前 exit」的入口（含 `--run-guard`、`--watchdog`）。漏一项 ⇒ 那个瞬时进程被 `isShellProcess` 当成「壳在运行」，看护短路成 `alive` 而永不拉起真壳；`restartShell` 共用同一谓词，漏项也会让它误杀运维进程（内核侧门禁 W2-f/g/h/i + 反空转 W2-j） |

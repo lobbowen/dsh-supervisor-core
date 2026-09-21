@@ -20,6 +20,18 @@
 //   CP-2  业务域不得出现 os/arch 映射对象字面量（与 M-c 呼应，此处再锁一层）
 //   CP-3  平台实现必须覆盖全部受支持平台（linux/darwin/win32 三份实现文件都在）
 //   CP-4  `package.json#engines.node` 必须存在（跨平台运行时下限的单一声明）
+//   CP-5  `src/domains/router/**` 零 `process.kill(`：反代隔离层（PROXY-ISOLATION-STANDARD
+//         L1）的终止/存活语义唯一经 `platform/os/carrier` 与 `os/process`。
+//         根因锁定：域内裸 kill(-pid) 在 win32 无组语义（只杀 .cmd 壳留占端口子孙，B13 同型）、
+//         sameProcessGroup 在 macOS 恒 false（自家监听者误判外部 -> 孤儿）。
+//   CP-6  `src/domains/**` 零 `/proc/` 字面（进程事实经 os/pidlookup 门面，三端语义齐）。
+//   CP-7  负 pid 组信号 `process.kill(-` 只允许 `src/platform/os/process.js`（POSIX 组信号
+//         的唯一收口；ownGroup 前提由该层注释纪律约束）。
+//   CP-8  `src/domains/**` 零 `.cmd/.bat` 执行字面与零 `_npx` 缓存路径字面：垫片形态与
+//         npm 缓存目录是平台事实（npx-forms#npxLauncher/npxCacheDir、exec-path#npxBin），win32 无
+//         shell spawn .cmd 必 EINVAL（CVE-2024-27980），POSIX 形 `_npx` 路径在 win 恒未命中。
+//   CP-9  标准正文同步锁：CP-5..CP-8 条款出自 PROXY-ISOLATION-STANDARD.md（本门禁真读正文，
+//          standards-uniqueness U-1b 的 reads:true 以此为准），条款编号与 L0/L1/L2 职责缺一即红。
 //
 // 每条都有**反向断言**（判据必须能识别违规形态，否则门禁空转）。
 // ---------------------------------------------------------------------------
@@ -127,6 +139,64 @@ const PLATFORM_RE = /\bprocess\.(platform|arch)\b|\bos\.(platform|arch)\s*\(/;
   const pkg = require(path.join(ROOT, 'package.json'));
   check('CP-4 package.json#engines.node 已声明（跨平台运行时下限单源）',
     !!(pkg.engines && pkg.engines.node), (pkg.engines && pkg.engines.node) || '(缺)');
+}
+
+// -- CP-5..CP-8：反代隔离层进程纪律（PROXY-ISOLATION-STANDARD 的机器牙齿）--
+//   共同范式（继承门禁三教训）：判据抽纯函数 scan()，真实扫描与反向合成样本共用同一把尺；
+//   反向样本必须真的命中，防「此刻恰好为零」的空转门禁。
+const DOMAIN_FILES = collectJs(path.join(ROOT, 'src', 'domains'));
+function scan(files, re, exclude) {
+  const offenders = [];
+  for (const f of files) {
+    const rel = path.relative(ROOT, f).replace(/\\/g, '/');
+    if (exclude && exclude.some((p) => rel.startsWith(p) || rel === p)) continue;
+    const code = stripComments(fs.readFileSync(f, 'utf8'));
+    const hit = code.split(String.fromCharCode(10)).findIndex((l) => re.test(l));
+    if (hit >= 0) offenders.push(rel + ':' + (hit + 1));
+  }
+  return offenders;
+}
+const ALL_SRC = collectJs(path.join(ROOT, 'src'));
+{
+  const ROUTER = DOMAIN_FILES.filter((f) => path.relative(ROOT, f).replace(/\\/g, '/').startsWith('src/domains/router/'));
+  const off = scan(ROUTER, /\bprocess\.kill\s*\(/);
+  check('CP-5 反代域零 process.kill（终止/存活唯一经 carrier 与 os/process）',
+    off.length === 0, off.length ? off.join(', ') : '0 处');
+  check('CP-5 反向：合成旧形状 process.kill(-pid, …) 被同一判据抓到',
+    /\bprocess\.kill\s*\(/.test("try { process.kill(-pid, 'SIGTERM'); } catch {}"), 'hit');
+
+  const off6 = scan(DOMAIN_FILES, /['"`]\/proc\//);
+  check('CP-6 业务域零 /proc 字面（进程事实经 os/pidlookup）',
+    off6.length === 0, off6.length ? off6.join(', ') : '0 处');
+  check('CP-6 反向：合成 readFileSync(\'/proc/…\') 被抓到',
+    /['"`]\/proc\//.test("const st = fs.readFileSync('/proc/' + pid + '/stat', 'utf8');"), 'hit');
+
+  const off7 = scan(ALL_SRC, /\bprocess\.kill\s*\(\s*-/).filter((o) => !o.startsWith('src/platform/os/process.js:'));
+  check('CP-7 负 pid 组信号只允许 platform/os/process.js（POSIX 组语义唯一收口）',
+    off7.length === 0, off7.length ? off7.join(', ') : '0 处（平台层收口外）');
+  check('CP-7 反向：合成 kill(-pid) 旧形状被抓到、正 pid 单杀不误报',
+    /\bprocess\.kill\s*\(\s*-/.test("try { process.kill(-pid, 'SIGKILL'); } catch {}")
+      && !/\bprocess\.kill\s*\(\s*-/.test("process.kill(pid, 'SIGTERM');"), 'hit');
+
+  const off8 = scan(DOMAIN_FILES, /['"`][^'"`]*\.(cmd|bat)['"`]|['"`]_npx['"`]|, '_npx'/);
+  check('CP-8 业务域零 .cmd/.bat 执行字面、零 _npx 缓存路径字面（npx-forms 唯一解析口）',
+    off8.length === 0, off8.length ? off8.join(', ') : '0 处');
+  check('CP-8 反向：合成 npx.cmd 直调与 ~/.npm/_npx 拼接被抓到',
+    /['"`][^'"`]*\.(cmd|bat)['"`]/.test("spawn('npx.cmd', args)")
+      && /['"`]_npx['"`]/.test("path.join(home, '.npm', '_npx')"), 'hit');
+}
+
+// -- CP-9：标准正文同步锁（reads:true 的事实依据：本门禁真读 PROXY-ISOLATION-STANDARD.md 正文）--
+{
+  const std = fs.readFileSync(path.join(ROOT, 'PROXY-ISOLATION-STANDARD.md'), 'utf8');
+  const missing = [];
+  for (const layer of ['L0', 'L1', 'L2']) if (!new RegExp('\\b' + layer + '\\b').test(std)) missing.push('职责层 ' + layer);
+  for (const clause of ['CP-5', 'CP-6', 'CP-7', 'CP-8']) if (!std.includes(clause)) missing.push('条款 ' + clause);
+  if (!std.includes('唯一事实源')) missing.push('唯一事实源声明');
+  check('CP-9 标准正文含 L0/L1/L2 三层职责与 CP-5..8 条款编号（牙齿与规范同源，防漂移）',
+    missing.length === 0, missing.length ? '缺: ' + missing.join(', ') : 'ok');
+  check('CP-9 反向：合成缺 L2/缺条款编号的正文被同一判据抓到',
+    !/\bL2\b/.test('L0 平台事实 CP-5') && !/CP-8/.test('L0 L1 CP-5 CP-6 CP-7'), 'hit');
 }
 
 // -- 反向断言：判据必须能识别违规形态（否则门禁空转）--

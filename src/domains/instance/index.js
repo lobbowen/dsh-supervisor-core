@@ -7,11 +7,13 @@
 const path = require('node:path');
 const os = require('node:os');
 const sandbox = require('./sandbox');
+const governor = require('./governor');
 const { InstanceStore } = require('./store');
 const { createLifecycle } = require('./lifecycle');
 const { createUpgrade } = require('./upgrade');
 const { createOps } = require('./ops');
 const service = require('../../platform/os/service').current();
+const defaultResstats = require('../../platform/os/resstats');
 
 class InstanceManager {
   constructor(opts) {
@@ -25,6 +27,9 @@ class InstanceManager {
     this.tasks = opts.tasks || null;          // 统一安装/更新任务注册表
     this.systemdDir = opts.systemdDir || path.join(os.homedir(), '.config', 'systemd', 'user');
     this.systemdTemplatePath = opts.systemdTemplatePath || path.join(this.systemdDir, 'dsh-web@.service');
+    // W2 控制面注入缝：采样与机器事实可替换（行为测试显式注入，不 patch 模块导出）。
+    this.resstats = opts.resstats || defaultResstats;
+    this.machineFacts = opts.machineFacts || null;
     this.instancesRoot = path.join(this.dir, 'instances');
     this._sandboxSupportedOverride = undefined;
     this._hooks = {}; // 6 个回调活对象（compose.js 直接赋值访问器，见下）
@@ -34,6 +39,7 @@ class InstanceManager {
       service: this.service, tokens: this.tokens, tasks: this.tasks,
       systemdDir: this.systemdDir, systemdTemplatePath: this.systemdTemplatePath,
       instancesRoot: this.instancesRoot, hooks: this._hooks, store: this._store,
+      resstats: this.resstats, machineFacts: this.machineFacts,
       isSandboxSupported: () => this.sandboxSupported,
     };
     ctx.lifecycle = this._lifecycle = createLifecycle(ctx);
@@ -53,7 +59,7 @@ class InstanceManager {
   find(id) { return this._store.instances.find((i) => i.id === id); }
   map(fn) { return this._store.instances.map(fn); }
 
-  /** 沙箱能力（实时求值）：仅 Linux+systemd 可用；保留显式覆写位供测试/嵌入方。 */
+  /** 沙箱能力（实时求值）：三平台均可跑舱（W3 portable 档）；保留显式覆写位供测试/嵌入方。 */
   get sandboxSupported() { return sandbox.supported(this._sandboxSupportedOverride); }
   _setSandboxSupportedForTest(v) { this._sandboxSupportedOverride = (v === null ? null : v === true); }
 
@@ -82,6 +88,8 @@ class InstanceManager {
   stopInstance(id) { return this._lifecycle.stop(id); }
   supervise(id) { return this._lifecycle.supervise(id); }
   probeInstance(id) { return this._lifecycle.probeInstance(id); }
+  /** 资源预算总览（/env/status 观测面，W2）：当前占用/剩余/下一份保底/可容纳实例数。 */
+  budgetSnapshot() { return governor.budgetSnapshot(this._store.instances, this.machineFacts || undefined); }
   checkUpdate(id) { return this._upgrade.checkUpdate(id); }
   upgradeInstance(id) { return this._upgrade.upgradeInstance(id); }
   upgradeStatus(id) { return this._upgrade.upgradeStatus(id); }
@@ -89,6 +97,9 @@ class InstanceManager {
   sandboxRoot(inst) { return sandbox.root(this.instancesRoot, inst); }
   sandboxDataDir(inst) { return sandbox.dataDir(this.instancesRoot, inst); }
   sandboxInstallDir(inst) { return sandbox.installDir(this.instancesRoot, inst); }
+  /** portable 档身份上下文（{port,pidFile,anchors}）：跨模块停止/复核调用点（shutdown）经门面取用，
+   *  不自行拼路径——锚点推导与 lifecycle 启停两侧必须同值，否则归属校验失效。systemd 档忽略附加字段。 */
+  launchCtx(inst) { return sandbox.launchCtx(this.instancesRoot, this.dshBin, inst); }
   _prepareSystemd() { return this._lifecycle._prepareSystemd(); }
 }
 

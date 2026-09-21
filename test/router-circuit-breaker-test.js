@@ -19,7 +19,7 @@
 //   只能靠另一套独立的 _monitorFails（探活）兜底。
 //
 // ## 锁定不变量
-//   R-a  清零只发生在**请求成功后**（markUsed 不得再碰 _unhealthyCount）
+//   R-a  清零只发生在**请求成功后**（markUsed/lastUsedAt 已随闲置宽限废止，源码零残留）
 //   R-b  `markNetFail` 不得再出现在调用位置（改用真实存在的 markInstanceNetFail）
 //   R-c  `_restartPending` 必须有**读取点**（出现在某方法的实参位置）
 //   R-d  退避 `_restartAt` 只在**真正执行**重启时置位（不得在延迟分支前）
@@ -32,17 +32,19 @@ const ROOT = path.join(__dirname, '..');
 const results = [];
 const check = (n, c, x) => { results.push(!!c); console.log((c ? 'PASS' : 'FAIL') + ' ' + n + (x !== undefined && x !== '' ? '  ← ' + x : '')); };
 
-const proxy = fs.readFileSync(path.join(ROOT, 'src', 'domains', 'router', 'providers', 'proxy.js'), 'utf8');
+//  R-a/R-b/R-c/R-d 的判据对象（markRequestOk/stopInstance 链/restartInstance/
+//   flushRestartPending）已随判据统一阶段抽入 process-pool.js mixin——按实现文件读。
+const pool = fs.readFileSync(path.join(ROOT, 'src', 'domains', 'router', 'providers', 'process-pool.js'), 'utf8');
 const fwd = fs.readFileSync(path.join(ROOT, 'src', 'domains', 'router', 'handlers', 'forward.js'), 'utf8');
 const inflight = fs.readFileSync(path.join(ROOT, 'src', 'domains', 'router', 'model', 'inflight.js'), 'utf8');
 
 // -- R-a：清零时机 --
 {
-  const m = proxy.match(/markUsed\(inst\) \{[\s\S]{0,200}?\n  \}/);
-  check('R-a 定位到 markUsed', !!m, m ? 'ok' : '未找到');
-  check('R-a markUsed **不再**清零 _unhealthyCount',
-    !!m && !/_unhealthyCount\s*=/.test(m[0]), m ? '已移除' : '');
-  check('R-a 存在 markRequestOk（成功后才清零）', /markRequestOk\(inst\)/.test(proxy), '有');
+  // markUsed/lastUsedAt 已随闲置宽限（IDLE_RECLAIM_GRACE）一并废止（PROXY-LIFECYCLE-STANDARD：
+  // 回收只看期望集，不看"刚用过"）——死代码收口判据：两处源零残留。
+  check('R-a markUsed/lastUsedAt 已全量退场（池与转发层零残留）',
+    !/markUsed|lastUsedAt/.test(pool) && !/markUsed|lastUsedAt/.test(fwd), '零残留');
+  check('R-a 存在 markRequestOk（成功后才清零）', /markRequestOk\(inst\)/.test(pool), '有');
   //  断言「调用了 markRequestOk」而不绑定具体实参名 ——
   //   P2 双事实源修复后实参已改为 instOf(...) 的结果（okInst），
   //   写死 `acc.instance` 会让「纯重构」误报（我第一版就踩了这个）。
@@ -68,8 +70,8 @@ const inflight = fs.readFileSync(path.join(ROOT, 'src', 'domains', 'router', 'mo
     !/\.markNetFail\s*\(/.test(strip(fwd)), '已改');
   check('R-b 改用真实存在的 markInstanceNetFail',
     /markInstanceNetFail/.test(strip(fwd)), '已改');
-  check('R-b 该方法确实定义在 proxy.js',
-    /markInstanceNetFail\s*\(instOrAcc\)/.test(proxy), '有定义');
+  check('R-b 该方法确实定义在 process-pool.js（mixin）',
+    /markInstanceNetFail\s*\(instOrAcc\)/.test(pool), '有定义');
 
   // -- R-b 升级（P3-B）：从「字符串出现过」升级为「实参正确 + 确实计数」的行为断言 --
   //   旧断言只查 markInstanceNetFail 字符串存在，故 forward.js 传错实参也绿。
@@ -97,13 +99,13 @@ const inflight = fs.readFileSync(path.join(ROOT, 'src', 'domains', 'router', 'mo
   check('R-b 反向：正确样本 inst 不误报', BARE_ACC.test('inst') === false, 'miss');
 
   // -- 行为面：沙箱内执行真实的 markInstanceProblem 本体，证明「计数」语义与实参形状要求 --
-  const mBody = proxy.match(/markInstanceProblem\(instOrAcc, reason\) \{[\s\S]*?\n  \}/);
+  const mBody = pool.match(/markInstanceProblem\(instOrAcc, reason\) \{[\s\S]*?\n    \}/);
   check('R-b 定位到 markInstanceProblem 实现', !!mBody, mBody ? 'ok' : '未找到');
   let impl = null;
   if (mBody) {
     try {
       const inner = mBody[0].replace(/^markInstanceProblem\(instOrAcc, reason\)\s*\{/, '');
-      impl = new Function('instOrAcc', 'reason', inner.slice(0, inner.lastIndexOf(String.fromCharCode(10) + '  }')));
+      impl = new Function('instOrAcc', 'reason', inner.slice(0, inner.lastIndexOf(String.fromCharCode(10) + '    }')));
     } catch { impl = null; }
   }
   check('R-b 行为断言前提：本体可在沙箱求值（不 require 产品状态根）', typeof impl === 'function', typeof impl);
@@ -129,11 +131,11 @@ const inflight = fs.readFileSync(path.join(ROOT, 'src', 'domains', 'router', 'mo
 // -- R-c：_restartPending 必须有读取点 --
 {
   // 写入点是赋值；读取点应出现在 `if (... _restartPending)` 或实参位置
-  const hasRead = /if\s*\([^)]*_restartPending\s*\)/.test(proxy)
-    || /flushRestartPending\([^)]*_restartPending/.test(proxy)
-    || /const\s+\w+\s*=\s*inst\._restartPending/.test(proxy);
+  const hasRead = /if\s*\([^)]*_restartPending\s*\)/.test(pool)
+    || /flushRestartPending\([^)]*_restartPending/.test(pool)
+    || /const\s+\w+\s*=\s*inst\._restartPending/.test(pool);
   check('R-c _restartPending 存在读取点（不再只写不读）', hasRead, '有');
-  check('R-c 存在 flushRestartPending 消费方法', /flushRestartPending\(inst\)/.test(proxy), '有');
+  check('R-c 存在 flushRestartPending 消费方法', /flushRestartPending\(inst\)/.test(pool), '有');
   check('R-c handlers/forward 在 inflight 归零时执行 flushRestartPending',
     /prov\.flushRestartPending\([^)]+\)/.test(fwd), '已接入');
   //  行为修复锁（PG-D3-4）：单一 end() 产生 flushRestartPending effect，
@@ -146,7 +148,7 @@ const inflight = fs.readFileSync(path.join(ROOT, 'src', 'domains', 'router', 'mo
 
 // -- R-d：退避置位时机 --
 {
-  const m = proxy.match(/restartInstance\(inst, reason\) \{[\s\S]*?\n  \}/);
+  const m = pool.match(/restartInstance\(inst, reason\) \{[\s\S]*?\n    \}/);
   check('R-d 定位到 restartInstance', !!m, m ? 'ok' : '未找到');
   if (m) {
     const body = m[0];
@@ -159,9 +161,9 @@ const inflight = fs.readFileSync(path.join(ROOT, 'src', 'domains', 'router', 'mo
 
 // -- 反向：成功路径仍要清零（防「修成永不清零」）--
 check('反向：成功路径保留了清零语义（markRequestOk 内有赋值）',
-  /markRequestOk\(inst\) \{[\s\S]{0,120}?_unhealthyCount\s*=\s*0/.test(proxy), '保留');
+  /markRequestOk\(inst\) \{[\s\S]{0,120}?_unhealthyCount\s*=\s*0/.test(pool), '保留');
 check('反向：markInstanceProblem 仍累加（熔断本身没被删）',
-  /_unhealthyCount\s*=\s*\(inst\._unhealthyCount \|\| 0\) \+ 1/.test(proxy), '保留');
+  /_unhealthyCount\s*=\s*\(inst\._unhealthyCount \|\| 0\) \+ 1/.test(pool), '保留');
 
 // -- D-4 / D-6：providers/probe.js 实例治理 --
 //   D-4 实例日志裸 createWriteStream({flags:'a'})：全仓唯一无轮转、且默认 0644 的日志落盘点。
@@ -184,50 +186,20 @@ check('反向：markInstanceProblem 仍累加（熔断本身没被删）',
   check('D-4 无缓冲写入器不需要 end()（close 里遗留的 logStream.end 已删）',
     !/logStream/.test(probe), 'ok');
 
-  // D-6 的实现落在平台层（的 CP-1 五 job 同点红：`process.platform` 出现在
-  //   src/domains/** 即架构越界）。判据随之搬家：从平台文件取本体，业务域只验「问了闸 + 没留副本」。
+  // D-6 的旧判据（等值比较 / 进程组 sameProcessGroup）已随消费面清零整体删除：
+  //   该判定在 macOS 恒 false（无 /proc）、Windows 无组语义，留着就是「第二份归属逻辑」的诱因。
+  //   全仓归属判定只剩 carrier/portable 一套锚点引擎（PROXY-ISOLATION-STANDARD L1）。
   const pidProbe = fs.readFileSync(path.join(ROOT, 'src', 'platform', 'os', 'pidlookup', 'probe.js'), 'utf8');
   const pidIndex = fs.readFileSync(path.join(ROOT, 'src', 'platform', 'os', 'pidlookup', 'index.js'), 'utf8');
-  const m = pidProbe.match(/function sameProcessGroup\(pid, pgidLeader\) \{[\s\S]*?\n\}/);
-  check('D-6 定位到 sameProcessGroup 实现（平台层 pidlookup/probe.js）', !!m, m ? 'ok' : '未找到');
-  check('D-6 门面导出该能力（业务域经 pidlook 取，不各自实现）',
-    /sameProcessGroup/.test(pidIndex), 'pidlookup/index.js 导出');
-  check('D-6 反向：业务域不再自带进程组判定实现',
-    !/function sameProcessGroup/.test(probe), '已下沉平台层');
-  let impl = null;
-  if (m) {
-    try {
-      const inner = m[0].replace(/^function sameProcessGroup\(pid, pgidLeader\) \{/, '');
-      impl = new Function('pid', 'pgidLeader', 'fs', 'isWindows', inner.slice(0, inner.lastIndexOf(String.fromCharCode(10) + '}')));
-    } catch { impl = null; }
-    check('D-6 行为断言前提：本体可在沙箱求值（fs/isWindows 经参数注入）', typeof impl === 'function', typeof impl);
-  }
-  if (typeof impl === 'function') {
-    // /proc/<pid>/stat 真实形态：pid (comm with spaces) state ppid pgrp session …
-    const stubFs = (text) => ({ readFileSync: () => text });
-    const posix = false;   // isWindows=false（POSIX 分支）
-    const win = true;
-    const stat = '2001 (my proxy bin) S 1990 2001 2001 0 -1 4194304';
-    check('D-6 行为：子孙进程（pgrp==leader）判为同组放行',
-      impl(2002, 2001, stubFs('2002 (node) S 2001 2001 2001 0 -1'), posix) === true, 'true');
-    check('D-6 行为：comm 自带括号/空格时不错位（取 pgrp 而非 ppid）',
-      impl(2001, 2001, stubFs(stat), posix) === true, 'pgrp=fields[2]=2001');
-    check('D-6 行为：反向 —— 外部进程（pgrp 不同）判为不同组',
-      impl(3000, 2001, stubFs('3000 (evil) S 1 3000 3000 0 -1'), posix) === false, 'false');
-    check('D-6 行为：win32 无 pgid 语义 -> 恒 false（不误判同组）',
-      impl(2001, 2001, stubFs(stat), win) === false, 'false');
-    check('D-6 行为：stat 读取失败 -> false（交给 HTTP 探活兜底，不静默放行外部占用）',
-      impl(2001, 2001, { readFileSync: () => { throw new Error('ENOENT'); } }, posix) === false, 'false');
-    check('D-6 行为：pid 缺失 -> false',
-      impl(null, 2001, stubFs(stat), posix) === false, 'false');
-    check('D-6 行为：leader 缺失 -> false（不得把 0 当成合法 pgid）',
-      impl(2001, 0, stubFs(stat), posix) === false, 'false');
-  }
-  // 判据替换：等值比较必须被「不同进程组」限定，且查不到监听者时不改判
-  const judged = /if\s*\(listening && listening !== inst\.pid && !pidlook\.sameProcessGroup\(listening, inst\.pid\)\)/.test(probe);
-  check('D-6 监控判据 = listening 存在 && 非本 pid && 非本进程组（经平台门面）', judged, judged ? 'ok' : '仍是 exact-pid 等值判据');
-  check('D-6 反向：裸等值判据（无进程组限定）不得残留',
-    !/if\s*\(listening !== inst\.pid\)/.test(probe), '已替换');
+  check('D-6 死代码收口：sameProcessGroup 平台层实现与门面导出均已删除',
+    !/sameProcessGroup/.test(pidProbe) && !/sameProcessGroup/.test(pidIndex), '零残留');
+  // 判据替换（隔离标准 L1）：占住判定必须走 carrier.probe 锚点身份（三平台同语义），
+  //   sameProcessGroup 判定在 macOS 恒 false（无 /proc）、Windows 无组语义 —— 域内不得再消费。
+  const judged = /carrier\.probe\(\{ port: inst\.port, pidFile: inst\.pidFile, anchors: inst\.launchAnchors \}\)/.test(probe)
+    && /st\.state === 'foreign'/.test(probe);
+  check('D-6 监控判据 = carrier.probe 锚点身份（foreign 才清 pid，查不到不改判）', judged, judged ? 'ok' : '仍是进程组/等值判据');
+  check('D-6 反向：域内 sameProcessGroup 消费与裸等值判据不得残留',
+    !/sameProcessGroup/.test(probe) && !/if\s*\(listening !== inst\.pid\)/.test(probe), '已替换');
 }
 
 const asyncChecks = [];
@@ -245,8 +217,8 @@ const acheck = (n, c, x) => { asyncChecks.push(!!c); console.log((c ? 'PASS' : '
     const prov = {
       name: 'p', kind: 'proxy', apiPort: 18080, accounts: [acc], instances: [inst],
       supports: (f) => f === 'instanceLifecycle',
-      markUsed() {}, startInstance: async () => ({ ok: true }), _waitHealthy: async () => true,
-      _switchBudgetMs: () => 50,
+      // 请求路径进程动作唯一经引擎门面 ensureServable（LC 核心-1）：夹具只桩门面。
+      ensureServable: async () => ({ ok: true }),
       stopInstance(called) { stops.push(called); called.pid = null; },
       // 夹具计数用 push：`restarts` / `netFails` 是 const 数组，
       //   自增抛 TypeError -> 被产品侧 try/catch 吞掉 -> 计数恒 0，

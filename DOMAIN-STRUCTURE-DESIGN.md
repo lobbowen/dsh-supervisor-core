@@ -1,7 +1,7 @@
 # 域内结构设计（DOMAIN-STRUCTURE-DESIGN）
 
 > **状态**：**执行中**（v1 定版 2026-09-17；同日进入 12+ 子代理并行施工，批 0–10）。本文件是**域内分层/拆分的唯一事实源（SSOT）**。U-2/U-3 由 test/standards-uniqueness-test.js 机器校验。
-> **来源**：12 份设计文档（`design-notes/`，6085 行）+ 主代理裁决 R1–R12。
+> **来源**：12 份设计文档（`archive/design-notes/`，6085 行）+ 主代理裁决 R1–R12。
 > **与前一份唯一事实源的关系**：`DIRECTORY-STRUCTURE-DESIGN.md` 管**跨层/跨域**（五层结构）；
 > 本文件管**域内**（每个域内部怎么切）。两者互补。
 
@@ -94,14 +94,16 @@ domains/<domain>/
 
 > 口径（重要，防「为消红而放宽」的变体）：
 > - **目标列**取自下方 §5.1–§5.6 的定版目标（`≤N` 为硬设计目标，`~N` 为近似目标），**不得为了让表变绿而静默抬高**；
-> - **实测列**为写入时对当前树 `wc -l` 的实测值（2026-09-20 复算）；判据是**行数**，硬门禁只 `≤300`（DG-2: `>300` 才红）；
+> - **实测列**为写入时对当前树 `wc -l` 的实测值（2026-09-20 复算；`instance/*` 行为 2026-09-21 W3 跨平台执行面落地后复算；`platform/os/resstats.js`（W2 新增，150 行）与 `platform/os/portable.js`（W3 新增，179 行）属平台层不在本域内文件清单，同 `app/` 两处一并见下）；判据是**行数**，硬门禁只 `≤300`（DG-2: `>300` 才红）；
 > - 标 **超目标** 的条目：**后续任何新增行都会继续加深该债**；标 **贴线** 的条目：再加 1 行即越界。
-> - **硬门禁现状（不是「全部满足」）**：`src/domains/router/handlers/forward.js` 已 **324 行 > 300**，
->   即本表**至少一行已越硬门禁**。越线不被 CI 拦下是因为 `domain-structure-gate-test` 整体
+> - **硬门禁现状（不是「全部满足」）**：本表内已越 `>300` 硬线的有两行——
+>   `router/handlers/forward.js` 324（W2 前已越），以及 `instance/lifecycle.js` 348（W2 越线）→ 364（W3 加深）
+>   （govern 采样-决策-处置内联进 supervise RUNNING 分支所致；见 §5.3 注释，压回属 W3/W4 结构步）。
+>   即本表**已有两行越硬门禁**。越线不被 CI 拦下是因为 `domain-structure-gate-test` 整体
 >   **report-only**（退出码恒 0，只有 `DG_STRICT=1` 才转硬失败），而 CI 从未设该变量 ——
 >   所以「门禁存在」不等于「门禁会红」。同一判据在 `src/app/` 下另有两处越线
 >   （`app/control/registry.js` 308、`app/main/process.js` 302），不在本表覆盖的域内文件清单里。
->   把这 3 个文件压回 300 以下，或把 `DG_STRICT=1` 纳入 CI，二者必居其一；在任一发生之前，
+>   把这 4 个文件压回 300 以下，或把 `DG_STRICT=1` 纳入 CI，二者必居其一；在任一发生之前，
 >   本表**不得**被读作「硬门禁已满足」。
 
 | 文件 | 目标 | 实测 | 状态 |
@@ -119,7 +121,7 @@ domains/<domain>/
 | `router/store/usage.js` | ≤160 | 150 | 达 |
 | `router/model/inflight.js` | ≤90 | 53 | 达 |
 | `router/router-ops.js` | ≤100 | 34 | 达 |
-| `router/ops/browser.js` | ≤140 | 83 | 达 |
+| `router/ops/browser.js` | ≤140 | 75 | 达 |
 | `router/ops/oauth.js` | ≤190 | 140 | 达 |
 | `router/ops/apps-registry.js` | ≤230 | 186 | 达 |
 | `router/ops/quotasync.js` | ≤140 | 89 | 达 |
@@ -129,14 +131,16 @@ domains/<domain>/
 | `relay/index.js` | ≤60 | 12 | 达 |
 | `relay/daemon.js` | （不变）214 | 194 | 达（优于原值） |
 | `relay/port-segments.js` | （不变）22 | 19 | 达 |
-| `instance/index.js` | ≤95 | 95 | **贴线**（=95） |
-| `instance/model.js` | ≤140 | 99 | 达 |
-| `instance/sandbox.js` | ≤85 | 79 | 达 |
+| `instance/index.js` | ≤95 | 106 | **超目标 +11**（W2：resstats/machineFacts 注入位 + budgetSnapshot 门面；W3：launchCtx 门面） |
+| `instance/model.js` | ≤140 | 105 | 达 |
+| `instance/governor.js` | ≤85 | 206 | **超目标 +121**（W2：decide 两级预留/突发 + 迟滞 + 违规计数 + 准入 + 快照） |
+| `instance/sandbox.js` | ≤85 | 117 | **超目标 +32**（W1 平台分派布局 + TMPDIR；W2 MemoryHigh；W3 runPidFile/锚点路径） |
 | `instance/state-machine.js` | ≤85 | 74 | 达 |
-| `instance/store.js` | ≤100 | 128 | **超目标 +28** |
-| `instance/lifecycle.js` | ≤185 | 242 | **超目标 +57** |
-| `instance/ops.js` | ≤180 | 165 | 达 |
+| `instance/store.js` | ≤100 | 133 | **超目标 +33** |
+| `instance/lifecycle.js` | ≤185 | 364 | **超目标 +179**（W2 govern tick 内联 + W3 动态下发/ctx 对齐；`>300` 已越 DG-2 硬线，report-only 故 CI 不红） |
+| `instance/ops.js` | ≤180 | 163 | 达 |
 | `instance/upgrade.js` | ≤330 | 231 | 达 |
+| `instance/contract.js` | ≤100 | 97 | 达（域契约面，DG-10 判据源） |
 | `plugin/index.js` | ≤70 | 83 | **超目标 +13** |
 | `plugin/store.js` | ~180 | 193 | **超目标 +13** |
 | `plugin/layers.js` | ~170 | 216 | **超目标 +46** |
@@ -147,10 +151,10 @@ domains/<domain>/
 | `shell/watchdog.js` | ~185 | 211 | **超目标 +26** |
 | `shell/core.js` | ~95 | 106 | **超目标 +11** |
 
-**汇总**：超目标 **10** 项（router 2 / instance 2 / plugin 4 / shell 2）、贴线 **2** 项
-（`router/index.js` 150、`instance/index.js` 95）；其余达。上述 10 项即设计目标债务，
-**未抬高任何目标值**。**`≤300` 硬门禁不满足**：`router/handlers/forward.js` 324 已越线
-（见上方口径说明与硬门禁现状一条）。
+**汇总**：超目标 **13** 项（router 2 / instance 5 / plugin 4 / shell 2；instance 域五行按 W3 后实测定，2026-09-21 复算）、贴线 **1** 项
+（`router/index.js` 150）；其余达。上述 13 项即设计目标债务，
+**未抬高任何目标值**。**`≤300` 硬门禁不满足**：`router/handlers/forward.js` 324、`instance/lifecycle.js` 364
+已越线（见上方口径说明与硬门禁现状一条）。
 
 ### §5.1 router（13 文件 → 22 文件，最大 330 行）
 
@@ -178,6 +182,7 @@ router/
 ├── policies/failure.js  ≤60   纯：失败反应（阈值）
 ├── switch.js            ≤110  编排
 ├── providers/base.js    ≤200  抽象契约 + 账号池 + 检测应用
+├── providers/process-pool.js ≤200  实例进程治理能力 mixin（11 个池契约方法实现 + supports 并集）
 ├── providers/model.js   ≤180  账号模型 + 序列化
 ├── providers/policies/quota.js  ≤250  额度判定 + 响应分类
 ├── providers/policies/freeze.js ≤200  冻结/恢复策略
@@ -190,6 +195,18 @@ router/
 ├── proxy-apps.js / port-segments.js  保留
 └── daemon.js            ≤120  仅装配 + 启动（**文件名不变**）
 ```
+
+**能力判据规范（判据统一方向③，2026-09-21 定版；机器校验 = PG-2 + PG-11）**：
+- 运行时「能不能做 X」（起停实例/对账/预热/优雅收敛…）一律 `p.supports(cap)`，词表见
+  `providers/process-pool.js` 的 `POOL_CAPS`；禁止退回 `typeof p.X === 'function'` 猜测或
+  `kind` 字面量分支——「有没有实例」是能力事实，「是不是反代」是身份标签，二者今天重合、
+  明天（binary 分发/新协议族）不一定。
+- `kind` 字面量比较仅保留 B 类四类用途：持久化字段（`store.js` 序列化/反序列化）、视图行
+  渲染（`views.js`）、同类注册表查找鉴别（`ops.js` CRUD）、无原型裸 JSON 记录
+  （`ports-bootstrap.js`）。逐文件精确配额登记在 PG-11 白名单，增减不匹配即红。
+- 新增能力：先在能力方文件（mixin 或专用 provider 类）实现并扩 `supports` 词表，调用方再以
+  `supports(cap)` 守卫；能力面契约在能力方声明，基座（`providers/base.js`）不携带池契约的抛错占位
+  （占位会诱导调用方退回 typeof 猜测，且其 this 跨文件反向边正是 DG-4 豁免的来源）。
 
 **关键缺陷（设计中发现）—— 三条均已落地**（下面写的是当前实现锚点，不是待办；原始行号属改造前快照）：
 1. **写权闸曾三处各查一半** → 现为 `src/domains/router/store.js` 的**唯一闸** `canPersist()`
@@ -205,7 +222,7 @@ router/
 ```
 relay/
 ├── index.js     ≤60   门面（**入口错位修正**：真入口是 manager.js）
-├── core.js            纯（含 validateFrpExposure：消除与 app/facade/main.js 的重复闸）
+├── core.js            纯（含 validateWanAccess + projectRemoteView：远程三态的判定与视图唯一事实源）
 ├── session.js         会话桥
 ├── proxy.js           服务本体（来源闸/令牌闸/HTTP/WS/热更新面）
 ├── tunnel.js / managed.js / ports.js
@@ -219,19 +236,26 @@ relay/
 ⚠ **修正 DF-7 方向错误**：现 `manager.js → ./index`（编排依赖门面）；改 `ops.js → ./proxy`。
 ⚠ `daemon.js` **不得改名，也不得移动目录**（`probe.js:46` 是字面量 `/domains/relay/daemon.js`）。
 
-### §5.3 instance（4 文件 → 8 文件）
+### §5.3 instance（4 文件 → 10 文件，governor.js 为 W1 新增纯策略模块，contract.js 为域改造契约面）
 
 ```
 instance/
 ├── index.js          ≤95   门面
+├── contract.js       —     域契约：PUBLIC_API 白名单 + deps 声明（DG-10 判据源；W3 增 launchCtx/dshBin）
 ├── model.js          ≤140  纯：模型 + 视图映射 + 序列化
-├── sandbox.js        ≤85   纯：沙箱路径/目录推导
+├── sandbox.js        ≤85   纯：沙箱路径/目录推导（+ runPidFile 锚点路径，W3）
 ├── state-machine.js  ≤85   纯：4 个状态转移（deps 显式入参）
+├── governor.js       ≤85   纯：资源预算推导 + 决策策略（W1 起限额定义权归本文件；W2 增 decide/准入/快照）
 ├── store.js          ≤100  持久化 + ensureDirs
-├── lifecycle.js      ≤185  启停/监督（「怎么把单元跑起来」）
+├── lifecycle.js      ≤185  启停/监督（「怎么把单元跑起来」；W2 起 RUNNING 拍内联 govern tick：采样→决策→下发/处置；
+│                            W3 起同拍下发 setLimits，provider 分档语义（systemd 硬档 / portable 软档）经 ctx 对齐）
 ├── ops.js            ≤180  编排（「一次操作的顺序」）
 └── upgrade.js        ≤330  沙箱 DSH 安装/检测/升级
 ```
+
+> 平台侧配套（W3）：`platform/os/portable.js`（179 行，无服务管理器依赖的执行 provider，
+> 与 `service.js`（178 行）的 systemd 档动词同形，11 键方法集由 X-3 `_testProviders` 静态对账）。
+> 域层对 `process.platform` 仍零分支——分档全收在 `service.current()`。
 
 ⚠ **`core.js` 是误名**：397 行混 10 类（含 IO + 构造 + 视图），拆解后「剩下那个 class」是组装根，下沉 `index.js`。
 ⚠ **待修**：`core→upgrade` 两条反向边（`_readInstalledVersion` 越过编排层直接读盘、`_taskStateToView` 纯映射住在 upgrade）。
@@ -384,6 +408,8 @@ shell/
 - ⚠ **伪耦合澄清**：任务书所称「router 调 `instances.sandboxRoot`」**不存在** ——
   `sandboxRoot` 全域仅 3 个消费者（`app/control/specs.js:47`、`instance/core.js:190` 定义、`instance/ops.js:205`）；
   router 里的 `this.instances` 是 **ProxyInstance**（router 自有模型），**同形不同物**。门禁需排除规则。
-- ⚠ **合法继承豁免**：`{providers/base, providers/proxy}` 的互相调用**不是隐式耦合** ——
-  `providers/base.js:55-65` 的 11 个方法是**抽象契约占位**（抛 'must be implemented by process-pool provider'），
-  朴素判据会误报 12 处。
+- ⚠ **合法继承豁免**：`{providers/base, providers/process-pool}` 经 `withProcessPool` mixin 组合，
+  **不是隐式耦合** —— 基座只剩 1 个抽象占位（`detectAccount`，base 调 `this.detectAccount` 由
+  DG-4 的 abstractPlaceholders 自动豁免）；process-pool 的 11 个契约方法在能力方 mixin 声明并
+  实现（判据统一阶段3 收口，2026-09-21：DG-4 域内跨文件 this 已归零）。旧描述「base.js 的 11 个
+  抽象占位抛 'must be implemented by process-pool provider'」已随该收口作废。

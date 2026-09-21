@@ -95,7 +95,7 @@ function _bootstrap(host) {
     // main 是否纳管/拉起，由各实例自己的［进程守护 guardian］开关 + 实例自身生命周期决定，不因守卫启动而改变。
     // 为已开启远程控制的实例补建代理（幂等；L3b 下由 lan-daemon reconcile 收敛）
     if (!host.lanDaemonEnabled()) {
-      for (const inst of host.instances.all()) { if (inst.remoteEnabled) host.lan.syncProxy(inst).catch(() => {}); }
+      for (const inst of host.instances.all()) { if (inst.remoteMode === 'lan' || inst.remoteMode === 'wan') host.lan.syncProxy(inst).catch(() => {}); }
     }
     if (host.config.routerAutostart === true) {
       // 统一生命周期视图同步：router 期望运行 -> 注册项纳入监测

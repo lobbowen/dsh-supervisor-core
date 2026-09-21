@@ -160,13 +160,13 @@ console.log('== 批4 C-3 remoteTokenStrength（shared/credential）/ backoffGate
     check('C-3 strength ' + label + ' → ok=' + wantOk, r.ok === wantOk && r.reason === wantReason,
       JSON.stringify(r));
   }
-  // 暴露闸接线：过短令牌在 enabled=true 时必须被拒（reason 走 short 文案）
-  check('C-3 validateFrpExposure 拒 4 位令牌',
-    core.validateFrpExposure({ enabled: true, remoteToken: 'abcd', frpRemotePort: 30001, peers: [], selfId: 'main' }).ok === false,
-    'short-rejected');
-  check('C-3 validateFrpExposure 放行 8 位令牌',
-    core.validateFrpExposure({ enabled: true, remoteToken: '12345678', frpRemotePort: 30001, peers: [], selfId: 'main' }).ok === true,
-    'ok');
+  // wan 前置闸接线：过短令牌必须被拒（reason 走 short 文案）；空令牌同样拒（公网零认证防线）
+  check('C-3 validateWanAccess 拒 4 位令牌',
+    core.validateWanAccess({ remoteToken: 'abcd' }).ok === false, 'short-rejected');
+  check('C-3 validateWanAccess 拒空令牌',
+    core.validateWanAccess({ remoteToken: '' }).ok === false, 'empty-rejected');
+  check('C-3 validateWanAccess 放行 8 位令牌',
+    core.validateWanAccess({ remoteToken: '12345678' }).ok === true, 'ok');
   const bgCases = [
     ['低于阈值', { failCount: 9, firstAt: 1000, now: 5000 }, null],
     //   入参语义是 `now` 而非已耗时长：真实耗时 = now - firstAt = 5000 - 1000 = 4000，
@@ -183,12 +183,14 @@ console.log('== 批4 C-3 remoteTokenStrength（shared/credential）/ backoffGate
     check('C-3 backoffGate ' + label + ' → waitMs=' + want,
       r.waitMs === want, JSON.stringify(r) + ' 输入=' + JSON.stringify(f));
   }
-  // 写入口接线（源码形态：两处写盘前都过同一纯函数）
+  // 写入口接线（源码形态：令牌强度闸的两个写入前置点都过同一纯函数）。
+  //   三态化收口后 main 的 remoteToken 唯一写入口在 app/domain-actions/lan.js#setRemoteToken
+  //   （main 与沙箱同口），patchDshMain 只剩 guardian，故不再检查 domain-actions/main.js。
   const opsSrc = fs.readFileSync(path.join(ROOT, 'src', 'domains', 'instance', 'ops.js'), 'utf8');
   const coreSrc = fs.readFileSync(path.join(ROOT, 'src', 'domains', 'relay', 'core.js'), 'utf8');
   check('C-3 实例域写入口引用 remoteTokenStrength', /remoteTokenStrength\(/.test(opsSrc), '有');
-  const actSrc = fs.readFileSync(path.join(ROOT, 'src', 'app', 'domain-actions', 'main.js'), 'utf8');
-  check('C-3 main 写入口引用 remoteTokenStrength', /remoteTokenStrength\(/.test(actSrc), '有');
+  const actSrc = fs.readFileSync(path.join(ROOT, 'src', 'app', 'domain-actions', 'lan.js'), 'utf8');
+  check('C-3 令牌统一写入口（lan.setRemoteToken）引用 remoteTokenStrength', /remoteTokenStrength\(/.test(actSrc), '有');
   // 归属判据：单一实现 + 三个消费点全部经 shared 取用。
   const credSrc = fs.readFileSync(path.join(ROOT, 'src', 'shared', 'credential.js'), 'utf8');
   check('C-3 强度闸实现在 shared/credential 且已导出',
@@ -200,6 +202,126 @@ console.log('== 批4 C-3 remoteTokenStrength（shared/credential）/ backoffGate
     !/function remoteTokenStrength\(/.test(coreSrc), coreSrc.indexOf('function remoteTokenStrength(') >= 0 ? '仍有本体' : '仅引用 shared');
   check('C-3 反向：instance 域不再跨域 require relay（DS-G1 边的成因）',
     !/require\(['"]\.\.\/relay/.test(opsSrc), '跨域 require 计数 0');
+}
+
+// --：C-3b projectRemoteView（relay/core）逐子句钉 --
+// 这是「二维码跟随真实访问态」的单一事实源：off 短路、reasons 优先级、host 按 mode 选、
+// 端口缺席不拼半截 URL——每个分句一条例，判据值回显整段视图。
+console.log('== 批4 C-3b projectRemoteView（访问视图唯一事实源）==');
+{
+  const core = require(path.join(ROOT, 'src', 'domains', 'relay', 'core.js'));
+  const pv = (x) => core.projectRemoteView(x);
+  const greenLan = { mode: 'lan', relayListening: true, tokenSet: true, cookieReady: true, lanAddress: '192.168.3.64', wanPort: 22001 };
+  // off 短路：即使运行时事实全部就绪也不出 URL/不报因（关 = 无访问态可言）
+  {
+    const v = pv(Object.assign({}, greenLan, { mode: 'off', serverAddr: '203.0.113.9', frpcRunning: true }));
+    check('C-3b off → 短路 {ready:false, accessUrl:null, reasons:[]}',
+      v.ready === false && v.accessUrl === null && v.reasons.length === 0, JSON.stringify(v));
+  }
+  {
+    const v = pv({ mode: 'bogus', relayListening: true });
+    check('C-3b 非法 mode 归一为 off（normalizeRemoteMode 单一入口）', v.mode === 'off', JSON.stringify(v));
+    check('C-3b mode 缺省（undefined）同样归 off', pv({}).mode === 'off', JSON.stringify(pv({})));
+  }
+  // 未就绪逐条给因 + 优先级：relay 未监听 在 令牌/注入 之前
+  {
+    const v = pv({ mode: 'lan' });
+    check('C-3b lan 全缺 → 首因是 relay 未监听（不是令牌）',
+      v.reasons[0] === '远程服务未就绪（relay 未监听）' && v.reasons.includes('未设访问令牌'), JSON.stringify(v));
+  }
+  {
+    const v = pv({ mode: 'lan', relayListening: true, tokenSet: false, cookieReady: false });
+    check('C-3b 监听后缺令牌 → 未设访问令牌（cookie 例走 else-if 不重复报）',
+      v.reasons.join('|') === '未设访问令牌', JSON.stringify(v));
+  }
+  {
+    const v = pv({ mode: 'lan', relayListening: true, tokenSet: true, cookieReady: false });
+    check('C-3b 有令牌但会话未注入 → 正在注入 DSH 会话…',
+      v.reasons.join('|') === '正在注入 DSH 会话…', JSON.stringify(v));
+  }
+  // wan 附加两因：未配地址 / 隧道未建（可并存，各报一条）
+  {
+    const v = pv(Object.assign({}, greenLan, { mode: 'wan', serverAddr: '', frpcRunning: false }));
+    check('C-3b wan 未配地址+隧道未建 → 两条都报（不吞并列因）',
+      v.reasons.includes('未配置 frps 服务器地址') && v.reasons.includes('公网隧道未建立（frpc 未运行）') && v.ready === false,
+      JSON.stringify(v));
+    const v2 = pv(Object.assign({}, greenLan, { mode: 'wan', serverAddr: '   ', frpcRunning: true }));
+    check('C-3b serverAddr 纯空白视同未配（trim 判定，防拼出 http:// :port/）',
+      v2.reasons.includes('未配置 frps 服务器地址') && v2.accessUrl === null, JSON.stringify(v2));
+  }
+  // host 选择：lan 用局域网地址、wan 用 serverAddr——另一个字段放诱饵值，选错即红
+  {
+    const v = pv(Object.assign({}, greenLan, { serverAddr: '203.0.113.9' }));
+    check('C-3b lan 就绪 → accessUrl 用局域网地址（serverAddr 诱饵未被选中）',
+      v.ready === true && v.accessUrl === 'http://192.168.3.64:22001/', JSON.stringify(v));
+    const w = pv({ mode: 'wan', relayListening: true, tokenSet: true, cookieReady: true, frpcRunning: true, serverAddr: '203.0.113.9', lanAddress: '192.168.3.64', wanPort: 22001 });
+    check('C-3b wan 就绪 → accessUrl 用 frps 公网地址（即验收判据 a：扫码进公网口）',
+      w.ready === true && w.accessUrl === 'http://203.0.113.9:22001/', JSON.stringify(w));
+  }
+  // 端口缺席不拼半截 URL（同号纪律下 relay 口即公网口，缺位 = 还没绑定）
+  {
+    const v = pv(Object.assign({}, greenLan, { wanPort: null }));
+    check('C-3b wanPort 缺席 → accessUrl=null（宁缺不半截）', v.accessUrl === null, JSON.stringify(v));
+    const v2 = pv(Object.assign({}, greenLan, { lanAddress: '' }));
+    check('C-3b lanAddress 空 → accessUrl=null 但就绪判定不受影响',
+      v2.accessUrl === null && v2.ready === true, JSON.stringify(v2));
+  }
+  // 反向防空转：ready 的判据必须真依赖 reasons 全清（漏一条原因字段必被检出）
+  {
+    const base = { mode: 'lan', relayListening: true, tokenSet: true, cookieReady: true, lanAddress: 'h', wanPort: 1 };
+    const flips = [
+      ['relayListening=false', Object.assign({}, base, { relayListening: false })],
+      ['tokenSet=false', Object.assign({}, base, { tokenSet: false })],
+      ['cookieReady=false', Object.assign({}, base, { cookieReady: false })],
+    ];
+    for (const [label, f] of flips) {
+      const v = pv(f);
+      check('C-3b 反向：' + label + ' 时 ready 必须 false', v.ready === false && v.reasons.length >= 1, JSON.stringify(v));
+    }
+  }
+}
+
+// --：C-3c normalizeInstance（instance/model）磁盘迁移逐例钉 --
+// 这是冷启动唯一的历史态收敛点（验收判据 d）：legacy 布尔对 -> 三态 + 手填口/镜像字段剔除。
+console.log('== 批4 C-3c normalizeInstance（legacy 布尔对 -> remoteMode 三态）==');
+{
+  const { normalizeInstance } = require(path.join(ROOT, 'src', 'domains', 'instance', 'model.js'));
+  const base = () => ({ id: 'i', name: 'n', port: 29051 });
+  const mig = (extra) => Object.assign(base(), extra);
+  const cases = [
+    ['remoteEnabled+frpEnabled → wan', mig({ remoteEnabled: true, frpEnabled: true }), 'wan'],
+    ['仅 remoteEnabled → lan', mig({ remoteEnabled: true, frpEnabled: false }), 'lan'],
+    ['remoteEnabled 有 frpEnabled 缺 → lan', mig({ remoteEnabled: true }), 'lan'],
+    ['两者皆 false → off', mig({ remoteEnabled: false, frpEnabled: false }), 'off'],
+    ['frpEnabled=true 但总远程关 → off（关是安全方向，不被 frp 意图翻起）', mig({ remoteEnabled: false, frpEnabled: true }), 'off'],
+    ['无 legacy 字段 → off', mig({}), 'off'],
+    ['已是三态 lan 直读（布尔对缺席不覆盖现值）', mig({ remoteMode: 'lan' }), 'lan'],
+    ['已是三态 wan 直读', mig({ remoteMode: 'wan' }), 'wan'],
+    ['三态在场优先于 legacy 布尔（新值不被旧对推翻）', mig({ remoteMode: 'wan', remoteEnabled: false, frpEnabled: false }), 'wan'],
+    ['非法三态值回落 legacy 推导（脏值不吞意图）', mig({ remoteMode: 'bogus', remoteEnabled: true }), 'lan'],
+    ['非法三态值且无 legacy → off', mig({ remoteMode: 'bogus' }), 'off'],
+  ];
+  for (const [label, input, want] of cases) {
+    const r = normalizeInstance(input);
+    check('C-3c ' + label + ' → ' + want, r.remoteMode === want, JSON.stringify({ got: r.remoteMode, want }));
+  }
+  // 旧键必须消失（残留会让下一轮读盘看到双轨真相）
+  {
+    const legacyRow = () => mig({
+      remoteEnabled: true, frpEnabled: true, frpRemotePort: 7001, wanPort: 22001, dshToken: 'STALE',
+    });
+    const raw = legacyRow(); // 不过 normalize 的原样记录（normalizeInstance 是原地改）
+    const r = normalizeInstance(legacyRow());
+    check('C-3c 迁移后 legacy 键全部剔除（零双轨）',
+      !('remoteEnabled' in r) && !('frpEnabled' in r) && !('frpRemotePort' in r)
+        && !('wanPort' in r) && !('dshToken' in r),
+      JSON.stringify(Object.keys(r)));
+    check('C-3c 迁移幂等（二次 normalize 不改结果 = 落盘后无历史态可推）',
+      normalizeInstance(r).remoteMode === 'wan', JSON.stringify(normalizeInstance(r)));
+    // 反向对照不过 normalize 的同一记录：键确实在——证明上面「剔除」判据不是空转。
+    check('C-3c 反向：未过 normalize 的同形状记录 wanPort/legacy 键仍在（判据非空转）',
+      'wanPort' in raw && 'remoteEnabled' in raw, JSON.stringify(Object.keys(raw)));
+  }
 }
 
 console.log('== 批4 C-4 upstreamPath（门卫令牌不进上游）==');

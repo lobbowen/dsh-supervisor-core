@@ -2,9 +2,11 @@
 'use strict';
 
 // lan-daemon（L3b 进程解耦）机制集成测试：
-//  - lan-daemon 从 lan-state.json 快照拉起 relay（mock 目标），wanPort 绑定并真实代理
+//  - lan-daemon 从 lan-state.json 快照拉起 relay（mock 目标）：wanPort 绑定唯一权威是
+//    端口注册表（ports-lan.json，claimSlot byOwner），实例行不带端口字段——测试经
+//    ctl list 回读实际绑定端口，不再硬编码期望值（三态化收口删 wanPort 镜像后同步）。
 //  - ctl（28104 复用 router-ctl dispatcher）list/frpStatus/health 可用
-//  - 状态 diff：remoteEnabled=false -> reconcile 移除 relay；实例新增 -> 补建
+//  - 状态 diff：行缺席/remoteMode=off -> reconcile 移除 relay；实例新增 -> 补建
 //  - SIGTERM 优雅退出（端口释放）
 // 自包含：mock HTTP 目标 + 独立 tmp config/lan-state，不触碰生产守卫/账号/relay。
 
@@ -13,16 +15,13 @@ const path = require('node:path');
 const fs = require('node:fs');
 const os = require('node:os');
 const { spawn } = require('node:child_process');
-// 端口统一取自 test/_ports.js（避开 OS ephemeral 与生产池，防跨文件撞号）
-const { safePort } = require(path.join(__dirname, '_ports'));
-
+const { safePort } = require(path.join(__dirname, '_ports.js'));
 const ROOT = path.join(__dirname, '..');
 const TMP = fs.mkdtempSync(path.join(os.tmpdir(), 'lan-daemon-test-'));
-const TARGET_A = 28100;
-const TARGET_B = 28101;
-const WAN_A = 28102;
-const WAN_B = 28103;
-const CTL = 28105; // 避开默认 28104，防与未来生产冲突（config.lanCtlPort 覆盖）
+const TARGET_A = safePort('lan-daemon', 0);
+const TARGET_B = safePort('lan-daemon', 1);
+// wanPort 不再硬编码：绑定权威是 daemon 侧端口注册表，实际端口经 ctl list 回读（portA/portB）。
+const CTL = safePort('lan-daemon', 5); // 避开段内 28104 默认位，防与未来生产冲突（config.lanCtlPort 覆盖）
 
 let passed = 0;
 let failed = 0;
@@ -89,9 +88,9 @@ async function main() {
 
   const ta = await startTarget(TARGET_A, 'A');
   const tb = await startTarget(TARGET_B, 'B');
-  const makeInst = (id, port, wanPort, remoteEnabled = true) => ({ id, name: id, port, remoteEnabled, remoteToken: '', frpEnabled: false, frpRemotePort: null, wanPort });
+  const makeInst = (id, port) => ({ id, name: id, port, remoteMode: 'lan', remoteToken: '' });
 
-  writeState({ updatedAt: Date.now(), instances: [makeInst('it-a', TARGET_A, WAN_A), makeInst('it-b', TARGET_B, WAN_B)], tokens: {} });
+  writeState({ updatedAt: Date.now(), instances: [makeInst('it-a', TARGET_A), makeInst('it-b', TARGET_B)], tokens: {} });
 
   // -- 启动 lan-daemon --
   // 诊断：stdio 由 ignore 改为捕获 stderr——wanPort 未监听失败时打印 daemon 错误（Windows 平台调试）。
@@ -110,25 +109,49 @@ async function main() {
   check('lan-daemon 启动且 ctl 可达', ctlUp);
   if (!ctlUp) { child.kill('SIGTERM'); ta.close(); tb.close(); console.log('\n结果: ' + passed + ' passed, ' + failed + ' failed'); process.exit(failed ? 1 : 0); }
 
-  // -- relay 拉起（wanPort 绑定 + 真实代理）--
+  // -- relay 拉起（注册表槽位绑定 + 真实代理）--
+  //   wanPort 权威在 daemon 侧端口注册表（claimSlot byOwner），实例快照/lan-state 都不带端口
+  //   -> 期望值只能从 ctl list 回读，再验证「回读到的端口确实在监听且确实在代理」。
   // Windows 实测 relay 绑定需 10-14s（pidlookup/端口探测慢于 Linux）；窗口放宽到 120x250ms=30s。
-  let aUp = false;
-  let bUp = false;
-  for (let i = 0; i < 120; i++) {
-    aUp = await portListening(WAN_A);
-    bUp = await portListening(WAN_B);
-    if (aUp && bUp) break;
-    await sleep(250);
-  }
-  check('relay wanPort 均在监听 (A/B)', aUp && bUp, { aUp, bUp });
-  if (!(aUp && bUp)) {
+  const listOnce = async () => {
+    try {
+      const l = await ctlCall('POST', { method: 'list', args: [] });
+      return (l.value && l.value.items) || [];
+    } catch { return []; }
+  };
+  const rowOf = (its, id) => its.find((x) => x.id === id) || null;
+  // 经 relay 口探一次真实代理：只有转发到正确 mock（响应体前缀核对）才算 200——防两口互串误判。
+  const proxyTo = (wan, tag) => new Promise((resolve) => {
+    const r = http.get({ host: '127.0.0.1', port: wan, path: '/probe' }, (res) => {
+      let b = '';
+      res.on('data', (c) => { b += c; });
+      res.on('end', () => resolve(res.statusCode === 200 && b.startsWith(tag) ? 200 : 0));
+    });
+    r.on('error', () => resolve(0));
+    r.setTimeout(1000, () => { r.destroy(); resolve(0); });
+  });
+  const waitForBinding = async (id, tag, tries = 120) => {
+    for (let i = 0; i < tries; i++) {
+      const row = rowOf(await listOnce(), id);
+      const wan = row && row.wanPort;
+      if (Number.isInteger(wan) && await portListening(wan)) {
+        if (await proxyTo(wan, tag) === 200) return wan;
+      }
+      await sleep(250);
+    }
+    return null;
+  };
+  const PORT_A = await waitForBinding('it-a', 'mock-A');
+  const PORT_B = await waitForBinding('it-b', 'mock-B');
+  check('relay 槽位端口已监听且代理到各自目标（A/B）', PORT_A && PORT_B, { PORT_A, PORT_B });
+  if (!(PORT_A && PORT_B)) {
     console.log('--- daemon stderr ---');
     console.log(daemonErr.slice(-80).join(''));
     try { const lf = fs.readFileSync(path.join(TMP, 'sup.log'), 'utf8').split('\n').slice(-40).join('\n'); console.log('--- sup.log tail ---\n' + lf); } catch {}
   }
 
   const proxy = () => new Promise((resolve) => {
-    const r = http.get({ host: '127.0.0.1', port: WAN_A, path: '/hi' }, (res) => {
+    const r = http.get({ host: '127.0.0.1', port: PORT_A, path: '/hi' }, (res) => {
       let b = '';
       res.on('data', (c) => { b += c; });
       res.on('end', () => resolve({ code: res.statusCode, body: b }));
@@ -140,20 +163,21 @@ async function main() {
   check('relay 真实代理到目标（mock-A /hi）', p.code === 200 && p.body === 'mock-A /hi', p);
 
   // -- ctl list / frpStatus --
-  const list = await ctlCall('POST', { method: 'list', args: [] });
-  const items = (list.value && list.value.items) || [];
-  check('ctl list 含 it-a/it-b', items.some((x) => x.id === 'it-a' && x.wanPort === WAN_A) && items.some((x) => x.id === 'it-b' && x.wanPort === WAN_B), JSON.stringify(list.value && list.value.items));
+  const items = await listOnce();
+  check('ctl list 含 it-a/it-b 且端口与实测一致',
+    rowOf(items, 'it-a') && rowOf(items, 'it-a').wanPort === PORT_A
+      && rowOf(items, 'it-b') && rowOf(items, 'it-b').wanPort === PORT_B, JSON.stringify(items));
   const frp = await ctlCall('POST', { method: 'frpStatus', args: [] });
   check('ctl frpStatus 可调（无异常）', frp && frp.ok === true);
 
-  // -- 状态 diff：禁用 it-b -> reconcile 移除；令牌注入不崩 --
-  writeState({ updatedAt: Date.now(), instances: [makeInst('it-a', TARGET_A, WAN_A)], tokens: { 'it-a': 'tok-XYZ' } });
+  // -- 状态 diff：关闭 it-b 远程 -> reconcile 移除；令牌注入不崩 --
+  writeState({ updatedAt: Date.now(), instances: [makeInst('it-a', TARGET_A), Object.assign(makeInst('it-b', TARGET_B), { remoteMode: 'off' })], tokens: { 'it-a': 'tok-XYZ' } });
   let gone = false;
   for (let i = 0; i < 20; i++) {
     await sleep(300);
-    if (!(await portListening(WAN_B))) { gone = true; break; }
+    if (!(await portListening(PORT_B))) { gone = true; break; }
   }
-  check('remoteEnabled=false → relay 移除（WAN_B 释放）', gone);
+  check('remoteMode=off → relay 移除（该槽位端口释放）', gone, { PORT_B });
   const list2 = await ctlCall('POST', { method: 'list', args: [] });
   const ids2 = ((list2.value && list2.value.items) || []).map((x) => x.id);
   check('ctl list 只剩 it-a', ids2.length === 1 && ids2[0] === 'it-a', ids2);
@@ -170,8 +194,8 @@ async function main() {
   child.kill('SIGTERM');
   await sleep(800);
   check('SIGTERM 后进程退出', child.exitCode !== null || true); // detached/unref：用端口判断
-  const aDown = !(await portListening(WAN_A));
-  check('退出后 wanPort 释放', aDown);
+  const aDown = !(await portListening(PORT_A));
+  check('退出后 wanPort 释放', aDown, { PORT_A });
 
   ta.close(); tb.close();
   try { fs.rmSync(TMP, { recursive: true, force: true }); } catch {}

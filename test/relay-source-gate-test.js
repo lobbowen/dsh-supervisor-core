@@ -113,6 +113,39 @@ check('S-c 空地址拒绝', trusted('') === false);
   check('S-d 因此回环判定必须放行（否则 FRP 会被误杀）', trusted('127.0.0.1') === true, '放行');
 }
 
+// -- S-e：端口权威唯一（同号纪律 + 绑定只在删除时释放）--
+//   三态化收口把「远程序号从哪来」收成一处：relay 槽位注册表 byOwner。实例记录不再有
+//   wanPort 镜像，frpc 也不引入第二套端口——公网口恒等于本机 relay 口。
+//   本组防的是**回流**：谁再往实例对象写 wanPort 镜像、给 frpc 配第二个端口来源、或在
+//   off 拆除分支 releaseOwner，守卫与 daemon 就会重新分裂成 ghost 双族（历史缺陷成因）。
+console.log('== S-e 端口权威唯一（同号纪律 + off 保留绑定）==');
+{
+  const readRelay = (rel) => stripAll(fs.readFileSync(path.join(relayDir, rel), 'utf8'));
+  const ops = readRelay('ops.js');
+  const core = readRelay('core.js');
+  const rec = readRelay(path.join('ops', 'reconcile.js'));
+  const toml = core.slice(core.indexOf('function buildFrpcToml'));
+  check('S-e frpc 隧道两端同源（localPort 与 remotePort 都取 inst.wanPort = 恒同号）',
+    /localPort = ' \+ inst\.wanPort/.test(toml) && /remotePort = ' \+ inst\.wanPort/.test(toml), '同号');
+  check('S-e 反向：frpc 不存在第二端口来源（frpRemotePort 手填口已删）',
+    !/frpRemotePort/.test(core), '无');
+  check('S-e 绑定记忆不在实例对象上（无任何 *.wanPort 回写镜像）',
+    !/\binst\.wanPort\s*=[^=]/.test(srcCode), '无镜像');
+  // 释放 owner 只在「对象真消失」时发生：关远程(off) 保留绑定，重开复用同口。
+  const releases = (rec.match(/releaseOwner\(/g) || []).length;
+  check('S-e 释放点计数恰为 2（reconcile 缺席判定 + 实例删除），无第三处',
+    releases === 2, 'count=' + releases);
+  check('S-e removeOne 释放受 !inst 前置（disabled 分支不释放）',
+    /if \(!inst\) portsvc\.releaseOwner\(/.test(rec), '有');
+  check('S-e removeOne 事件载荷区分 stale/disabled（两种移除原因可审计）',
+    /reason: !inst \? 'stale' : 'disabled'/.test(rec), '有');
+  check('S-e ops.js（syncProxy/off 拆除分支）不调 releaseOwner',
+    !/releaseOwner/.test(ops), 'count=0');
+  check('S-e 反向：污染样本（无条件释放/旧 disabled 也 release）会被 !inst 前置判据识破',
+    !/if \(!inst\) portsvc\.releaseOwner\(/.test("  portsvc.releaseOwner('relay:' + proxy.id);")
+      && /if \(!inst\) portsvc\.releaseOwner\(/.test("  if (!inst) portsvc.releaseOwner('relay:' + proxy.id);"), 'hit');
+}
+
 const failed = results.filter((r) => !r);
 console.log(String.fromCharCode(10) + '结果: ' + (results.length - failed.length) + ' passed, ' + failed.length + ' failed');
 process.exit(failed.length ? 1 : 0);

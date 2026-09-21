@@ -363,6 +363,8 @@ const RANK = {
   'core.js': 2, 'policies': 2, 'policies.js': 2, 'switch.js': 2, 'journal.js': 2, 'jobs.js': 2,
   'state-machine.js': 2, 'cli.js': 2, 'targets.js': 2, 'frp.js': 2, 'managed.js': 2, 'views.js': 2,
   'session.js': 2, 'tunnel.js': 2, 'market-net.js': 2, 'market-sources.js': 2,
+  // 资源预算推导纯函数（instance 域，被 lifecycle 消费；与 state-machine 同层）。
+  'governor.js': 2,
   // frp-install.js 与 frp.js 同为原 frpmgr.js 的按副作用二分半（relay.md:216 判定 frp->frp-install 域内合法）：
   'frp-install.js': 2,
   // rank 3：模型 / 持久化 / 多实现 / 纯数据
@@ -552,7 +554,9 @@ function functionScan(src) {
 
 // -- DG-14 facade 只读 --
 const WRITE_VERB = /^(set|patch|install|apply|toggle|sync|start|stop|restart|enable|disable|update|remove|delete|reset)/i;
-const WRITE_TARGET_CALL = /\.(frpAction|setFrp|syncFrpc)\s*\(/;
+//   setFrp 随远程控制三态化收口删除；写目标清单对齐现役唯一写入口（lan.js#setRemoteMode/
+//   setRemoteToken/lanFrpc->frpAction/syncFrpc）。
+const WRITE_TARGET_CALL = /\.(frpAction|setRemoteMode|setRemoteToken|syncFrpc)\s*\(/;
 const FACADE_EXCEPTIONS = {
   'app/facade/lan.js': { listLan: '读触发 reconcile 对账（relay list），域契约标注 read-with-side-effect' },
   'app/facade/ports.js': { listPorts: '读触发端口激活探测，同上' },

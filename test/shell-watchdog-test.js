@@ -17,7 +17,7 @@ const ROOT = path.join(__dirname, '..');
 // 纯决策/谓词已下沉 core.js（域结构改造）；看护状态机仍在 watchdog.js。
 //    读取面必须随文件搬移同步更新，否则判据静默失去覆盖面（本仓已多次踩坑）。
 const { createShellWatchdog } = require(path.join(ROOT, 'src', 'domains', 'shell', 'watchdog'));
-const { decide, isShellProcess, DEFAULTS } =
+const { decide, isShellProcess, DEFAULTS, HEADLESS_FLAGS } =
   require(path.join(ROOT, 'src', 'domains', 'shell', 'core'));
 
 const results = [];
@@ -51,6 +51,21 @@ console.log('== W2 isShellProcess 过滤 ==');
   check('W2-c 排除 --shell-update-plan 自检', isShellProcess({ cmdline: 'dsh-supervisor-gui --shell-update-plan' }) === false);
   check('W2-d 排除 --service-plan 自检', isShellProcess({ cmdline: 'dsh-supervisor-gui --service-plan' }) === false);
   check('W2-e 空 cmdline 不误判', isShellProcess({ cmdline: '' }) === false);
+  // 无头模式清单必须与壳侧 main.rs「在 Tauri 初始化之前 exit」的分支一一对应：
+  // 漏一项 = 那个瞬时进程被当成「壳在运行」，看护短路成 alive，真壳永不回来。
+  check('W2-f 排除 --run-guard（服务定义指向的守卫入口）',
+    isShellProcess({ cmdline: 'dsh-supervisor-gui.exe --run-guard' }) === false);
+  check('W2-g 排除 --watchdog（Windows 看护任务的无头入口）',
+    isShellProcess({ cmdline: 'dsh-supervisor-gui.exe --watchdog' }) === false);
+  check('W2-h 排除 --platform-matrix（此前漏项）',
+    isShellProcess({ cmdline: 'dsh-supervisor-gui --platform-matrix' }) === false);
+  check('W2-i 清单可枚举（供壳侧/文档对齐）',
+    Array.isArray(HEADLESS_FLAGS) && HEADLESS_FLAGS.length >= 9
+      && HEADLESS_FLAGS.every((f) => /^--[a-z-]+$/.test(f))
+      && HEADLESS_FLAGS.every((f) => isShellProcess({ cmdline: 'dsh-supervisor-gui ' + f }) === false));
+  // 反空转：判 false 的必须是「排除表命中」，不是「名字没匹配上壳」。
+  check('W2-j 反向：未登记的同名进程仍判为壳',
+    isShellProcess({ cmdline: 'dsh-supervisor-gui --some-future-headless-flag' }) === true);
 }
 
 // -- W3 tick() 集成（注入 mock）--

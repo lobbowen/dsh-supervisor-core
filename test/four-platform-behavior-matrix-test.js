@@ -94,13 +94,13 @@ function underFake(platform, arch, body) {
   const sets = plats.map((p) => Object.keys(osLayer.capabilityProfile(p, 'x64')).sort());
   const base = JSON.stringify(sets[0]);
   const bad = plats.filter((p, i) => JSON.stringify(sets[i]) !== base);
-  check('P-4 四平台能力键集合完全一致（13 项）',
-    bad.length === 0 && sets[0].length >= 13,
+  check('P-4 四平台能力键集合完全一致（14 项）',
+    bad.length === 0 && sets[0].length >= 14,
     bad.length ? ('不一致: ' + bad.join(', ')) : (sets[0].length + ' 键一致'));
   // 逐项列出，便于人工核对（也证明不是空集合）
   const expectedKeys = [
-    'platform', 'arch', 'multiInstance', 'pidAdoption', 'processTreeKill', 'desktopNotify',
-    'autostart', 'frpExpose', 'hostService', 'guardAutostart', 'guardSelfHeal',
+    'platform', 'arch', 'sandboxLaunch', 'sandboxEnforcement', 'pidAdoption', 'processTreeKill',
+    'desktopNotify', 'autostart', 'frpExpose', 'hostService', 'guardAutostart', 'guardSelfHeal',
     'shellAutostart', 'shellSelfHeal',
   ].sort();
   check('P-4 键集合 = 规范清单（防新增能力只加在一个平台）',
@@ -114,9 +114,14 @@ function underFake(platform, arch, body) {
   const D = osLayer.capabilityProfile('darwin', 'x64');
   const W = osLayer.capabilityProfile('win32', 'x64');
   const U = osLayer.capabilityProfile('freebsd', 'x64');
-  check('P-5 只有 linux 声明 multiInstance=true（沙箱 systemd-run）',
-    L.multiInstance === true && D.multiInstance === false && W.multiInstance === false && U.multiInstance === false,
-    [L, D, W, U].map((x) => x.multiInstance).join(','));
+  check('P-5 三平台均声明 sandboxLaunch=true（W3：linux=systemd 硬档，darwin/win32=portable 软档），未知平台 false',
+    L.sandboxLaunch === true && D.sandboxLaunch === true && W.sandboxLaunch === true && U.sandboxLaunch === false,
+    [L, D, W, U].map((x) => x.sandboxLaunch).join(','));
+  //  字段拆分：拉起能力与限额执行档位是两个正交维度（W3 落地：三平台都能跑舱，但限额强制不同档）。
+  check('P-5 sandboxEnforcement 档位：linux=cgroup（期望），darwin/win32=supervise，未知=none',
+    L.sandboxEnforcement === 'cgroup' && D.sandboxEnforcement === 'supervise'
+    && W.sandboxEnforcement === 'supervise' && U.sandboxEnforcement === 'none',
+    [L, D, W, U].map((x) => x.sandboxEnforcement).join(','));
   check('P-5 hostService 与平台一一对应（systemd/launchd/windows-service/none）',
     L.hostService === 'systemd' && D.hostService === 'launchd'
     && W.hostService === 'windows-service' && U.hostService === 'none',
@@ -124,8 +129,9 @@ function underFake(platform, arch, body) {
   check('P-5 三平台 shellSelfHeal 均为 true（macOS 曾缺，2026-09-11 补齐）',
     L.shellSelfHeal === true && D.shellSelfHeal === true && W.shellSelfHeal === true && U.shellSelfHeal === false,
     [L, D, W, U].map((x) => x.shellSelfHeal).join(','));
+  // sandboxEnforcement 是枚举字符串（未知平台='none'），不在「其余全 false」断言范围内。
   check('P-5 未知平台全 false（显式 Unsupported，绝不静默成功）',
-    Object.entries(U).every(([k, v]) => (k === 'platform' || k === 'arch' || k === 'hostService') || v === false),
+    Object.entries(U).every(([k, v]) => (k === 'platform' || k === 'arch' || k === 'hostService' || k === 'sandboxEnforcement') || v === false),
     JSON.stringify(U));
   //  重要区分：capabilityProfile.processTreeKill（含 Windows taskkill /T）与
   //   matrix.supportsProcessGroup（仅 POSIX kill(-pid)）**语义不同**，不得混用。
@@ -187,8 +193,8 @@ function underFake(platform, arch, body) {
 // -- P-8：反向（判据必须能识别违规）--
 {
   const keySetEqual = (a, b) => JSON.stringify(Object.keys(a).sort()) === JSON.stringify(Object.keys(b).sort());
-  const full = { platform: 'linux', arch: 'x64', multiInstance: true, pidAdoption: true };
-  const shortOne = { platform: 'win32', arch: 'x64', multiInstance: false };
+  const full = { platform: 'linux', arch: 'x64', sandboxLaunch: true, pidAdoption: true };
+  const shortOne = { platform: 'win32', arch: 'x64', sandboxLaunch: false };
   check('P-8 反向：判据能识别"某平台少声明能力"',
     keySetEqual(full, shortOne) === false, 'hit');
   check('P-8 反向：判据对同键集合不误报',

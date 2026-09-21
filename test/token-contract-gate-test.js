@@ -490,7 +490,7 @@ function ghostKeyHitsIn(rel, code, keys) {
 // instances[] 行是配置存储的只读派生投影（0600，daemon 不回写），字段走**白名单**：
 // 唯一允许携带的用户配置凭证字段是 remoteToken（lan-daemon 门卫校验与 frp 暴露闸必需值）。
 // 新增任何凭证字段想进此文件，必须先改契约（DSH-TOKEN-CONTRACT TK-7 裁决）再过本门禁。
-var LAN_STATE_ROW_KEYS = ['id', 'name', 'port', 'remoteEnabled', 'remoteToken', 'frpEnabled', 'frpRemotePort'];
+var LAN_STATE_ROW_KEYS = ['id', 'name', 'port', 'remoteMode', 'remoteToken'];
 function lanTokensProblems(tokens, managedIds, userConfigValues) {
   var problems = [];
   var keys = Object.keys(tokens || {});
@@ -669,17 +669,17 @@ function runLanStateProbe() {
       // DG-11 查询接口：runtime#_syncLanState 经 all() 取用，不再直读内部活数组。
       all() { return this.instances; },
       instances: [{
-        id: 'inst-a', name: 'a', port: 28221, remoteEnabled: true,
-        remoteToken: USER[1], frpEnabled: true, frpAuth: USER[2], frpRemotePort: 7000,
+        id: 'inst-a', name: 'a', port: 28221, remoteMode: 'wan',
+        remoteToken: USER[1], frpAuth: USER[2],
       }, {
         // TK-8 失效信号用例：池内无令牌的实例，tokens 段必须显式写出 ''（旧实现 if (t) 直接缺席，
         // daemon 持旧 cookie 且 cookieReady 假真）。
-        id: 'inst-b', name: 'b', port: 28222, remoteEnabled: true,
-        remoteToken: '', frpEnabled: false, frpRemotePort: null,
+        id: 'inst-b', name: 'b', port: 28222, remoteMode: 'lan',
+        remoteToken: '',
       }],
     };
     sup.dshMainView = function () {
-      return { id: 'main', name: '主实例', port: 28220, remoteEnabled: true, remoteToken: USER[0], frpEnabled: false, frpRemotePort: null };
+      return { id: 'main', name: '主实例', port: 28220, remoteMode: 'wan', remoteToken: USER[0] };
     };
     sup.tokenService = {
       get: function (id) { return id === 'main' ? 'DSH_MAIN_TOK' : (id === 'inst-a' ? 'DSH_INST_TOK' : ''); },
@@ -788,7 +788,7 @@ console.log('== TK-G8 反向：判据能识别旧形态 ==');
   check('TK-G8 G4 白名单判据识别 instances 行混入未注册凭证字段（TK-7 裁决）',
     lanInstanceRowProblems([{ id: 'a', port: 1, apiAccessKey: 'X' }]).length > 0, 'hit');
   check('TK-G8 G4 白名单判据不误报注册过的投影行（remoteToken 合法在场）',
-    lanInstanceRowProblems([{ id: 'a', name: 'a', port: 1, remoteEnabled: true, remoteToken: 'T', frpEnabled: false, frpRemotePort: null }]).length === 0, 'ok');
+    lanInstanceRowProblems([{ id: 'a', name: 'a', port: 1, remoteMode: 'wan', remoteToken: 'T' }]).length === 0, 'ok');
 }
 
 var failed = results.filter(function (r) { return !r; });

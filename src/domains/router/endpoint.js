@@ -97,7 +97,7 @@ function createEndpoint(deps) {
         if (events) { try { events.append('router_provider_activation_failed', { id, name: p.name, error: 'providerApi 端口池耗尽', capacity: cap }); } catch {} }
         return { ok: false, error: 'providerApi 端口池耗尽（' + (cap ? cap.free + ' 空闲 / ' + cap.size + ' 总量' : '满') + '），请扩 portPools.providerApi 或停用部分供应商', poolFull: true, capacity: cap };
       }
-      if (p.kind === 'proxy') scheduler.ensureProviderInstances(p).catch(() => {});
+      if (p.supports('instanceLifecycle')) scheduler.ensureProviderInstances(p).catch(() => {});
       startProviderServer(id);
       if (events) events.append('router_provider_activated', { id, name: p.name, port: p.apiPort });
       save();
@@ -113,7 +113,7 @@ function createEndpoint(deps) {
       p.activated = false;
       stopProviderServer(id);
       // force=true：停用是资源回收语义；不带 force 时在用实例只挂待停标记，而停用后补刀不可达，进程泄漏。
-      if (p.kind === 'proxy') { for (const i of (p.instances || [])) { try { p.stopInstance(i, true); } catch {} } }
+      if (p.supports('instanceLifecycle')) { for (const i of (p.instances || [])) { try { p.stopInstance(i, true); } catch {} } }
       if (events) events.append('router_provider_deactivated', { id, name: p.name });
       save();
     }
@@ -133,7 +133,7 @@ function createEndpoint(deps) {
         if (p.apiPort) save();
       }
       startProviderServer(p.id);
-      if (p.kind === 'proxy') await scheduler.ensureProviderInstances(p).catch(() => {});
+      if (p.supports('instanceLifecycle')) await scheduler.ensureProviderInstances(p).catch(() => {});
     }
   }
 

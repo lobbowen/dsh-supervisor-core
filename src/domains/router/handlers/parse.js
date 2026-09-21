@@ -77,7 +77,7 @@ function instOf(prov, acc) {
 /** 账号/实例目标：{ targetBase, prov }（直连=baseUrl，反代=实例端口）。不跨池。 */
 function resolveTarget(acc, prov) {
   if (!prov) return null;
-  if (prov.kind === 'proxy') {
+  if (prov.supports && prov.supports('instanceLifecycle')) {
     const inst = instOf(prov, acc);
     if (!inst || !inst.port) return null;
     return { targetBase: 'http://127.0.0.1:' + inst.port, prov };

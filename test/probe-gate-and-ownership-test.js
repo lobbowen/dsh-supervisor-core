@@ -35,7 +35,6 @@ const ROOT = path.join(__dirname, '..');
 const results = [];
 const check = (n, c, x) => { results.push(!!c); console.log((c ? 'PASS' : 'FAIL') + ' ' + n + (x !== undefined && x !== '' ? '  ← ' + x : '')); };
 
-const base = fs.readFileSync(path.join(ROOT, 'src', 'domains', 'router', 'providers', 'base.js'), 'utf8');
 //  providers 改造后 applyDetection 状态机下沉 policies/freeze.js（base 只剩薄委托）——
 //   E-a 判据必须读**实现文件**，否则文件一搬即静默假绿。
 const freezePolicySrc = fs.readFileSync(path.join(ROOT, 'src', 'domains', 'router', 'providers', 'policies', 'freeze.js'), 'utf8');
@@ -102,7 +101,7 @@ check('E-c release 签名接受第二参', /release\(port, ownerId\)/.test(
   check('E-d 删反代账号时停止实例', /p\.stopInstance\(/.test(body), '有');
   check('E-d 删反代账号时释放端口登记', /ports\.unregister\('proxy:'/.test(body), '有');
   check('E-d 同步 p.instances（防 orphan 实例记录）', /p\.instances\s*=\s*\(p\.instances/.test(body), '有');
-  check('E-d 收尾限定于 proxy 类（direct 无实例/端口）', /p\.kind === 'proxy'/.test(body), '有');
+  check('E-d 收尾限定于 process-pool 形态（direct 无实例/端口）', /p\.supports\('instanceLifecycle'\)/.test(body), '有');
 }
 
 // -- E-e：applyProxyUpdate 的进度必须写进 task（P2-1）--

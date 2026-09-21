@@ -53,7 +53,7 @@ function handle(ctx) {
       return send(202, { ok: true, accepted: true, state: 'uninstalling' });
     }
     // 原生主干(main)设置：main 的设置不经 /instances（沙箱域），统一走本入口。
-    // 白名单：guardian(守护自动拉起) / remoteEnabled(远程控制) / frp。
+    // 白名单：仅 guardian(守护自动拉起)；远程控制意图（模式/令牌）唯一入口在 /remote/*。
     if (req.method === 'POST' && pathname === '/native/settings') {
       if (!originAllowed(req, sup.config.apiPort)) { req.resume(); return send(403, { ok: false, error: 'cross-origin request rejected' }); }
       collectBody(req, res, 4096, (body) => {
