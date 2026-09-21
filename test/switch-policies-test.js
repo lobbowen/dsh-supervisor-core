@@ -40,12 +40,12 @@ const { decideFailure, headerRetryMs, bodyResetMs } = require(path.join(ROOT, 's
   const frozen = pickAccount({ accounts: [{ keyId: 'k1', status: 'frozen', usable: false }, { keyId: 'k2', usable: true }], selectedAccountKeyId: 'k1', cursor: 0 }, {});
   check('S1 锁定账号临时冻结 → 不清锁，落到可用号', frozen.clearSelected === false && frozen.keyId === 'k2', JSON.stringify(frozen));
 
-  const excl = pickAccount({ accounts: [{ key: 'a', keyId: 'k1', usable: true }], kind: 'direct', cursor: 0 }, { excludeKeys: new Set(['a']) });
+  const excl = pickAccount({ accounts: [{ key: 'a', keyId: 'k1', usable: true }], cursor: 0 }, { excludeKeys: new Set(['a']) });
   check('S1 excludeKeys 强制排除 → null', excl.keyId === null, JSON.stringify(excl));
 
-  const proxy = pickAccount({ accounts: [{ keyId: 'k1', usable: true, running: false }, { keyId: 'k2', usable: true, running: true }], kind: 'proxy', cursor: 0 }, {});
+  const proxy = pickAccount({ accounts: [{ keyId: 'k1', usable: true, running: false }, { keyId: 'k2', usable: true, running: true }], instancePool: true, cursor: 0 }, {});
   check('S1 反代优先选实例已运行账号', proxy.keyId === 'k2', JSON.stringify(proxy));
-  const proxyFallback = pickAccount({ accounts: [{ keyId: 'k1', usable: true, running: false }], kind: 'proxy', cursor: 0 }, {});
+  const proxyFallback = pickAccount({ accounts: [{ keyId: 'k1', usable: true, running: false }], instancePool: true, cursor: 0 }, {});
   check('S1 无就绪账号降级全可用池', proxyFallback.keyId === 'k1', JSON.stringify(proxyFallback));
 }
 

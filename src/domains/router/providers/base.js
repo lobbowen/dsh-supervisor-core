@@ -66,6 +66,10 @@ class ProviderBase {
 
   accountQuotaSummary(acc) { return quota.accountQuotaSummary(acc); }
 
+  /** 结算单价来源（转发收口按此多态分派，取代 kind 字面量分支）：
+   *  缺省=调用方注入的全局单价 fallback；直连覆写为官方单价。 */
+  pricingOf(fallback) { return typeof fallback === 'function' ? fallback() : null; }
+
   async addAccount(key, extra) {
     const existing = this.accounts.find((a) => a.key === key);
     if (existing) return { ok: true, account: existing, already: true };

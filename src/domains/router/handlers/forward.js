@@ -94,7 +94,7 @@ function createForwarder(deps) {
       // 按需激活必须在 resolveTarget 之前（实例未启动 port=null，否则死锁）
       activeProv = prov;
       const curInst = parse.instOf(activeProv, acc);
-      if (activeProv && activeProv.kind === 'proxy' && curInst) {
+      if (activeProv && activeProv.supports && activeProv.supports('instanceLifecycle') && curInst) {
         activeProv.markUsed(curInst);
         if (!curInst.pid || curInst.status !== 'HOT') {
           const sr = await activeProv.startInstance(curInst).catch((e) => ({ ok: false, error: e && e.message }));
@@ -136,7 +136,7 @@ function createForwarder(deps) {
         // 失败归属在下方按 activeProv + inst 收口。此处原有一处 rt.prov.markInstanceNetFail(acc)：
         // proxy 实现要求实参带 pid（acc 无 pid -> 无操作），base 实现直接抛错 —— 冗余死调用，删除。
         log('ERR net fail key=' + maskKey(acc.key) + ' err=' + out.error);
-        if (activeProv && activeProv.kind === 'proxy' && inst) {
+        if (activeProv && activeProv.supports && activeProv.supports('instanceLifecycle') && inst) {
           if (isTimeout && activeProv.supports && activeProv.supports('instanceLifecycle')) {
             try { activeProv.restartInstance(inst, 'upstream-timeout'); } catch {}
           } else if (activeProv.supports && activeProv.supports('instanceLifecycle')) {
@@ -145,12 +145,12 @@ function createForwarder(deps) {
         }
         if (!isTimeout) {
           // 先停实例再清 pid。原先只置 pid=null，
-          //   而 stopInstance 的 kill 段以 inst.pid 为判据（instance-lifecycle.js:38）——
+          //   而 stopInstance 的 kill 段以 inst.pid 为判据（instance-lifecycle.js）——
           //   先把 pid 抹掉等于让唯一 kill 路径恒不可达，本地反代进程留存并继续占端口。
           //   endAttempt() 已在上方执行，inflight 归零后 stopInstance 不会走 pendingStop 延后分支。
           try {
             const inst2 = parse.instOf(activeProv, acc);
-            if (activeProv && activeProv.kind === 'proxy' && inst2 && inst2.pid
+            if (activeProv && inst2 && inst2.pid
                 && activeProv.supports && activeProv.supports('instanceLifecycle')) {
               activeProv.stopInstance(inst2);
             } else if (inst2 && inst2.pid) { inst2.pid = null; inst2.healthy = false; }
@@ -191,7 +191,7 @@ function createForwarder(deps) {
       }
       // 2xx 才清零失败计数（请求级熔断）
       const okInst = parse.instOf(activeProv, acc);
-      if (activeProv && activeProv.kind === 'proxy' && okInst
+      if (activeProv && okInst
           && activeProv.supports && activeProv.supports('instanceLifecycle')) {
         try { activeProv.markRequestOk(okInst); } catch {}
       }
@@ -239,7 +239,7 @@ function createForwarder(deps) {
           logger.warn('[stream] SHORT-OUTPUT key=' + maskKey(acc.key) + ' completionTokens=' + comp + ' bytes=' + bytes + ' tail=...' + t);
         }
       } catch {}
-      usage.recordUsage({ ts: new Date().toISOString(), model: meta.model, key: acc.key, promptTokens: usageRec ? usageRec.promptTokens : 0, completionTokens: usageRec ? usageRec.completionTokens : 0, totalTokens: usageRec ? usageRec.totalTokens : 0, cacheMiss: usageRec ? usageRec.cacheMiss : 0, cacheHit: usageRec ? usageRec.cacheHit : 0, durationMs: Date.now() - meta.started, status, streamed: meta.streamRequested, usageMissing: !usageRec, pricing: (prov && prov.kind === 'direct') ? ((prov.officialPricing || null)) : getPricing() });
+      usage.recordUsage({ ts: new Date().toISOString(), model: meta.model, key: acc.key, promptTokens: usageRec ? usageRec.promptTokens : 0, completionTokens: usageRec ? usageRec.completionTokens : 0, totalTokens: usageRec ? usageRec.totalTokens : 0, cacheMiss: usageRec ? usageRec.cacheMiss : 0, cacheHit: usageRec ? usageRec.cacheHit : 0, durationMs: Date.now() - meta.started, status, streamed: meta.streamRequested, usageMissing: !usageRec, pricing: (prov && prov.pricingOf) ? prov.pricingOf(getPricing) : getPricing() });
     };
     const finishAborted = () => {
       if (completed) return;
