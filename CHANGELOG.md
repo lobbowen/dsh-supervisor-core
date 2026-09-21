@@ -6,6 +6,30 @@
 
 ## [未发布]
 
+### 路由域判据统一（方向三）：能力判据一律 supports()，process-pool 契约收口能力方 mixin
+
+- **错误设计**：路由判据 35 处散用 `p.kind === 'proxy'` 字面量分支与 `typeof p.X === 'function'`
+  猜测；11 个 process-pool 契约方法以基座抛错占位存在——基座永远实现不了它们，base 与 pool 的
+  this 图反向边靠 DG-4 豁免兜底，且占位文案诱导调用方退回 typeof。
+- **正解**：池能力面自 `proxy.js` 抽为 `providers/process-pool.js` mixin（withProcessPool；
+  supports = 基座与 POOL_CAPS 并集；抽离时方法体逐字节比对一致），重启编排器/删账号钩子的
+  ctor 接线随迁入 mixin 构造器；基座抛错占位删除，契约声明归能力方（PG-1 判据改为
+  「基座 detectAccount 抛错 + mixin 定义 11 个契约方法」）；`usageOf` 拆为基座 in-use/idle
+  加 mixin 覆写派生 warming；instance-lifecycle 模块函数 `stopInstance` 更名 `arbitrateStop`
+  消除与 mixin 方法的 DG-4c 同名歧义。
+- **判据迁移**：scheduler/endpoint/forward/parse/switch/admin/ops/quotasync 等 35 处改
+  `supports('instanceLifecycle'|'processPool'|'gracefulStop'|'reconcile'…)` 守卫；结算单价
+  由 kind 分支改多态 `pricingOf(fallback)`（direct 覆写返回官方单价）；切换策略输入去身份化
+  （`state.kind` 改布尔 `instancePool`）。
+- **B 类保留 + 防回潮**：持久化字段（store.js 序列化 2 处）、视图渲染（views.js 1 处）、
+  注册表查找（ops.js 3 处）、无原型裸 JSON（ports-bootstrap.js 1 处）共 7 处保留 kind 比较，
+  新门禁 PG-11 按文件精确配额登记（增减不匹配即红）。实施中一处由 A 类改判 B 类：
+  ports-bootstrap 读的是裸 providers.json 记录（无原型，supports 不可用），理由记入代码注释。
+- 文档：DOMAIN-STRUCTURE-DESIGN §5.1 增「能力判据规范」小节，目录树补 process-pool.js 行。
+- 验证：node --check 全绿；静态门禁 domain-structure（DG-4 归零 / DG-4c 消歧 / DG-4d
+  router=1 且均有实现）、provider-gateway 31/31（含 PG-11 四向自检）、round13 53/53、
+  directory-structure 无新增红；运行测试按仓库标准以 CI 为准。
+
 ### 智能路由一键登录：浏览器选择权归还系统默认浏览器
 
 - **错误设计**：Command Code 一键登录的隔离打开不走系统默认浏览器，而是由产品指定浏览器内核 ——

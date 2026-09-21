@@ -178,6 +178,7 @@ router/
 ├── policies/failure.js  ≤60   纯：失败反应（阈值）
 ├── switch.js            ≤110  编排
 ├── providers/base.js    ≤200  抽象契约 + 账号池 + 检测应用
+├── providers/process-pool.js ≤200  实例进程治理能力 mixin（11 个池契约方法实现 + supports 并集）
 ├── providers/model.js   ≤180  账号模型 + 序列化
 ├── providers/policies/quota.js  ≤250  额度判定 + 响应分类
 ├── providers/policies/freeze.js ≤200  冻结/恢复策略
@@ -190,6 +191,18 @@ router/
 ├── proxy-apps.js / port-segments.js  保留
 └── daemon.js            ≤120  仅装配 + 启动（**文件名不变**）
 ```
+
+**能力判据规范（判据统一方向③，2026-09-21 定版；机器校验 = PG-2 + PG-11）**：
+- 运行时「能不能做 X」（起停实例/对账/预热/优雅收敛…）一律 `p.supports(cap)`，词表见
+  `providers/process-pool.js` 的 `POOL_CAPS`；禁止退回 `typeof p.X === 'function'` 猜测或
+  `kind` 字面量分支——「有没有实例」是能力事实，「是不是反代」是身份标签，二者今天重合、
+  明天（binary 分发/新协议族）不一定。
+- `kind` 字面量比较仅保留 B 类四类用途：持久化字段（`store.js` 序列化/反序列化）、视图行
+  渲染（`views.js`）、同类注册表查找鉴别（`ops.js` CRUD）、无原型裸 JSON 记录
+  （`ports-bootstrap.js`）。逐文件精确配额登记在 PG-11 白名单，增减不匹配即红。
+- 新增能力：先在能力方文件（mixin 或专用 provider 类）实现并扩 `supports` 词表，调用方再以
+  `supports(cap)` 守卫；能力面契约在能力方声明，基座（`providers/base.js`）不携带抛错占位
+  （占位会诱导调用方退回 typeof 猜测，且其 this 跨文件反向边正是 DG-4 豁免的来源）。
 
 **关键缺陷（设计中发现，须修）**：
 1. **写权闸三处各查一半**：`index.js:144`（服务级）+ `store.js:43`（文件级）串起来，

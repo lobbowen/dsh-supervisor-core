@@ -13,14 +13,16 @@
 //   PG-6 凭证只经 env 注入，绝不进 spawn 命令行
 //   PG-7 写权：所有落盘经统一写权闸
 //   PG-8 反向：判据能识别旧形态（门禁非空转）
+//   PG-9 daemon 入口必须有 require.main 守卫（require 不得拉起 daemon）
+//   PG-11 router 域 kind 字面量比较收敛于 B 类白名单（能力判据一律 supports()）
 //
 // ## 为什么有本门禁
 //   本域从未被真正设计过（13 文件同日随初始提交搬入），累积了大量
 //   「隐式契约 + 无白名单 + 双事实源」。本文档类规范都配机器校验（一域一规范），
 //   本门禁即该设计的可执行部分。
 //
-//  Phase 1-5 尚未落地：PG-1/2/3/4/5/7 预期 FAIL（如实报告，不掩盖）。
-//   PG-6 当前已成立，PG-8 证明判据非空转。
+//  Phase 1-5 已全部落地：当前全部判据为绿（以门禁运行为准；回潮即如实报 FAIL，不掩盖）。
+//   PG-8 与各处反向自检保证每条判据能命中旧形态样本（防空转）。
 // ---------------------------------------------------------------------------
 
 const fs = require('node:fs');
@@ -282,6 +284,50 @@ const idxSrc = read(IDX);
   const m = /_writeTotals\s*\(\s*\)\s*\{([\s\S]*?)\n  \}/.exec(OLD_TOTALS);
   check('PG-8 反向：写闸判据能识别未过闸形态',
     !!m && !/_persistEnabled|_canPersist|writeGate/.test(m[1]), 'hit');
+}
+
+// ---------------------------------------------------------------------------
+// PG-11 判据统一（方向 3）防回潮：router 域能力判据不得退回 kind 字面量分支。
+//   运行时「能不能做 X」一律 supports(cap)（PG-2 锁 typeof 猜测，本条锁 kind 分支）。
+//   B 类保留场景 = 持久化字段 / 视图行渲染 / 同类注册表鉴别 / 无原型裸 JSON 记录，
+//   按文件精确配额登记；新增文件或配额增减不匹配都红（配额精确=逼同步，防沉淀）。
+// ---------------------------------------------------------------------------
+{
+  const CLASS_B_BUDGET = {
+    'src/domains/router/store.js': 2,             // 序列化/反序列化持久化 kind 字段
+    'src/domains/router/views.js': 1,             // 视图行按身份渲染反代字段
+    'src/domains/router/ops.js': 3,               // 注册表 CRUD 查找的同类鉴别条件
+    'src/domains/router/ports-bootstrap.js': 1,   // 裸 providers.json 记录（无原型，supports 不可用）
+  };
+  const KIND_CMP = /kind\s*[!=]==\s*['"](proxy|direct)['"]/g;
+  const files = [];
+  (function walk(dir) {
+    for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+      const f = path.join(dir, e.name);
+      if (e.isDirectory()) walk(f); else if (e.name.endsWith('.js')) files.push(f);
+    }
+  })(path.join(ROOT, 'src/domains/router'));
+  const hits = {};
+  for (const f of files) {
+    const rel = path.relative(ROOT, f).split(path.sep).join('/');
+    const n = (stripComments(fs.readFileSync(f, 'utf8')).match(KIND_CMP) || []).length;
+    if (n) hits[rel] = n;
+  }
+  const viol = [];
+  for (const [rel, n] of Object.entries(hits)) {
+    if (CLASS_B_BUDGET[rel] === undefined) viol.push(rel + '=' + n + ' 未登记');
+    else if (n !== CLASS_B_BUDGET[rel]) viol.push(rel + '=' + n + '≠配额' + CLASS_B_BUDGET[rel]);
+  }
+  const total = Object.values(hits).reduce((a, b) => a + b, 0);
+  check('PG-11 kind 字面量比较收敛于 B 类白名单（逐文件精确配额）',
+    viol.length === 0, viol.length ? viol.join(', ') : total + ' 处均在配额内');
+  // 反向（防空转）：A 类旧形态必须命中；supports 形态与异名 kind（limit.kind 等）不误伤。
+  check('PG-11 反向：旧形态 kind 分支命中',
+    (stripComments("if (p.kind === 'proxy') { this.startInstance(i); }").match(KIND_CMP) || []).length === 1, 'hit');
+  check('PG-11 反向：supports 形态不命中',
+    !KIND_CMP.test("if (p.supports('instanceLifecycle')) { p.startInstance(i); }"), 'miss');
+  check('PG-11 反向：异名 kind（额度限流种类）不误伤',
+    !/kind\s*[!=]==\s*['"](proxy|direct)['"]/.test("if (acc.limit.kind === 'rpm') {}"), 'miss');
 }
 
 // ---------------------------------------------------------------------------
