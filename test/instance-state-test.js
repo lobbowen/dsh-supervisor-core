@@ -213,7 +213,7 @@ check('副作用经 deps.save 显式发出（非隐式 this）', saves > 0, 'sav
         stopEntry && JSON.stringify(stopEntry.ctx && stopEntry.ctx.anchors));
       check('7A 处置后走既有退避链：BACKOFF + restartCount=1',
         inst.state.phase === 'BACKOFF' && inst.state.restartCount === 1, inst.state.phase + ' n=' + inst.state.restartCount);
-      check('7A 违规原因可见（lastFailure 带资源违规）', /资源违规:memory/.test(inst.state.lastFailure || ''), inst.state.lastFailure);
+      check('7A 违规原因可见（lastFailure 带资源违规）', /资源违规:内存/.test(inst.state.lastFailure || ''), inst.state.lastFailure);
       check('7A 观测行回填（usage.memMb + burst 迟滞三步爬到 16384M）',
         inst.state.usage && inst.state.usage.memMb === 30000 && inst.state.allocation.memoryMax === '16384M',
         JSON.stringify(inst.state.usage) + ' ' + JSON.stringify(inst.state.allocation));
@@ -227,7 +227,7 @@ check('副作用经 deps.save 显式发出（非隐式 this）', saves > 0, 'sav
       const pB = safePort('instance-state', 2);
       const srvA = await listen(pA);
       const srvB = await listen(pB);
-      const rss = 6000 * 1024 * 1024; // 预留 5734.4M 之上、池充裕
+      const rss = 7000 * 1024 * 1024; // 预留 5734.4M 之上且差额越过 10% 死区（22%），池充裕
       const { mgr } = mkGovMgr({
         resstats: { sampleAsync: () => Promise.resolve({ rssBytes: rss, cpuMs: 8000 }) },
         machineFacts: () => ({ totalMemBytes: GiB(16), cpuCount: 8 }),
@@ -238,15 +238,15 @@ check('副作用经 deps.save 显式发出（非隐式 this）', saves > 0, 'sav
       mgr.supervise('gb1'); mgr.supervise('gb2'); await sleep(30);
       check('7B 首拍（采样回填前）等权预留 5734M', a.state.allocation.memoryMax === '5734M', a.state.allocation.memoryMax);
       mgr.supervise('gb1'); mgr.supervise('gb2'); await sleep(30);
-      check('7B 有需求实例补到真实用量（6000M，两拍内到位）',
-        a.state.allocation.memoryMax === '6000M' && b.state.allocation.memoryMax === '6000M',
+      check('7B 有需求实例补到真实用量（7000M，两拍内到位）',
+        a.state.allocation.memoryMax === '7000M' && b.state.allocation.memoryMax === '7000M',
         a.state.allocation.memoryMax + ' / ' + b.state.allocation.memoryMax);
-      check('7B 展示值含 MemoryHigh（0.9x = 5400M）', a.state.allocation.memoryHigh === '5400M', a.state.allocation.memoryHigh);
+      check('7B 展示值含 MemoryHigh（0.9x = 6300M）', a.state.allocation.memoryHigh === '6300M', a.state.allocation.memoryHigh);
       // cpuPct 需相邻两拍时间差 >0（Windows 粗时钟兜底，多跑一拍）。
       mgr.supervise('gb1'); mgr.supervise('gb2'); await sleep(30);
       mgr.supervise('gb1'); mgr.supervise('gb2'); await sleep(30);
       check('7B 观测行 usage 回填（rss 即时 + cpu delta 终有值）',
-        !!a.state.usage && a.state.usage.memMb === 6000 && typeof a.state.usage.cpuPct === 'number',
+        !!a.state.usage && a.state.usage.memMb === 7000 && typeof a.state.usage.cpuPct === 'number',
         JSON.stringify(a.state.usage));
       srvA.close(); srvB.close();
     }

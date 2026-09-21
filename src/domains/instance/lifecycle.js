@@ -89,7 +89,7 @@ function createLifecycle(deps) {
       }
       if (probe(inst).running) return { ok: false, error: '端口 ' + inst.port + ' 已被占用' }; // 端口被占：不启动
       // 配额在启动时刻按机器预算与活跃实例数推导并记入 state（观测面：面板展示当次生效值）。
-      const alloc = governor.currentAllocation(store.instances, inst.id);
+      const alloc = governor.currentAllocation(store.instances, inst.id, machineFactsNow());
       inst.state.allocation = alloc;
       const props = sandbox.unitProps(inst, alloc);
       const { env, workingDir } = sandbox.sandboxEnv(instancesRoot, inst);

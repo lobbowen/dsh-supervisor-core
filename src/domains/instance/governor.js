@@ -64,9 +64,11 @@ function allocation(totalMemBytes, cpuCount, n) {
   };
 }
 
-/** 本实例当前应得保底配额（读机器事实 + 活数组拓扑；调用点在 lifecycle 启动路径）。 */
-function currentAllocation(instances, selfId) {
-  return allocation(os.totalmem(), os.cpus().length, activeCount(instances, selfId));
+/** 本实例当前应得保底配额（机器事实 + 活数组拓扑；调用点在 lifecycle 启动路径）。
+ *  facts 为显式注入位（与 machineFactsNow 同一缝），缺省读本机。 */
+function currentAllocation(instances, selfId, facts) {
+  const f = facts || machineFacts();
+  return allocation(f.totalMemBytes, f.cpuCount, activeCount(instances, selfId));
 }
 
 /** 迟滞单步（纯）：与上一生效值比，死区内的抖动原样保持；超死区则最多挪 25%。 */
