@@ -102,7 +102,7 @@ check('E-c release 签名接受第二参', /release\(port, ownerId\)/.test(
   check('E-d 删反代账号时停止实例', /p\.stopInstance\(/.test(body), '有');
   check('E-d 删反代账号时释放端口登记', /ports\.unregister\('proxy:'/.test(body), '有');
   check('E-d 同步 p.instances（防 orphan 实例记录）', /p\.instances\s*=\s*\(p\.instances/.test(body), '有');
-  check('E-d 收尾限定于 proxy 类（direct 无实例/端口）', /p\.kind === 'proxy'/.test(body), '有');
+  check('E-d 收尾限定于 process-pool 形态（direct 无实例/端口）', /p\.supports\('instanceLifecycle'\)/.test(body), '有');
 }
 
 // -- E-e：applyProxyUpdate 的进度必须写进 task（P2-1）--

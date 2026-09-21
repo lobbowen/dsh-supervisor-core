@@ -18,7 +18,7 @@ function createAdminOps(deps) {
     const before = (p.accounts || []).length;
     // 删反代账号必须做与 removeProxyKey 同等的收尾（stopInstance/ports/instances）。
     const doomed = (p.accounts || []).filter((a) => rm.has(a.maskedKey));
-    if (p.kind === 'proxy') {
+    if (p.supports('instanceLifecycle')) {
       for (const a of doomed) {
         if (a.instance) {
           // 删除路径必须 force（账号即将摘除，延迟停标记会变不可达，进程泄漏）。
@@ -29,7 +29,7 @@ function createAdminOps(deps) {
       }
     }
     p.accounts = (p.accounts || []).filter((a) => !rm.has(a.maskedKey));
-    if (p.kind === 'proxy') {
+    if (p.supports('instanceLifecycle')) {
       const gone = new Set(doomed.map((a) => a.keyId));
       p.instances = (p.instances || []).filter((i) => !gone.has(i.keyId));
     }
@@ -75,7 +75,7 @@ function createAdminOps(deps) {
     p.selectedAccountKeyId = keyId;
     save();
     // 切换即确保目标实例拉起；失败回滚 selected（防坏账号粘滞导致 429 循环）
-    if (p.kind === 'proxy' && acc.instance && !acc.instance.pid) {
+    if (p.supports('instanceLifecycle') && acc.instance && !acc.instance.pid) {
       const sr = await p.startInstance(acc.instance).catch((e) => ({ ok: false, error: e && e.message }));
       const ok = sr && sr.ok;
       const healthy = ok ? await p._waitHealthy(acc.instance).catch(() => false) : false;
@@ -100,21 +100,21 @@ function createAdminOps(deps) {
     if (!p) return { ok: false, error: '供应商不存在' };
     const idx = (p.accounts || []).findIndex((a) => a.keyId === keyId);
     if (idx < 0) return { ok: false, error: '账号不存在' };
-    if (p.kind === 'proxy' && p.accounts[idx].instance) {
+    if (p.supports('instanceLifecycle') && p.accounts[idx].instance) {
       // 删除路径必须 force。
       try { p.stopInstance(p.accounts[idx].instance, true); } catch {}
       try { ports.unregister('proxy:' + keyId); } catch {}
       p.accounts[idx].instance.port = null;
     }
     p.accounts.splice(idx, 1);
-    if (p.kind === 'proxy') p.instances = (p.instances || []).filter((i) => i.keyId !== keyId);
+    if (p.supports('instanceLifecycle')) p.instances = (p.instances || []).filter((i) => i.keyId !== keyId);
     save();
     return { ok: true };
   }
 
   function addProxyKey(providerId, key) {
     const p = findProvider(providerId);
-    if (!p || p.kind !== 'proxy') return { ok: false, error: '供应商不存在或非反代' };
+    if (!p || !p.supports('instanceLifecycle')) return { ok: false, error: '供应商不存在或非反代' }; // 文案保持对外口径
     return p.addAccount(key);
   }
 
