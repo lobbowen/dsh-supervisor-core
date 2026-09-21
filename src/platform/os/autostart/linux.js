@@ -52,7 +52,7 @@ function setGuiAutostart(on, deps) {
     const file = guiFile();
     if (on) {
       let entry = GUI_AUTOSTART_TEMPLATE;
-      // Exec 必须指向解析出的真实路径：deb/rpm 把可执行装在 /usr/bin，模板写死的 ~/.local/bin
+      // Exec 必须指向解析出的真实路径：deb 把可执行装在 /usr/bin，模板写死的 ~/.local/bin
       // 会让用安装包的用户登录时 Exec 指向不存在的文件。
       entry = entry.split('@HOME@').join(os.homedir());
       const guiBin = deps.guiCommand();

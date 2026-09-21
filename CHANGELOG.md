@@ -305,6 +305,195 @@
 - 门禁同步：`platform-layer-portability-test` X-8/X-9 改为注入 `defaultBrowser` 解析结果
   （夹具与产品同源原则不变），新增「平台层源码不再指定任何浏览器内核」反向判据；
   `PLATFORM-CAPABILITY-MATRIX.md` C8 行按新实现改写。
+- 把两条**没有依据的规则**从口径里清除并写成明文（`RELEASE-STANDARD.md` §7 第 7 条、
+  `RELEASE-CHANNEL-CONTRACT.md` §2「检测不到新版本」的排查顺序）：
+  其一，「npm 同版本不可重发 → 保住版本号原地重发」—— 仓库里从来没有这条规则，各文档一直写的是
+  「提版本重来」；现补为红线：版本号一律相对 registry 上**已存在**的版本向前推，保号会让新代码在
+  客户端被判成「已装过」（客户端只看版本号），且 npm 端本就 409，保号得不到任何好处。
+  其二，「检测/更新内核的令牌不对」—— 读路径**全程匿名**（壳 `core.rs::latest_pick`、内核
+  `install.js::fetchNpmLatest` 只做 GET，无 `Authorization`），链上唯一凭据是 CI 发布步的 `NPM_TOKEN`；
+  把「拉不到最新版」归因于换令牌会掩盖真实成因（`latest` tag 陈旧，即本节下一条 RC-6）。
+  2026-09-21 逐源实测：四个平台包在五源均为 `latest = beta = 0.1.5-BETA.11`，`dist.tarball` 可取回。
+- 发布通道根因修复：**`latest` 不再只由「发布的是 RC」驱动**（`RELEASE-CHANNEL-CONTRACT.md` §2/RC-6、
+  `release/scripts/publish-core.sh::reconcile_latest_tag`、门禁 `test/release-channel-gate-test.js` RC-G4-i..o）。
+  旧口径下 BETA 档 `npm publish --tag beta` 之后再没人写 `latest`，而客户端选版链第 3 步只读 `latest`、
+  第 4 步兜底又排除 `-BETA.` —— 两条相加的后果是「切档之后的全部版本对自动升级的机器不可达」
+  （registry 实况：`latest=0.1.5-BETA.7 / beta=0.1.5-BETA.11`，即 BETA.8..11 那批安全修复没人拉得到）。
+  现两档发布后都按 `semverCompare` **只升不降**地回补 `latest`，幂等跳过分支同样执行（部分平台重跑是最常见的
+  漏补场景），回补失败判为发布失败。四平台 `latest` 已按新口径人工对齐到 `0.1.5-BETA.11`。
+- Linux 支持面与壳更新通道的实测口径（与壳仓同批）：**Linux 只认 Ubuntu + `.deb` 一种形态** ——
+  矩阵此前 `deb,rpm` 一起产，而更新清单每平台只有一个槽位（放 deb），等于产出一个更新通道覆盖不到的形态；
+  现从产线源头停掉，`CROSS-PLATFORM-BUILD-AND-UPDATE.md` §十 V1/N2b 与 `RELEASE-AND-UPDATE-MECHANISM.md`
+  的 D4/N2 按「不再产 rpm」收口（是定案，不是待议）。
+- `D5` / `V5` / `K13` 三条把「拿得到清单」与「拿得到安装包」分开重述：`endpoints` 的回退只覆盖取清单那一次
+  请求，插件下载阶段不会自己换源，所以「unpkg + jsdelivr 两条端点」从来不等于「两条下载源」
+  （jsdelivr 按扩展名屏蔽 `.exe`）。壳侧现在按逐源实测的候选源换源取安装包，未审计的第三方中转不进默认表；
+  逐源状态与全部排除理由在壳仓 `docs/SHELL-UPDATE-CHANNEL-VERIFICATION.md` §九。
+
+- 文档风险表的「缓解」列去假象（`AUDIT-REPORT-2026-09-19.md` §O）：`RELEASE-AND-UPDATE-MECHANISM.md`
+  的 K1 / K13 原把**设想**写成**已具备**（私钥异地多份托管与恢复演练、多 CDN 回退 + 内核本地缓存），
+  三者实际都不存在。1.2.0 出厂后的端点复测给出硬证据：jsdelivr 对 `.exe` 一律 403（`1.1.11` 同样复现）
+  ⇒ Windows 只有 unpkg 单条 CDN；`CHANGELOG` 与 `CROSS-PLATFORM-BUILD-AND-UPDATE.md` §十 V5 登记该缺口。
+  本条只改表述，不动 `endpoints`；该缺口由同批壳侧改动按实测候选源收口（见本节上一条）。
+
+## [0.1.5-BETA.11]（2026-09-21）
+
+本版是 **AUDIT-2026-09-19 第 3/4/5 批全量落地**：B 类安全与生命周期（§G）、C 类健壮性 P2 全量 +
+§E.1/E.2/E.4 立项收口（§H）、注释纪律门禁与 `--prefix` 闸对称性 + 插件域 killTree 收口 + `cred.sh`
+行为级测试（§I），逐条裁决登记于 `AUDIT-REPORT-2026-09-19.md`。同批含第 3 轮起的文档与产线残留纠正
+（3b…3g：把「做不到 / 没在做」写成「已具备」的假现状、结构判定假象、单平台构建旁路、一次性证据当现状）、
+注释纪律（CS-1 字符白名单 / CS-2 过程叙事禁用）与两仓主干的分支保护落成。内核运行时依赖仍为 0。
+
+发布通道与回退下限（本版两处显式裁决）：
+
+- 通道：`0.1.5-BETA.11` 按 `publish-core.sh` 的 dist-tag 规范只进 `beta`。`latest` 仍停在
+  `0.1.5-BETA.7` —— 这是历史错位而非本版引入，修它要发 `-RC.n`（正式版占 latest），属独立发布决策。
+- 下限：`ROLLBACK_FLOOR_VERSION` **保持 `0.1.5-BETA.10`**，不按「每次上调到本版」的读法抬到本版。
+  理由：下限是本版之下仍允许回退到的最低安全版，抬到本版的净效果是回退开关对本版永久无效
+  （没有任何已发布版本满足 `>= 本版`），而 RC-7 要留的是「刚发布即出严重问题退回上一版」这条真实通道。
+  BETA.10 已含第 1/2 批 P0 修复，作为回退目标不再暴露那些漏洞；更早版本仍被下限挡住。
+- 工具链：`bump.sh --core` 现在同时提升 `package-lock.json` 的两处 `version`。此前它只改
+  `package.json`，而门禁 P-9 B26 要求两者同步 —— 即每次发版都要手工补一刀，漏掉就在 CI 判红。
+- 发布链（本版发布过程中由 CI 抓到）：`publish-core.sh` 的幂等判定原以「`npm view --json` 输出非空」
+  当作「该版本已发布」，而 `--json` 对**不存在**的版本同样把 E404 错误对象写到 stdout（退出码非零）。
+  后果是首次发布被判成重复、并在内容强核对处 fail-closed（四平台同红）。存在性改由**退出码**定性，
+  B24 的体积 + sha1 双项核对语义不变；补 P-9 B24 两条判据（正向锚在代码行、反向识别旧形态）。
+  裁决登记 `AUDIT-REPORT-2026-09-19.md` §N。
+
+### 第 3g 轮：三个长文件的注释按纪律重写（2026-09-21）
+
+用户定案：行数不是判据，逻辑干净才是；而眼下撑长度的正是「把注释写成了过程记录」。本轮只动注释，
+除下方一处显式声明的依赖清理外**代码逐字节不变**（用 `test/_strip.js` 的剥注释结果与改前比对，
+三文件均 IDENTICAL-CODE）。
+
+判据与逐文件结论（先判断逻辑该不该拆，再动注释）：
+
+| 文件 | 行 | 注释行 | 逻辑判断 |
+|---|---|---|---|
+| `src/domains/router/handlers/forward.js` | 324 -> 317 | 31 -> 24 | 单一职责（上游 IO + 重试循环 + 透传收口），重试循环长但线性，不拆 |
+| `src/app/control/registry.js` | 308 -> 287 | 83 -> 62 | 目录 CRUD + 持久化，调度已归 `heartbeat.js`，视图/查询/变更各一组，不拆 |
+| `src/app/main/process.js` | 302 -> 297 | 44 -> 39 | 一个方法 = 一次生命周期迁移（spawn/adopt/observe/restart/stop），不拆 |
+
+删掉的是三类，留下的都是「为什么」：
+
+- 批次与审计编号：`D-1`、`P2-2 配套`、`P3-E #7`、`P3-F #5`、`B2 归一`、`G-1`、`R3`、`D12`、`K3-d`、
+  `DF-2/DF-3`、`M-1..M-4`、`阶段六 B-2`、`阶段 2` —— 门禁（CS-2）本来也不认这些，属纪律外残留。
+- 「原先是 X，现已改成 Y」的历史叙事：`forward.js` 里那处已删除的死调用整段、`registry.js` 的
+  「回退现已删除」、`process.js` 的「原实现会让异常逃出本方法」，改写为只陈述当前约束与后果。
+- 拆文件路线图：`registry.js` 两段「已拆到 managed-object.js / heartbeat.js（registry <=400）」——
+  行数上限不是拆分理由，且导出面与 require 行本身就说明了归属。
+- 重复表述：`process.js` 头注与 deps 内两次写「等价于原经 this 的调用」、令牌脱敏两次写「journald 不留
+  明文」；`registry.js` 的崩溃字段单一副本与 guardian 归一各在两处（_load/_save、_load/update）重复。
+  每处只保留一份。
+
+同批的一处代码清理：`forward-core.js` 组装 `createForwarder` 时传了 `canPersist`，而 `handlers/forward.js`
+从不读它（它属于 `UsageLedger` 的写权闸）。头注的 deps 清单一直把它列在本层依赖里，属错误引导 ——
+删掉这个透传，清单同步更正。`PG-7`（用量落盘必须过 `canPersist()`）的判据读的是 `store/usage.js` 的
+代码形态，不受影响。
+
+### 第 3f 轮：签名链路的现状从「从未配过」纠正为「曾在产线、现被冻结」
+
+
+壳仓取证（2026-09-21，逐条解码 npm 线上清单）推翻了本仓四处口径 —— 它们全部来自
+「`lobbowen` 两仓 secrets 里没有 `TAURI_SIGNING_*`」+「壳仓 `/releases` 为 0 条」这两个真事实，
+但推论越界成了「从未签过名」，而签名通道其实一直是 **npm + CDN**（`@dsh-sup/shell-release@latest`
+现指 1.1.11，四平台各一份 minisign 签名；抽验 1.0.1…1.1.11 七个版本 key id 全是
+`96DE3EF26F389F70` = 内置公钥）。按现状改写：
+
+- `CROSS-PLATFORM-BUILD-AND-UPDATE.md` §一 G3：原「自更新签名私钥至今未配置，所以可自更新只对非签名
+  路径成立」→ 签名链路**曾产线工作、现断供**：迁仓后新仓无 secret、本机无副本，故签不出存量客户端
+  会接受的新产物（壳冻结在 1.1.11）；内核自更新走 npm + registry 完整性，不经 minisign，不受牵制。
+- 同文件 §八 C1（minisign 私钥丢失）：由「风险」改为**已成真**并给出证据链 —— 当年只做本机单点备份。
+- 同文件 §九 F2：「密钥本身仍缺失」限定为「**新仓**没有该 secret」，并注明旧仓曾配置、≤1.1.11 签名在线。
+- 同文件 §十 V1（Tauri 是否为 deb/rpm 生成 `.sig`）：原「两仓从未配过签名私钥，没有任何一份 `.sig` 可证」
+  → **deb 已确证**（清单 `linux-x86_64` 条目的 URL 与签名 trusted comment 都是 `…_1.1.11_amd64.deb`）；
+  顺带登记一个真缺口：清单每平台只有一个槽位、Linux 放 deb，**rpm 装的客户端在现清单下拿到的更新包是 deb**，
+  待壳侧定案。
+- `CREDENTIALS-STANDARD.md` §表：`（壳自更新签名）` 行的状态由「缺失」改为「**现仓**缺失 + 唯一可能
+  残存处 = 旧账号仓 secret（现 PAT 取之 403，无 admin）」，避免下一任把它当成「从来没有过这枚密钥」。
+
+### 第 3e 轮：分支保护落成服务端事实（2026-09-21）
+
+用户定案「分支保护必须做」。此前状态是：2026-09-19 迁仓把旧账号的服务端配置留在原地，两仓主干
+`GET .../protection` 均 404（内核 AUDIT §K-1 记为「待定案」），而多份文档仍把保护写成现行保证或写成
+「待恢复的目标态」—— 两种读法都会跑偏。现已 `PUT` 写入并 `GET` 读回（`PAT` 具 `Administration: Read and write`）：
+
+| 仓 · 主干 | required checks | 其余字段 |
+|---|---|---|
+| `dsh-supervisor-core @ master` | `precheck`、`test` + 4 条 `build (...)` | `strict` / `enforce_admins` / `required_conversation_resolution` 开，审批数 0，禁 force push 与删除分支 |
+| `dsh-supervisor-launcher @ main` | `version` + 4 条 `build (...)` | 同上 |
+
+两点与旧文档口径不同，按现状改写而不是照抄旧表：
+
+- **内核把 4 条 `build` 也设为 required**。原表只设 `precheck` + `test`，理由是 `build` 当时受
+  `need_build` 门控（条件 job 设 required → GitHub 等一个永不出现的状态 → PR 永久阻塞）。
+  2026-09-14 起 `build` 每次 push / PR 都跑，该理由消失；「四平台全由 CI 产出」是硬标准，
+  设为 required 才由服务端兜住。`release`（内核）/ `publish`（壳）在 PR 上 `skipped`，**永不设 required**。
+- **审批数设 0**：放行裁决者是 CI，单人仓设 ≥1 会把「CI 绿后合入」变成死锁；保护的实际作用是
+  关掉不经 PR 的直推（`DEVELOPMENT-TRACK.md` §7 保留 2026-09-13 的实测：直推路径也评估 required）。
+
+登记维护规则：**改 `build.yml` 平台矩阵必须在同一次变更里同步 required contexts** —— 矩阵 job 显示名
+内嵌 `os/arch/bundles` 参数，旧语境永不出现即所有 PR 卡死。据此纠正：`DEVELOPMENT-TRACK.md` §7（含
+「恢复保护时要写入的字段」表改为读回值）、`RELEASE-STANDARD.md` §4、`CROSS-PLATFORM-BUILD-AND-UPDATE.md`
+V3、`release/runbooks/publish-and-verify.md` §0（改为「服务器端配置不随仓迁移」的一般教训）、
+`AUDIT-REPORT-2026-09-19.md` §K-1 加 dated 勘误（历史 404 证据保留）。壳仓对应纠正随壳 PR 走。
+
+### 第 3d 轮：把「已完成」写成待办、把「已删除」写成风险面
+
+三份文档里的现状陈述与当前代码对不上，读的人会按它们重复施工或防一个不存在的敌人：
+
+- `DOMAIN-STRUCTURE-DESIGN.md` 仍以命令式写着三条「设计中发现，须修」缺陷（写权闸三处各查一半、
+  用量读写散在 `forward-core.js`、流式成功路径不补做延后重启），并挂着改造前的行号锚点。
+  三条**都已落地**：写权收敛为 `src/domains/router/store.js` 的唯一闸 `canPersist()`，
+  用量读写进同一 store，延后重启由 `model/inflight.js` 发 `flushRestartPending` effect、
+  `handlers/forward.js` 统一派发。改写为事实 + 按当前实现重取锚点，并修正
+  `providers/base.js` 的抽象占位段区间。
+- `INCIDENT-2026-09-13-credential-overwrite.md` §6 把 `release-core.sh --publish` 列为「尚未过同类审计」的
+  破坏性操作 —— 该脚本**已删除**。改为现役真实面：只有 `publish-core.sh --publish` 不可逆
+  （npm 同版本不可重发，须 `GITHUB_ACTIONS=true`），`bump.sh --core` 只改 `package.json` 一处；
+  两者的放行条件由 `release-auth-test`（R7-b）与 `all-platforms-test`（T2-b / T2-b2）断言，
+  写路径本身未过「读失败不得覆盖」加固 —— 这是残余风险的本来大小，不夸大也不缩小。
+  同节 `cred.sh` 行原写「`put` 是唯一写路径」：漏了 `backup`，它不改库却把整份明文令牌复制到指定目录。
+- `CROSS-PLATFORM-BUILD-AND-UPDATE.md` §一 仍以现在时写着「当前公开发布的 deb 只能装 Ubuntu 24.04+」，
+  §八 把 L1 的缓解写成待办。实测：壳 CI 的 Linux 基座自 2026-09-11 起已钉 `ubuntu-22.04` +
+  `glibc_max: "2.35"`，打包后由壳仓 `ci/check-glibc.sh` 拦截，deb + rpm 双形态在产线
+  （Linux arm64 runner 仍停用，未产线）；G1/G2 已收口，**G3 仍开** —— 自更新签名私钥至今未配置，
+  「可自更新」只对非签名路径成立。§二 的发行版实测表标注为改造前的证据并保留（判据来源）。
+- `README.md` 索引表：`HANDOFF.md` 一行链的是**不入库**的会话过程物（`.gitignore` 有 `**/HANDOFF.md`，
+  故干净检出与 CI 都看不到该文件），而该行还写着「新会话接手先读此文件」——照着做会打开一个不存在的文件。
+  删该行：本机交接物按 `.gitignore` 既定约定本就只在本地存在，不该出现在入库索引里当必读项。
+  同表 `ARCHITECTURE-ACCEPTANCE.md` 行仍以现在时宣称「终验收记录 / 全部门禁严格模式结果 /
+  物理结构终态最大单文件 298 / DF-1..DF-9 逐条达成」，四条全与 3b 修正后的该文件正文矛盾
+  （实测最大单文件 324、`>300` 有 3 处、DF-2 不满足、两道结构门禁整体 report-only 且 CI 未设严格开关）。
+  改为标注复算口径、且不承载放行结论。
+- `release/runbooks/publish-and-verify.md`：`build-ui` 缺失的后果写成「直接跑 `npm test` 会得到 503」，
+  在本机禁跑测试的硬标准下这是对不存在的动作下判据。改为「链上缺这一步 → **CI 的** `npm test` 得到 503」。
+- 同表的 `RELEASE-CHANNEL-CONTRACT.md` 行抄着「RC-1..6」，而正文在 A3-b 修复后已有 **RC-7**
+  （rollback 防降级下限）—— 索引抄编号必然再漂移，故改为指向正文 §3「关键不变量」表并声明不抄条数。
+  （`DG-1..DG-16` / `R1..R12` / `TK-1..8` / 能力矩阵 14 项 × 3 平台等其余索引计数已逐条复核为实。）
+
+另核三条无需改动的：`RELEASE-CHANNEL-CONTRACT.md` §5.4 说 `@dsh-sup/canary-allowlist` 尚未发布 ——
+registry 实测 404，说法成立；`release/README.md` 与两份标准文档里所有 `docs/*.md` 引用都带「壳仓」限定词，
+不是本仓断链；壳仓 `DESIGN-BOUNDARY.md` / `DESIGN-COMPLETE.md` 引用的 `shared/version-vectors.json`
+与 `shell-release/version-vectors.json` 两仓实测均存在。
+
+### 第 3c 轮：一条「已排除」测试的假理由，以及它其实没在任何人手里跑过
+
+`test/native-test.js`（原生 DSH 卸载全量清理）长期挂在 `test/test-chain-completeness-test.js` 的排除表里，
+理由写的是「**需真实原生卸载环境**（npmBin 注入型行为测试），按需经 `npm run test:native-uninstall`」。
+两处都不成立：
+
+- 夹具其实**离线** —— 它用临时 `npmRoot` 搭 npm 全局布局，不碰宿主环境；而且它没有注入 `npmBin`。
+  同一提交 `ab071f5` 自己的注释就记着它「10 断言，能通过」，与它写下的排除理由互相打脸。
+- 「按需运行」在这条硬标准下**没有落点**：CI 的四平台矩阵里没有这一步（`.github/workflows/build.yml` 全文
+  不引用该脚本），本机又被 `ACCEPTANCE-STANDARD.md` §0 禁止执行任何测试 —— 所以它不是「按需可取证的通道」，
+  而是**当前不在任何环境运行、不产生验收证据**的测试。真实障碍另有两条并已如实登记：
+  `src/app/native/ops.js` 的 `uninstall()` 会真起 `npm uninstall -g --prefix` 子进程，
+  夹具又用 `fs.symlinkSync` 造 bin 链接（Windows 建符号链接需特权或开发者模式，夹具未按平台分支）。
+
+排除表改为「为什么不能入链 + 那现在是谁在跑它」两问齐备；`README.md` §验证、`package.json#_uninstallTests`、
+`test/native-test.js` 头注同步改写，并写明入链前提（走 `npmBin` 注入口塞假 npm + bin 夹具按平台分支）。
+本批只纠正说法，**不**把该脚本并入 `npm test` 链（入链需先做上述夹具改造，属独立批次）。
 
 ### 第 3b 轮：结构判定假象 + 单平台构建旁路 + 一次性证据当现状
 
@@ -322,6 +511,9 @@
   `publish-core.sh` 缺产物时提示「请先构建：npm run build:launcher」、`release.sh` 结尾也如此建议。
   现把守卫**上移到参数解析之前**、覆盖全部调用形态（新增门禁 T2-a4 以「守卫在 while 之前」这一结构事实钉住，
   并配反向合成样本），三处提示与命令表同步改为「仅 CI 内」。
+  `README.md` 里仍以现在时态把 `npm run build:launcher` 当本机入口的三处（构建条目、平台生产分工条、
+  单写入者节的发布条），以及 `RELEASE-STANDARD.md` §0 表格里只承诺「本地不得**全平台**构建」的那一行，
+  一并改为「任何调用形态仅 CI 内」，并把门禁列指向 T2-a2 / T2-a4。
 - **分支保护假象**：`bump.sh` 成功后打印「master 有分支保护」，`DEVELOPMENT-TRACK.md` §7 一边写
   「两个 required check 通过后合并」、一边留着一份「本次启用的完整设置」表。实测两仓 protection API
   均返回 404 Branch not protected。改为：该表题为「恢复保护时要写入的字段（当前一项都没生效）」，

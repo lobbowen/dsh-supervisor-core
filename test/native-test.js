@@ -1,13 +1,12 @@
 #!/usr/bin/env node
 'use strict';
 
-//  卸载类测试：本脚本执行「控制面板对 DSH 原生的卸载」（NativeManager.uninstall 全量清理），
-// 已从 npm test 自动测试链排除，仅允许作为独立脚本显式单独调用（node test/native-test.js 或 npm run test:native-uninstall）；
-// 除非用户明确指令，禁止擅自运行。
-
-// 原生 DSH 生命周期管理（NativeManager）离线测试：
-// 安装状态探测 / 环境检查 / 安装清单记录 / 全量卸载清理。
-// 全部使用隔离的临时 npm 全局根，绝不触碰宿主 npm 环境。
+// 卸载类离线夹具测试（NativeManager 状态探测 / 环境检查 / 清单记录 / 全量卸载清理）。
+//   夹具用临时 npm 全局根，不碰宿主环境；但 ops.uninstall 会真起 npm 子进程，
+//   且 bin 链接经 fs.symlinkSync 造（Windows 需特权或开发者模式），故未入 npm test 链，
+//   理由与入链前提登记在 test/test-chain-completeness-test.js 的排除表。
+//   本仓硬标准禁止在本机执行任何测试，CI 也不跑这条脚本，所以它不产生验收证据；
+//   链内的卸载行为面由 test/uninstall-timeout-behavior-test.js（npmBin 注入）承担。
 
 const path = require('node:path');
 const fs = require('node:fs');

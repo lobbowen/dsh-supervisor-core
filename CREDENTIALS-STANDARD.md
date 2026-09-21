@@ -119,7 +119,7 @@ echo -n TOKEN | bash release/scripts/cred.sh put 名   # 写入并置 active
 | `github-pat` | GitHub Fine-grained PAT | `lobbowen` | active；两仓共用（`lobbowen/dsh-supervisor-core`、`lobbowen/dsh-supervisor-launcher`），用途 = push（HTTPS）+ REST（查 CI / 设 secret / 分支保护）|
 | `git-credentials` | git credential store（URL 形态）| `x-access-token` | active；与上一行是**同一枚 PAT 的另一种形态**（见 §2）。两仓 repo-local `credential.helper store --file` 指向该文件，是**唯一**推送通道 |
 | `npm-token` | npm Granular Access Token（须带 bypass 2FA）| `lob.bowen` | active，`rotateBy` 2026-12-18；作用域 `@dsh-sup`；同一值以 repo secret `NPM_TOKEN` 存在于两仓 |
-| （壳自更新签名）| minisign 私钥 `TAURI_SIGNING_PRIVATE_KEY(_PASSWORD)` | - | **缺失**：2026-09-20 实测两仓 Actions secrets 只有 `NPM_TOKEN`，本机亦无密钥文件。壳的非 tag 构建已改为不因此变红，tag 发布仍由 workflow 主动拦下；恢复/重建流程见壳仓 `docs/UPDATER-SIGNING-KEY.md` |
+| （壳自更新签名）| minisign 私钥 `TAURI_SIGNING_PRIVATE_KEY(_PASSWORD)` | 旧账号 `wasi7mglns` 曾配置 | **现仓缺失**：2026-09-20 实测 `lobbowen` 两仓 Actions secrets 只有 `NPM_TOKEN`，本机亦无密钥文件，git 历史从未入库。但它**不是「从未有过」** —— 已发布的 `@dsh-sup/shell-*@1.0.1…1.1.11` 全部由 key id `96DE3EF26F389F70` 签名并在线，签名发生在迁仓前的旧仓 CI；现 PAT 对旧仓 `actions/secrets` 返回 403（无 admin），**只有用户本人登录旧账号才能核对/导出**。壳的非 tag 构建已改为不因此变红，tag 发布由 workflow 主动拦下；判据与恢复流程见壳仓 `docs/UPDATER-SIGNING-KEY.md` §〇 |
 
 > **已废弃，不要再去找**：SSH 部署密钥通道（历史上的 `push-kernel` / `push-shell`，账号
 > `advgyxqamf` / `wasi7mglns`）。2026-09-19 同机事故后该通道未重建，推送一律走 HTTPS +

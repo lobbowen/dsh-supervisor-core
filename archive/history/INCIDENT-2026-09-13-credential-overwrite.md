@@ -121,8 +121,8 @@ cite「剥离注释」「反向断言」等纪律 | 都是**断言正确性**的
 |---|---|
 令牌曾在对话中以明文出现 | 已入库（0600）；若该对话记录被留存，建议按需轮换 |
 真机库无异地备份 | 单点。建议在 `put` 成功后另存一份离线/密码管理器副本（新流程待定）|
-`cred.sh` 的其它子命令 | `get`/`path` 只读，无破坏性；`put` 是唯一写路径，已加固 |
-其它脚本的破坏性操作 | `release-core.sh --publish`（npm 不可重发）、`git push --force` 等**尚未**过同类审计 |
+`cred.sh` 的其它子命令 | `list`/`get`/`path`/`verify`/`doctor` 只读，无破坏性；改库的写路径只有 `put`（已加固：空 stdin 先拒再动盘、真机值须 `DSH_CRED_FORCE=1` 且先尽力 `.bak`）。`backup` 不改库，但会把**整份明文令牌**复制到调用者指定目录，故带「目标落在实例子目录即拒绝」的闸 |
+其它脚本的破坏性操作 | 现役脚本里唯一不可逆的是 `publish-core.sh --publish`（npm 同版本不可重发；须 `GITHUB_ACTIONS=true` 才放行）；`bump.sh --core` 的写入面 = `package.json.version`（唯一事实源）+ `package-lock.json` 的两处 `version`（跟随，门禁 P-9 B26 要求两者一致）。两者的**放行条件**由 `release-auth-test`（R7-b）与 `all-platforms-test`（T2-b / T2-b2）断言，但写路径本身未过本事故同类的「读失败不得覆盖」加固。条目里曾点名的 `release-core.sh` **已删除**，不再是风险面 |
 
 ---
 

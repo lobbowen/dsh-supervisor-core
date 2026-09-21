@@ -6,21 +6,22 @@
 //
 // ## 断言
 //   RC-G3 内核选版「优先读 latest」（结构断言 + 行为断言）
-//         - 结构：src/platform/distribution/index.js 的 fetchNpmLatest 读 dist-tags.latest，
+//         - 结构：src/platform/distribution/ 的 fetchNpmLatest 读 dist-tags.latest，
 //                 且不再「dist-tags 全部值 并 versions 全部键」取最高
 //         - 行为：假 registry 上 latest=0.1.6-RC.1 而 versions 另有数字更高的
-//                 0.2.0-BETA.1 —— 契约 ) 要求返回 latest（通道控制）
-//   RC-G4 发布脚本 release/scripts/publish-core.sh：'-RC.*' 分支必须带 '--tag latest'（RC-6）
-//         - BETA -> '--tag beta'（绝不碰 latest）；rc 只作发布后补打的别名
+//                 0.2.0-BETA.1 —— 契约第 3 节第 3 步要求返回 latest（通道控制）
+//   RC-G4 发布脚本 release/scripts/publish-core.sh 的标签策略（RC-6）
+//         - 档位别名：BETA -> '--tag beta'，RC -> '--tag latest' + 发布后补打 rc
+//         - latest 回补：两档都在发布后按 semverCompare 只升不降地对齐 latest；
+//           真发布分支与幂等跳过分支都要走到；回补失败非零退出
 //         - rollback / canary 不由发布脚本设置（人工运维，契约）
 //   RC-G5 反向：判据能识别「仅取全量最高」的旧形态（门禁非空转）
-//   附    RC-G1/G2 交叉断言：只读**壳仓** core.rs 源码（壳实现归分片1，本仓不改）
+//   附    RC-G1/G2 交叉断言：只读**壳仓** core.rs 源码（壳实现归壳仓，本仓不改）
 //
-// ## 现状（如实记录；本文件不改实现）
-//   RC-G3 在本门禁建立时**未落地**：fetchNpmLatest 仍是「tags 并 versions 取最高」，
-//   违反不变量 RC-1（BETA 数字可压过 RC）。壳仓 core.rs::latest_version 同形态，
-//   且无 rollback 分支。故 RC-G3 / RC-G1-x / RC-G2-x 预期 FAIL，直到分片2 / 分片1 落地。
-//   这是如实报告，不是门禁空转 —— RC-G5 证明判据能区分两种形态。
+// ## 覆盖面边界
+//   本文件只静态判定发布脚本的**形态**（命令行、调用点、判据来源），不真触网。
+//   「registry 上 latest 是否真的对齐」由发布日志与契约第 4 节的通道自检覆盖 ——
+//   静态门禁抓不到「脚本对但某次人工把标签改回去」。
 // ---------------------------------------------------------------------------
 
 const fs = require('node:fs');
@@ -164,26 +165,50 @@ async function main() {
   }
 
   // --- RC-G4 发布脚本 ---
-  console.log('== RC-G4 publish-core.sh：-RC.* 必须带 --tag latest ==');
+  console.log('== RC-G4 publish-core.sh：档位别名 + latest 回补（RC-6）==');
   {
     const sh = read(SCRIPT_REL);
     const ls = splitLines(sh);
     const rcLine = ls.find((l) => /^\s*\*-RC\.\*\)/.test(l));
     const betaLine = ls.find((l) => /^\s*\*-BETA\.\*\)/.test(l));
     check('RC-G4-a case 分支 -RC.* 存在', !!rcLine, rcLine ? rcLine.trim() : '未找到');
-    check('RC-G4-b -BETA.* 带 --tag beta（不碰 latest）',
+    check('RC-G4-b -BETA.* 发布挂 --tag beta（别名档位；latest 由回补步骤负责）',
       !!betaLine && /--tag\s+beta\b/.test(betaLine), betaLine ? betaLine.trim() : '未找到');
-    check('RC-G4-c -RC.* 带 --tag latest（RC-6：正式发布必更新 latest）',
+    check('RC-G4-c -RC.* 发布挂 --tag latest（RC-6：latest 跟随本次发布）',
       !!rcLine && /--tag\s+latest\b/.test(rcLine), rcLine ? rcLine.trim() : '未找到');
     check('RC-G4-d RC 分支不再以 rc 为主标签（不得 --tag rc）',
       !!rcLine && !/--tag\s+rc\b/.test(rcLine), 'ok');
 
     const code = withoutCommentLines(sh);
-    const addIdx = code.indexOf('dist-tag add');
+    const rcAddIdx = code.indexOf('dist-tag add "$PKG_NAME@$VER" rc');
     const pubIdx = code.indexOf('npm publish --access public');
     check('RC-G4-e rc 别名经 npm dist-tag add ... rc 在 publish 之后补打',
-      addIdx > 0 && pubIdx > 0 && addIdx > pubIdx && /dist-tag add\s+"\$PKG_NAME@\$VER"\s+rc/.test(sh),
-      'dist-tag add@' + addIdx + ' / publish@' + pubIdx);
+      rcAddIdx > 0 && pubIdx > 0 && rcAddIdx > pubIdx && /dist-tag add\s+"\$PKG_NAME@\$VER"\s+rc/.test(sh),
+      'rc add@' + rcAddIdx + ' / publish@' + pubIdx);
+
+    // -- RC-G4-i..n：latest 回补步骤（RC-6 的执行体）。钉的是命令行与调用点，不钉注释。--
+    const fn = /reconcile_latest_tag\(\)\s*\{([\s\S]*?)\n\}/.exec(code);
+    const body = fn ? fn[1] : '';
+    check('RC-G4-i latest 回补有独立实现（不靠 publish 的 --tag 副作用）',
+      !!fn, fn ? 'reconcile_latest_tag()' : '未见 reconcile_latest_tag 函数');
+    check('RC-G4-j 回补执行 npm dist-tag add "$PKG_NAME@$VER" latest',
+      /dist-tag add "\$PKG_NAME@\$VER" latest\b/.test(body), fn ? 'ok' : '无函数体');
+    check('RC-G4-k 只升不降：由 semverCompare 判定，比较单源 = src/shared/version.js',
+      /semverCompare\(e\.PUBLISH_VER,\s*e\.CUR_LATEST\)\s*>\s*0/.test(body)
+        && /DSH_VERSION_LIB="\$ROOT\/src\/shared\/version\.js"/.test(body),
+      fn ? 'ok' : '无函数体');
+    check('RC-G4-l 远端 latest 读法容错（缺包/无标签一律按「无 latest」处理，不猜）',
+      /npm view "\$PKG_NAME" dist-tags\.latest/.test(body), fn ? 'ok' : '无函数体');
+    check('RC-G4-m 回补失败必须非零退出（RC-5：不得「包发出去了但通道没对齐」）',
+      /if ! out=.*dist-tag add "\$PKG_NAME@\$VER" latest/.test(body)
+        && /exit 1/.test(body), fn ? 'ok' : '无函数体');
+    const callLines = splitLines(code).filter((l) => /^\s*reconcile_latest_tag\s*$/.test(l));
+    check('RC-G4-n 真发布分支与幂等跳过分支都执行回补（部分平台重跑不得漏）',
+      callLines.length >= 2, callLines.length + ' 处调用（期望 >=2：publish 后 + 幂等 exit 前）');
+    // 幂等分支的回补形态：紧跟在 `exit 0` 之前（跳过发布也要先对齐通道再退出）。
+    check('RC-G4-o 幂等跳过分支里回补排在 exit 0 之前（跳过发布也要对齐通道）',
+      /reconcile_latest_tag\s*\n\s*exit 0\s*\n/.test(code),
+      /reconcile_latest_tag\s*\n\s*exit 0/.test(code) ? 'ok' : 'exit 0 前无回补调用');
 
     const autoChannel = splitLines(code)
       .filter((l) => /dist-tag\s+(add|rm)/.test(l) && /\b(rollback|canary)\b/.test(l));
@@ -269,8 +294,8 @@ main().then(() => {
   const failed = results.filter((r) => !r);
   console.log(String.fromCharCode(10) + '结果: ' + (results.length - failed.length) + ' passed, ' + failed.length + ' failed');
   if (failed.length) {
-    console.log('说明：RC-G3-* / RC-G1-x / RC-G2-x 是契约 §6 的待落地项（分片2 / 分片1 负责）；');
-    console.log('      本门禁如实报告现状，判据有分辨力（见 RC-G5），非空转。');
+    console.log('说明：本门禁的每一项都对应契约第 6 节的一条不变量；失败 = 实现与契约分叉，');
+    console.log('      按契约（SSOT）修实现，不要把断言放宽。');
   }
   process.exit(failed.length ? 1 : 0);
 }).catch((e) => {

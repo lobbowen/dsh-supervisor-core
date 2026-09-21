@@ -13,15 +13,26 @@
 
 ## 一、先承认三个真实缺口（我的问题）
 
+> **这三条现在的状态（G1/G2 已收口，G3 仍开）**：
+> G1 —— 壳 CI 的 Linux 基座已钉 `ubuntu-22.04` + `glibc_max: "2.35"`，并由壳仓 `ci/check-glibc.sh`
+> 在打包后拦截「只能在新发行版上跑」的退化；G2 —— Linux **只出 `deb` 一种形态**（支持面 = Ubuntu，
+> 见 §5.2 与 §十 N2b 的收口），架构按矩阵分列
+> （Linux arm64 runner 当时被注释停用，未产线）；G3 —— 四平台构建与产物装配已在产线，签名链路**曾产线工作、现已断供**：
+> 已发布的 `@dsh-sup/shell-*@1.0.1…1.1.11` 四平台产物全部由 key id `96DE3EF26F389F70` 签名且更新清单在线可取，
+> 但**私钥只在旧账号仓的 CI 里配置过**，迁仓后 `lobbowen` 两仓无该 secret、本机也没有副本，
+> 所以现在**签不出任何存量客户端会接受的新产物**（壳更新通道冻结在 1.1.11）。内核自更新走 npm + registry 完整性，
+> 不经 minisign，不受影响（详见壳仓 `docs/UPDATER-SIGNING-KEY.md` §〇）。
+> 下面 §二 的发行版实测表是**改造前**的证据（当时的产物确实只能装 24.04+），保留它是为了留下判据来源。
+
 | # | 缺口 | 后果 |
 |---|---|---|
-| **G1** | 只按**本机**（Linux Mint 22.3 / Ubuntu 24.04 基座）考虑 | **当前公开发布的 deb 只能装在 Ubuntu 24.04+**（详见二） |
+| **G1** | 只按**本机**（Linux Mint 22.3 / Ubuntu 24.04 基座）考虑 | **改造前**公开发布的 deb 只能装在 Ubuntu 24.04+（详见二） |
 | **G2** | 把 Linux 当成**单一形态**（deb 一种） | 未考虑发行版差异、架构差异、依赖差异 |
 | **G3** | 未展开 macOS / Windows 的**构建、签名、自更新**全链路 | 无法作为公开产品发布 |
 
 ---
 
-## 二、决定性实测：当前 Linux 产物**只能装 Ubuntu 24.04+**
+## 二、决定性实测：**改造前**的 Linux 产物**只能装 Ubuntu 24.04+**
 
 ### 2.1 证据
 
@@ -48,9 +59,9 @@ GLIBC_2.39        ← 最高要求
 原因是**在本机（Ubuntu 24.04 基座，glibc 2.39）构建** —— glibc 是**前向兼容**：
 **在新 glibc 上编译的二进制，无法在旧 glibc 上运行**。
 
-### 2.2 发行版覆盖矩阵（当前状态）
+### 2.2 发行版覆盖矩阵（改造前状态）
 
-| 发行版 | glibc | webkit2gtk-4.1 | **当前 deb 可用？** |
+| 发行版 | glibc | webkit2gtk-4.1 | **当时 deb 可用？** |
 |---|---|---|---|
 | Ubuntu 24.04 LTS | 2.39 | 有 | ✅ |
 | Ubuntu 26.04 | ≥2.39 | 有 | ✅ |
@@ -60,8 +71,8 @@ GLIBC_2.39        ← 最高要求
 | Ubuntu 20.04 / Debian 11 | 2.31 / 2.31 | **无**（实测 focal 无 4.1） | ❌ ABI + glibc 均不足 |
 | Fedora / Arch | 2.4x | 有 | ⚠️ 视 glibc 版本 |
 
-> **结论**：当前的公开 deb **把最主流的 Ubuntu 22.04 LTS 与 Debian 12 用户全部排除在外**。
-> 这是一个必须修的产品缺陷，而非配置细节。
+> **结论（针对改造前的产物）**：当时的公开 deb **把最主流的 Ubuntu 22.04 LTS 与 Debian 12 用户全部排除在外**。
+> 这是一个必须修的产品缺陷，而非配置细节 —— 该缺陷已由壳 CI 固定 `ubuntu-22.04` 基座收口（见一、状态说明）。
 
 ### 2.3 修复原则（工业标准）
 
@@ -215,7 +226,7 @@ $ bash ci/check-glibc.sh <binary> 2.35
 | # | 平台 / 架构 | Runner | 产物 | npm 包名 |
 |---|---|---|---|---|
 | 1 | Linux x64 | `ubuntu-22.04` | `.deb` | `@dsh-sup/shell-linux-x64` |
-| 2 | Linux x64 | `ubuntu-22.04` | `.rpm`（可选，N2b） | 同上 |
+| 2 | ~~Linux x64 第二形态~~ | — | **不产**：Linux 支持面 = Ubuntu + `deb` 一种形态（§十 N2b 收口） | — |
 | 3 | Linux arm64 | `ubuntu-22.04-arm` | `.deb` | `@dsh-sup/shell-linux-arm64` |
 | 4 | macOS arm64 | `macos-latest` | `.app.tar.gz` + `.dmg` | `@dsh-sup/shell-darwin-arm64` |
 | 5 | macOS x64 | **`macos-15-intel`** | `.app.tar.gz` + `.dmg` | `@dsh-sup/shell-darwin-x64` |
@@ -243,7 +254,7 @@ $ bash ci/check-glibc.sh <binary> 2.35
 平台差异全部封装在 Tauri 插件内，壳不写平台分支。
 ```
 
-### 5.2 Linux（deb / rpm）
+### 5.2 Linux（只 `deb`）
 
 | 项 | 内容 |
 |---|---|
@@ -284,7 +295,7 @@ $ bash ci/check-glibc.sh <binary> 2.35
 ```
 【壳发布】公开仓 dsh-supervisor-launcher（CI 免费额度）
   ① git push origin HEAD && git tag v0.2.0 && git push origin v0.2.0
-  ② GitHub Actions 矩阵（4 平台：linux-x64 deb,rpm / darwin-arm64 app,dmg / darwin-x64 app,dmg / win-x64 nsis,msi），每个 job：
+  ② GitHub Actions 矩阵（4 平台：linux-x64 deb / darwin-arm64 app,dmg / darwin-x64 app,dmg / win-x64 nsis,msi），每个 job：
        - 装系统依赖（Linux 22.04 的 webkit2gtk-4.1-dev 等）
        - Rust 工具链（dtolnay/rust-toolchain）
        - npx tauri build（tag 构建须有 TAURI_SIGNING_PRIVATE_KEY；非 tag 构建撤掉该变量并关掉 updater 产物）
@@ -345,7 +356,7 @@ $ bash ci/check-glibc.sh <binary> 2.35
 
 | # | 风险 | 影响 | 缓解 |
 |---|---|---|---|
-| **L1** | glibc 基座过新 | 主流发行版装不上（**当前已发生**） | **基座固定 `ubuntu-22.04`**；CI 加**门禁断言**：`objdump -T` 最高 GLIBC ≤ 2.35 |
+| **L1** | glibc 基座过新 | 主流发行版装不上（**改造前已发生**，见二） | **壳 CI 基座已固定 `ubuntu-22.04` + `glibc_max: "2.35"`，打包后由壳仓 `ci/check-glibc.sh` 断言 `objdump -T` 最高 GLIBC ≤ 2.35**；内核仓全平台弃 SEA、无 ELF 产物，故该门禁不在本仓生效（见 §E.2） |
 | **L2** | webkit2gtk ABI 不匹配 | 运行失败 | 固定构建 4.1；`Depends` 显式声明；文档说明最低发行版 |
 | **L3** | 发行版依赖缺失 | `dpkg -i` 失败 | 提示 `apt install -f`；文档；可选后续做 apt 仓库（N4） |
 | **M1** | macOS 未签名/未公证 | **用户装不上/被拦** | Developer ID + notarytool + stapler（硬性） |
@@ -353,7 +364,7 @@ $ bash ci/check-glibc.sh <binary> 2.35
 | **W1** | 缺 WebView2 运行时 | 启动失败 | `downloadBootstrapper` 自动安装；提供离线包选项 |
 | **W2** | 无代码签名 | SmartScreen 告警，转化率低 | 代码签名证书（D6 定案） |
 | **W3** | MSI 需管理员 | 无法 per-user 自更新 | **主推 NSIS per-user**；MSI 仅作备选 |
-| **C1** | minisign 私钥丢失 | 已发布用户永久无法更新 | 异地多份 + 双人托管 + 发布前演练恢复 |
+| **C1** | minisign 私钥丢失 | 已发布用户永久无法更新 | 异地多份 + 双人托管 + 发布前演练恢复。**2026-09-21 复核：已成真** —— 当年只做了本机单点备份，副本随 09-19 事故丢失，新仓也没有该 secret；已发布的 `shell@1.0.1…1.1.11` 签名仍在线（见 §一 G3、壳仓 `docs/UPDATER-SIGNING-KEY.md` §〇），**找回旧私钥前签不出存量客户端会接受的壳更新**。内核自更新不经 minisign，不受此项影响 |
 
 ---
 
@@ -362,7 +373,7 @@ $ bash ci/check-glibc.sh <binary> 2.35
 | # | 缺陷 | 修正 |
 |---|---|---|
 | **F1** | Linux 构建基座过新（glibc 2.39）—— **已实测确证**（产物无法在 Ubuntu 22.04 加载） | ✅ **已修**：壳仓 CI 基座改 `ubuntu-22.04` + 门禁断言 `glibc_max=2.35`；`ci/check-glibc.sh` 单源导出到壳仓 |
-| **F2** | 壳仓 CI 缺 `createUpdaterArtifacts` | ✅ **产线语义已修（2026-09-20）**：配置里内置了 pubkey 时 Tauri 见「有公钥无私钥」直接失败，且未配置的 secret 会展开成空串被 CLI 当成非法私钥——所以缺密钥分支必须**同时** `unset TAURI_SIGNING_*` 并用 `--config` 把 `bundle.createUpdaterArtifacts` 关掉，`.sig` 的强校验只在 tag 构建生效（壳门禁 C-f/C-g 锁定）。**密钥本身仍缺失**：tag 发布按设计被 workflow 拦下，见壳仓 `docs/UPDATER-SIGNING-KEY.md` §〇 |
+| **F2** | 壳仓 CI 缺 `createUpdaterArtifacts` | ✅ **产线语义已修（2026-09-20）**：配置里内置了 pubkey 时 Tauri 见「有公钥无私钥」直接失败，且未配置的 secret 会展开成空串被 CLI 当成非法私钥——所以缺密钥分支必须**同时** `unset TAURI_SIGNING_*` 并用 `--config` 把 `bundle.createUpdaterArtifacts` 关掉，`.sig` 的强校验只在 tag 构建生效（壳门禁 C-f/C-g 锁定）。**新仓没有该 secret**：tag 发布按设计被 workflow 拦下（旧账号仓曾配置过它，≤1.1.11 的签名产物至今仍在线，见壳仓 `docs/UPDATER-SIGNING-KEY.md` §〇）|
 | **F3** | 无 macOS 签名/公证 | ⏸ **暂缓**（用户定案 2026-09-11：暂无证书）。不阻塞构建与手动安装（有拦截提示，用户可手动放行）；自动更新链路由 minisign 保障完整性，与此无关 |
 | **F4** | 无 Windows 代码签名；MSI 需管理员 | ⏸ **暂缓**（同上，无证书）。CI 已改主推 NSIS per-user（免提权）；无签名时 SmartScreen 会提示，用户可继续 |
 | **F5** | CI 触发口径 | ✅ **已按硬标准定稿（两仓一致）**：`push`（各自主干 + `v*` tag）+ `pull_request` + `workflow_dispatch`。曾短暂收为「仅 tag 触发」以省构建，但那使 PR 完全不跑 CI、无法把 `build` 设为 required，故 2026-09-13 起恢复**每次 push / PR 都跑完整矩阵**（省额度的正解是公开仓，不是砍触发） |
@@ -375,11 +386,12 @@ $ bash ci/check-glibc.sh <binary> 2.35
 
 | # | 项 | 说明 |
 |---|---|---|
-| **V1** | Tauri 是否为 **deb/rpm** 生成 `.sig` | **仍未验**：两仓从未配过签名私钥，也就没有任何一份 `.sig` 可证。只有在**配好密钥的 tag 构建**上顺带验一次，禁止用本地构建替代（本机不得构建）|
+| **V1** | Tauri 是否为 **deb** 生成 `.sig` | **已确证**（不必等 tag 构建重验）：线上清单 `@dsh-sup/shell-release@1.2.0` 的 `linux-x86_64` 条目 URL 与该签名 trusted comment 都是 `dsh-supervisor_1.2.0_amd64.deb`，即 Tauri 确实为 deb 产出并使用了 `.sig`。**原登记的「rpm 装了却拿不到自己的更新包」已随 rpm 停发而消失**（不是缓解，是不再存在该形态），见 §十 N2b |
+| **V5** | 清单声明的**双 CDN 回退**是否对四平台成立 | **对「拿得到清单」成立，对「拿得到安装包」不成立**：1.2.0 逐源复测，jsdelivr 对 `.exe` 返 **403 Forbidden**（`1.1.11` 同样复现，与版本无关 —— 是它按扩展名的策略，不是我们包的问题），而清单本身、`.deb`、`.app.tar.gz`、同包 `.sig` 在 jsdelivr 都取得到。且 `endpoints` 的回退**只覆盖取清单那一次请求**，插件下载阶段拿着清单里那一条绝对 URL 不会换源 ⇒ 「两条端点」从来不等于「两条下载源」。**已修**：壳按实测候选源换源取安装包（声明源永远第一 → npm 同路径换主机 → GitHub Release 同名资产），验签仍在插件内按字节做，换源不换内容。逐源实测与全部排除理由见壳仓 `docs/SHELL-UPDATE-CHANNEL-VERIFICATION.md` §九 |
 | ~~V2~~ | ~~`ubuntu-22.04` 上能否顺利构建~~ | **已由 CI 确证**：`ubuntu-22.04` job 在壳仓 main 上反复全绿（含 glibc 2.35 门禁与打包）。~~原「本机 24.04 基座 cargo build --release 成功」~~ —— 那既不能证明 22.04 基座，也违反「一律 CI 构建/测试」，不作为依据保留 |
-| ~~V3~~ | ~~Linux arm64 是否有用户需求~~ | **未纳入矩阵**（Linux 只有 x64）。纳入新平台属矩阵变更：若已恢复分支保护，必须同步改 required status checks 的 contexts（两仓当前无保护，见 `archive/history/AUDIT-REPORT-2026-09-19.md` §K-1）|
+| ~~V3~~ | ~~Linux arm64 是否有用户需求~~ | **未纳入矩阵**（Linux 只有 x64）。纳入新平台属矩阵变更：两仓主干保护已于 2026-09-21 恢复，required contexts 逐字内嵌矩阵参数，**改矩阵必须同批改 contexts**，否则旧语境永不出现 → 所有 PR 阻塞（现值见 `DEVELOPMENT-TRACK.md` §7、壳仓 `docs/RELEASE-AND-BUILD-DECISION.md`）|
 | ~~V4~~ | ~~Windows arm64 是否纳入~~ | **未纳入矩阵**（Windows 只有 x64，bundles `nsis,msi`），变更约束同上 |
-| ~~N2b~~ | ~~是否发 rpm~~ | **现状：deb + rpm 一起发**（Linux job 的 `bundles: deb,rpm`）|
+| ~~N2b~~ | ~~是否发 rpm~~ | **定案：不发**。Linux job 的 `bundles` 收窄为 `deb`，`tauri.conf.json` 的 `targets` 同步去掉 rpm。当初 rpm 与 deb 一起产却没有自己的清单槽位，等于产一个更新通道覆盖不到的形态 —— 支持面 = Ubuntu 一种形态；真要扩发行版，先解决清单每平台单槽位（壳仓 `docs/RELEASE-STANDARD.md` §2）|
 | **N4** | 是否建 apt/yum 仓库 | 后续加分项，未立项 |
 | **W4** | macOS 最低支持版本（10.15 / 11.0 / 12.0） | 影响构建 target 与测试面 |
 

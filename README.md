@@ -16,7 +16,7 @@ DeepSeek Harness 生命周期监管工具：独立于 Harness 运行的系统级
 | [KERNEL-DAEMON-CONTRACT.md](KERNEL-DAEMON-CONTRACT.md) | 规范（契约） | 内核守护进程契约（D1–D9）：被壳拉起时必须提供什么；配套 `test/kernel-daemon-contract-test.js` |
 | [NO-CONSOLE-WINDOW-STANDARD.md](NO-CONSOLE-WINDOW-STANDARD.md) | **规范（唯一事实源，两仓共遵）** | **无控制台窗口**：壳启动内核全链路不得弹终端；统一 spawn 封装 + 门禁（W1–W5） |
 | [DSH-TOKEN-CONTRACT.md](DSH-TOKEN-CONTRACT.md) | 规范（契约） | **令牌唯一事实源**：7 类令牌各自策略；令牌是基础组件非域；令牌恒存在、不驱动生命周期（TK-1..8 + 门禁） |
-| [RELEASE-CHANNEL-CONTRACT.md](RELEASE-CHANNEL-CONTRACT.md) | **规范（唯一事实源）** | **发布通道与选版唯一事实源**：canary/beta/rc/latest/rollback 五通道；选版算法冻结；紧急回退用显式 rollback 标签（RC-1..6 + 门禁）。由 `test/release-channel-gate-test.js` 机器校验（RC-G3/G4/G5；RC-G1/G2 在壳仓） |
+| [RELEASE-CHANNEL-CONTRACT.md](RELEASE-CHANNEL-CONTRACT.md) | **规范（唯一事实源）** | **发布通道与选版唯一事实源**：canary/beta/rc/latest/rollback 五通道；选版算法冻结；紧急回退用显式 rollback 标签（铁律 `RC-*` 全集见该文件 §3「关键不变量」表，**本索引不抄编号与条数**）。由 `test/release-channel-gate-test.js` 机器校验（RC-G3/G4/G5；RC-G1/G2 在壳仓） |
 | [DIRECTORY-STRUCTURE-DESIGN.md](DIRECTORY-STRUCTURE-DESIGN.md) | **规范（唯一事实源）** | **目录结构与分层唯一事实源**：五层（shared/platform/domains/app/api）+ 依赖矩阵 + 完整目录树 + 12 条不变量（DS-1..DS-12）+ 门禁升级（DS-G1..G8）+ 10 步迁移计划 + 10 项决策记录。由四路审计 + 三路设计交叉验证后定版 |
 | [DOMAIN-STRUCTURE-DESIGN.md](DOMAIN-STRUCTURE-DESIGN.md) | **规范（唯一事实源）** | **域内结构唯一事实源**（与上一份互补）：域内分层判据 DF-1..DF-7（门面 ≤150 / 单文件 ≤300 / 零隐式 this / DAG）+ 三消解手法 + 五域与 app 的**逐文件目标结构** + R1..R12 裁决 + 10 批迁移计划 + DG-1..DG-16 门禁 + **迁移时须同步改的 10 处门禁**。由 12 份设计文档（archive/design-notes/，6085 行）合并定版。**状态：执行中（2026-09-17 起，12+ 子代理并行施工，批 0–10）** |
 | [ACCEPTANCE-STANDARD.md](ACCEPTANCE-STANDARD.md) | **规范（唯一事实源）** | **验收与测试唯一事实源**：`硬标准` —— **所有测试不得在本机执行，验收只能由推送后的 CI 四平台矩阵裁决**；本机不得产生发布产物。含 CI 实际执行步骤、四平台矩阵、“逻辑门禁与原生行为的边界”、禁止/允许事项、违规判定。由 test/acceptance-standard-gate-test.js 机器校验 |
@@ -34,7 +34,7 @@ DeepSeek Harness 生命周期监管工具：独立于 Harness 运行的系统级
 
 > 归档说明：历史与过程文档已移至 archive/，不再作为当前事实源。
 - archive/design-notes/：138 份设计文档（逐域设计、作业单、审计、FIX 工作笔记）
-- archive/history/：审计报告、事故复盘、终验收报告、执行契约、发布/更新机制论证
+- archive/history/：审计报告、事故复盘、结构复算报告（非放行依据）、执行契约、发布/更新机制论证
 
 > 当前事实源 = 文档索引中列出的规范/契约/记录。archive/ 内文件为历史归档，仅供回溯参考。
 
@@ -81,12 +81,12 @@ xdg-open http://127.0.0.1:36360/   # 浏览器直接开面板（默认端口；�
 
 > **弃 SEA 原因（铁证）**：Node SEA 单文件二进制在 macOS 上注入后 `self-check` 即段错误——即使最小 hello-world SEA 亦崩（CI 双 arch 验证，与 useCodeCache/codesign/Node 版本均无关，为 Node SEA 的 macOS 上游缺陷）。为彻底消除平台差异、保证 macOS/Windows（产品主力）可用，全平台改发 Node launcher。
 
-- **构建**：`npm run build:launcher`（`release/scripts/build-launcher.sh`）→ esbuild CJS bundle（`--define:__DSH_VERSION__` 注入版本）→ 组装 `bin/dsh-supervisor`（node 启动脚本）+ `core.cjs` + `ui-react/` → 自带冒烟（self-check + fresh-HOME daemon + UI 服务断言）。
+- **构建**：`npm run build:launcher`（`release/scripts/build-launcher.sh`，**仅 CI 内**：脚本对任何调用形态在 CI 外一律 exit 2）→ esbuild CJS bundle（`--define:__DSH_VERSION__` 注入版本）→ 组装 `bin/dsh-supervisor`（node 启动脚本）+ `core.cjs` + `ui-react/` → 自带冒烟（self-check + fresh-HOME daemon + UI 服务断言）。
 - **产物**：`dist/launcher/dsh-supervisor-<ver>-<platform>-<arch>/`（bin + core.cjs + ui-react + version.txt），整包发布可辨识。
 - **运行时依赖**：Node.js ≥18（launcher 需目标机 node；SEA 免运行时优势已弃，换取三端可运行可发布）。
 - **版本自包含**：esbuild 编译期注入 `__DSH_VERSION__`，launcher 任意 cwd 自报正确版本；提升走 `release/scripts/bump.sh --core`（单源 = `package.json.version`）。
 - **平台命名**：npm 内核子包按平台分（`@scope/dsh-core-linux-x64` / `darwin-arm64` / `darwin-x64` / `win-x64`；`process.platform` 的 `win32` 需映射 `win`）。四平台各由对应 runner 产出，**不做交叉编译**；唯一例外是 darwin-x64 目前在 `macos-14`（arm64 runner）上以 `DSH_ARCH_OVERRIDE=x64` 产出 —— 因为 launcher 是架构无关纯 JS，两形产物等价（切 `macos-15-intel` 需真实构建验证，见 `CROSS-PLATFORM-BUILD-AND-UPDATE.md` §三）。
-- **平台生产分工（2026-09-13 硬标准）**：**四平台全部由 GitHub CI 产出**（`build` job 的 4 runner 矩阵：ubuntu-22.04 / windows-latest / macos-latest / macos-14）；**本地不再有任何平台构建/发布路径**（`--all-platforms` 本地 exit 2，`release-core.sh` 已删除）。
+- **平台生产分工（2026-09-13 硬标准）**：**四平台全部由 GitHub CI 产出**（`build` job 的 4 runner 矩阵：ubuntu-22.04 / windows-latest / macos-latest / macos-14）；**本地不再有任何平台构建/发布路径**（`build-launcher.sh` 对单平台与 `--all-platforms` 调用在 CI 外都 exit 2，`release-core.sh` 已删除）。
 - **许可**：内核 **UNLICENSED**（闭源构建物，主 `package.json`/`LICENSE` 声明）；壳 **MIT**（`src-tauri/LICENSE`）。
 - **双仓库（壳开源引流）**：壳源码位于公开仓库 `lobbowen/dsh-supervisor-launcher`（MIT 许可）；
   本仓库为内核（**同为公开仓库** `lobbowen/dsh-supervisor-core`；公开是为了 CI 免额度跑四平台矩阵，
@@ -308,13 +308,19 @@ POST /shutdown               已由 POST /session/stop 取代（保留供旧版�
 
 `npm test` 使用 mock 目标跑通设计文档 §12 的全部用例及安全边界（Host/Origin 校验、控制结果透传、日志轮转、端口占用不硬抢、守卫崩溃幂等、接管实例可停止、升级先停后装与回滚），**不触碰真实 DSH 与真实 npm**。
 
-> **卸载类测试现状（2026-09-13 起，与 2026-08-31 政策原文已有出入，以此为准）**：
-> 当前仅 `test/native-test.js`（原生 DSH 卸载全量清理）仍在 `npm test` 链外 —— 见
-> `test/test-chain-completeness-test.js` 的显式排除表（理由：需真实原生卸载环境），
-> 经 `npm run test:native-uninstall` 按需运行。原政策同时排除的 `test/api-contract-test.js`
-> （含 `POST /native/uninstall` 契约断言）与 `test/plugin-change-restart-test.js`（含插件卸载场景）
-> 已**重新入链**（2026-09-13 `ab071f5`：二者此前从未在 CI 执行）；它们仍各有独立 npm script
-> （`test:api-contract` / `test:plugin-change-restart`）供单独调用。
+> **卸载类测试现状**：链内覆盖安装/卸载的行为面 —— `test/uninstall-timeout-behavior-test.js`（注入会挂起的假 npm）、
+> `test/api-contract-test.js`（含 `POST /native/uninstall` 契约断言）、`test/plugin-change-restart-test.js`（含插件卸载场景）；
+> 后两者曾长期被排除、2026-09-13（`ab071f5`）重新入链，它们仍各有独立 npm script 供 CI 单独调用。
+>
+> **唯一在链外的是 `test/native-test.js`**（原生 DSH 卸载全量清理）。它的排除理由此前登记为
+> 「需真实原生卸载环境」，**这句话是错的**：夹具用的是临时 `npmRoot`，不碰宿主环境；同一提交 `ab071f5`
+> 自己的注释还记着它「10 断言，能通过」。真实障碍有两条（现登记在 `test/test-chain-completeness-test.js` 排除表）：
+> `ops.uninstall` 会真起 `npm` 子进程，且夹具用 `fs.symlinkSync` 造 bin 链接 —— Windows 建符号链接需特权或开发者模式，
+> 夹具没有按平台分支。
+>
+> 因此 **`npm run test:native-uninstall` 不是一条可随时取证的通道**：本仓硬标准禁止本机执行任何测试
+> （`ACCEPTANCE-STANDARD.md` §0），CI 也不跑它。该文件当前**不在任何环境运行、不产生验收证据**，
+> 最后一次有记录的执行是 2026-09-13 在 Linux 上。入链前提：改走 `npmBin` 注入口塞假 npm，并把 bin 夹具按平台分支。
 >
 > ⚠ **补充（2026-09-12，P1-F 事故后定规）**：需要验证卸载逻辑的行为时，
 > **必须经构造期依赖注入**（`new NativeManager({ npmBin: <假可执行> })`），
@@ -344,7 +350,7 @@ POST /shutdown               已由 POST /session/stop 取代（保留供旧版�
   并在首帧下发真实等待上界 `maxWaitMs`；面板 `AboutCard` 据此显示逐源/心跳进度，
   等待上界取自壳而**不写死**（旧实现写死 6 分钟 < 壳预算 17 分钟 → 误报「壳无响应」→ 重试造成并发写入）。
   判据见 `test/kernel-update-single-writer-test.js` 的 SW-9（含反向例）。
-- 内核发布：`npm run build:launcher` + `npm run publish:core`（Node launcher + npm 平台子包，见「内核发布」节）。发布由 tag 触发 CI：`build` 矩阵四平台先跑不带令牌的验证步，再由 token-scoped 发布步执行 `ci-core.sh --publish-only`。
+- 内核发布：`npm run build:launcher` + `npm run publish:core`（Node launcher + npm 平台子包，见「内核发布」节；两者**只在 CI 内运行**，本机调用被脚本自身的 `GITHUB_ACTIONS` 守卫拒绝）。发布由 tag 触发 CI：`build` 矩阵四平台先跑不带令牌的验证步，再由 token-scoped 发布步执行 `ci-core.sh --publish-only`。
 - 环境状态：`GET /env/status`（node/npm/git 探针 + 壳写入的 runtime.json）、`GET /env/dsh`（DSH 本体安装/纳管判定）。
 
 ### 跨平台打包（**已移至壳仓**）

@@ -11,7 +11,9 @@
 | **桌面壳** | `lobbowen/dsh-supervisor-launcher` | 公开 | `src-tauri/`（Tauri 引导器，MIT）+ 壳文档与脚本 |
 
 > 两仓曾分属 `wasi7mglns` / `advgyxqamf`，2026-09-19 统一到 `lobbowen`。旧账号下的同名仓已停更，
-> 不要向它们推送，也不要以其中内容为准（历史配置在迁仓时**未随迁**，尤其分支保护，见 `RELEASE-STANDARD.md` §4）。
+> 不要向它们推送，也不要以其内容为准。**服务器端配置不随仓迁移**（迁仓后两仓主干一度无保护，
+> 2026-09-21 才在新仓重新写入，见 `RELEASE-STANDARD.md` §4）—— 同理，旧账号仓上的 secrets / 保护 /
+> 环境设置一律不能当作新仓已具备。
 
 两仓**不共享目录**：壳的构建、签名、发布、测试全部由壳仓自持；
 内核仓只保留对接代码（`src/domains/shell/`、`src/api/domains/shell.js`）。
@@ -37,6 +39,8 @@ git push origin HEAD --tags   # 触发 CI 四平台构建+发布
 # 1) 本地：提升版本（单源 = package.json.version，只允许递增）
 bash release/scripts/bump.sh --core <下一版本>
 #    只允许递增：低于 package.json 当前值时脚本直接以「拒绝回退」退出。
+#    脚本同时提升 package-lock.json 的两处 version —— 门禁 P-9 B26 要求 lock 与 package.json 一致，
+#    只改前者会把这个不一致留到 CI 才暴露。
 #    本手册刻意不写具体版本号 —— 写死必然过期（此处曾写 0.1.5-BETA.1，低于当前值，照抄必被拒）。
 #    然后整理 CHANGELOG.md：[未发布] → [<下一版本>]
 
@@ -54,7 +58,7 @@ verify:versions → build-ui（ui-react/ 为测试与产物依赖）→ npm test
 ```
 
 > ⚠ **`build-ui` 不可跳过**：`npm test` 中的面板响应头断言与 launcher 携带的 UI 均依赖
-> `ui-react/`（gitignored 构建产物）。直接跑 `npm test` 会得到 503「UI not built」。
+> `ui-react/`（gitignored 构建产物）。链上缺这一步，CI 的 `npm test` 会得到 503「UI not built」。
 
 ## release job 与 need_build
 
@@ -112,8 +116,11 @@ dsh-supervisor-gui --service-plan --service-apply # 实际建立服务定义
 - [x] **测试端口纪律**：安全段 28000-28999 + 门禁（防落 OS 动态端口范围）
 - [x] **工作流解析行尾归一化**：修复 Windows CRLF 导致的 CI 假失败 + 门禁
 - [x] **npm 认证大小写修复**：`NPM_CONFIG_USERCONFIG` 与 `npm_config_userconfig` 双写
-- [x] 已发布（registry dist-tag `beta`）：`@dsh-sup/dsh-core-*@0.1.5-BETA.10`（`latest` 仍在 `0.1.5-BETA.7`，
-      正式版由用户决定何时切）
+- [x] 已发布（registry dist-tag `beta`）：**现值以 `npm view @dsh-sup/dsh-core-linux-x64 dist-tags` 为准**，
+      本行只记最后一次出厂实测：`@dsh-sup/dsh-core-*@0.1.5-BETA.11` 四平台齐、溯源证明四条均可查
+      （`latest` 曾长期停在 `0.1.5-BETA.7` —— 那不是「正式版由用户决定何时切」，而是 BETA 挂
+      `--tag beta` 后没人回补通道标签，结果是 BETA.8..11 对全体自动升级机器不可达；
+      现四平台 `latest=0.1.5-BETA.11`，回补改由发布脚本承担，见 `RELEASE-CHANNEL-CONTRACT.md` §2）
 - [x] **`v0.1.4-BETA.1` 的 Windows CRLF 假失败**：修复后经 0.1.5-BETA.x 多次四平台矩阵验证，已消失
 - [x] **旧账号善后（用户侧）**：`wasi7mglns` / `advgyxqamf` 两仓已停更，其上的 SSH 公钥与 PAT
       随账号弃用一并失效，**无需再逐项清理**（2026-09-20 校准）

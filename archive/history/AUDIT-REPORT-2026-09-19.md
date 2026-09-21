@@ -728,6 +728,13 @@ node/npm 拆成两个松字段（成功路径只写 node）；内核侧把 npm �
 **未擅自恢复**：分支保护会同时限制直推与管理员，属共享状态变更，需单独定案；
 文档已改为「下表是旧账号仓配置，待在新仓恢复」。旧仓是公开且停更的副本，容易被误当现仓，文档已点名。
 
+> **勘误（2026-09-21）**：用户定案「分支保护必须做」，本节已收口。两仓主干经
+> `PUT /branches/{master,main}/protection` 写入并 `GET` 读回：内核 `master` = `precheck` + `test`
+> + 4 条 `build (...)`（比原表更强：`build` 自 09-14 起已是无条件 job，当年只设两个 job 的理由消失），
+> 壳 `main` = `version` + 4 条 `build (...)`；两仓 `strict` / `enforce_admins` /
+> `required_conversation_resolution` 开启、审批数 0、禁 force push 与删除分支。
+> 上方两条 404 是本节取证当时的实测，保留为历史证据；现值与判据见 `DEVELOPMENT-TRACK.md` §7。
+
 ### K-2 门禁把 owner 钉死导致空转 P2
 
 `test/no-cross-repo-test.js` 的 X-2 判据写死 `repository:\s*wasi7mglns/dsh-supervisor-launcher`。
@@ -761,8 +768,8 @@ X-5 反向夹具同时投喂新旧两个 owner，且断言内核仓自身不被�
 内核 registry 仍 `0.1.5-BETA.10`，壳不发 tag、不动 npm 包。
 
 裁决：内核侧 K-2/K-3（X-2 判据去 owner 硬编码 + 三处现状文档）走 PR #9，CI（precheck + test +
-四平台 build）全绿后合入 `master` = `4cef6d9`，分支已清理。K-1（恢复分支保护）按上文**保持待定案**，
-未擅自动服务端。壳侧产线修复随壳 PR #1 走。
+四平台 build）全绿后合入 `master` = `4cef6d9`，分支已清理。K-1（恢复分支保护）按上文**当时保持待定案**、
+未擅自动服务端（2026-09-21 已定案并写入两仓主干，见 §K-1 勘误）。壳侧产线修复随壳 PR #1 走。
 
 ## L. 凭据工具链本身不可用 + 配套门禁空转（2026-09-20 继续清扫时顺藤摸出）
 
@@ -939,6 +946,93 @@ dispatch（F5 行早已纠正，本段没跟着改），而**在命令行 export
 （`acceptance-standard-gate` / `docs-reference-gate` / `standards-uniqueness` /
 `release-spec-consistency` 各全绿，`comment-pin-gate` hard 0 失败）＋ `bash -n`；
 其余结论按常规由 CI 四平台矩阵裁决。
+
+## N. 发布链回归：B24 把「查不到」当成「已发布」（2026-09-21，0.1.5-BETA.11 首发四平台同红）
+
+### N-0 触发点
+
+tag `v0.1.5-BETA.11` 的发布轮：`precheck` 与 `test` 全绿，四个 `build` 腿**在同一步、以同一句判据全红**，
+`release` job 未跑。registry 该版本零上架（`npm view` 返回 E404），产物未发布成功。发布步尾部：
+
+```
+== @dsh-sup/dsh-core-linux-x64@0.1.5-BETA.11 已存在于 https://registry.npmjs.org/ → 内容强核对…==
+   ❌ 核对要素缺失（远端 size= sha= 本地 size=… sha=…）：无法证明同源，禁止幂等跳过。
+```
+
+四平台一致 ⇒ 与平台无关；`test` 绿 ⇒ 与被测代码无关。红点自证在发布脚本自身。
+
+### N-1 根因：B24 换实现时把存在性判据的语义换掉了（回归，不是历史缺陷）
+
+`publish-core.sh` 的存在性探测：
+
+```bash
+REMOTE_SPEC="$(npm view "$PKG_NAME@$VER" --json ... | tr -d '\r' || true)"
+if printf '%s' "$REMOTE_SPEC" | grep -q .; then   # 非空 => 判「已存在」
+```
+
+`npm view --json` 对**不存在**的版本会同时做两件事：往 stdout 打一个 `{"error":{"code":"E404",…}}`
+对象，并以非零退出。于是「输出非空」把「查不到」归到「已发布」，再由 fail-closed 的核对分支判红 ——
+**任何首次发布都必红**。脚本内注释把它的前提写成「npm view 对不存在版本返回非零 + 空输出」：
+那是不带 `--json` 时的行为（旧实现正是 `npm view … dist.unpackedSize` 取值、以「取到值」为存在）。
+
+`git log -S` 定位：`grep -q .` 形态唯一由第 3 批 B24 提交引入 —— B24 为拿 `dist.shasum` 而把两次
+`npm view` 合成一次 `--json` 调用，**顺带把存在性从「字段取到值」降级成「输出非空」**。BETA.10 及更早
+版本发布时跑的是旧实现，故此前未暴露。B24 修的「体积代内容」仍成立，坏的是它新引入的那半。
+
+### N-2 修法（根源，不加补偿）
+
+存在性交回工具自己的裁决 —— 退出码：
+
+```bash
+REMOTE_SPEC=''
+if REMOTE_SPEC="$(npm view "$PKG_NAME@$VER" --json … 2>/dev/null | tr -d '\r')"; then
+```
+
+`set -euo pipefail` 下 `if 赋值="$(…)"` 的成立条件即命令替换退出状态（pipefail 在子壳内生效，实测确认），
+因此原来的 `|| true` 与「首发布必中止」的顾虑一并消失。非零（E404/网络/权限）一律走发布分支：
+真发布若因网络或认证失败会自行非零退出，不存在「核对不了 → 视为成功」的旁路。
+体积 + sha1 双项强核对、缺要素即 `exit 1` 的语义**未动**。
+
+### N-3 判据与覆盖缺口（ACCEPTANCE-STANDARD §7）
+
+`test/release-spec-consistency-test.js` P-9 B24 补两条：正向锚在代码行
+`if REMOTE_SPEC="$(npm view `，反向识别旧「输出非空即已存在」形态（`grep -q .` 不得再现）。
+缺口如实登记：该判据是**源码形态**门禁，不执行 `publish-core.sh`；真正的裁决只来自 CI 的 tag 发布轮
+（非 tag 构建走 dry-run，不进这段分支）。故本条的产线证据 = 移动后的 tag 那一轮四平台发布步全绿。
+
+**已兑现的证据**：PR #19 六 job 全绿后 squash 合入（`87be552`），tag `v0.1.5-BETA.11` 前移到该提交重推，
+run 35532356277 全绿（precheck + test + 四平台 build + release 皆 success）；registry 终验四平台
+`0.1.5-BETA.11` 齐备、`beta` 全指本版、四条 publish 溯源证明均可查。
+darwin-arm64 首查 E404 属 §RELEASE-STANDARD 5 已登记的传播延迟，重试即齐。
+
+## O. 风险表里的纸面缓解：两条「已 mitigated」其实不存在（2026-09-21，1.2.0 出厂复测顺带查出）
+
+### O-0 触发点
+
+壳 1.2.0 发布后按端点复测更新通道，顺带回看内核仓两份设计文档的风险表，发现 K1 / K13 两条的
+「缓解」列写的是**设想**而非**现状**。下一轮接手的人读到「多 CDN 回退 + 内核本地缓存兜底」，
+会判定 unpkg 故障有兜底，从而不去排这个单点 —— 与 §M 那批「以现在时态写着的假现状」同构。
+
+### O-1 实测与结论
+
+| 判据 | 实测 | 结论 |
+|---|---|---|
+| jsdelivr 取 win 产物 | `@1.2.0` 与 `@1.1.11` 的 `…-setup.exe` 均 **403 Forbidden**；同包 `manifest-entry.json`、`.exe.sig` 与清单本身、`.deb`、`.app.tar.gz` 均取得到 | 与版本无关，是 jsdelivr 侧对 `.exe` 的处置 ⇒ **Windows 的备用端点无效**，双 CDN 回退只对另外三个平台成立 |
+| 内核本地缓存 | 壳自更新链无预取、无缓存、无隐式回退（账本只有 `pending -> confirmed` 两态） | 该缓解**从未落地** |
+| minisign 私钥备份 | 用户 2026-09-11 定案只做本机备份；旧钥随后四处不可得，实际换钥一次 | K1 的原写缓解（异地多份 + 双人托管 + 演练）**一项都没做**，且风险已真实发生 |
+
+### O-2 修法
+
+只改文档表述，不改 `endpoints`、不加镜像（那是通道设计，待用户定案）：
+`RELEASE-AND-UPDATE-MECHANISM.md` 的 D5/K1/K13 三处标注实际缓解度并指向证据行；
+`CROSS-PLATFORM-BUILD-AND-UPDATE.md` §十新增 **V5**（双 CDN 回退是否对四平台成立 —— 否），
+V1 的 deb 证据同步换成 `@1.2.0` 清单。壳侧对应缺口登记在壳仓 `CHANGELOG.md` `[1.2.0]`。
+
+### O-3 覆盖缺口
+
+本仓门禁没有覆盖「文档风险表的缓解列是否与代码一致」这一类判据（P 组锚的是脚本与代码形态）。
+缺口如实登记：这类漂移只能靠复核线上产物的那一次实测发现，无静态门禁可兜；因此把它写进 §十的
+待实测台账（V5），下次改通道时按行重跑，而不是留在某段叙述里。
 
 ## 附录：分域审计明细索引
 

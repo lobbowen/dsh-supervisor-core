@@ -11,7 +11,7 @@
 | 要求 | 实现 | 门禁 |
 |---|---|---|
 | 四平台构建只在 CI 内发生 | `build` job 的 4 runner 矩阵，各 runner 只构建**自己**的平台 | `all-platforms-test` T2-a/T2-a2 |
-| 本地不得全平台构建 | `build-launcher.sh --all-platforms` 受 `GITHUB_ACTIONS` 守卫，本地 exit 2 | T2-a2 |
+| 本地不得构建任何平台（含单平台）| `build-launcher.sh` 整体受 `GITHUB_ACTIONS` 守卫：守卫在参数解析之前，`--all-platforms` 与单平台调用在本机一律 exit 2 | T2-a2 / T2-a4 |
 | 本地不得全平台发布 | `publish-core.sh --all-platforms` 一律 exit 2 | T2-b |
 | 无本地发布编排器 | `release-core.sh` **已删除** | T2-e |
 | npm scripts 无本地发布入口 | `release:core*` 与 `publish:core:all` 全部移除 | T2-g |
@@ -58,7 +58,7 @@
 | 阶段 | 名称 | 命令 | 必须绿 | 失败怎么办 |
 |---|---|---|---|---|
 | S0 | 凭据就绪 | `bash release/scripts/cred.sh doctor` | ✅ | 补发/轮换令牌（见凭据标准）|
-| S1 | 版本提升 | `bash release/scripts/bump.sh --core <ver>` | ✅ | 只允许递增 |
+| S1 | 版本提升 | `bash release/scripts/bump.sh --core <ver>`（写 `package.json` 与 lock 两处 version）| ✅ | 只允许递增 |
 | S2 | 版本一致性预检 | `npm run verify:versions` | ✅ | 修派生处 |
 | S3 | 前端产物 | `bash release/scripts/build-ui.sh` | ✅ | 修 UI 构建 |
 | S4 | 全量回归（**由 CI 执行**）| `xvfb-run -a npm test`（本机不得执行）| ✅ | 修缺陷（含注入验证）|
@@ -68,7 +68,7 @@
 | S8 | 发布后验证 | 见 §5 | ✅ | 立即处置（见 §6）|
 
 > **本地只完成 S0–S3**（凭据 / 版本 / 前端产物）；**S4（全量回归）由推送后的 CI test job 执行**，**S5 起全部在 CI 内完成**（见 ACCEPTANCE-STANDARD：本机不得执行任何测试）。
-> 本地可用 `npm run build:launcher:all` 仅在 **CI 内**生效（有 `GITHUB_ACTIONS` 守卫，本地一律 exit 2）。
+> `build:launcher` / `build:launcher:all` 在 CI 外**一律被脚本自身拒绝**（exit 2），不依赖操作者自觉。
 
 ## 2. 平台矩阵（单一事实源）
 
@@ -126,21 +126,27 @@
 
 **受 `need_build` 影响的两处都在「发布/挂载」侧：`build` job 内的真发布步骤（`--publish-only`）与 `release` job（挂 Release 附件）**；构建本身不受它管（上表）。
 
-分支保护（服务器端放行条件）**设计为**：
+分支保护（服务器端放行条件）**已启用**（2026-09-21 经 `PUT /repos/lobbowen/{repo}/branches/{trunk}/protection` 写入并读回）：
 
-| 仓库 | branch | required checks |
+| 仓库 | branch | required checks（逐字语境，全部为 PR 事件必然出现的 job）|
 |---|---|---|
-| `lobbowen/dsh-supervisor-core` | `master` | `precheck`、`test`（strict + enforce_admins）|
-| `lobbowen/dsh-supervisor-launcher` | `main` | `version` + 4 条 `build (...)`（strict + enforce_admins）|
+| `lobbowen/dsh-supervisor-core` | `master` | `precheck`、`test` + 4 条 `build (...)` |
+| `lobbowen/dsh-supervisor-launcher` | `main` | `version` + 4 条 `build (...)`（矩阵参数内嵌在语境名里）|
 
-> **当前实测两仓均未设**（2026-09-20 REST `/branches/{master,main}/protection` 均返回
-> 404 `Branch not protected`）：迁到 `lobbowen` 后服务器端配置没有跟着搬过来，
-> 因此**目前没有任何放行条件**，PR 可绕过 CI 直接合入。上表是**待恢复的目标态**；
-> 恢复需仓库 admin 令牌，属用户决策，不是产线缺陷（内核侧记录见 AUDIT §K-1）。
+两仓其余字段一致：`strict=true`、`enforce_admins=true`、必须走 PR 且审批数 0、
+`required_conversation_resolution=true`、禁止 force push 与删除分支。
+内核侧精确值与判据见 `DEVELOPMENT-TRACK.md` §7。
 
-> required 只能设**每次都会跑**的 job。`build` 矩阵如今**每次 push / PR 都跑**（不再是条件 job），
-> 故它可作为 required；`release` job 只在 tag 上跑（且受 `need_build` 门控，见 §4 上文），
-> 把它设为 required 会让 PR **永久阻塞**。
+> **审批数设 0** 而非 ≥1：本产线的放行裁决者是 CI，单人仓里没有第二双眼睛，设 ≥1 会把
+> 「CI 绿后合入」变成推不动的死锁；它的实际作用是关掉**不经 PR 的直接推送**。
+> 迁仓后（2026-09-19 → 09-20 实测）两仓曾一度 `404 Branch not protected`，那段窗口的合并
+> 只有纪律约束 —— 服务端配置不随仓迁移，**换账号/迁仓后必须重新写入**。
+
+> required 只能设**每次 PR 事件必然出现**的 job。`build` 矩阵如今**每次 push / PR 都跑**（不再是条件 job），
+> 故它已设为 required；`release`（内核）与 `publish`（壳）只在 tag / 满足 `need_build` 时跑，在 PR 上
+> 是 `skipped`，把它们设为 required 会让 PR **永久阻塞**。
+> **改平台矩阵 = 改 required contexts**：矩阵 job 的显示名内嵌 `os/arch/bundles` 参数，
+> 增删平台后旧语境永不出现 → 所有 PR 卡死，故两者必须在同一次变更里同步。
 
 ## 5. 发布后验证（S8）
 
@@ -149,10 +155,14 @@
 | npm 四平台齐备 | `npm view @dsh-sup/dsh-core-<platform>@<ver> version` ×4 | 四者皆等于目标版本 |
 | dist-tag | `npm view @dsh-sup/dsh-core-linux-x64 dist-tags` | `beta` → 新版本 |
 | GitHub Release | `gh release view v<ver>` 或 API | 4 个附件 |
+| 供应链溯源 | `GET https://registry.npmjs.org/-/npm/v1/attestations/@dsh-sup/dsh-core-<platform>@<ver>` | 200 且含 `specs/publish` 证明 |
 | CI 结论 | tag run 全绿 | precheck + test + 四平台 build + release |
 | 凭据仍有效 | `bash release/scripts/cred.sh verify` | 全部 OK |
 
-> **执行位置**：前三行的 registry / Release 查询需要**能访问公网 registry 与 GitHub API 的环境**，
+> **溯源证明只能单独查**：包级 packument 与 `npm view` 的输出里**没有** `attestations` 字段
+> （2026-09-21 实测），必须走上表的「供应链溯源」行。
+
+> **执行位置**：前四行的 registry / Release / 溯源查询需要**能访问公网 registry 与 GitHub API 的环境**，
 > 且本机既无 `gh` 也无 `curl`（`npm` 走内网代理亦不可达，见 `archive/history/AUDIT-REPORT-2026-09-19.md` §G-6-5）。
 > 因此这套 S8 由**发布操作者所在环境**执行，或用 node `fetch` 查 API
 > （令牌经 `cred.sh path github-pat` 取路径后从文件读，不上 argv）；**不要**把「本机查不到」当成发布失败。
@@ -179,7 +189,12 @@
 3. 不得在非 22.04 基座构建 Linux 产物；
 4. 不得把令牌写入仓库目录 / remote URL / 实例子目录（见凭据标准）；
 5. 不得在未跑 S2–S6 的情况下执行 S7；
-6. 不得对**不可逆**操作（真发布 / force push / 覆盖凭据）省略「是否可逆 / 有无备份 / 失效方向」三问。
+6. 不得对**不可逆**操作（真发布 / force push / 覆盖凭据）省略「是否可逆 / 有无备份 / 失效方向」三问；
+7. 不得**保号** —— 为了绕开「npm 同版本不可重发」而沿用已发布的版本号原地覆盖，或改了产物内容却不提版本。
+   版本号一律相对 npm 上**已存在**的版本向前推（`bump.sh --core` 只升不降；`0.1.5-BETA.11` 已在 registry，
+   下一次就是 `0.1.5-BETA.12`）。为什么这条要写成红线：客户端判新**只看版本号**（`RELEASE-CHANNEL-CONTRACT.md` §3
+   的通道选版 + 本机 `installed vs latest` 比较），保号会让新代码在客户端看起来「已经装过」，
+   修复被静默吞掉；而 npm 端本来就拒绝覆盖（409），所以保号得不到任何好处，只会造成版本与代码不一致。
 
 ## 8. 规范自校验（防漂移）
 

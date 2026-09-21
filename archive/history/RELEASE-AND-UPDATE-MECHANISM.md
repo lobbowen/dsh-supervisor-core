@@ -16,8 +16,8 @@
 | D1 | 桌面形态 | **保留 Tauri 原生壳**（桌面级产品） |
 | D2 | 壳更新源 | **壳直连公网自更新**；内核**不做更新源**，只做安全网 |
 | D3 | 更新失败 | 显示选择页 **【重试】【继续】**（不静默放行，但【继续】始终可用） |
-| **D4** | **Linux 分发形态** | **废弃 AppImage，采用标准 Linux 包（deb，可选 rpm）** |
-| D5 | 通道 | npm CDN（unpkg 主 / jsdelivr 备） |
+| **D4** | **Linux 分发形态** | **废弃 AppImage，采用标准 Linux 包；且只 `deb` 一种形态**（支持面 = Ubuntu，见 §3.1） |
+| D5 | 通道 | 清单走 npm CDN（unpkg 主 / jsdelivr 备，两条对清单都成立）；**安装包**每平台只有清单里那一个 URL，拿不到时由壳按实测候选换源（unpkg → jsdelivr → GitHub Release 同名资产），见 `CROSS-PLATFORM-BUILD-AND-UPDATE.md` §十 V5 |
 | D6 | 内核更新机制 | **绝不被本方案破坏**（四条路径原样保留） |
 
 ### D4 的影响与契合度（重要）
@@ -32,7 +32,7 @@ dsh-supervisor: /usr/bin/dsh-supervisor-gui      # 当时生产就是 deb 安装
 > **该快照不可复现，也不作为现在的依据**：2026-09-20 在开发机复跑 `dpkg -S /usr/bin/dsh-supervisor-gui`
 > 返回「没有找到与 … 相匹配的路径」（本机未装任何 `dsh*` 包），且那个 `/usr/bin/dsh-supervisor-gui`
 > 路径属旧的单文件安装形态。D4 之所以仍然成立，靠的是**产线事实**：壳仓 CI 的 Linux 腿
-> 就打着 `deb,rpm` 包（见壳仓 `docs/RELEASE-STANDARD.md` 的矩阵），不需要任何本机取证。
+> 就打着 `deb` 包（见壳仓 `docs/RELEASE-STANDARD.md` 的矩阵），不需要任何本机取证。
 
 且这**同时带来两个净收益**（下表数字是**立规当时的估算**，不是当前测量；量级结论成立，绝对值请以 CI 产物实测为准）：
 
@@ -105,12 +105,14 @@ dsh-supervisor: /usr/bin/dsh-supervisor-gui      # 当时生产就是 deb 安装
 
 | 平台 | 产物 | 体积 | 更新产物 | 安装位置 | 提权 |
 |---|---|---|---|---|---|
-| Linux | `.deb`（**主**） | 3.8MB | `.deb` + `.sig` | `/usr/bin` | 更新需 pkexec |
-| Linux（可选） | `.rpm` | ~4MB | `.rpm` + `.sig` | `/usr/bin` | 更新需 pkexec |
+| Linux | `.deb`（**唯一形态**） | 3.8MB | `.deb` + `.sig` | `/usr/bin` | 更新需 pkexec |
 | macOS | `.app`（由 `.dmg` 装载） | 3.1MB | `.app.tar.gz` + `.sig` | `~/Applications` | 否 |
 | Windows | `.msi` / NSIS `-setup.exe` | 3.7MB | `-setup.exe` + `.sig` | `%LOCALAPPDATA%`（per-user） | 否 |
 
-> **不再构建 AppImage**（D4）。壳仓 `tauri.conf.json` 的 `bundle.targets` 由 `["deb","appimage","dmg","msi"]` 改为 `["deb","rpm","dmg","msi"]`。
+> **不再构建 AppImage**（D4）。壳仓 `tauri.conf.json` 的 `bundle.targets` 由 `["deb","appimage","dmg","msi"]` 改为 `["deb","dmg","nsis","msi"]`。
+> 中间那步「再加上 rpm」**已经收回**：Linux 支持面 = **Ubuntu + `deb` 一种形态**，rpm 不产、不测、不承诺
+> （更新清单每平台只有一个槽位，多产一种形态就等于让装那种形态的客户端在自动更新时拿到别的包）。
+> 要扩发行版得先改清单结构，见 `CROSS-PLATFORM-BUILD-AND-UPDATE.md` §十 N2b。
 
 ### 3.2 发布流程（从 commit 到用户可更新）
 
@@ -170,7 +172,7 @@ dsh-supervisor: /usr/bin/dsh-supervisor-gui      # 当时生产就是 deb 安装
 
 | 平台 | 更新方式 | 提权 | 失败表现 |
 |---|---|---|---|
-| **Linux（deb/rpm）** | 应用内：Tauri → `pkexec dpkg -i` / `rpm -U` | 一次密码 | 选择页【重试】【继续】 |
+| **Linux（只 `deb`）** | 应用内：Tauri → `pkexec dpkg -i` | 一次密码 | 选择页【重试】【继续】 |
 | **macOS** | 应用内：Tauri → 替换 `~/Applications/xxx.app` | 否 | 选择页 |
 | **Windows** | 应用内：Tauri → NSIS `passive` 静默 | 否 | 选择页 |
 
@@ -277,7 +279,7 @@ dsh-supervisor: /usr/bin/dsh-supervisor-gui      # 当时生产就是 deb 安装
 | 壳版本 | 壳仓**三处互锁**：`Cargo.toml` = `tauri.conf.json` = `Cargo.lock`（`scripts/verify-shell-versions.js`，壳仓自持）|
 | 两者关系 | **独立版本线**；通过元数据声明兼容区间协商（`kernelMin` / `shellMin`） |
 | 不兼容时 | **唯一允许动作：先升级壳**（禁止降级内核） |
-| npm dist-tag | `-BETA.*`→`beta`；`-RC.*`→`latest`（rc 为发布后补打的附加别名）；无后缀→`latest`；`rollback`/`canary` 人工运维（见 `RELEASE-CHANNEL-CONTRACT.md` §4）|
+| npm dist-tag | 档位别名：`-BETA.*`→`beta`；`-RC.*`/无后缀→`latest`（rc 为发布后补打的附加别名）。**通道标签 `latest` 由发布脚本在每次发布后（含 BETA）只升不降地回补对齐**，故客户端默认通道始终跟随我们最后一次发布；`rollback`/`canary` 人工运维（见 `RELEASE-CHANNEL-CONTRACT.md` §2/§4）|
 
 ---
 
@@ -285,9 +287,9 @@ dsh-supervisor: /usr/bin/dsh-supervisor-gui      # 当时生产就是 deb 安装
 
 | # | 风险 | 缓解 |
 |---|---|---|
-| K1 | minisign 私钥丢失 → 已发布用户**永久**无法更新 | 异地多份 + 双人托管 + **首次发布前演练恢复** |
+| K1 | minisign 私钥丢失 → 已发布用户**永久**无法更新 | 表上原写的「异地多份 + 双人托管 + 首次发布前演练恢复」**一项都没落地**；用户 2026-09-11 定案为**只做本机备份**（壳仓 `docs/UPDATER-SIGNING-KEY.md` §四）。该风险已真实发生过一次：旧钥四处不可得 → 换钥、`≤1.1.11` 存量客户端强制手动重装 |
 | K11 | Tauri 原地安装不保留旧版本 | **更新前强制备份** + 内核缓存 |
-| K13 | npm CDN（unpkg/jsdelivr）为第三方 | 多 CDN 回退 + **内核本地缓存**兜底 + 失败进选择页 |
+| K13 | npm CDN（unpkg/jsdelivr）为第三方 | 原写的「多 CDN 回退 + 内核本地缓存兜底」**都不成立**：jsdelivr 按扩展名屏蔽 `.exe`，且 `endpoints` 的回退只覆盖取清单那一次请求 —— 安装包在插件里不会换源；内核本地缓存从未实现。现在真实在跑的是两件事：**壳按实测候选源换源取安装包**（含 GitHub Release 同名资产，验签仍在插件内按字节做，见 `CROSS-PLATFORM-BUILD-AND-UPDATE.md` §十 V5）与「失败进选择页」让用户重试。风险性质不变（第三方 CDN 仍是主力源），不再有「已经 mitigated」的假象 |
 | K14 | deb 自更新需 pkexec，用户可拒绝 | 视为正常失败路径 → 选择页【重试】【继续】 |
 | K15 | deb 新版本新增依赖 → `dpkg -i` 报未满足 | 归入失败路径并**如实显示原因**；文档说明可用 `apt install ./x.deb` 手动补依赖 |
 | K16 | 壳仓 CI 推 main 即四平台完整构建（耗时；2026-09-13 按明确要求改为 push main 也跑完整矩阵）| 公开仓 Actions 免额度；**发布**仍仅 tag 触发（`publish` job）|
@@ -298,9 +300,9 @@ dsh-supervisor: /usr/bin/dsh-supervisor-gui      # 当时生产就是 deb 安装
 
 | # | 事项 | 说明 |
 |---|---|---|
-| V1 | Tauri 是否为 **deb/rpm** 自动生成 `.sig` | 官方文档的 v2 产物列表只列 AppImage/macOS/Windows。**若未生成 → 我们自己用 `tauri signer sign` 签**（清单的 signature 只要求能被 pubkey 验过，与来源无关）。需 Rust 环境验证 |
+| V1 | Tauri 是否为 **deb** 自动生成 `.sig` | **已确证**：线上清单 `@dsh-sup/shell-release@1.2.0` 的 `linux-x86_64` 条目 URL 与其签名的 trusted comment 都是 `dsh-supervisor_1.2.0_amd64.deb`（详 `CROSS-PLATFORM-BUILD-AND-UPDATE.md` §十 V1）。rpm 已从支持面收回，无需再问 |
 | V2 | deb 自更新在缺依赖时的真实行为 | 需真机验证 `dpkg -i` 的报错形态，以定错误文案 |
-| **N2** | **Linux 是否加 rpm**（除 deb 外） | 建议：**先只发 deb**（覆盖主流），rpm 视用户需求再加——减少 CI 与测试面 |
+| ~~N2~~ | ~~Linux 是否加 rpm~~ | **定案：不加**。Linux 支持面 = Ubuntu + `deb` 一种形态（§3.1）；此前矩阵产 `deb,rpm` 时 rpm 也没有清单槽位，属旁路产物而非可选形态 |
 | **N4** | 是否发布 **apt/yum 仓库**（VS Code 模式） | 可选增强：系统包管理器自动更新 + 依赖解析。代价：需仓库托管 + GPG 密钥管理 |
 
 ---

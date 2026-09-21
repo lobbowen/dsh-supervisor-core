@@ -208,13 +208,14 @@ router/
   `supports(cap)` 守卫；能力面契约在能力方声明，基座（`providers/base.js`）不携带池契约的抛错占位
   （占位会诱导调用方退回 typeof 猜测，且其 this 跨文件反向边正是 DG-4 豁免的来源）。
 
-**关键缺陷（设计中发现，须修）**：
-1. **写权闸三处各查一半**：`index.js:144`（服务级）+ `store.js:43`（文件级）串起来，
-   但 `forward-core.js:508` **只查服务级** → PG-7 反复复发的根因。**收敛为 store 内唯一闸**。
-2. **用量文件读写散在 `forward-core.js:503-539`**，`.tmp` 命名与 `store.js:47` 不一致 → 收敛进 store。
-3. **流式成功路径不补做延后重启**（真缺陷）：`writeThrough` 的 `decInflight`（`:331-337`）只做
-   `_retryPendingStop`，不做 `flushRestartPending`；而 `_endInflight`（`:411-427`）两者都做。
-   → 统一为单一 `end()` + 显式 effect。**此步是行为变更，必须独立提交 + 专项回归**。
+**关键缺陷（设计中发现）—— 三条均已落地**（下面写的是当前实现锚点，不是待办；原始行号属改造前快照）：
+1. **写权闸曾三处各查一半** → 现为 `src/domains/router/store.js` 的**唯一闸** `canPersist()`
+   （服务级写开关 `setPersistEnabled` 并文件级健康 `loadedOk`，定义在该文件 51-52 行）；
+   调用方不再各自判断。
+2. **用量文件读写曾散在 forward 主路径**、`.tmp` 命名与 store 不一致 → 现收敛进同一 store。
+3. **流式成功路径曾不补做延后重启** → 现为单一 in-flight 结算并产出显式 effect：
+   `src/domains/router/model/inflight.js` 发 `{kind:'flushRestartPending'}`，
+   `src/domains/router/handlers/forward.js` 统一派发（`retryPendingStop` 与 `flushRestartPending` 同路）。
 
 ### §5.2 relay（5 文件 → 12 文件）
 

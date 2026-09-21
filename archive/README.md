@@ -9,10 +9,10 @@
 
 ## 目录
 - `design-notes/`（138 份）：逐域设计、迁移作业单与登记表、审计报告、FIX 工作笔记。
-- `history/`（7 份）：审计报告、事故复盘、终验收报告、执行契约、发布/更新机制论证。
+- `history/`（7 份）：审计报告、事故复盘、结构复算报告（非放行依据）、执行契约、发布/更新机制论证。
 
 ## history/
-- `ARCHITECTURE-ACCEPTANCE.md` — 终验收报告（三轮架构归一化）
+- `ARCHITECTURE-ACCEPTANCE.md` — 结构复算报告（三轮架构归一化的只读复算记录，非放行依据）
 - `EXECUTION-CONTRACT.md` — 域结构改造执行契约（接口冻结书）
 - `AUDIT-REPORT-2026-09-19.md` — 全仓静态代码审计
 - `AUDIT-REPORT-2026-09-20.md` — 注释与门禁专项审计

@@ -24,9 +24,9 @@
 | | 内核仓 `dsh-supervisor-core` | 壳仓 `dsh-supervisor-launcher` |
 |---|---|---|
 | 职责 | 产品逻辑 + 守护：API/路由/relay/实例/插件/端口/更新编排 | **仅**桌面体验：引导页、托盘、安装程序、原生能力（systemd/launchctl/schtasks） |
-| 技术栈 | JS（CommonJS），运行时依赖 **0**、原生扩展 **0** | Rust（Tauri 2）+ TS/React 前端 |
-| 产物 | npm 平台子包 `@dsh-sup/dsh-core-{linux-x64,darwin-arm64,darwin-x64,win-x64}` | 安装程序 `deb/rpm`、`dmg/app`、`msi/nsis` + 壳 npm 包 `@dsh-sup/shell-*` |
-| 分发通道 | **npm registry** | **GitHub Release**（安装包）+ npm（自更新产物） |
+| 技术栈 | JS（CommonJS），运行时依赖 **0**、原生扩展 **0** | Rust（Tauri 2）+ 纯 HTML/CSS/JS 引导页（无构建步骤）|
+| 产物 | npm 平台子包 `@dsh-sup/dsh-core-{linux-x64,darwin-arm64,darwin-x64,win-x64}` | 安装程序 `deb`（Linux 支持面 = Ubuntu 一种形态）、`dmg/app`、`msi/nsis` + 壳 npm 包 `@dsh-sup/shell-*` |
+| 分发通道 | **npm registry** | **npm + CDN**（自更新的清单与产物）+ **GitHub Release**（手动下载点，同时是自动更新取安装包的回退源） |
 | 节奏 | **高频**（小步快跑，可单独 hotfix） | **低频**（安装程序，用户不常更新） |
 | 构建负担 | 轻（纯 JS，一次构建派生四平台） | 重（Rust 编译 + 各平台系统库） |
 | 门禁侧重 | 行为/契约/跨进程 | 平台分支编译 + 引导流程 + 签名/清单 |
@@ -214,7 +214,7 @@ release/
 │       （凭据 runbook 见根目录 CREDENTIALS-STANDARD.md；桌面壳的签名密钥手册与 GUI 验收清单
 │        属壳仓资产，见壳仓 docs/UPDATER-SIGNING-KEY.md、docs/DESKTOP-ACCEPTANCE.md）
 └── scripts/                   ← 发布自动化脚本（唯一可执行集）
-    ├── bump.sh                ← 版本提升（**--core 内核单源**；壳版本提升见壳仓 scripts/bump-shell.sh）
+    ├── bump.sh                ← 版本提升（**--core 内核单源 package.json + lock 两处 version 同步**；壳版本提升见壳仓 scripts/bump-shell.sh）
     ├── build-ui.sh            ← 前端统一构建（ui/ → ui-react/ 镜像；npm test 与 launcher 携带依赖）
     ├── build-launcher.sh      ← 内核统一发布物（esbuild bundle core.cjs + node 启动脚本 + ui-react）
     │                             `--all-platforms` 仅 CI 内放行（本地 exit 2）
@@ -272,7 +272,7 @@ release/
 
 - **内核**：唯一事实源 = 根 `package.json`（`bump.sh --core`；tag `v<内核>` 触发 build.yml）。语义化版本 + 两档预览后缀：`-BETA.n` / `-RC.n` / 无后缀=正式。
 - **壳**：独立于内核。版本在壳仓**三处互锁**（`src-tauri/Cargo.toml` / `tauri.conf.json` / `Cargo.lock`），由壳仓 `scripts/verify-shell-versions.js` 校验、`scripts/bump-shell.sh` 提升。
-- npm dist-tag（2026-09-16 发布通道契约，`RELEASE-CHANNEL-CONTRACT.md` §4）：`-BETA.n` → `beta`；`-RC.n` → `latest`（正式版占 latest），rc 别名在 publish 之后经 `npm dist-tag add ... rc` 补打；无后缀 → `latest`（publish-core.sh 自动判定）。`rollback` / `canary` 不由脚本设置（人工运维）。
+- npm dist-tag（发布通道契约 `RELEASE-CHANNEL-CONTRACT.md` §2/§4）：档位决定**别名**标签 —— `-BETA.n` → `beta`；`-RC.n` / 无后缀 → `latest` + 发布后补打 `rc` 别名。**`latest` 与档位无关**：两档发布后都由 `publish-core.sh::reconcile_latest_tag` 按 semver 只升不降地对齐到本次版本（含 BETA 线），回补失败即发布失败。`rollback` / `canary` 不由脚本设置（人工运维）。
 
 ## 端到端发布 SOP
 
@@ -326,7 +326,7 @@ node scripts/verify-shell-versions.js     # 自洽校验
 git add -A && git commit && git tag v<ver> && git push origin main && git push origin v<ver>
 ```
 
-→ tag 触发壳仓 `.github/workflows/build.yml`：四平台 Tauri bundle（deb/rpm/.dmg/.app/.msi/nsis）
+→ tag 触发壳仓 `.github/workflows/build.yml`：四平台 Tauri bundle（deb / .dmg / .app / .msi / nsis）
 + npm 壳包（`@dsh-sup/shell-*`）+ `shell-manifest.json`。
 壳仓已**自持**打包工具（`shell-release/`）、CI（`.github/workflows/build.yml`）、
 文档（`docs/`）与版本脚本（`scripts/`），不依赖内核仓。

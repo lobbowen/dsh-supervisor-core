@@ -3,18 +3,16 @@
 // app/main/process.js —— 主进程生命周期（spawn/接管/重启/停止）。
 // 导出形态 { methods }；装配：app/assembly/facets.js 装到 host 实例；方法内部以 this 协作。
 //
-// 阶段六 B-2 原地去 this：实现体不再经 this 的隐式方法调用取事实，改经按 host 缓存的**惰性 deps**。
-// 方法名/{ methods }/逐字体保留，装配路径不变，AT 棘轮计数归零。
-//  applyMainPort(this, ...) 仍显式传**宿主**（this）：该函数签名要求真实 host，不能传 deps 对象。
+// 实现体经按 host 缓存的惰性 deps（depsOf）取事实，不走 this 的隐式方法调用；方法名与 { methods }
+//  外壳保持不变（装配路径不变）。applyMainPort(this, ...) 仍显式传**宿主**：签名要求真实 host。
 const spawnOS = require('../../platform/os/spawn');
 const pidlook = require('../../platform/os/pidlookup');
 const { LineBuffer } = require('../../platform/service/log/log');
 const native = require('../../app/native/command');
-// 端口运行时再推导已拆到 main/port-rederive.js（独立切面）。
 const { findManagedDshPort, applyMainPort } = require('./port-rederive');
 
 const DEPS = new WeakMap();
-// 字段 helper 名（去 host 上的 _m 前缀）：经 host 上的既有安装转发（等价于原经 this 的调用）。
+// 字段 helper 名：host 上的 _m<Name> 方法，经 deps 转发为 m<Name>。
 const HELPERS = ['MissingNotified', 'SetMissingNotified', 'SetSpawnBlockedUntil', 'SetFailStreak', 'SetChild',
   'Child', 'SetAdopted', 'SetAdoptPid', 'AdoptPid', 'SetObservedOnly', 'SetStartDeadline', 'SetBackoffLevel',
   'SetBackoffUntil', 'SetCrashWindowStart', 'SetCrashWindowRestarts', 'SetLastFailure', 'SetLastRestartAt',
@@ -29,7 +27,6 @@ function depsOf(host) {
       tokenService: () => host.tokenService, dshWriter: () => host.dshWriter,
       pluginManager: () => host.pluginManager, stopping: () => host._stopping,
       writeCrashHalted: (v) => { host._crashHalted = v; },
-      // 兄弟方法经 host 上的既有安装转发（等价于原经 this 的调用）。
       spawnCommand: () => host.spawnCommand(),
       beginRestart: (reason, opts) => host._beginRestart(reason, opts),
       // 取得所有权的两条路线（spawn / adopt）都要落归属凭据（实现在 main/signals.js）。
@@ -88,15 +85,14 @@ module.exports = {
     d.mSetAdoptPid(null);
     d.state().setPhase('STARTING');
     d.mSetStartDeadline(Date.now() + d.config().startTimeoutMs);
-    // DSH 输出落盘专用日志（行缓冲还原完整行），同时镜像 stderr 供 journald 收敛
-    // 先捕获令牌（原文），落盘前对启动 URL 的 ?token= 段脱敏——dsh.log/journald 不复留会话令牌明文
+    // DSH 输出落盘专用日志（行缓冲还原完整行），同时镜像到 stderr 供 journald 收敛。
+    // 令牌原文先喂 tokenService；落盘/镜像前对启动 URL 的 ?token= 段脱敏，两处都不留会话令牌明文。
     const sanitizeToken = (l) => String(l).replace(/([?&]token=)[A-Za-z0-9_-]+/g, '$1***');
     const outBuf = new LineBuffer((line) => {
       d.tokenService().feedLine('main', line); // 唯一令牌节点：stdout 源逐行推送（最新行优先）
 
       const clean = sanitizeToken(line);
       d.dshWriter().write(clean);
-      // 实时镜像同样走脱敏后的完整行，dsh-supervisor 单元 journald 不再残留 token 明文。
       process.stdout.write('[dsh] ' + clean + '\n');
     });
     const errBuf = new LineBuffer((line) => {
@@ -136,12 +132,12 @@ module.exports = {
       if (d.state().desired() !== 'running') return;
       if (d.state().phase() === 'RUNNING' || d.state().phase() === 'STARTING') {
         const why = code !== null ? String(code) : 'sig' + signal;
-        // 守护语义（与 RUNNING 收敛分支同 gate）：RUNNING 崩溃看守护开关——
-        // guardian=false 不自动拉起（转 STOPPED 等用户手动）；STARTING(用户启动流程)保留重试。
+        // 守护语义：RUNNING 崩溃看守护开关——guardian=false 不自动拉起（转 STOPPED 等用户手动），
+        // STARTING（用户启动流程）保留重试。
         if (d.state().phase() === 'STARTING' || d.state().guardian()) {
           d.beginRestart('exit:' + why, { countCrash: true });
         } else {
-          d.writeCrashHalted(true); // 未守护崩溃：停靠等待显式启动（阶段 2 意图单源）
+          d.writeCrashHalted(true); // 未守护崩溃：停靠等待显式启动
           d.events().append('guardian_off_exit', { reason: 'child_exit:' + why + ' 未守护，保持停止' });
           d.state().setPhase('STOPPED');
         }
@@ -275,16 +271,15 @@ module.exports = {
     d.logger().info('stop: ' + reason);
     const child = d.mChild();
     const adoptedPid = d.mAdoptPid();
-    // 相位裁定（D12）：即便 kill 未能确认成功，仍置 STOPPED —— controller 的
-    //   portUp -> adoptObserved 语义依赖 STOPPED；失败经 stop_failed 事件如实上报，
-    //   而不是把相位停在一个既非运行也非停止的中间态。
+    // 相位裁定：即便 kill 未能确认成功仍置 STOPPED —— controller 的 portUp -> adoptObserved
+    //   语义依赖 STOPPED；失败经 stop_failed 事件如实上报，而不是把相位停在中间态。
     d.state().setPhase('STOPPED');
     d.mSetChild(null);
     d.mSetAdopted(false);
     d.mSetAdoptPid(null);
     d.mSetFailStreak(0);
-    // kill 派遣可能同步抛错（平台 signalProcess/killTree 实现抛）：原实现会让异常逃出
-    //   本方法、跳过 state.write()，且没有任何失败事件 —— 停止半执行而静默（D12）。
+    // kill 派遣可能同步抛错（平台 signalProcess/killTree 实现抛）：不兜住则异常逃出本方法、
+    //   跳过 state.write() 且无失败事件 —— 停止半执行而静默。
     try {
       if (child && child.exitCode === null) d.main().killSequence(child);
       else if (adoptedPid) d.main().killAdopted(adoptedPid);

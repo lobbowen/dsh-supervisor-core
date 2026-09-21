@@ -147,9 +147,9 @@ DSH lifecycle guard core — Node launcher 形态（esbuild bundle + node 启动
 本包仅面向 $OS_TAG-$ARCH （npm os/cpu 平台过滤）。
 
 \`\`\`bash
-# 正式版（latest 跟随 RC）
+# 当前通道版本（latest = 我们发布的最新版，档位可能是 RC 也可能是 BETA）
 npm i -g $PKG_NAME
-# 测试版（BETA）
+# 显式按档位安装（beta=最新测试版 / rc=最新正式版别名）
 npm i -g $PKG_NAME@beta
 # 显式指定版本（**仅排障/人工分发**；日常升级不要绕过标签）
 npm i -g $PKG_NAME@<version>
@@ -159,8 +159,10 @@ dsh-supervisor self-check   # guardVersion / node / platform 三段自检
 
 > 本包由桌面壳（Dsh Supervisor GUI）与内核自身按**发布通道契约**自动安装与升级：
 > 选版一律走 \`rollback → canary → dist-tags.latest → versions 最高兜底 → 明确失败\`
-> （**latest 优先**，绝不「取 registry 全量最高」——那会绕过通道控制；我们的包在兜底步
+> （**latest 优先**，绝不「取 registry 全量最高」——那会绕过通道控制；latest 缺失时的兜底步
 > 还排除 \`-BETA.\` 测试版）。选定版本后按 \`$PKG_NAME@<version>\` 显式安装。
+> latest 由发布脚本每次发布后核验并回补（只升不降），因此**它才是自动升级的目标通道**；
+> 要退出升级请走人工分发（显式版本），不要靠陈旧 latest —— 那会让安全修复不可达。
 > 算法单源见内核仓 RELEASE-CHANNEL-CONTRACT.md §3 + \`pickReleaseVersion\`。
 > 手工安装仅供排障。
 EOF
@@ -171,11 +173,18 @@ ls -lh "$STAGE/bin/" | tail -1
 cd "$STAGE"
 # dist-tag 规范——产品只有两档：BETA（测试版）/ RC（正式版）。
 #
-#   -BETA.n  -> tag beta              测试版：用户须显式 @beta 才装到
-#   -RC.n    -> tag latest（主）+ rc  正式版：latest 必须跟随；rc 作为附加标签在发布后补
+#   -BETA.n  -> 发布挂 tag beta，发布后回补 latest（见 reconcile_latest_tag）
+#   -RC.n    -> 发布挂 tag latest（主）+ 补打 rc 别名
 #
 #    npm publish **只接受一个 --tag**（默认 latest）——多标签必须发布后用
-#     `npm dist-tag add` 补（见本脚本末尾的 RC 附加标签步骤）。
+#     `npm dist-tag add` 补（见本脚本末尾的 RC 附加标签与 latest 回补步骤）。
+#
+#    为什么 BETA 也要回补 latest：`--tag beta` 只决定「这次发布挂哪个标签」，于是
+#    latest 永久停在切档前的那个版本，而客户端选版链（契约 RELEASE-CHANNEL-CONTRACT.md
+#    第 3 节）第 3 步只读 latest、第 4 步兜底又**刻意排除** -BETA. 形态。两条合起来的
+#    后果不是「测试版不外泄」，而是**最新一批版本对全体自动升级的机器永久不可达**
+#    （实证：registry 上 latest=0.1.5-BETA.7、beta=0.1.5-BETA.11）。当前产品形态下
+#    BETA 线就是出货线，「我们发布什么，latest 就该是什么」只能由脚本在发布后核验补齐。
 #
 #    以下两个 tag **刻意不由本脚本设置**（它们是人工运维操作，见契约）：
 #     - rollback —— 紧急回退开关，全量最高优先级；仅回退时人工
@@ -183,14 +192,15 @@ cd "$STAGE"
 #                   发布脚本若自动写它，等于把「发布」和「回退」两种意图混在一起。
 #     - canary   —— 灰度通道，仅灰度名单内机器可见；由灰度发布时人工设置（脚本无从得知名单）。
 #
-#  正的背景（公开发行审计发现）：
-#   原策略把 RC 只标 rc、**从不更新 latest**，于是 latest 永久停留在历史 SEA 形态
+#  历史背景（公开发行审计发现）：
+#   更早的策略把 RC 只标 rc、**从不更新 latest**，于是 latest 永久停留在历史 SEA 形态
 #   （实证：四平台 latest 分别停在 0.1.1/0.1.2/0.1.2/0.1.2，且描述仍是已废弃的 SEA）
 #   ——「我们发布什么，latest 就该是什么」被打破，且四平台版本不一致。
-#   现按产品模型修正：RC 即正式版 —— 发布时占 latest（主标签），并补打 rc 别名。
+#   那次修正把 latest 的更新条件绑在了「发布的是 RC」上，等于把同一个坑换了一种形态
+#   留在 BETA 线上；现在的口径是**发布档位决定别名标签，latest 只由「是否更新」决定**。
 DIST_TAG=""
 case "$VER" in
-  *-BETA.*) DIST_TAG="--tag beta" ;;
+  *-BETA.*) DIST_TAG="--tag beta" ;;   # latest 由发布后的回补步骤对齐，不在此处
   *-RC.*)   DIST_TAG="--tag latest" ;;   # 正式版占 latest（rc 标签发布后补）
 esac
 # 发布到官方 npm registry（发布必须官方源；本机默认 npmmirror 只读消费不适配发布认证）
@@ -216,22 +226,47 @@ else
   fi
   echo "== 认证：无（dry-run 不校验认证；真发布需先配置） =="
 fi
+
+# ---- 通道回补：latest 必须跟随本次发布（仅当本次版本更高）----
+# 为什么单独一步而不是靠 publish 的 --tag：--tag 只决定「这次发布挂哪个别名」，
+# BETA 档挂 beta，latest 于是停在切档前的旧版；客户端只信 latest，结果新版本对外不可达。
+# 只升不降：把 latest 往回拉属「紧急回退」语义，是人工运维，脚本绝不自动做。
+# 比较用内核自己的 semverCompare 单源（src/shared/version.js），不在此手写第二套版本比较。
+# 失败必须非零退出：「包发出去了但通道没对齐」正是本步骤要消灭的状态（契约 RC-5）。
+reconcile_latest_tag() {
+  local cur promote out
+  cur="$(npm view "$PKG_NAME" dist-tags.latest --json --registry="$REGISTRY" 2>/dev/null \
+        | node -e 'let b="";process.stdin.on("data",d=>b+=d);process.stdin.on("end",()=>{let v="";try{v=JSON.parse(b)}catch(e){}process.stdout.write(typeof v==="string"?v:"")})' || true)"
+  cur="${cur//$'\r'/}"
+  promote="$(CUR_LATEST="$cur" PUBLISH_VER="$VER" DSH_VERSION_LIB="$ROOT/src/shared/version.js" node -e 'const e=process.env;const {semverCompare}=require(e.DSH_VERSION_LIB);process.stdout.write(!e.CUR_LATEST||semverCompare(e.PUBLISH_VER,e.CUR_LATEST)>0?"yes":"no");')"
+  if [ "$promote" != "yes" ]; then
+    echo "== 通道核对：latest=${cur} 已不低于本次 ${VER}，不动 =="
+    return 0
+  fi
+  echo "== 通道回补：$PKG_NAME 的 latest（当前=${cur:-无}）-> $VER =="
+  if ! out="$(npm dist-tag add "$PKG_NAME@$VER" latest --registry="$REGISTRY" 2>&1)"; then
+    echo "❌ latest 回补失败：$PKG_NAME@$VER"
+    printf '%s\n' "$out"
+    exit 1
+  fi
+  printf '%s\n' "$out" | tail -1
+}
+
 if [ "$PUBLISH" = 1 ]; then
   # -- 幂等发布--
   # 为什么需要：npm **不允许覆盖同版本**，而发布流水线可能「部分平台成功、部分失败」
   # （实测 v0.1.3-BETA.1：linux-x64 已发，mac/win 因 CI 失败未发）。此时重跑，
   # 已成功的平台会 403 报错，而 npm 又没有「只补发缺失平台」的入口 ——
   # 结果就是重跑永远无法自愈。故：同版本已存在 -> 视为成功（幂等），并做内容一致性核对。
-  #  必须 `|| true`：版本不存在时 `npm view` 返回非零，而本脚本是 `set -euo pipefail`，
-  #   管道失败会让**赋值语句本身**失败并中止脚本 —— 即「首次发布必然失败」。
-  #   （实测：v0.1.3-BETA.2 发布时脚本在认证后静默终止，正是此处。）
   # B24：幂等判定不得「只看体积、不一致只警告」。改为：
-  #   1) 存在性：远端 JSON 非空（npm view 对不存在版本返回非零 + 空输出）；
+  #   1) 存在性：npm view **退出码为 0** —— `--json` 对不存在的版本也往 stdout 打一个 E404 错误对象，
+  #      以「输出非空」判存在会把首次发布当成已发布；非 0 一律走发布分支，网络/权限失败由 npm publish
+  #      自身非零退出，不在这里换成「视为成功」；
   #   2) 体积：与远端 dist.unpackedSize 同口径的本地 dry-run unpackedSize；
   #   3) 内容：本地真 pack 的 tarball sha1 对远端 dist.shasum（同体积异内容是真实碰撞面）。
   #   任一要素缺失或不一致 -> 拒绝幂等跳过、非零退出（「核对不了」不得换「视为成功」的假安心）。
-  REMOTE_SPEC="$(npm view "$PKG_NAME@$VER" --json --registry="$REGISTRY" 2>/dev/null | tr -d '\r' || true)"
-  if printf '%s' "$REMOTE_SPEC" | grep -q .; then
+  REMOTE_SPEC=''
+  if REMOTE_SPEC="$(npm view "$PKG_NAME@$VER" --json --registry="$REGISTRY" 2>/dev/null | tr -d '\r')"; then
     LOCAL_SIZE="$(npm pack --dry-run --json --registry="$REGISTRY" 2>/dev/null | node -e 'let b="";process.stdin.on("data",d=>b+=d);process.stdin.on("end",()=>{try{const j=JSON.parse(b);console.log((j[0]&&j[0].unpackedSize)||"")}catch(e){console.log("")}})' || true)"
     LOCAL_TGZ="$(npm pack --json --registry="$REGISTRY" 2>/dev/null | node -e 'let b="";process.stdin.on("data",d=>b+=d);process.stdin.on("end",()=>{try{const j=JSON.parse(b);process.stdout.write((Array.isArray(j)?j[0]:j).filename||"")}catch(e){}})' || true)"
     LOCAL_SHA1=''
@@ -248,6 +283,9 @@ if [ "$PUBLISH" = 1 ]; then
     fi
     rm -f "$LOCAL_TGZ" 2>/dev/null || true
     echo "   ✅ 体积与 sha1 双项一致，内容可信 → 跳过发布（幂等：视为成功）"
+    # 幂等跳过时**同样**要核对通道：部分平台失败的重跑里，已发布的平台可能正是
+    # 唯一没把 latest 对齐过的那次（publish 的 --tag 只在首次发布生效，重跑不再写标签）。
+    reconcile_latest_tag
     exit 0
   fi
   echo "== 发布 $PKG_NAME@$VER ${DIST_TAG:-（tag=latest）} → $REGISTRY =="
@@ -259,14 +297,17 @@ if [ "$PUBLISH" = 1 ]; then
   if [ "${DSH_NPM_PROVENANCE:-1}" != '0' ]; then PUB_PROV='--provenance'; fi
   npm publish --access public --registry="$REGISTRY" $DIST_TAG $PUB_PROV
   # RC（正式版）的**附加** rc 标签：npm publish 只接受一个 --tag，故发布后补打。
-  #   语义：latest=正式版（用户不写标签装到它）；rc=同一版本的显式别名，便于按通道安装/回滚。
+  #   语义：latest=当前通道版本（用户不写标签装到它）；rc/beta=同一版本的显式别名，
+  #   便于按档位安装/回滚。别名之后统一回补 latest —— 两档走同一条通道对齐路径。
   case "$VER" in
     *-RC.*)
       echo "== 补打 rc 标签：$PKG_NAME@$VER =="
       npm dist-tag add "$PKG_NAME@$VER" rc --registry="$REGISTRY" 2>&1 | tail -1
       ;;
   esac
+  reconcile_latest_tag
 else
   echo "== npm publish --dry-run（确认无误后加 --publish 真发）${DIST_TAG:+ → 将打 tag=${DIST_TAG#--tag }} → $REGISTRY =="
+  echo "   真发布后另有一步通道回补：本次版本高于 latest 时把 latest 指到 $VER"
   npm publish --dry-run --registry="$REGISTRY" $DIST_TAG
 fi
