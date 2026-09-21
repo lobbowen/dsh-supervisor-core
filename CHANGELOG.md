@@ -6,6 +6,13 @@
 
 ## [未发布]
 
+- 发布通道根因修复：**`latest` 不再只由「发布的是 RC」驱动**（`RELEASE-CHANNEL-CONTRACT.md` §2/RC-6、
+  `release/scripts/publish-core.sh::reconcile_latest_tag`、门禁 `test/release-channel-gate-test.js` RC-G4-i..o）。
+  旧口径下 BETA 档 `npm publish --tag beta` 之后再没人写 `latest`，而客户端选版链第 3 步只读 `latest`、
+  第 4 步兜底又排除 `-BETA.` —— 两条相加的后果是「切档之后的全部版本对自动升级的机器不可达」
+  （registry 实况：`latest=0.1.5-BETA.7 / beta=0.1.5-BETA.11`，即 BETA.8..11 那批安全修复没人拉得到）。
+  现两档发布后都按 `semverCompare` **只升不降**地回补 `latest`，幂等跳过分支同样执行（部分平台重跑是最常见的
+  漏补场景），回补失败判为发布失败。四平台 `latest` 已按新口径人工对齐到 `0.1.5-BETA.11`。
 - Linux 支持面与壳更新通道的实测口径（与壳仓同批）：**Linux 只认 Ubuntu + `.deb` 一种形态** ——
   矩阵此前 `deb,rpm` 一起产，而更新清单每平台只有一个槽位（放 deb），等于产出一个更新通道覆盖不到的形态；
   现从产线源头停掉，`CROSS-PLATFORM-BUILD-AND-UPDATE.md` §十 V1/N2b 与 `RELEASE-AND-UPDATE-MECHANISM.md`

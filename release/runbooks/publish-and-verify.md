@@ -118,7 +118,9 @@ dsh-supervisor-gui --service-plan --service-apply # 实际建立服务定义
 - [x] **npm 认证大小写修复**：`NPM_CONFIG_USERCONFIG` 与 `npm_config_userconfig` 双写
 - [x] 已发布（registry dist-tag `beta`）：**现值以 `npm view @dsh-sup/dsh-core-linux-x64 dist-tags` 为准**，
       本行只记最后一次出厂实测：`@dsh-sup/dsh-core-*@0.1.5-BETA.11` 四平台齐、溯源证明四条均可查
-      （`latest` 仍在 `0.1.5-BETA.7`，正式版由用户决定何时切）
+      （`latest` 曾长期停在 `0.1.5-BETA.7` —— 那不是「正式版由用户决定何时切」，而是 BETA 挂
+      `--tag beta` 后没人回补通道标签，结果是 BETA.8..11 对全体自动升级机器不可达；
+      现四平台 `latest=0.1.5-BETA.11`，回补改由发布脚本承担，见 `RELEASE-CHANNEL-CONTRACT.md` §2）
 - [x] **`v0.1.4-BETA.1` 的 Windows CRLF 假失败**：修复后经 0.1.5-BETA.x 多次四平台矩阵验证，已消失
 - [x] **旧账号善后（用户侧）**：`wasi7mglns` / `advgyxqamf` 两仓已停更，其上的 SSH 公钥与 PAT
       随账号弃用一并失效，**无需再逐项清理**（2026-09-20 校准）

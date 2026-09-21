@@ -279,7 +279,7 @@ dsh-supervisor: /usr/bin/dsh-supervisor-gui      # 当时生产就是 deb 安装
 | 壳版本 | 壳仓**三处互锁**：`Cargo.toml` = `tauri.conf.json` = `Cargo.lock`（`scripts/verify-shell-versions.js`，壳仓自持）|
 | 两者关系 | **独立版本线**；通过元数据声明兼容区间协商（`kernelMin` / `shellMin`） |
 | 不兼容时 | **唯一允许动作：先升级壳**（禁止降级内核） |
-| npm dist-tag | `-BETA.*`→`beta`；`-RC.*`→`latest`（rc 为发布后补打的附加别名）；无后缀→`latest`；`rollback`/`canary` 人工运维（见 `RELEASE-CHANNEL-CONTRACT.md` §4）|
+| npm dist-tag | 档位别名：`-BETA.*`→`beta`；`-RC.*`/无后缀→`latest`（rc 为发布后补打的附加别名）。**通道标签 `latest` 由发布脚本在每次发布后（含 BETA）只升不降地回补对齐**，故客户端默认通道始终跟随我们最后一次发布；`rollback`/`canary` 人工运维（见 `RELEASE-CHANNEL-CONTRACT.md` §2/§4）|
 
 ---
 
