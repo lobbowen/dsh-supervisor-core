@@ -85,7 +85,7 @@ function sandboxEnv(rootDir, inst) {
     const data = dataDir(rootDir, inst);
     const install = installDir(rootDir, inst);
     const nodeBinDir = path.dirname(process.execPath);
-    const paths = [nodeBinDir, path.join(inst, 'bin'), process.env.PATH || ''].join(path.delimiter);
+    const paths = [nodeBinDir, path.join(install, 'bin'), process.env.PATH || ''].join(path.delimiter);
     env.HOME = data;
     env.XDG_CONFIG_HOME = data;
     env.XDG_DATA_HOME = data;
