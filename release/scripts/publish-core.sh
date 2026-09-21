@@ -240,7 +240,7 @@ reconcile_latest_tag() {
   cur="${cur//$'\r'/}"
   promote="$(CUR_LATEST="$cur" PUBLISH_VER="$VER" DSH_VERSION_LIB="$ROOT/src/shared/version.js" node -e 'const e=process.env;const {semverCompare}=require(e.DSH_VERSION_LIB);process.stdout.write(!e.CUR_LATEST||semverCompare(e.PUBLISH_VER,e.CUR_LATEST)>0?"yes":"no");')"
   if [ "$promote" != "yes" ]; then
-    echo "== 通道核对：latest=$cur 已不低于本次 $VER，不动 =="
+    echo "== 通道核对：latest=${cur} 已不低于本次 ${VER}，不动 =="
     return 0
   fi
   echo "== 通道回补：$PKG_NAME 的 latest（当前=${cur:-无}）-> $VER =="
