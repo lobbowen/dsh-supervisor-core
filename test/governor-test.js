@@ -101,7 +101,8 @@ console.log('== G4 decide 两段制与违规矩阵 ==');
     byId(d4, 'a').memoryMaxMb === 10650, String(byId(d4, 'a').memoryMaxMb));
   check('G4 池耗尽后到者回落纯预留（5734M）', byId(d4, 'b').memoryMaxMb === 5734, String(byId(d4, 'b').memoryMaxMb));
   const d5 = decide({ totalMemBytes: M, cpuCount: C, roster: [
-    R('a', { usageMb: 6000, since: 1 }), R('b', { usageMb: 6000, since: 2 }), R('c', { usageMb: 100, since: 3 })] });
+    R('a', { usageMb: 6000, since: 1 }), R('b', { usageMb: 6000, since: 2 }),
+    R('c', { usageMb: 100, since: 3 }), R('d', { usageMb: 100, since: 4 })] });
   check('G4 突发封顶 2x 预留（N=4：2867+2867=5734M，池有富余也不超）',
     byId(d5, 'a').memoryMaxMb === 5734, String(byId(d5, 'a').memoryMaxMb));
   check('G4 池余量部分补给第二需求者（2867+2048=4915M）',
