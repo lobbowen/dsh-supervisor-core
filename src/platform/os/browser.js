@@ -156,7 +156,8 @@ function resolveDefaultMac(runOut) {
   if (!out) return null;
   const parts = out.trim().split('\t');
   if (parts.length < 3 || parts[0] === 'EMPTY' || !parts[2]) return null;
-  return { bin: path.join(parts[1], 'Contents', 'MacOS', parts[2]), baseArgs: [], bundleId: parts[0] };
+  // 拼的恒是 macOS 路径：用宿主 path.join 在 win 宿主（CI 夹具跨端跑）会产出反斜杠形态。
+  return { bin: path.posix.join(parts[1], 'Contents', 'MacOS', parts[2]), baseArgs: [], bundleId: parts[0] };
 }
 
 /** linux：xdg-settings 得默认浏览器 desktop 文件名，在其 .desktop 主条目 Exec 行还原真实命令。
