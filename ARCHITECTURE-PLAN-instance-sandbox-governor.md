@@ -1,10 +1,15 @@
 # 根因级架构计划：实例沙箱跨平台化与动态资源治理（Governor）
 
-> 性质：**计划（进行中）**。内核仓「严重问题清单」批次第 1 项。
+> 性质：**计划（W1–W4 已落地，待 CI 验收定版）**。内核仓「严重问题清单」批次第 1 项。
 > 进度：W1 地基纠偏已落地（2026-09-21，含 governor 初版预算/能力字段拆分/win32 布局/TMPDIR+权限收紧）；
 > W2 控制面已落地（2026-09-21，decide 两级预留+突发/迟滞/违规处置 + resstats 采样 + supervise 拍 govern tick
 > + 准入门 + 观测面 usage/budgetSnapshot；下发口径为「展示值 + 下次启动生效」，运行期 set-property 动态化属 W3）；
-> W3 跨平台执行、W4 呈现定版待令。验收以 CI 四平台矩阵为准。
+> W3 跨平台执行已落地（2026-09-21，portable provider + 实测分档 dispatch + systemd setLimits 动态下发
+> + 调用点三态对齐 + 能力档位三平台翻正；X-3/X-3b/X-3c/X-3d 行为测试并入既有文件，待 CI 三平台矩阵裁决）；
+> W4 呈现定版已落地（2026-09-21，前端类型补 usage/SandboxBudget、列表行「配额(动态)+当前占用」并按
+> 执行档位标注硬限/软限、能力门改读 sandboxEnforcement、矩阵新增实例舱档位小节）。
+> 四期代码/文档面全部就位。**未决项（不得预勾，逐条见 §六）**：CI 三平台矩阵的行为裁决
+> （§六 条 1/2/4/5）、本批次改动的提交与推送（须用户明示）。
 > 前置调研（2026-09-21 两轮）结论：沙箱卡点不在数据层（目录/环境/令牌/端口隔离本已跨平台），
 > 而在**进程层把「限额语义」的定义权交给了 systemd 属性表**——换平台必失能，静态用户填额必退化。
 > 本计划的目标：**不做补丁、不写胶水、不为 mac/win 模仿 systemd**；从架构层收权，一次立正。
@@ -85,7 +90,7 @@
 
 - `linux + hasTool('systemd-run')` → systemd provider（硬 cgroup，`set-property` 动态下发）；
   **无 user-systemd 的 Linux（容器/WSL1）自动落 portable** —— 今天这类环境整个功能判死，一并解锁。
-- `darwin` / `win32` → portable。Job Object / launchd plist 一期不做（§五）。
+- `darwin` / `win32` → portable。Job Object / launchd plist 定案不做（§五）。
 - 能力矩阵 **C10 拆两字段**（A2/A3 审计测试逐格绑定）：
   - `sandboxLaunch: boolean` —— 能否运行实例舱；
   - `sandboxEnforcement: 'cgroup' | 'supervise' | 'none'` —— 限额由谁执行。
@@ -129,6 +134,10 @@ PLATFORM-CAPABILITY-MATRIX 配套小节，三平台一致，不新造说法。
    逐一过三态表（含 `distribution/install.js:258` 的 unitActive 用途复核）。
 2. systemd 档 `setLimits()` 动态化（`set-property`，带 `--runtime` 语义确认）。
 - 测试：三端 CI 真实 spawn/kill/收养/删除保护行为测试（本机不跑）。
+- 落地实况：dispatch 以 `hasSystemdRun()` 实测分档（容器/WSL1 落 portable 软档，未知平台 NONE 显式）；
+  `install.js` 的 unitActive 复核为 truthy 比较语义，三态 `null` 不影响其判定；
+  `_prepareSystemd` 增 `supportsUnits` 闸防非 Linux 落结构残留；
+  `setLimits` 的动态性由**执行器边界 argv 实录**验证（X-3d），不在 CI runner 上真改宿主单元属性。
 
 ### W4 呈现与文档定版
 1. UI：添加实例表单删内存/CPU 两输入框；列表行展示「配额(动态) + 当前占用」；能力门改读新字段
@@ -157,16 +166,29 @@ api-surface,instance 生命周期相关}`、`PLATFORM-CAPABILITY-MATRIX.md`、`R
 | 第三能力字段 `sandboxDynamicLimits` | **裁掉** | 与 `sandboxEnforcement` 不可区分（两档执行面决策都动态）；拆字段的意义是让不同降级形状可见，造区分不了的字段的即胶水 |
 | pidfile 作身份 | **裁掉** | 端口+cmdline 双锚已是本项目既定身份链且更严格（防 PID 复用），pidfile 仅留「未监听窗口」停止兜底 |
 | macOS launchd plist provider | **不做** | rlimit 启动定死、无法运行时改；每实例 plist 重演双写/篡改事故史；supervise 档给足功能完整性，缺的只有内核强制——如实声明 |
-| Windows Job Object helper | **一期不做，不预留分支** | 无软档不足证据前不背 native 供应链（签名/杀软/发布耦合）；届时以 W2 真机数据立项 |
+| Windows Job Object helper | **定案不做，不预留分支** | 无软档不足证据前不背 native 供应链（签名/杀软/发布耦合）。重开条件不是「某一期之后」而是**证据**：supervise 档真机采样数据证明软限不足以护住机器，方以独立计划立项 |
 | docker/podman/NSSM/安全沙箱（AppContainer/Seatbelt/nsenter） | **不做** | DSH 是 localhost 长驻服务，容器栈收益已被 §2.4 维度清单覆盖且成本不可比；安全边界从来不是本域承诺（ProtectHome 默认关即证） |
-| 单实例配额用户覆写 | **一期不留** | 入口一旦开就是契约负担；预留一个「setLimits 接受外部覆写」的内部参数即可，不暴露 API |
+| 单实例配额用户覆写 | **不留，且不预留入口** | 入口一旦开就是契约负担。落地口径：`setLimits(unit, alloc)` 的 alloc **只来自 governor**，平台层不接受外部覆写参数（不留死路径，届时以证据立项） |
 
-## 六、验收标准（合入前全部满足）
+## 六、验收标准与达成口径
+
+> 状态口径（2026-09-21 W4 定版）：以下**只有静态/域内可证的条目标注落地点**；
+> 依赖真机行为与三平台 runner 的条目（1、4、5）**本仓不预勾**，一律由推送后的 CI 矩阵裁决 ——
+> 在此写「已满足」就是本文件开篇反面教材的那类假现状。
 
 1. 三平台 CI 绿：portable 档真实 spawn→端口在线→STOPPING→killTree→删除三态保护全链行为测试；
-2. Linux 行为不回退：cgroup 限额可由 governor 运行时改动（`systemctl show` 断言）；
-3. 能力呈现零谎报：`sandboxLaunch/sandboxEnforcement` 对三平台 + 未知平台均有 A2/A3 绑定；
-   任何「不支持」路径给出可诊断文案（含新字段指引），绝无静默 ok；
-4. 用户配置面：新实例无需填任何资源数字；旧 payload 字段传入被无副作用忽略；
+   —— 测试已就位（X-3c 真拉起-停止闭环、X-3b 认领/宽严矩阵），**结果待 CI**。
+2. Linux 行为不回退：cgroup 限额可由 governor 运行时改动（**下发链已证，内核侧生效待 CI**）。
+   （原文写「`systemctl show` 断言」，落地时改为**执行器边界 argv 实录**：真发 `set-property` 会在
+   runner 上留下真实单元属性副作用，且 transient 单元不存在时该命令本身就得起不来 ——
+   验 argv 验到的是**平台层在这条链上唯一的真产物**（下发什么、是否下发）；
+   「systemd 收到属性后是否真限流」属 systemd 自身语义，不在本仓断言面内。见 X-3d：逐字 argv +
+   `--runtime` + 有界超时 + 空 alloc/非法名 fail-closed；下发时机由 instance-state 7E 行为断言承担。）
+3. ✅ 能力呈现零谎报：`sandboxLaunch/sandboxEnforcement` 对三平台 + 未知平台均有 A2/A3 绑定；
+   「不支持」路径给可诊断文案（`instance/sandbox.js` 的 `sandboxUnsupported` 文案 + UI 前置提示），
+   绝无静默 ok（`CapabilityError` 与 portable `setLimits=false` 的档位声明同规）。
+4. 用户配置面：新实例无需填任何资源数字（✅ 表单与 API 参数面均已删）；
+   旧 payload 字段传入被无副作用忽略 —— **待 CI 的 API 行为断言**。
 5. win32：`npm -g --prefix` 布局下安装→探测→启动→升级链在 CI windows runner 实测通过；
-6. 文档：矩阵 C10 行更新 + 本计划状态改「已完成」，README 索引同步。
+   —— 布局推导已单源化（`sandbox.nodeModulesDir/dshEntry`），**结果待 CI**。
+6. ✅ 文档：矩阵 C10 行更新 + 实例舱档位小节（§八）+ 本计划状态改「已落地待验收」+ README 索引同步。

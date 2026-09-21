@@ -43,9 +43,9 @@
 | **本文件** | **流程（阶段/入口/命令/门禁/放行/验证）** | — |
 | `CREDENTIALS-STANDARD.md` | 凭据的存放与轮换 | 流程阶段 |
 | `DEVELOPMENT-TRACK.md` | 改代码的规则（分层/测试/注入验证） | 发布命令 |
-| `INCIDENT-2026-09-13-credential-overwrite.md` | 事故复盘 | 现行流程 |
+| `archive/history/INCIDENT-2026-09-13-credential-overwrite.md` | 事故复盘 | 现行流程 |
 | `release/README.md` | 发布工程**目录结构**与脚本索引 | 流程细节（指向本文件）|
-| `RELEASE-AND-UPDATE-MECHANISM.md` | 机制**原理**（为何这样设计） | 操作步骤 |
+| `archive/history/RELEASE-AND-UPDATE-MECHANISM.md` | 机制**原理**（为何这样设计） | 操作步骤 |
 | `CROSS-PLATFORM-BUILD-AND-UPDATE.md` | 跨平台**方案论证** | 操作步骤 |
 | `release/runbooks/publish-and-verify.md` | 发布与验收全流程（runbooks/ 下唯一一份）| 通用流程 |
 | 壳仓 `docs/RELEASE-AND-BUILD-DECISION.md` | **壳仓**发布（安装程序） | 内核流程 |
@@ -153,7 +153,7 @@
 | 凭据仍有效 | `bash release/scripts/cred.sh verify` | 全部 OK |
 
 > **执行位置**：前三行的 registry / Release 查询需要**能访问公网 registry 与 GitHub API 的环境**，
-> 且本机既无 `gh` 也无 `curl`（`npm` 走内网代理亦不可达，见 `AUDIT-REPORT-2026-09-19.md` §G-6-5）。
+> 且本机既无 `gh` 也无 `curl`（`npm` 走内网代理亦不可达，见 `archive/history/AUDIT-REPORT-2026-09-19.md` §G-6-5）。
 > 因此这套 S8 由**发布操作者所在环境**执行，或用 node `fetch` 查 API
 > （令牌经 `cred.sh path github-pat` 取路径后从文件读，不上 argv）；**不要**把「本机查不到」当成发布失败。
 > 最后一行的 `cred.sh verify` 走的是打点 URL，同样需要出网。

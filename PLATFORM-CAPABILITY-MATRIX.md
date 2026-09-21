@@ -1,7 +1,8 @@
 # 内核跨平台能力矩阵（可执行审计）
 
-> 生成日期：2026-09-11　范围：内核仓 `src/platform/os/`（跨平台能力面）
-> 配套测试：**`test/platform-capability-audit-test.js`**（42 项断言，三平台 CI 均运行）
+> 生成日期：2026-09-11　末次校准：2026-09-21（W3/W4 实例舱档位落地后）
+> 范围：内核仓 `src/platform/os/`（跨平台能力面）+ 实例舱档位（`domains/instance` × provider 分档，见 §八）
+> 配套测试：**`test/platform-capability-audit-test.js`**（A1–A6 组；条数不在此维护，写了就是会过期的数。三平台 CI 均运行）
 
 ---
 
@@ -53,8 +54,8 @@ macOS 的**壳自启 / 壳自愈从项目奠基提交（`8867942`, 2026-09-01）
 | C6 | 进程列表 / 命令行读取 | ✅ `pgrep -af` | ✅ `pgrep` + `ps` | ✅ CIM | `platform/os/pidlookup/index.js` | A2 |
 | C7 | 桌面通知 | ✅ `notify-send` | ✅ `osascript` | ✅ PowerShell 气泡 | `platform/os/notify.js` | A2 |
 | C8 | 打开浏览器（含隔离 profile；引擎 = **系统默认浏览器**，隔离参数按解析结果的引擎族展开） | ✅ `xdg-settings`+`.desktop` Exec 解析 → `xdg-open` 兜底 | ✅ LaunchServices 解析直启 → `open` 兜底 | ✅ 注册表 `Clients\StartMenuInternet` 解析直启 → `explorer.exe` 兜底 | `platform/os/browser.js` | A2 · AUDIT-REPORT §A4（win32 argv 不经 shell；原 `cmd /c start` 的 URL 二次解析注入面已消灭） |
-| C9 | 服务单元管理 | ✅ systemd | ❌ **显式** | ❌ **显式** | `platform/os/service.js` | A3 |
-| C10 | 沙箱实例舱（原「沙箱多实例」，两维拆分声明：拉起 `sandboxLaunch` / 限额执行 `sandboxEnforcement`） | ✅ 拉起 + 限额 `cgroup`（`systemd-run` transient） | ❌ **显式**（launch=false、enforcement=none；portable 档接入前不虚报） | ❌ **显式**（同左） | `platform/os/capability-profile.js` + `domains/instance/{sandbox,governor}.js` + `platform/os/resstats.js`（W2 采样观测；governor 决策/准入三平台同跑，运行期限额动态化属 W3） | A1·A2·A3 · P-5 |
+| C9 | 宿主服务单元管理（systemd 单元语义：daemonReload / 持久单元 / failed 复位） | ✅ systemd | ❌ **显式**（launchd 无 provider；实例舱由 `portable` 档承担，见 C10，不冒充服务管理器） | ❌ **显式**（同左；Windows 服务无 provider，实例舱走 `portable` 档） | `platform/os/service.js` | A3 |
+| C10 | 沙箱实例舱（两维拆分声明：拉起 `sandboxLaunch` / 限额执行 `sandboxEnforcement`；provider 分档见 `service.current()`） | ✅ 拉起 + 限额 `cgroup`（`systemd-run` transient；运行期动态限额 `systemctl --user set-property --runtime`）；无 user-systemd 的容器/WSL1 自动落 `portable` 软档 | ✅ 拉起 + 限额 `supervise`（`portable` provider：端口反查 + cmdline 锚点认领，软档无内核强制） | ✅ 拉起 + 限额 `supervise`（同 macOS；未知平台仍**显式** launch=false、enforcement=none） | `platform/os/{service,portable}.js`（provider 分档与 dispatch） + `platform/os/capability-profile.js` + `domains/instance/{sandbox,governor}.js` + `platform/os/resstats.js`（W2 采样观测；governor 决策/准入三平台同跑；W3 落地运行期限额动态化：systemd `setLimits` 下发，portable `setLimits` 恒 false = 档位声明而非缺陷） | A1·A2·A3 · P-5 · X-3·X-3b·X-3c·X-3d |
 | C11 | **守卫**开机自启 | ✅ systemd + linger | ✅ LaunchAgent | ✅ schtasks | `platform/os/autostart/index.js` | A2 |
 | C12 | **守卫**崩溃自愈 | ✅ `Restart=always` | ✅ `KeepAlive` | ✅ 保活归**桌面壳**（2026-09-15 起内核不再创建 watchdog 任务）| `platform/os/autostart/index.js` | A5 |
 | C13 | **壳**开机自启（原生机制） | ✅ XDG `.desktop` | ✅ LaunchAgent `com.dsh.supervisor.gui` | ✅ schtasks `DSH-Supervisor-GUI` | `platform/os/autostart/index.js` | A4 · A8 · P1–P5 |
@@ -223,3 +224,43 @@ npm test        # 只在 CI 内跑；本机一律不得执行（ACCEPTANCE-STAND
 | **A4 行为一致** | 模块的跨平台行为与 `capabilityProfile()` 声明一致（真实调用，非文本扫描）|
 | **A5 自愈真伪** | 自愈类能力的声明匹配实际机制（不得声称存在而实现被条件屏蔽）|
 | **A6 无回归** | 历史错误声明不得重现（剥离注释后检查代码）|
+
+---
+
+## 八、实例舱（沙箱多实例）能力小节
+
+矩阵行 C10 的两维拆分在此展开：`sandboxLaunch`（能不能跑舱）与 `sandboxEnforcement`
+（限额由谁执行）**是两个独立字段**，合并声明会掩盖「可跑舱但只软限」的真实形状。
+
+| 运行环境 | 拉起 `sandboxLaunch` | 限额执行 `sandboxEnforcement` | 执行 provider | 隔离定性 |
+|---|---|---|---|---|
+| Linux（有 user-systemd）| ✅ | `cgroup` | `systemd`（`systemd-run` transient 单元）| **内核级硬限**：MemoryMax/MemoryHigh/CPUQuota 由 cgroup 强制，越限即被内核节流/杀 |
+| Linux（容器 / WSL1 等无 user-systemd）| ✅ | `supervise` | `portable` | 软限（同 macOS/Windows 行）；分档由**实测探测**决定，不按平台名写死 |
+| macOS | ✅ | `supervise` | `portable` | 软限：采样观测 + 超标拍数判定 + 守卫收割重启（非内核强制）|
+| Windows | ✅ | `supervise` | `portable` | 同 macOS 行 |
+| 未知平台 | ❌ **显式** | `none` | NONE（调用即抛 `CapabilityError`）| 不静默成功，也不假装支持 |
+
+**「软限」不是「不支持」的委婉说法，是可执行的处置链**：`governor.decide()` 每拍（5s）
+按机器预算与活跃实例数推导目标配额（预留 + 突发两级，带迟滞），`resstats` 采样进程树
+rss / cpu-time，内存连续 3 拍 / CPU 连续 5 拍超限即记 `inst_resource_violation` → 停止 →
+按状态机 BACKOFF 自愈。运行期限额变更在 systemd 档经 `set-property --runtime` 当拍下发，
+portable 档 `setLimits` 恒 `false` —— 这是**档位声明**而非缺陷（无内核强制点可下发）。
+
+**分工铁律**（防止档位差异渗回业务层）：拉起 / 停止 / 活跃判定归 provider；「该发多少」
+永远归 `governor.decide`；域层 `process.platform` 分支数必须为 **0**。
+`portable` 与 `systemd` 两档的动词形状（11 键方法集）由 X-3 静态对账强制同形，
+调用点因此无需知道自己跑在哪一档。
+
+**认领与宽严分离**（portable 档的身份问题，无 pidfile 权威时）：实例身份 = 端口反查 +
+命令行锚点（`--port` / 可执行入口）复核，`run.pid` 仅覆盖「已拉起未监听」窗口，PID 复用由
+锚点判死。查询降级宽松（`isUnitActive` 无锚点时仅凭端口，查不到返三态 `null` 而非谎报不活跃），
+杀进程从严（`stopUnit` 必须锚点命中，未确认不杀并返 `false`；纯端口回退命中标 `ownGroup=false`，
+不把他进程组当本实例）。
+
+**已裁决不做**（避免为 mac/win 模仿 systemd）：Windows Job Object、launchd plist provider、
+容器专属栈、用户手填额、`sandboxDynamicLimits` 第三能力字段。
+
+**验证**：`platform-layer-portability-test` X-3（分档不变式 + 方法集对账）· X-3b（注入假
+pidlookup 的认领/停止语义矩阵）· X-3c（真实宿主拉起→监听→认领→停止闭环，每平台 runner 各跑一次）；
+`instance-state-test` 7A/7E（启停 ctx 同源、动态下发、不变不重发）；
+`exec-return-contract` A4b/A5；`four-platform-behavior-matrix` P-5；本文件 A1·A2·A3。

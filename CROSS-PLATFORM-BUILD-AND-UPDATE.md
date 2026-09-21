@@ -377,7 +377,7 @@ $ bash ci/check-glibc.sh <binary> 2.35
 |---|---|---|
 | **V1** | Tauri 是否为 **deb/rpm** 生成 `.sig` | **仍未验**：两仓从未配过签名私钥，也就没有任何一份 `.sig` 可证。只有在**配好密钥的 tag 构建**上顺带验一次，禁止用本地构建替代（本机不得构建）|
 | ~~V2~~ | ~~`ubuntu-22.04` 上能否顺利构建~~ | **已由 CI 确证**：`ubuntu-22.04` job 在壳仓 main 上反复全绿（含 glibc 2.35 门禁与打包）。~~原「本机 24.04 基座 cargo build --release 成功」~~ —— 那既不能证明 22.04 基座，也违反「一律 CI 构建/测试」，不作为依据保留 |
-| ~~V3~~ | ~~Linux arm64 是否有用户需求~~ | **未纳入矩阵**（Linux 只有 x64）。纳入新平台属矩阵变更：若已恢复分支保护，必须同步改 required status checks 的 contexts（两仓当前无保护，见 `AUDIT-REPORT-2026-09-19.md` §K-1）|
+| ~~V3~~ | ~~Linux arm64 是否有用户需求~~ | **未纳入矩阵**（Linux 只有 x64）。纳入新平台属矩阵变更：若已恢复分支保护，必须同步改 required status checks 的 contexts（两仓当前无保护，见 `archive/history/AUDIT-REPORT-2026-09-19.md` §K-1）|
 | ~~V4~~ | ~~Windows arm64 是否纳入~~ | **未纳入矩阵**（Windows 只有 x64，bundles `nsis,msi`），变更约束同上 |
 | ~~N2b~~ | ~~是否发 rpm~~ | **现状：deb + rpm 一起发**（Linux job 的 `bundles: deb,rpm`）|
 | **N4** | 是否建 apt/yum 仓库 | 后续加分项，未立项 |
