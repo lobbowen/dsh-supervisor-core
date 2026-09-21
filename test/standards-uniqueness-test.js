@@ -39,9 +39,10 @@ const check = (n, c, x) => {
 //   与「发布/构建流程」（RELEASE-STANDARD.md）是**两个域**：前者管「版本如何被选择」，
 //   后者管「怎么构建与发布」，故不违反一域一规范。
 // reads: 该门禁是否**真读**规范正文（U-1b 的声明字段，必须与源码事实一致）。
-//实测 11 个登记门禁中只有 3 个在**剥注释后**的源码里出现自己的规范名并真读它
-//   （release-spec-consistency / layering-and-dependency / acceptance-standard）；其余 8 个
-//   只在头注里提到规范名 —— 全域硬执行会立刻红 8 个，故按「声明诚实 + 缺口可见」分区登记。
+//实测登记门禁中真读正文的：release-spec-consistency / layering-and-dependency /
+//   acceptance-standard / cross-platform-architecture（CP-9 读 PROXY-ISOLATION-STANDARD.md）；
+//   其余只在头注里提到规范名 —— 全域硬执行会立刻红一批，
+//   故按「声明诚实 + 缺口可见」分区登记。
 //   reads:false 不是「已修」，而是**显式登记的债**：必须写 pending 原因，并由 U-1b 打印成清单。
 const STANDARDS = {
   '发布/构建流程': { file: 'RELEASE-STANDARD.md', gate: 'test/release-spec-consistency-test.js', reads: true },
@@ -60,6 +61,13 @@ const STANDARDS = {
     pending: '门禁扫描全域 guardian 补丁形态，尚未读规范正文' },
   '供应商网关架构': { file: 'PROVIDER-GATEWAY-ARCHITECTURE.md', gate: 'test/provider-gateway-gate-test.js', reads: false,
     pending: '门禁校验网关实现不变量（PG-1..PG-8），尚未读规范正文' },
+  //反代进程隔离（L0 平台事实 / L1 载体 / L2 供应商纯声明）：CP-5..CP-8 是静态牙齿，
+  //   CP-9 让该门禁真读正文并锁「条款编号/三层职责缺一即红」，故 reads:true 属实。
+  '反代进程隔离': { file: 'PROXY-ISOLATION-STANDARD.md', gate: 'test/cross-platform-architecture-gate-test.js', reads: true },
+  // 反代账号生命周期（L-A 引擎期望集/事件表，HOW 与 WHEN 正交分治）：W1 牙齿先落在
+  //   provider-gateway 的 PG-4 判据族，LC-1..LC-6 专审门禁随 W4 落地后迁移 gate 指向。
+  '反代账号生命周期': { file: 'PROXY-LIFECYCLE-STANDARD.md', gate: 'test/provider-gateway-gate-test.js', reads: false,
+    pending: '门禁（PG-4）校验生命周期引擎实现不变量，尚未读标准正文；W4 落 LC 门禁后收敛' },
   '目录结构与分层': { file: 'DIRECTORY-STRUCTURE-DESIGN.md', gate: 'test/directory-structure-gate-test.js', reads: false,
     pending: '门禁校验目录/行数/原型混入等实现不变量，尚未读规范正文' },
   //DOMAIN-STRUCTURE-DESIGN.md 原先以「定版 SSOT / 唯一权威」自称，规避 U-3 的字面量检查；

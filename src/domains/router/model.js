@@ -3,8 +3,9 @@
 // 反代实例模型：一个账号（key）= 一个实例（硬规则）。
 // 实例态按服务能力分四态：COLD 未启动（资源 0）、WARM 启动中（有进程未就绪，资源 1，不可服务）、
 // HOT 就绪（可立即服务）、DEAD 异常（进程在但不健康，资源 1，待回收）。注意：账号级冻结（frozen）
-// 不在实例态里，冻结是账号语义（base.applyDetection 管理）。实例记录与进程解耦：pid 不落盘，
-// port 持久化并与实例绑死，仅删除账号才释放。
+// 不在实例态里，冻结是账号语义（base.applyDetection 管理）。实例记录与进程解耦：pid 不落盘；
+// 端口绑定在账号可用且有槽位期间保留（防漂移），账号进入等待区（冻结/封号/无槽）或被删除时
+// 随进程一并归零（PROXY-LIFECYCLE-STANDARD LC 核心-3：等待区=零进程零端口）。
 
 /** 实例四态（本域唯一实例态词表，冻结）。 */
 const INSTANCE_STATES = Object.freeze({
@@ -54,9 +55,12 @@ class ProxyInstance {
     this.registeredAt = Date.now();
     this.pid = null;
     this.port = null;
+    // 载体身份（run.pid 文件 + cmdline 锚点）：仅本代运行期内存有效，不落盘
+    //   （pid 本就不落盘，daemon 重启后由 spawn 重建；跨代残尸走端口幸存者弃用链）。
+    this.pidFile = null;
+    this.launchAnchors = null;
     this.version = null;
     this.startingPromise = null; // 启动并发去重：启动中复用同一 Promise，杜绝双 spawn
-    this.lastUsedAt = null;      // 最近被请求使用的时刻（闲置回收窗口判断）
     this._unhealthyCount = 0;  // 连续不健康次数（运行时，不落盘——健康监护用：>=N 次自动重启）
     this._restartAt = 0;       // 自动重启退避时刻（防风暴）
     this._monitorFails = 0;    // 健康监测连续失败次数（与 _unhealthyCount **独立**，见 proxy.js 说明）

@@ -2,19 +2,20 @@
 
 // 反代供应商：账号=代理实例（进程），每账号一个实例（硬规则）。process-pool 契约方法
 // （启停/重启/熔断/对账入口）在 process-pool.js mixin；本文件留 ctor、账号生命周期钩子与
-// 池/探测/命令委托：命令拼装归 command.js，实例池决策归 pool.js，spawn/探活/配额探测归
-// probe.js，重启重拉/对账归 restart.js，冻结/解冻状态机归 base.js 与 freeze.js。
+// 池/探测/命令委托：命令拼装归 command.js，期望集纯决策归 pool.js（PROXY-LIFECYCLE-STANDARD），
+// spawn/探活/配额探测归 probe.js，重启重拉/对账归 restart.js，
+// 冻结/解冻状态机归 base.js 与 freeze.js。
 
 const { ProviderBase } = require('./base');
 const { withProcessPool } = require('./process-pool');
 const { keyFingerprint, maskKey } = require('./model');
 const { ProxyInstance } = require('../model');
 require('../port-segments'); // 本域端口段/独立池申报（require 即注入）
-const { npxBin } = require('../../../platform/os/exec-path');
+const { npxLauncher } = require('../../../platform/os/npx-forms');
 const { buildCommand } = require('./command');
 const probe = require('./probe');
 const restart = require('./restart');
-const poolPolicy = require('./pool');
+const pool = require('./pool');
 const life = require('./instance-lifecycle');
 
 class ProxyProvider extends withProcessPool(ProviderBase) {
@@ -27,10 +28,10 @@ class ProxyProvider extends withProcessPool(ProviderBase) {
     this.proxyRunning = false;
     this.instances = [];
     this.selectedAccountKeyId = null;
+    this._prewarmKeyId = null; // 预热槽 sticky 归属（内存）：只在占用者自身失效/被提为在用时让位
     this._startLock = false; // 实例启动互斥：一次只 spawn 一个 npx
     this._stopping = false; // 关停标记：stop() 前置真，期间不预启动
     this._terminatingPids = new Set(); // 停服台账：已发 SIGTERM 的子进程 pid
-    this._pool = poolPolicy.createPoolPolicy({ getConfig: () => this.config });
     // 重启编排器与删账号钩子在 withProcessPool 的 mixin ctor 装配（process-pool.js）。
   }
 
@@ -48,7 +49,8 @@ class ProxyProvider extends withProcessPool(ProviderBase) {
   async _resolveLaunchCommand(app, port, key) {
     const registry = this.dist ? await this.dist.selectRegistry(false).catch(() => null) : null;
     const cachedBin = this._cachedPkgBin(app.pkg);
-    const launch = buildCommand({ app, port, cachedBin, registry, npxBin: npxBin(), execPath: process.execPath });
+    // npx 兜底必须成对 launcher 形态（node 直启 npx-cli.js 优先）：win32 无 shell spawn .cmd 必 EINVAL。
+    const launch = buildCommand({ app, port, cachedBin, registry, launcher: npxLauncher(), execPath: process.execPath });
     if (!launch || !launch.ok) return launch || { ok: false, error: '命令拼装失败' };
     // 凭证纪律：key 只经 env（app.keyEnv），argv 必须剔除 --api-key 及其值与 {{key}} 占位
     const cmd = [];
@@ -81,20 +83,18 @@ class ProxyProvider extends withProcessPool(ProviderBase) {
 
   async addAccount(key, extra) { return life.addAccount(this, key, extra); }
   isAccountUsable(acc, opts) { return life.isAccountUsable(this, acc, opts); }
-  /** 停掉账号实例（委托 instance-lifecycle.js）。 */
-  _stopInstanceIfAny(acc) { return life.stopInstanceIfAny(this, acc); }
 
-  /** 429/403 配额触发冻结：先停实例，再状态机，再对账补备胎 + 异步补探测。 */
+  /** 429/403 配额触发冻结：立即回收进等待区（force + 释放端口，零宽限），再状态机，再对账补槽。 */
   markQuotaExhausted(acc, cooldownMs) {
-    this._stopInstanceIfAny(acc);
+    this.reclaimAccount(acc);
     super.markQuotaExhausted(acc, cooldownMs);
     this.reconcileNow();
     this._probeAfterResponseFreeze(acc);
   }
 
-  /** credits 余额不足：与窗口同一处置（停实例 + 冻结 + 对账补备胎）。 */
+  /** credits 余额不足：与窗口同一处置（立即回收 + 冻结 + 对账补槽）。 */
   markCreditsExhausted(acc) {
-    this._stopInstanceIfAny(acc);
+    this.reclaimAccount(acc);
     super.markCreditsExhausted(acc);
     this.reconcileNow();
     this._probeAfterResponseFreeze(acc);
@@ -102,45 +102,26 @@ class ProxyProvider extends withProcessPool(ProviderBase) {
 
   _probeAfterResponseFreeze(acc) { return probe.probeAfterResponseFreeze(this, acc); }
 
-  // 实例池策略（纯决策在 pool.js，此处读 provider 状态并落 sticky）
-  _quotaPercent(acc) { return poolPolicy.quotaPercent(acc); }
-
-  residentAccount() {
-    const r = this._pool.residentAccount({
+  // 期望集（纯决策在 pool.js；此处读 provider 状态并落预热槽 sticky 归属）
+  desiredRunningAccounts() {
+    const r = pool.computeDesired({
       accounts: this.accounts,
       selectedAccountKeyId: this.selectedAccountKeyId,
       activeKeyId: this.activeAccount && this.activeAccount.keyId,
-      residentKeyId: this._residentKeyId,
+      prewarmKeyId: this._prewarmKeyId,
       isUsable: (a) => this.isAccountUsable(a),
     });
-    if (r.resident) this._residentKeyId = r.residentKeyId; // 内存 sticky：空闲后回到同一账号
-    return r.resident;
+    this._prewarmKeyId = r.prewarm ? r.prewarm.keyId : null;
+    return r;
   }
+  isDesiredAccount(acc) { return pool.isDesired(this.desiredRunningAccounts().list, acc); }
 
-  _limits() { return this._pool.limits(); }
-  _switchBudgetMs() { return this._pool.switchBudgetMs(); }
-  _stateCounts() { return this._pool.stateCounts(this.instances); }
-
-  _needSpare() {
-    return this._pool.needSpare({ resident: this.residentAccount(), limits: this._limits(), counts: this._stateCounts(), instances: this.instances });
-  }
-
-  desiredRunningAccounts() {
-    const resident = this.residentAccount();
-    return this._pool.desiredRunningAccounts({
-      accounts: this.accounts, resident, limits: this._limits(), needSpare: this._needSpare(),
-      isUsable: (a) => this.isAccountUsable(a),
-    });
-  }
-
-  prewarmAsync(acc) { return restart.prewarmAsync(this, acc); }
   _runReconcile(allowStop) { return restart.runReconcile(this, allowStop); }
   reconcileNow() { return restart.reconcileNow(this); }
-  isDesiredAccount(acc) { return poolPolicy.isDesired(this.desiredRunningAccounts(), acc); }
 
-  /** 封号：停掉实例（不再消耗资源），再更新状态机。 */
+  /** 封号：立即回收进等待区，再更新状态机。 */
   markBanned(acc, error) {
-    this._stopInstanceIfAny(acc);
+    this.reclaimAccount(acc);
     super.markBanned(acc, error);
   }
 }

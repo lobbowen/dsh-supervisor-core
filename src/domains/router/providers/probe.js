@@ -2,12 +2,14 @@
 
 // 实例运行时探活与进程治理（B10/B11）：IO 模块，覆盖 spawn、健康探活、生命周期监控、npm 包
 // 缓存、实例配额探测。一律经 provider 显式入参，不持有实例/域状态。
+// 进程载体（拉起/归属判定/终止）唯一走 platform/os/carrier（PROXY-ISOLATION-STANDARD L1）。
 
-const spawnOS = require('../../../platform/os/spawn');
 const path = require('node:path');
 const fs = require('node:fs');
 const ports = require('../../../platform/service/ports').shared;
 const pidlook = require('../../../platform/os/pidlookup');
+const carrier = require('../../../platform/os/carrier');
+const procOS = require('../../../platform/os/process');
 const { INSTANCE_STATES } = require('../model');
 const { getQuotaStrategy } = require('./quota-strategies');
 const { quotaOverallStatus } = require('./policies/quota');
@@ -35,7 +37,8 @@ async function spawnInstance(provider, inst) {
       if (pkgMarker && cmd.indexOf(pkgMarker) >= 0) {
         if (provider.logger && provider.logger.warn) provider.logger.warn('[proxy-instance] 重启幸存者弃用重拉 pid=' + boundPid + ' port=' + inst.port + '（stdio 归属旧代，禁 adopt）');
         if (provider.events) provider.events.append('proxy_instance_survivor_reclaimed', { app: provider.proxyAppId, port: inst.port, pid: boundPid, reason: 'restart-survivor-stdio-unsafe' });
-        try { process.kill(boundPid, 'SIGKILL'); } catch {}
+        // 幸存者来路不明（旧代/手动）：外来 pid 一律不组信号，Windows 走 taskkill 整树（B13 纪律）。
+        try { procOS.killTree(boundPid, 'SIGKILL'); } catch {}
         const dl = Date.now() + 3000;
         while (Date.now() < dl && (await ports.isTaken(inst.port, 'proxy:' + (inst.keyId || 'unknown')).catch(() => false))) {
           await new Promise((r) => setTimeout(r, 150));
@@ -79,17 +82,14 @@ async function spawnInstance(provider, inst) {
     }
   }
   if (launch.registry) { envVars.npm_config_registry = launch.registry; envVars.NPM_CONFIG_REGISTRY = launch.registry; }
-  let child;
-  try { child = spawnOS.piped(launch.cmd[0], launch.cmd.slice(1), { env: envVars, detached: true }); }
-  catch (e) { return { ok: false, error: 'spawn 失败: ' + e.message }; }
   // 实例 stdout/stderr 全量落盘 + 关键词行落事件（stateDir 由 Provider 注入，D7）
   // 落盘统一走平台层 Rotator —— 原先裸
   //   fs.createWriteStream({flags:'a'}) 是全仓唯一的无轮转日志（反代 stdout 可无界增长），
   //   且默认 0644（Rotator 首建即 0600：实例日志含启动令牌 URL/环境变量派生行）。
   const logFilter = /error|streaming|idle|timeout|ECONN|abort|socket|finish|truncat/i;
+  const baseDir = provider.stateDir || stateRoot.supervisorDir();
   let logWriter = null;
   try {
-    const baseDir = provider.stateDir || stateRoot.supervisorDir();
     const logDir = path.join(baseDir, 'logs');
     fs.mkdirSync(logDir, { recursive: true });
     logWriter = new Rotator(path.join(logDir, 'proxy-instance-' + provider.proxyAppId + '-' + port + '.log'), INSTANCE_LOG_MAX_BYTES);
@@ -103,11 +103,29 @@ async function spawnInstance(provider, inst) {
       if (provider.logger && provider.logger.warn) provider.logger.warn('[proxy-instance] ' + src + ': ' + l.slice(0, 400));
     }
   };
-  child.stdout.on('data', (c) => pushLog(c, 'out'));
-  child.stderr.on('data', (c) => pushLog(c, 'err'));
+  // 身份锚点（隔离标准 L2 声明的衍生物）：包名 + '--port' 须同时出现在载体进程与其
+  //   子孙监听者的 cmdline，与 run.pid 配合判归属——防 PID 复用误杀，三平台同语义。
+  const anchors = [];
+  if (app.pkg) anchors.push(String(app.pkg));
+  anchors.push('--port ' + port);
+  let pidFile = null;
+  try { fs.mkdirSync(path.join(baseDir, 'run'), { recursive: true }); pidFile = path.join(baseDir, 'run', 'proxy-' + provider.proxyAppId + '-' + port + '.pid'); } catch {}
+  let handle;
+  try {
+    handle = carrier.start({
+      cmd: launch.cmd,
+      env: envVars,
+      identity: { port, pidFile, anchors },
+      onOutput: (c) => { c.stdout.on('data', (b) => pushLog(b, 'out')); c.stderr.on('data', (b) => pushLog(b, 'err')); },
+    });
+  }
+  catch (e) { return { ok: false, error: 'spawn 失败: ' + e.message }; }
+  const child = handle.child;
   // Rotator 每次 write 即时 appendFileSync，无缓冲 => 关闭时不需（也无法）end()。
   inst.pid = child.pid;
   inst.port = port;
+  inst.pidFile = pidFile;
+  inst.launchAnchors = anchors;
   inst.status = INSTANCE_STATES.WARM;
   inst.healthy = false;
   // 关停竞态：stop() 先于 spawn 完成时一次也不漏，立即自清
@@ -124,7 +142,9 @@ async function spawnInstance(provider, inst) {
     if (provider.events) provider.events.append('proxy_instance_stopped', { app: provider.proxyAppId, port, code });
   });
   child.on('error', (err) => {
-    if (inst.pid === child.pid) { inst.pid = null; inst.status = INSTANCE_STATES.DEAD; }
+    // error 事件=进程从未成功存活（ENOENT 等 spawn 失败派生）：pid 已无，态必须回 COLD——
+    // DEAD 的定义是「进程在但不健康」（model.js），写 DEAD+pid=null 是词表自相矛盾的化石。
+    if (inst.pid === child.pid) { inst.pid = null; inst.healthy = false; inst.status = INSTANCE_STATES.COLD; }
     if (provider.events) provider.events.append('proxy_instance_failed', { app: provider.proxyAppId, port, error: err.message });
   });
   provider._persist();
@@ -166,18 +186,12 @@ async function monitorLifecycle(provider) {
       inst.pid = null; inst.healthy = false; inst._monitorFails = 0; inst.status = INSTANCE_STATES.COLD;
       continue;
     }
-    if (typeof pidlook.findListeningPid === 'function') {
-      const listening = pidlook.findListeningPid(inst.port);
-      // exact-pid 等值判据在 npx --yes 兜底形态下恒不成立 ——
-      //   命令为 [npxBin, --yes, pkg, ...]，spawn 的是 npx，真正监听端口的是其子孙 node。
-      //   误判后果不是「重启」而是**留下孤儿**：此处把 pid 抹掉后，stopInstance 的 kill 段
-      //   以 inst.pid 为判据（instance-lifecycle.js），真实进程恒不可达地继续占端口。
-      //   改判据：监听者与被管实例**不同进程组**才算被外部进程占住（detached 子孙同组，放行）。
-      //   进程组判定是平台事实，经 pidlook 门面取（CP-1：业务域不得自带 process.platform//proc）。
-      //   监听者查不到（inet-diag 回退）不改判：交给下方 HTTP 探活（进程活着但不健康
-      //   连续 3 次即 kill 重拉），避免探测工具缺失时误杀。
-      if (listening && listening !== inst.pid && !pidlook.sameProcessGroup(listening, inst.pid)) {
-        if (provider.logger && provider.logger.warn) provider.logger.warn('[proxy-instance] 生命周期监控：端口被外部进程占住 key=' + inst.maskedKey + ' port=' + inst.port + ' pid=' + inst.pid + ' listener=' + listening);
+    // 端口占住判定走载体身份引擎（标准 L1）：锚点命中才算我方进程；监听者查不到
+    //   （探测工具缺失）不改判，交给下方 HTTP 探活（连续 3 次不健康即 kill 重拉），避免误杀。
+    if (inst.pidFile && inst.launchAnchors && inst.launchAnchors.length) {
+      const st = carrier.probe({ port: inst.port, pidFile: inst.pidFile, anchors: inst.launchAnchors });
+      if (st.state === 'foreign') {
+        if (provider.logger && provider.logger.warn) provider.logger.warn('[proxy-instance] 生命周期监控：端口被外部进程占住 key=' + inst.maskedKey + ' port=' + inst.port + ' pid=' + inst.pid + ' listener=' + st.pid);
         inst.pid = null; inst.healthy = false; inst._monitorFails = 0; inst.status = INSTANCE_STATES.COLD;
         continue;
       }
@@ -191,7 +205,8 @@ async function monitorLifecycle(provider) {
         if (inst._monitorFails >= 3) {
           if (provider.logger && provider.logger.warn) provider.logger.warn('[proxy-instance] 生命周期监控：实例无响应（疑似卡死）key=' + inst.maskedKey + ' port=' + inst.port + ' pid=' + inst.pid + ' fails=' + inst._monitorFails + '，kill 重拉');
           if (provider.events) provider.events.append('proxy_instance_hang_restart', { app: provider.proxyAppId, port: inst.port, pid: inst.pid, fails: inst._monitorFails });
-          try { process.kill(inst.pid, 'SIGKILL'); } catch {}
+          // 卡死重拉：本方 detached 拉起的组长 pid，POSIX 组信号整树、win taskkill /T /F。
+          try { procOS.killTree(inst.pid, 'SIGKILL', undefined, { ownGroup: true }); } catch {}
           inst.pid = null; inst.healthy = false; inst._monitorFails = 0; inst.status = INSTANCE_STATES.COLD;
         }
       }
@@ -252,20 +267,13 @@ function probeAfterResponseFreeze(provider, acc) {
 /** 等待全部 SIGTERM 在途子进程真正退出（优雅退出专用，根治停服孤儿化）。 */
 async function waitAllStopped(provider, timeoutMs) {
   const dl = Date.now() + (timeoutMs || 3000);
-  // zombie 判定：SIGKILL 已投递但父进程尚未回收的进程 kill(0) 仍为 true，但端口/stdio 已释放
-  const isZombie = (pid) => {
-    try {
-      const st = fs.readFileSync('/proc/' + pid + '/stat', 'utf8');
-      const idx = st.lastIndexOf(') ');
-      return idx >= 0 && st[idx + 2] === 'Z';
-    } catch { return false; }
-  };
   const sweep = () => {
     if (!provider._terminatingPids || !provider._terminatingPids.size) return;
     for (const pid of [...provider._terminatingPids]) {
       let alive = true;
       try { alive = pidlook.isAlive ? pidlook.isAlive(pid) : true; } catch { alive = false; }
-      if (!alive || isZombie(pid)) provider._terminatingPids.delete(pid);
+      // zombie（SIGKILL 已投递、父进程未回收）kill(0) 仍为 true，但端口/stdio 已释放；判定经 pidlookup 门面。
+      if (!alive || pidlook.isZombie(pid)) provider._terminatingPids.delete(pid);
     }
   };
   while (Date.now() < dl && provider._terminatingPids.size) {
@@ -275,7 +283,8 @@ async function waitAllStopped(provider, timeoutMs) {
   }
   if (provider._terminatingPids.size) {
     for (const pid of [...provider._terminatingPids]) {
-      try { process.kill(-pid, 'SIGKILL'); } catch { try { process.kill(pid, 'SIGKILL'); } catch {} }
+      // 关停兜底升级：台账内 pid 全是本方 detached 拉起的组长（ownGroup:true 前提成立），killTree 三平台整树终止。
+      try { procOS.killTree(pid, 'SIGKILL', undefined, { ownGroup: true }); } catch { /* 已退出 */ }
     }
     const dl2 = Date.now() + 2000;
     while (Date.now() < dl2 && provider._terminatingPids.size) {

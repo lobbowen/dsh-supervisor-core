@@ -3,10 +3,10 @@
 // 反代应用注册表与更新（IO）。deps 注入：{getProviders, proxyUpdateCache, dist, events, tasks, save, logger}。
 // 更新 job 状态收敛于本工厂闭包（jobs）。
 
-const fs = require('node:fs');
-const os = require('node:os');
-const path = require('node:path');
+// npx 缓存目录是平台事实（win 在 %LOCALAPPDATA%\npm-cache）——清理逻辑收口 providers/pkg-cache，
+//   此处曾复制过一份硬编码 ~/.npm/_npx 的扫描（第二事实源，Windows 恒空转）。
 const { PROXY_APPS } = require('../proxy-apps');
+const { invalidatePkgCache } = require('../providers/pkg-cache');
 const { semverCompare } = require('../../../shared/version');
 
 function createAppsRegistryOps(deps) {
@@ -80,18 +80,7 @@ function createAppsRegistryOps(deps) {
     }
     (async () => {
       // 0) 清除该 app 的 npx 缓存（强制重新拉取最新版）
-      try {
-        const npxDir = path.join(os.homedir(), '.npm', '_npx');
-        if (fs.existsSync(npxDir)) {
-          for (const dir of fs.readdirSync(npxDir)) {
-            if (!/^[0-9a-f]{8,}$/i.test(dir)) continue;
-            const pkgDir = path.join(npxDir, dir, 'node_modules', a.pkg);
-            if (fs.existsSync(pkgDir)) {
-              try { fs.rmSync(path.join(npxDir, dir), { recursive: true, force: true }); } catch {}
-            }
-          }
-        }
-      } catch {}
+      try { invalidatePkgCache(a.pkg); } catch {}
       const setStep = (i, state, reason) => {
         job.steps[i].state = state; job.steps[i].ts = Date.now();
         if (reason) job.steps[i].reason = reason;

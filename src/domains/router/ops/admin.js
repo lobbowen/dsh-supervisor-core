@@ -74,19 +74,20 @@ function createAdminOps(deps) {
     const prevSelected = p.selectedAccountKeyId || null;
     p.selectedAccountKeyId = keyId;
     save();
-    // 切换即确保目标实例拉起；失败回滚 selected（防坏账号粘滞导致 429 循环）
-    if (p.supports('instanceLifecycle') && acc.instance && !acc.instance.pid) {
-      const sr = await p.startInstance(acc.instance).catch((e) => ({ ok: false, error: e && e.message }));
-      const ok = sr && sr.ok;
-      const healthy = ok ? await p._waitHealthy(acc.instance).catch(() => false) : false;
-      if (!healthy) {
-        if (acc.instance.pid) { try { p.stopInstance(acc.instance); } catch {} }
+    // 切换即确保目标就绪（引擎门面，budgetMs=null 等满探活周期——显式切换的启动预算，
+    // 裁决 1）；失败回滚 selected 并回收半成品进程（防坏账号粘滞导致 429 循环）。
+    if (p.supports('instanceLifecycle')) {
+      const sv = await p.ensureServable(acc, { budgetMs: null }).catch((e) => ({ ok: false, error: e && e.message }));
+      if (!sv || !sv.ok) {
+        if (acc.instance && acc.instance.pid) { try { p.stopInstance(acc.instance); } catch {} }
         p.selectedAccountKeyId = prevSelected;
         save();
-        const errMsg = '实例启动失败（' + ((sr && sr.error) || '探活超时') + '），已取消切换并回滚';
-        if (logger && logger.warn) logger.warn('[select] ' + errMsg + ' key=' + (acc.maskedKey || keyId) + ' sr=' + JSON.stringify(sr));
+        const errMsg = '实例启动失败（' + ((sv && sv.error) || '探活超时') + '），已取消切换并回滚';
+        if (logger && logger.warn) logger.warn('[select] ' + errMsg + ' key=' + (acc.maskedKey || keyId) + ' sv=' + JSON.stringify(sv));
         return { ok: false, error: errMsg };
       }
+      // 角色变化即回收退位者（事件表）：期望集重算 + 非期望实例经停止仲裁回收（在途 drain 补刀）。
+      p.reconcileNow();
     }
     return { ok: true, selected: keyId };
   }

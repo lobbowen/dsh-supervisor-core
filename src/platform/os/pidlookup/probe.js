@@ -90,19 +90,21 @@ function isAlive(pid) {
   catch (e) { return !!e && e.code === 'EPERM'; }
 }
 
-/** 同进程组判定（CP-1：平台事实留在平台层，业务域经本门面取用）。
- *  POSIX：detached spawn 的子孙进程 pgrp == 子进程 pid；win32 无 pgid 语义恒 false。
- *  macOS 无 /proc -> 走 catch 返回 false。 */
-function sameProcessGroup(pid, pgidLeader) {
-  if (!pid || !pgidLeader || isWindows) return false;
+/** zombie（已退出未回收）判定：kill(pid,0) 对 zombie 仍为 true，端口/stdio 却已释放，
+ *  停服等待必须能区分二者（反代关停台账此前在域内自读 /proc，现收口平台层）。
+ *  linux 读 /proc/<pid>/stat 状态位；macOS 无 /proc 走 ps state 列；win32 无 zombie 形态恒 false。 */
+function isZombie(pid) {
+  if (!Number.isInteger(pid) || pid <= 0 || isWindows) return false;
+  if (isLinux) {
+    try {
+      const st = fs.readFileSync('/proc/' + pid + '/stat', 'utf8');
+      const idx = st.lastIndexOf(') ');
+      return idx >= 0 && st[idx + 2] === 'Z';
+    } catch { return false; }
+  }
   try {
-    const st = fs.readFileSync('/proc/' + pid + '/stat', 'utf8');
-    // comm 字段可含空格且自带括号：以最后一个 ") " 为锚点，其后依次为 state/ppid/pgrp
-    //   => fields[0]=state、fields[1]=ppid、fields[2]=pgrp（写成 fields[1] 会误比父 pid）
-    const idx = st.lastIndexOf(') ');
-    if (idx < 0) return false;
-    const fields = st.slice(idx + 2).trim().split(/\s+/);
-    return Number(fields[2]) === Number(pgidLeader);
+    const o = ex.runOut('ps', ['-o', 'state=', '-p', String(pid)], { timeoutMs: 3000 });
+    return !!o && /^Z/.test(o.trim());
   } catch { return false; }
 }
 
@@ -182,5 +184,5 @@ function pgrepList(pattern) {
 
 module.exports = {
   linuxListeningInodes, linuxFind, macFind, winFind, linuxFindSs,
-  readCmdline, pgrepList, isAlive, sameProcessGroup,
+  readCmdline, pgrepList, isAlive, isZombie,
 };

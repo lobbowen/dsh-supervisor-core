@@ -49,8 +49,9 @@ class ProviderBase {
     throw new Error('detectAccount must be implemented by subclass');
   }
   // 能力契约声明（PG-1）。process-pool 能力面（startInstance/stopInstance/restartInstance/
-  // _waitHealthy/instanceOf/markUsed/markRequestOk/markInstanceNetFail/_retryPendingStop/
-  // flushRestartPending/reconcileInstances 及其 this 图所需的 accountOf/markInstanceProblem/_doStart）
+  // _waitHealthy/instanceOf/ensureServable/reclaimAccount/markRequestOk/markInstanceNetFail/
+  // _retryPendingStop/flushRestartPending/reconcileInstances 及其 this 图所需的
+  // accountOf/markInstanceProblem/_doStart）
   // 由 providers/process-pool.js 的 mixin 实现并并入 supports 词表——契约在能力方声明，
   // 基座不再携带实现不了的抛错占位；调用方一律以 supports(cap) 守卫。
   /** 本 provider 是否具备某项能力；缺省为无 process 能力（最保守）。 */

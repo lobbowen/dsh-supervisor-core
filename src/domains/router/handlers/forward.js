@@ -91,30 +91,15 @@ function createForwarder(deps) {
       acc = switcher.pickFor(prov, { excludeKeys: triedKeys });
       if (!acc || triedKeys.has(acc.key)) break;
       triedKeys.add(acc.key);
-      // 按需激活必须在 resolveTarget 之前（实例未启动 port=null，否则死锁）
+      // 按需可服务化必须在 resolveTarget 之前（实例未就绪 port=null，否则死锁）。
+      // 进程动作经引擎门面 ensureServable（LC 核心-1）：请求路径不再自发 start/kill。
       activeProv = prov;
       const curInst = parse.instOf(activeProv, acc);
       if (activeProv && activeProv.supports && activeProv.supports('instanceLifecycle') && curInst) {
-        activeProv.markUsed(curInst);
-        if (!curInst.pid || curInst.status !== 'HOT') {
-          const sr = await activeProv.startInstance(curInst).catch((e) => ({ ok: false, error: e && e.message }));
-          const ok = sr && sr.ok;
-          const budgetMs = activeProv.supports('switchBudget') ? activeProv._switchBudgetMs() : 2000;
-          const healthy = ok
-            ? await Promise.race([
-                activeProv._waitHealthy(curInst).catch(() => false),
-                new Promise((r) => setTimeout(() => r(false), budgetMs)),
-              ])
-            : false;
-          if (!healthy) {
-            log('INST-START-FAIL key=' + maskKey(acc.key) + ' err=' + ((sr && sr.error) || ('未在 ' + budgetMs + 'ms 内就绪')));
-            if (curInst && curInst.pid && activeProv.supports('prewarm')) {
-              try { activeProv.prewarmAsync(acc); } catch {}
-            } else if (curInst && curInst.pid) {
-              try { activeProv.stopInstance(curInst); } catch {}
-            }
-            continue;
-          }
+        const sv = await activeProv.ensureServable(acc).catch((e) => ({ ok: false, error: e && e.message }));
+        if (!sv || !sv.ok) {
+          log('INST-START-FAIL key=' + maskKey(acc.key) + ' err=' + ((sv && sv.error) || '实例未在等待期内就绪'));
+          continue;
         }
       }
       const rt = parse.resolveTarget(acc, prov);

@@ -2,23 +2,41 @@
 
 // npm 包缓存定位与预取（IO 叶子）。
 // 所有 require 在模块顶层（DF-8），无内联 require。
-// 只做「~/.npm/_npx 下的缓存 bin 定位」与「未命中时 npx --yes 预下载」。
+// 缓存根目录是平台事实，经 npx-forms#npxCacheDir 取（CP-1）；本模块只做「缓存 bin 定位
+// 「失效清理」与「未命中时 npx 预下载」，绝不自行拼 ~/.npm/_npx。
 
-const os = require('node:os');
 const path = require('node:path');
 const fs = require('node:fs');
 // 异步子进程必须走统一有界封装（裸 execFile 无 windowsHide，
-// Windows 上 npx.cmd 会弹控制台窗口，且绕过 timeout/SIGKILL/maxBuffer 纪律）。
+// Windows 上 .cmd 垫片既弹控制台又触发无 shell spawn EINVAL）。
 const ex = require('../../../platform/util/exec');
-const { npxBin } = require('../../../platform/os/exec-path');
+const { npxCacheDir, npxLauncher } = require('../../../platform/os/npx-forms');
 
-/** 定位已缓存的包 bin（~/.npm/_npx/<hash>/node_modules/<pkg>，取最新）。无则 null。 */
+const HASH_DIR_RE = /^[0-9a-f]{8,}$/i;
+
+/** 列出含 pkg 的缓存哈希目录（绝对路径）。 */
+function pkgCacheDirs(pkg) {
+  if (!pkg) return [];
+  const out = [];
+  try {
+    const npxDir = npxCacheDir();
+    if (!fs.existsSync(npxDir)) return out;
+    for (const d of fs.readdirSync(npxDir)) {
+      if (!HASH_DIR_RE.test(d)) continue;
+      if (fs.existsSync(path.join(npxDir, d, 'node_modules', pkg))) out.push(path.join(npxDir, d));
+    }
+  } catch {}
+  return out;
+}
+
+/** 定位已缓存的包 bin（<npxCacheDir>/<hash>/node_modules/<pkg>，按目录 mtime 取最新）。无则 null。 */
 function cachedPkgBin(pkg) {
   if (!pkg) return null;
+  let dirs = [];
   try {
-    const npxDir = path.join(os.homedir(), '.npm', '_npx');
+    const npxDir = npxCacheDir();
     if (!fs.existsSync(npxDir)) return null;
-    const dirs = fs.readdirSync(npxDir).filter((d) => /^[0-9a-f]{8,}$/i.test(d));
+    dirs = fs.readdirSync(npxDir).filter((d) => HASH_DIR_RE.test(d));
     dirs.sort((a, b) => { try { return fs.statSync(path.join(npxDir, b)).mtimeMs - fs.statSync(path.join(npxDir, a)).mtimeMs; } catch { return 0; } });
     for (const d of dirs) {
       const pkgDir = path.join(npxDir, d, 'node_modules', pkg);
@@ -36,6 +54,15 @@ function cachedPkgBin(pkg) {
   return null;
 }
 
+/** 清除含 pkg 的 npx 缓存哈希目录（强制重新拉取最新版）。返回删除数。 */
+function invalidatePkgCache(pkg) {
+  let removed = 0;
+  for (const dir of pkgCacheDirs(pkg)) {
+    try { fs.rmSync(dir, { recursive: true, force: true }); removed++; } catch {}
+  }
+  return removed;
+}
+
 /** 下载预取：缓存未命中 -> npx --yes 预下载（首次安装）。 */
 async function ensurePkgCached(provider, app) {
   if (!app || !app.pkg) return { ok: true };
@@ -44,10 +71,11 @@ async function ensurePkgCached(provider, app) {
     const regOrigin = provider.dist ? await provider.dist.selectRegistry(false).catch(() => null) : null;
     const env = Object.assign({}, process.env);
     if (regOrigin) { env.npm_config_registry = regOrigin; env.NPM_CONFIG_REGISTRY = regOrigin; }
+    const launcher = npxLauncher();
     // 预下载成败以下方缓存复检为准，runOutAsync 自身绝不 reject。
-    await ex.runOutAsync(npxBin(), ['--yes', app.pkg, '--help'], { env, timeoutMs: 120000 });
+    await ex.runOutAsync(launcher.program, [...launcher.args, '--yes', app.pkg, '--help'], { env, timeoutMs: 120000 });
     return { ok: !!cachedPkgBin(app.pkg) };
   } catch { return { ok: false }; }
 }
 
-module.exports = { cachedPkgBin, ensurePkgCached };
+module.exports = { cachedPkgBin, invalidatePkgCache, ensurePkgCached };

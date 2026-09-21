@@ -3,19 +3,23 @@
 // process-pool 能力面（mixin）：实例进程治理的契约方法归能力方实现，而非基座抛错占位。
 // 判据纪律：调用方以 supports(cap) 守卫，不按 kind 字面量分支——「有没有实例」是能力事实，
 // 「是不是反代」是身份标签，二者今天重合、明天（binary 分发/新协议族）不一定。
-// POOL_CAPS：instanceLifecycle/warmPool/switchBudget/reconcile/prewarm 为转发/调度既有消费点；
-// processPool=伞能力（_stopping 纪律、端口恢复等整组守卫）；gracefulStop=waitAllStopped 在途收敛。
+// POOL_CAPS：instanceLifecycle=池存在本身；reconcile=对账入口；processPool=伞能力
+// （_stopping 纪律、端口恢复等整组守卫）；gracefulStop=waitAllStopped 在途收敛。
 // 本文件方法自 proxy.js 搬移（方法体逐字保留）；池机制的 ctor 接线（重启编排/删账号钩子）
 // 一并归入 mixin——消费方 ctor 不再跨文件 this 调池方法，this 图保持单向（DG-4 语义）。
+// 生命周期引擎（PROXY-LIFECYCLE-STANDARD L-A）：进程动作唯一发出方。ensureServable 是
+// 请求路径/显式切换的统一可服务化门面，reclaimAccount 是等待区回收唯一入口，
+// _onStatusTransition 是状态迁移事件表的进程侧接线——外部只经门面驱动进程。
 
 const life = require('./instance-lifecycle');
 const restart = require('./restart');
 const probe = require('./probe');
+const pool = require('./pool');
 const pidlook = require('../../../platform/os/pidlookup');
 const ports = require('../../../platform/service/ports').shared;
+const { isServable } = require('../model');
 
-const POOL_CAPS = ['instanceLifecycle', 'warmPool', 'switchBudget', 'reconcile', 'prewarm',
-  'processPool', 'gracefulStop'];
+const POOL_CAPS = ['instanceLifecycle', 'reconcile', 'processPool', 'gracefulStop'];
 
 function withProcessPool(Base) {
   return class ProcessPoolMixin extends Base {
@@ -28,12 +32,16 @@ function withProcessPool(Base) {
         logger: this.logger,
         isStopping: () => this._stopping,
       });
-      // 删账号钩子（打破 base 到池的 this.stopInstance 反向边）：释放实例与端口绑定
+      // 删账号钩子（打破 base 到池的 this.stopInstance 反向边）：force 回收 + 释放端口 + 剪除
+      // 实例记录（删除是永久摘除，在途丢弃属预期语义；记录不留场，杜绝 reconcile 'orphan' 名义补停）。
       this._hooks = this._hooks || {};
       this._hooks.onDiscardAccount = (acc) => {
-        if (acc.instance) { try { this.stopInstance(acc.instance); } catch {} }
+        if (acc.instance) { try { this.stopInstance(acc.instance, true); } catch {} }
         try { ports.unregister('proxy:' + acc.keyId); } catch {}
-        if (acc.instance) acc.instance.port = null;
+        if (acc.instance) {
+          acc.instance.port = null;
+          this.instances = (this.instances || []).filter((i) => i !== acc.instance);
+        }
       };
     }
 
@@ -84,16 +92,42 @@ function withProcessPool(Base) {
      *  测试以 _doStart 打桩替换 spawn；留在 mixin 侧是为了 this 图单向（mixin 不回调消费方方法）。 */
     async _doStart(inst) { return probe.spawnInstance(this, inst); }
 
-    /** 标记实例被请求使用：只记录 lastUsedAt（清零归 markRequestOk，避免熔断计数到不了阈值）。 */
-    markUsed(inst) {
-      if (!inst) return;
-      inst.lastUsedAt = Date.now();
-    }
-
     /** 请求成功后清零失败计数（时机是熔断可达的全部要害）。不触碰健康监测的 _monitorFails。 */
     markRequestOk(inst) {
       if (!inst) return;
       inst._unhealthyCount = 0;
+    }
+
+    /** 统一可服务化门面（LC 核心-1：请求路径/显式切换经此驱动进程，不裸调 start/kill）：
+     *  幂等启动（startingPromise 去重）+ 预算内同步等待。opts.budgetMs=null 表示等满探活周期
+     *  （显式切换的启动预算，裁决 1：超时诚实报错，绝不静默换号）。 */
+    async ensureServable(acc, opts) {
+      const inst = this.instanceOf(acc);
+      if (!inst) return { ok: false, error: '实例不存在' };
+      if (isServable(inst)) return { ok: true };
+      const sr = await this.startInstance(inst).catch((e) => ({ ok: false, error: e && e.message }));
+      if (!sr || !sr.ok) return { ok: false, error: (sr && sr.error) || '启动失败' };
+      const budgetMs = opts && opts.budgetMs === null ? null : ((opts && opts.budgetMs) || pool.SWITCH_BUDGET_MS);
+      const healthyP = this._waitHealthy(inst).catch(() => false);
+      const healthy = budgetMs === null
+        ? await healthyP
+        : await Promise.race([healthyP, new Promise((r) => setTimeout(() => r(false), budgetMs))]);
+      if (healthy && isServable(inst)) return { ok: true };
+      return { ok: false, warming: !!inst.pid, error: '实例未在等待期内就绪' };
+    }
+
+    /** 等待区回收唯一入口（LC 核心-3）：force 终止 + 释放端口，账号进程层面同一轮零存在。
+     *  丢弃在途属预期语义——发不出请求的账号不该继续占进程（裁决：冻结零宽限）。幂等。 */
+    reclaimAccount(acc) { return life.reclaimAccount(this, acc); }
+
+    /** 状态迁移事件表接线（freeze.js setStatus 回调）：进入等待区（frozen/banned/discarded）
+     *  立即回收；恢复回可用池（status 回到 ready）立即重算期望集补缺口（LC 核心-5，不等周期对账的运气）。 */
+    _onStatusTransition(acc, prev, status) {
+      if (status === 'frozen' || status === 'banned' || status === 'discarded') {
+        try { this.reclaimAccount(acc); } catch {}
+      } else if (status === 'ready' && prev && prev !== 'ready') {
+        this.reconcileNow();
+      }
     }
 
     /** 实例停止（幂等）：在途/在用 -> 标记待停；force 跳过仲裁（委托 instance-lifecycle.js）。 */

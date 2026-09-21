@@ -24,6 +24,9 @@ function setStatus(acc, status, nextResetAt, error, autoRecover, provider) {
   }
   provider._persist();
   if (prev === status) return;
+  // 生命周期引擎钩子（PROXY-LIFECYCLE-STANDARD 事件表接线）：迁移的进程副作用归能力方
+  // mixin（process-pool）执行，本文件零 IO；直接冻结/解冻的回收与补槽由此触发。
+  if (typeof provider._onStatusTransition === 'function') provider._onStatusTransition(acc, prev, status);
   if (provider.events) {
     if (autoRecover) {
       provider.events.append('account_recovered', { provider: provider.name, key: acc.maskedKey, from: prev, to: status });

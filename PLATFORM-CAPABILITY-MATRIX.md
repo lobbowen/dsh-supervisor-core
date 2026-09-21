@@ -48,7 +48,7 @@ macOS 的**壳自启 / 壳自愈从项目奠基提交（`8867942`, 2026-09-01）
 | C1 | 产品数据目录 | ✅ | ✅ | ✅ | `platform/os/index.js` | A1 |
 | C2 | 可执行解析（PATH/标准目录/扩展名）| ✅ | ✅ | ✅ | `platform/os/exec-path.js` | A2 · cross-platform P0 |
 | C3 | 敏感文件保护 | ✅ `chmod` | ✅ `chmod` | ✅ `icacls`（真实 PATH 实测可用，且可用时绝不谎报 `none`） | `platform/os/file-protect.js` | A2 · cross-platform P1 · run `35488336734` 实测（原挂账结案见 AUDIT-REPORT §H-8-9/§H-7-16）。⚠ 本格证明的是 **CI windows runner**，不是任意 Windows 生产机 |
-| C4 | 进程信号 / 进程树终止 | ✅ 进程组 `kill(-pid)` | ✅ 进程组 | ✅ `taskkill /T` | `platform/os/process.js` | A2 |
+| C4 | 进程信号 / 进程树终止 | ✅ 进程组 `kill(-pid)` | ✅ 进程组 | ✅ `taskkill /T` | `platform/os/process.js`（负 pid 组信号唯一收口，CP-7）；池式消费者经载体门面 `platform/os/carrier.js`（PROXY-ISOLATION-STANDARD L1，反代域零裸 kill） | A2 · cross-platform P3 |
 | C5 | 端口 → PID 反查 | ✅ `/proc` + `ss` 兜底 | ✅ `lsof` | ✅ `netstat -ano` | `platform/os/pidlookup/index.js` | A2 |
 | C6 | 进程列表 / 命令行读取 | ✅ `pgrep -af` | ✅ `pgrep` + `ps` | ✅ CIM | `platform/os/pidlookup/index.js` | A2 |
 | C7 | 桌面通知 | ✅ `notify-send` | ✅ `osascript` | ✅ PowerShell 气泡 | `platform/os/notify.js` | A2 |

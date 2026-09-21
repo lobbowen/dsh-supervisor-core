@@ -278,6 +278,6 @@ function commandEntryViolation(cmdArr, opts) {
 }
 
 module.exports = {
-  resolveExecutable, candidateNames, standardDirs, npmBin, npxBin, resolveDsh, dshJsIn,
-  knownDshEntries, commandEntryViolation, isExecutableFile,
+  resolveExecutable, candidateNames, standardDirs, npmBin, npxBin,
+  resolveDsh, dshJsIn, knownDshEntries, commandEntryViolation, isExecutableFile,
 };

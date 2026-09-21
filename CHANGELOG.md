@@ -6,6 +6,63 @@
 
 ## [未发布]
 
+### 反代账号生命周期引擎 W1：期望集纠偏 + 事件表落地 + 旧锁拆迁（PROXY-LIFECYCLE-STANDARD）
+
+- **根因**：进程起停时机散落在额度阈值（80% 备胎）、闲置宽限（markUsed/lastUsedAt）、
+  假配置面（proxyInstanceLimits 无任何注入方）三套旧语义里，坏账号退场后进程与端口仍
+  滞留（等待区不是零存在），且 DEAD 态与 pid 字段互相矛盾（probe 子进程 error 只清 pid
+  不改 status）。标准见 PROXY-LIFECYCLE-STANDARD.md（已入 README/standards 登记）。
+- **锁的旧形状 -> 新不变量**（拆迁逐项，判据同批落地）：
+  - `R1 常驻1+（>=80% 才补）备胎` -> **期望集恒为 在用1+预热1**，按 registeredAt 登记序
+    （裁决 2）；pool.js 纯决策（ACTIVE_SLOTS/PREWARM_SLOTS 引擎常量），restart.js 消费执行。
+  - `R2 selected/额度择优归属` -> **selected 提为在用、预热槽 sticky 留任**（裁决 4），
+    退位者走停止仲裁回收、下一拍端口归零。
+  - `R4 冻结后等周期对账` -> **状态事件表**：freeze.setStatus 回调 `_onStatusTransition`，
+    frozen/banned/discarded 同一轮 `reclaimAccount`（force kill + ports.unregister + port=null），
+    恢复回 ready 立即 `reconcileNow`（LC 核心-5）。
+  - `markUsed/lastUsedAt/IDLE_RECLAIM_GRACE 闲置宽限` -> **删除**（宽限期不存在，回收零延迟）；
+    请求路径改引擎门面 `ensureServable`（forward/admin 均不再裸编排 startInstance/_waitHealthy），
+    成功计数归 `markRequestOk`（R-a 熔断不变量迁移到 mixin 判据）。
+  - `prewarmAsync/needSpare/_switchBudgetMs/DEFAULT_MAX_HOT·WARM/proxyInstanceLimits/
+    createPoolPolicy/residentAccount/stopInstanceIfAny` -> **全部删除**，零消费方；
+    PG-4 判据从「maxHot/maxWarm 存在且被引用」反转为「假配置面零残留 + 门面 + 事件表」。
+  - `E6 DEAD 矛盾` -> probe 子进程 error 置 `pid=null + status=COLD`（COLD 可再拉起），
+    reconcile 对 DEAD 残留态收敛。`E11 孤儿记录` -> discard 钩子剪枝 instances + reconcile
+    对残余孤儿补剪。
+- **测试拆迁**：reconcile-instance-test R1–R4/R9 按新契约重写（registeredAt 显式化、
+  sticky/端口归零/事件表同步回收断言）；circuit-breaker R-a 改锁「markUsed/lastUsedAt 零残留」；
+  PG-1 契约表 markUsed -> ensureServable/reclaimAccount。本机静态门禁全绿；
+  运行时契约由 CI 矩阵裁决（本机严禁跑测试套件）。
+
+### 反代进程隔离标准化：平台事实上收 + 受管进程载体 + CP-5..9 牙齿（PROXY-ISOLATION-STANDARD）
+
+- **根因**：反代链绕过平台层、域内自带 POSIX 假设——裸 `process.kill(-pid)`（win32 只杀 .cmd 壳，
+  占端口子孙存活成孤儿）、`sameProcessGroup` 读 `/proc`（macOS 恒 false，自家进程误判外部占用）、
+  直 spawn `npx.cmd`（CVE-2024-27980 必 EINVAL）、硬编码 `~/.npm/_npx`（win 缓存实为
+  `%LOCALAPPDATA%\npm-cache\_npx`）。同类缺陷本仓已在别处修过三次，这次立标准断根。
+- **L0 平台事实上收**（`platform/os/npx-forms.js`，新；自 exec-path 分文件，使其不越 DG-2 ≤300 线）：
+  新增 `npxLauncher`（node-direct `npx-cli.js` 成对形态，探不到回退 PATH）与 `npxCacheDir`
+  （三平台正确缓存根）；`pidlookup` 补 `isZombie`
+  （win 恒 false / linux /proc / darwin ps），域内自读 `/proc` 的 waitAllStopped 改经门面；
+  macOS 恒 false 的 `sameProcessGroup` 随消费面清零**删除**（死代码不留）。
+- **L1 受管进程载体**（`platform/os/carrier.js`，新）：池式消费者拉起外部进程唯一通道——
+  `start`（detached+管道+run.pid）、`probe`（三态 ours/foreign/dead，归属判定复用
+  portable#findOurs 锚点引擎，全仓唯一一份）、`signalTermination`（SIGTERM+1.5s 台账升 SIGKILL）、
+  `stop`（确认式有界停止）。`portable.js` 导出 findOurs/matchesAnchors 供载体共用。
+- **router 反代链切换消费**：probe.js 拉起改走 carrier（identity={port,pidFile,anchors:[pkg,'--port N']}），
+  监控占用误判改 `probe().state==='foreign'`，幸存者回收/挂死强杀/全停等待改 `os/process#killTree`；
+  instance-lifecycle 裸 `kill(-pid)` 改 `carrier.signalTermination`；command.js npx 回退形
+  `[l.program,...l.args,...]` 成对形态；pkg-cache 收敛缓存扫描为 `invalidatePkgCache` 单一实现
+  （apps-registry 第二份删除），密钥仍只经 env（PG-6 不变）。
+- **机器牙齿**：CP-5..CP-8（域内零裸 process.kill、零 /proc 字面、负 pid 只在 os/process、
+  零 .cmd/_npx 字面，各带反向合成）+ CP-9（门禁真读标准正文，锁三层职责与条款编号防漂移）；
+  CI 契约冒烟 P3-a..f 并入 `cross-platform-test.js`（假供应商真 spawn/探活/锚点归属/foreign
+  不误杀/终止端口释放/确认停止，四平台矩阵裁决）；D-6 监控判据断言同步改 carrier 形状。
+- **标准成文**：`PROXY-ISOLATION-STANDARD.md` 入册（L0/L1/L2 职责 + 禁项表 + 新增供应商纯 L2
+  验收单），standards-uniqueness 登记（reads:true 经 CP-9 属实），README 索引与矩阵 C4 行同步。
+- 验证：node --check 全绿；静态门禁（cross-platform-architecture 23/23、no-console-window 12/12、
+  provider-gateway 35/35、layering 13/13）；运行时行为（P3 真进程冒烟、D-6）由 CI 四平台裁决。
+
 ### 账号账本读写收口：usage-totals 单一实现 + 只读实例鲜度纪律（PG-12）
 
 - **缺陷（行为变更，内嵌只读模式）**：`UsageLedger.load()` 一次读盘后永久缓存；守卫/内嵌实例

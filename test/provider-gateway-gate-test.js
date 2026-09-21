@@ -8,7 +8,7 @@
 //   PG-1 两类 pattern 的抽象方法必须显式声明（构造期可校验）
 //   PG-2 转发层不得用 `typeof === 'function'` 猜测能力（应为 supports()）
 //   PG-3 实例态只用 COLD/WARM/HOT/DEAD 四态
-//   PG-4 资源上限 maxHot/maxWarm 必须存在且被 Reconciler 引用
+//   PG-4 生命周期引擎：槽位预算（在用1+预热1）+ 请求路径走引擎门面 + 状态事件表
 //   PG-5 ctl 只能调用白名单内方法（内部方法不可达）
 //   PG-6 凭证只经 env 注入，绝不进 spawn 命令行
 //   PG-7 写权：所有落盘经统一写权闸
@@ -118,12 +118,13 @@ const idxSrc = read(IDX);
   const ppSrc = read('src/domains/router/providers/process-pool.js');
   // 设计更新（判据统一阶段3）：process-pool 契约的显式声明**迁出基座、落在能力方 mixin**——
   //   基座携带实现不了的抛错占位会诱导调用方退回 typeof 猜测；契约面与实现面同文件收口。
-  // 判据仍是"达到设计要求的数量"：detectAccount 基座抛错 1 个 + process-pool 契约 11 个在 mixin 定义。
+  // 判据仍是"达到设计要求的数量"：detectAccount 基座抛错 1 个 + process-pool 契约 12 个在 mixin 定义。
+  //   markUsed 已随闲置宽限废止；生命周期引擎门面（ensureServable/reclaimAccount）入列（W1）。
   const baseThrows = (stripComments(baseSrc).match(/must be implemented by subclass/g) || []).length;
   const POOL_CONTRACT = ['startInstance', 'stopInstance', 'restartInstance', '_waitHealthy', 'instanceOf',
-    'markUsed', 'markRequestOk', 'markInstanceNetFail', '_retryPendingStop', 'flushRestartPending', 'reconcileInstances'];
+    'ensureServable', 'reclaimAccount', 'markRequestOk', 'markInstanceNetFail', '_retryPendingStop', 'flushRestartPending', 'reconcileInstances'];
   const ppDefs = POOL_CONTRACT.filter((n) => new RegExp('^\\s*(?:async\\s+)?' + n + '\\s*\\(', 'm').test(stripComments(ppSrc)));
-  check('PG-1 契约显式声明：基座 detectAccount + mixin 的 11 个 process-pool 能力方法',
+  check('PG-1 契约显式声明：基座 detectAccount + mixin 的 12 个 process-pool 能力方法',
     baseThrows >= 1 && ppDefs.length === POOL_CONTRACT.length,
     'base=' + baseThrows + ' mixin=' + ppDefs.length + '/' + POOL_CONTRACT.length);
   // 能力声明 supports() 必须存在（两类 pattern 的差异靠它表达）
@@ -170,28 +171,41 @@ const idxSrc = read(IDX);
 }
 
 // ---------------------------------------------------------------------------
-// PG-4 资源上限 maxHot/maxWarm（Phase 4 目标）
+// PG-4 生命周期引擎（W1）：槽位预算常量 + 请求路径走引擎门面 + 状态事件表
+//   旧的 maxHot/maxWarm 假配置面与 80%-备胎/双预算切换语义随 PROXY-LIFECYCLE-STANDARD 废止。
 // ---------------------------------------------------------------------------
 {
+  const poolOnly = stripComments(read('src/domains/router/providers/pool.js'));
+  const restartOnly = stripComments(read('src/domains/router/providers/restart.js'));
+  const freezeOnly = stripComments(read('src/domains/router/providers/policies/freeze.js'));
   const code = stripComments(providerSrc);
-  // 资源闸：常量存在 + 被 _limits()/desiredRunningAccounts 实际引用（不能只是定义了不用）。
-  const hasCaps = /DEFAULT_MAX_HOT|DEFAULT_MAX_WARM/.test(code);
-  const usedInGate = /maxHot/.test(code) && /desiredRunningAccounts/.test(code);
-  check('PG-4 存在 maxHot/maxWarm 资源上限且被 reconcile 引用',
-    hasCaps && usedInGate,
-    (hasCaps ? '有常量' : '无常量') + ' / ' + (usedInGate ? '已被引用' : '未被引用'));
-  // 双预算切换：同步预算存在 + 异步预置存在
-  const hasBudget = /_switchBudgetMs/.test(code) && /DEFAULT_SWITCH_BUDGET_MS/.test(code);
-  const hasPrewarm = /prewarmAsync/.test(code);
+  // 资源闸：期望集槽位常量必须存在**且被 computeDesired 引用**（不能只是定义了不用）。
+  const hasCaps = /ACTIVE_SLOTS\s*=\s*1/.test(poolOnly) && /PREWARM_SLOTS\s*=\s*1/.test(poolOnly);
+  const computeBody = (poolOnly.match(/function computeDesired[\s\S]*?\n\}/) || [''])[0];
+  const usedInGate = /ACTIVE_SLOTS/.test(computeBody) && /PREWARM_SLOTS/.test(computeBody);
+  // 假配置面（proxyInstanceLimits / DEFAULT_MAX_HOT / DEFAULT_MAX_WARM / needSpare）零残留。
+  const fakeGone = !/proxyInstanceLimits|DEFAULT_MAX_HOT|DEFAULT_MAX_WARM|needSpare/.test(code);
+  check('PG-4 槽位预算（在用1+预热1）定义于 pool.js 且被 computeDesired 引用，假配置面零残留',
+    hasCaps && usedInGate && fakeGone,
+    '常量=' + hasCaps + ' computeDesired引用=' + usedInGate + ' 假配置面残留=' + !fakeGone);
+  // 请求路径经引擎门面：forward 只调 ensureServable，不得再裸编排 startInstance/prewarmAsync。
   const fwd = stripComments(forwardSrc);
-  const budgetUsed = /_switchBudgetMs/.test(fwd) && /prewarmAsync/.test(fwd);
-  check('PG-4 双预算切换（同步预算 ≤ switchBudgetMs + 后台 prewarmAsync）',
-    hasBudget && hasPrewarm && budgetUsed,
-    '预算方法=' + hasBudget + ' 预置方法=' + hasPrewarm + ' 转发层使用=' + budgetUsed);
-  // 预热规范化：触发条件扩展（不再是单一 80%）
-  const multiTrigger = /故障前兆|时间维度|资源允许|_unhealthyCount/.test(code);
-  check('PG-4 预热触发条件已扩展（不再是单一额度阈值）',
-    multiTrigger, multiTrigger ? 'ok（含故障前兆/时间维度/资源闸）' : '仍只有单一 80% 阈值');
+  const usesFacade = /ensureServable\(/.test(fwd);
+  const noRawOrchestration = !/\.startInstance\(/.test(fwd) && !/prewarmAsync/.test(fwd);
+  check('PG-4 请求路径走引擎门面 ensureServable（裸 startInstance / prewarmAsync 零残留）',
+    usesFacade && noRawOrchestration,
+    '门面=' + usesFacade + ' 裸编排残留=' + !noRawOrchestration);
+  // 反向：判据能识别 W1 前"转发层裸编排启动"的旧形态
+  const OLD_RAW = "const sr = await prov.startInstance(inst); await prov._waitHealthy(inst); prov.prewarmAsync(acc);";
+  check('PG-8 反向：PG-4 门面判据能识别裸编排旧形态',
+    /\.startInstance\(/.test(OLD_RAW) && /prewarmAsync/.test(OLD_RAW), 'hit');
+  // 事件表落地：冻结/封禁/删除即时回收 + 恢复回池（freeze 钩子），等待区端口随回收释放（restart）。
+  const hasHook = /_onStatusTransition\s*\(/.test(freezeOnly) && /_onStatusTransition\(acc/.test(freezeOnly);
+  const hasPrewarmReclaim = /reclaimAccount/.test(code) && /_prewarmKeyId/.test(code);
+  const portReleaseInReconcile = /ports\.unregister\(/.test(restartOnly);
+  check('PG-4 状态事件表：冻结即时回收（_onStatusTransition）+ 期望集消费与端口释放（reconcile）',
+    hasHook && hasPrewarmReclaim && portReleaseInReconcile,
+    '钩子=' + hasHook + ' 回收门面=' + hasPrewarmReclaim + ' reconcile端口释放=' + portReleaseInReconcile);
 }
 
 // ---------------------------------------------------------------------------
