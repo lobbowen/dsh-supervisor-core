@@ -171,7 +171,7 @@ async function monitorLifecycle(provider) {
       // exact-pid 等值判据在 npx --yes 兜底形态下恒不成立 ——
       //   命令为 [npxBin, --yes, pkg, ...]，spawn 的是 npx，真正监听端口的是其子孙 node。
       //   误判后果不是「重启」而是**留下孤儿**：此处把 pid 抹掉后，stopInstance 的 kill 段
-      //   以 inst.pid 为判据（instance-lifecycle.js:38），真实进程恒不可达地继续占端口。
+      //   以 inst.pid 为判据（instance-lifecycle.js），真实进程恒不可达地继续占端口。
       //   改判据：监听者与被管实例**不同进程组**才算被外部进程占住（detached 子孙同组，放行）。
       //   进程组判定是平台事实，经 pidlook 门面取（CP-1：业务域不得自带 process.platform//proc）。
       //   监听者查不到（inet-diag 回退）不改判：交给下方 HTTP 探活（进程活着但不健康

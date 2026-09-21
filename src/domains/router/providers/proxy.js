@@ -10,8 +10,6 @@ const { withProcessPool } = require('./process-pool');
 const { keyFingerprint, maskKey } = require('./model');
 const { ProxyInstance } = require('../model');
 require('../port-segments'); // 本域端口段/独立池申报（require 即注入）
-const ports = require('../../../platform/service/ports').shared;
-const pidlook = require('../../../platform/os/pidlookup');
 const { npxBin } = require('../../../platform/os/exec-path');
 const { buildCommand } = require('./command');
 const probe = require('./probe');
@@ -33,23 +31,10 @@ class ProxyProvider extends withProcessPool(ProviderBase) {
     this._stopping = false; // 关停标记：stop() 前置真，期间不预启动
     this._terminatingPids = new Set(); // 停服台账：已发 SIGTERM 的子进程 pid
     this._pool = poolPolicy.createPoolPolicy({ getConfig: () => this.config });
-    this._restart = restart.createRestartOrchestrator({
-      startInstance: (inst) => this.startInstance(inst),
-      waitHealthy: (inst) => this._waitHealthy(inst),
-      isAlive: (pid) => { try { return pidlook.isAlive ? pidlook.isAlive(pid) : true; } catch { return true; } },
-      logger: this.logger,
-      isStopping: () => this._stopping,
-    });
-    // ctor 注入钩子（打破 base 到 proxy 的 this.stopInstance 反向边）：删账号时释放实例与端口绑定
-    this._hooks = this._hooks || {};
-    this._hooks.onDiscardAccount = (acc) => {
-      if (acc.instance) { try { this.stopInstance(acc.instance); } catch {} }
-      try { ports.unregister('proxy:' + acc.keyId); } catch {}
-      if (acc.instance) acc.instance.port = null;
-    };
+    // 重启编排器与删账号钩子在 withProcessPool 的 mixin ctor 装配（process-pool.js）。
   }
 
-  /** 能力声明：基座 ∪ process-pool 并集在 withProcessPool mixin 完成（process-pool.js）。 */
+  /** 能力声明：基座与 process-pool 的并集在 withProcessPool mixin 完成（process-pool.js）。 */
 
   async ensureInstance(key) {
     let inst = this.instances.find((i) => i.key === key);

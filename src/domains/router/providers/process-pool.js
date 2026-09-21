@@ -5,21 +5,49 @@
 // 「是不是反代」是身份标签，二者今天重合、明天（binary 分发/新协议族）不一定。
 // POOL_CAPS：instanceLifecycle/warmPool/switchBudget/reconcile/prewarm 为转发/调度既有消费点；
 // processPool=伞能力（_stopping 纪律、端口恢复等整组守卫）；gracefulStop=waitAllStopped 在途收敛。
-// 本文件方法自 proxy.js 纯搬移（函数体一字不改）；proxy 专属的其余方法仍留 proxy.js。
+// 本文件方法自 proxy.js 搬移（方法体逐字保留）；池机制的 ctor 接线（重启编排/删账号钩子）
+// 一并归入 mixin——消费方 ctor 不再跨文件 this 调池方法，this 图保持单向（DG-4 语义）。
 
 const life = require('./instance-lifecycle');
 const restart = require('./restart');
 const probe = require('./probe');
 const pidlook = require('../../../platform/os/pidlookup');
+const ports = require('../../../platform/service/ports').shared;
 
 const POOL_CAPS = ['instanceLifecycle', 'warmPool', 'switchBudget', 'reconcile', 'prewarm',
   'processPool', 'gracefulStop'];
 
 function withProcessPool(Base) {
   return class ProcessPoolMixin extends Base {
-    /** 能力声明 = 基座能力 ∪ process-pool 能力。 */
+    constructor(o) {
+      super(o);
+      this._restart = restart.createRestartOrchestrator({
+        startInstance: (inst) => this.startInstance(inst),
+        waitHealthy: (inst) => this._waitHealthy(inst),
+        isAlive: (pid) => { try { return pidlook.isAlive ? pidlook.isAlive(pid) : true; } catch { return true; } },
+        logger: this.logger,
+        isStopping: () => this._stopping,
+      });
+      // 删账号钩子（打破 base 到池的 this.stopInstance 反向边）：释放实例与端口绑定
+      this._hooks = this._hooks || {};
+      this._hooks.onDiscardAccount = (acc) => {
+        if (acc.instance) { try { this.stopInstance(acc.instance); } catch {} }
+        try { ports.unregister('proxy:' + acc.keyId); } catch {}
+        if (acc.instance) acc.instance.port = null;
+      };
+    }
+
+    /** 能力声明 = 基座能力与 process-pool 能力的并集。 */
     supports(cap) {
       return POOL_CAPS.includes(cap) || super.supports(cap);
+    }
+
+    /** 使用状态在基座（in-use/idle）上派生 warming：实例在场是池能力，覆写归 mixin。 */
+    usageOf(acc) {
+      const r = super.usageOf(acc);
+      if (r !== 'idle') return r;
+      const inst = this.instanceOf(acc);
+      return inst && inst.pid ? 'warming' : 'idle';
     }
 
     accountOf(inst) { return this.accounts.find((a) => a.key === inst.key) || null; }
@@ -69,7 +97,7 @@ function withProcessPool(Base) {
     }
 
     /** 实例停止（幂等）：在途/在用 -> 标记待停；force 跳过仲裁（委托 instance-lifecycle.js）。 */
-    stopInstance(inst, force) { return life.stopInstance(this, inst, force); }
+    stopInstance(inst, force) { return life.arbitrateStop(this, inst, force); }
     /** 请求结束补刀（委托 instance-lifecycle.js）。 */
     _retryPendingStop(acc) { return life.retryPendingStop(this, acc); }
     async _waitHealthy(inst, tries) { return life.waitHealthy(this, inst, tries); }

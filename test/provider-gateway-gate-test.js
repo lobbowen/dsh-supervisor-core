@@ -111,16 +111,19 @@ const idxSrc = read(IDX);
 // ---------------------------------------------------------------------------
 {
   const baseSrc = read('src/domains/router/providers/base.js');
-  // 统计"契约占位抛错"的总数（含 detectAccount 的 by subclass 与 process-pool 能力面的 by process-pool provider）。
-  const throwsNotImpl = (stripComments(baseSrc).match(/must be implemented by (subclass|process-pool provider)/g) || []).length;
-  // 设计要求：process-pool 的能力方法也应在基类声明（当前一个都没有 -> 本项应 FAIL）。
-  //    判据不能是">=1"（恒真，等于空转）——必须是"达到设计要求的数量"。
-  // 设计要求：process-pool 的能力面（11 个）都应在基类显式声明 + detectAccount = 12。
-  check('PG-1 基类显式声明全部抽象能力方法（detectAccount + 11 个 process-pool 能力）',
-    throwsNotImpl >= 12,
-    '当前声明 ' + throwsNotImpl + ' 个（应 ≥12）');
+  const ppSrc = read('src/domains/router/providers/process-pool.js');
+  // 设计更新（判据统一阶段3）：process-pool 契约的显式声明**迁出基座、落在能力方 mixin**——
+  //   基座携带实现不了的抛错占位会诱导调用方退回 typeof 猜测；契约面与实现面同文件收口。
+  // 判据仍是"达到设计要求的数量"：detectAccount 基座抛错 1 个 + process-pool 契约 11 个在 mixin 定义。
+  const baseThrows = (stripComments(baseSrc).match(/must be implemented by subclass/g) || []).length;
+  const POOL_CONTRACT = ['startInstance', 'stopInstance', 'restartInstance', '_waitHealthy', 'instanceOf',
+    'markUsed', 'markRequestOk', 'markInstanceNetFail', '_retryPendingStop', 'flushRestartPending', 'reconcileInstances'];
+  const ppDefs = POOL_CONTRACT.filter((n) => new RegExp('^\\s*(?:async\\s+)?' + n + '\\s*\\(', 'm').test(stripComments(ppSrc)));
+  check('PG-1 契约显式声明：基座 detectAccount + mixin 的 11 个 process-pool 能力方法',
+    baseThrows >= 1 && ppDefs.length === POOL_CONTRACT.length,
+    'base=' + baseThrows + ' mixin=' + ppDefs.length + '/' + POOL_CONTRACT.length);
   // 能力声明 supports() 必须存在（两类 pattern 的差异靠它表达）
-  //  能力声明随 process-pool mixin 走（判据统一阶段③）——按整组读，文件一搬判据不失覆盖面。
+  //  能力声明随 process-pool mixin 走（判据统一阶段 3）——按整组读，文件一搬判据不失覆盖面。
   const proxySrc2 = read('src/domains/router/providers/proxy.js') + String.fromCharCode(10)
     + read('src/domains/router/providers/process-pool.js');
   const directSrc2 = read('src/domains/router/providers/direct.js');

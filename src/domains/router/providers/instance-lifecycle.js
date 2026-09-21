@@ -21,8 +21,9 @@ function canStopInstance(provider, acc) {
 //   实例若被悬挂在途请求无限续命，可活过冻结很久。到期后 force kill（丢在途请求是预期语义）。
 const STOP_PENDING_MAX_MS = 5 * 60 * 1000;
 
-/** 实例停止（幂等）：在途/在用 -> 标记待停（请求结束补刀/reconcile 补停）；force 跳过仲裁。 */
-function stopInstance(provider, inst, force) {
+/** 实例停止仲裁入口（幂等）：在途/在用 -> 标记待停（请求结束补刀/reconcile 补停）；force 跳过仲裁。
+ *  更名 arbitrateStop：与 process-pool mixin 的 stopInstance 方法消歧（DG-4c 同名歧义）。 */
+function arbitrateStop(provider, inst, force) {
   if (!inst) return;
   const acc = provider.accounts.find((a) => a.keyId === inst.keyId) || null;
   if (acc && !force && !canStopInstance(provider, acc)) {
@@ -67,7 +68,7 @@ function retryPendingStop(provider, acc) {
   if (!acc || !acc._stopPendingUntilIdle) return;
   if ((acc.inflight || 0) > 0) return;
   const inst = provider.instanceOf(acc);
-  if (inst && inst.pid) { stopInstance(provider, inst); }
+  if (inst && inst.pid) { arbitrateStop(provider, inst); }
   else { acc._stopPendingUntilIdle = false; acc._stopPendingSince = 0; }
 }
 
@@ -75,7 +76,7 @@ function retryPendingStop(provider, acc) {
 function stopInstanceIfAny(provider, acc) {
   if (!acc) return;
   const inst = provider.instanceOf(acc);
-  if (inst) { try { stopInstance(provider, inst); } catch {} }
+  if (inst) { try { arbitrateStop(provider, inst); } catch {} }
 }
 
 async function waitHealthy(provider, inst, tries) {
@@ -134,10 +135,10 @@ async function addAccount(provider, key, extra) {
   const summary = provider.accountQuotaSummary(acc);
   // 统一入库：与 base 同一 applyDetection 状态机（受限则 frozen + limit + recovery，正常则 ready）
   provider.applyDetection(acc, { ok: true, quota: det.quota || null });
-  if (acc.status === 'frozen' && acc.instance && acc.instance.pid) { try { stopInstance(provider, acc.instance); } catch {} }
+  if (acc.status === 'frozen' && acc.instance && acc.instance.pid) { try { arbitrateStop(provider, acc.instance); } catch {} }
   if (acc.status === 'ready' && provider.events) provider.events.append('account_ready', { provider: provider.name, key: acc.maskedKey });
   const limited = (acc.limit && acc.limit.kind) || null;
   return { ok: true, account: acc, review: false, ...(limited ? { limited } : {}), quota: summary };
 }
 
-module.exports = { canStopInstance, stopInstance, retryPendingStop, stopInstanceIfAny, waitHealthy, isAccountUsable, addAccount };
+module.exports = { canStopInstance, arbitrateStop, retryPendingStop, stopInstanceIfAny, waitHealthy, isAccountUsable, addAccount };

@@ -213,7 +213,7 @@ console.log('== ③ 删除路径 force 停实例 ==');
 // -- 4) 重启必须真正停掉进程 --
 console.log('== ④ 重启真正停进程 ==');
 {
-  //  restartInstance 等 process-pool 契约方法已抽入 mixin（判据统一阶段③）——按整组读。
+  //  restartInstance 等 process-pool 契约方法已抽入 mixin（判据统一阶段 3）——按整组读。
   const px = strip(read('src/domains/router/providers/proxy.js') + String.fromCharCode(10)
     + read('src/domains/router/providers/process-pool.js'));
   check('④ restartInstance 用 force 停实例（旧为不带 force）',

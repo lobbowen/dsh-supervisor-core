@@ -76,7 +76,7 @@ function createForwarder(deps) {
     // inflight.begin 之后任何跳出（writeThrough 抛错、
     //   writeHead 抛错、await 中断、上游 reader 事件里抛错冒泡）都不许留在途计数。
     //   一次 begin 只结束一次：endAttempt 幂等，漏调由 finally 兜底。
-    //   泄漏后果：instance-lifecycle 的 canStopInstance/stopInstance 与 proxy 的 pendingStop
+    //   泄漏后果：instance-lifecycle 的 canStopInstance/arbitrateStop 与 proxy 的 pendingStop
     //   都以 inflight>0 为「不可停」判据，计数永不归零 => 实例悬挂、restartPending 永不补做。
     let attemptEnded = true;
     let activeProv = prov;
@@ -145,7 +145,7 @@ function createForwarder(deps) {
         }
         if (!isTimeout) {
           // 先停实例再清 pid。原先只置 pid=null，
-          //   而 stopInstance 的 kill 段以 inst.pid 为判据（instance-lifecycle.js）——
+          //   而 arbitrateStop 的 kill 段以 inst.pid 为判据（instance-lifecycle.js）——
           //   先把 pid 抹掉等于让唯一 kill 路径恒不可达，本地反代进程留存并继续占端口。
           //   endAttempt() 已在上方执行，inflight 归零后 stopInstance 不会走 pendingStop 延后分支。
           try {

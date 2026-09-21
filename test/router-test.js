@@ -164,19 +164,19 @@ const check = (n, c, x) => { results.push(!!c); console.log((c ? 'PASS' : 'FAIL'
     };
     // 期限内：在途 -> 仅标记待停 + 记 _stopPendingSince。
     const a = mkCase();
-    life.stopInstance(a.p, a.inst);
+    life.arbitrateStop(a.p, a.inst);
     check('B20 期限内：在途 stop 仅延后（置 pending + 记起始时刻）',
       a.acc._stopPendingUntilIdle === true && typeof a.acc._stopPendingSince === 'number' && a.acc._stopPendingSince > 0,
       JSON.stringify({ pend: a.acc._stopPendingUntilIdle, since: a.acc._stopPendingSince }));
     // 反向（防空转）：再次 stop（仍在期限内）仍延后——证明是「到期」才放行，非首拍即放行。
-    life.stopInstance(a.p, a.inst);
+    life.arbitrateStop(a.p, a.inst);
     check('B20 反向：未到期重复 stop 仍延后', a.acc._stopPendingUntilIdle === true, String(a.acc._stopPendingUntilIdle));
     // 越界：把起始时刻拨到期限之后 -> stop 不再延后，落 kill 分支（pid=null -> 置 COLD）并清标记。
     const b = mkCase();
-    life.stopInstance(b.p, b.inst); // 先置 since
+    life.arbitrateStop(b.p, b.inst); // 先置 since
     b.acc._stopPendingSince = Date.now() - (6 * 60 * 1000); // 超过 5min 期限
     b.acc.inflight = 1; // 仍在途（有界期限应无视在途强停）
-    life.stopInstance(b.p, b.inst);
+    life.arbitrateStop(b.p, b.inst);
     check('B20 到期：即使仍在途也停止延后，清 pending/since 并置 COLD',
       b.acc._stopPendingUntilIdle === false && b.acc._stopPendingSince === 0 && b.inst.status === 'COLD',
       JSON.stringify({ pend: b.acc._stopPendingUntilIdle, since: b.acc._stopPendingSince, st: b.inst.status }));

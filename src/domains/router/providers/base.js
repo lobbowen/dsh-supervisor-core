@@ -48,21 +48,13 @@ class ProviderBase {
   async detectAccount(acc) {
     throw new Error('detectAccount must be implemented by subclass');
   }
-  // 能力契约声明（PG-1）
+  // 能力契约声明（PG-1）。process-pool 能力面（startInstance/stopInstance/restartInstance/
+  // _waitHealthy/instanceOf/markUsed/markRequestOk/markInstanceNetFail/_retryPendingStop/
+  // flushRestartPending/reconcileInstances 及其 this 图所需的 accountOf/markInstanceProblem/_doStart）
+  // 由 providers/process-pool.js 的 mixin 实现并并入 supports 词表——契约在能力方声明，
+  // 基座不再携带实现不了的抛错占位；调用方一律以 supports(cap) 守卫。
   /** 本 provider 是否具备某项能力；缺省为无 process 能力（最保守）。 */
   supports(_cap) { return false; }
-  // process-pool 能力面的契约占位（默认抛错，避免被误当 no-op 使用）
-  async startInstance() { throw new Error('startInstance must be implemented by process-pool provider'); }
-  async stopInstance() { throw new Error('stopInstance must be implemented by process-pool provider'); }
-  async restartInstance() { throw new Error('restartInstance must be implemented by process-pool provider'); }
-  async _waitHealthy() { throw new Error('_waitHealthy must be implemented by process-pool provider'); }
-  instanceOf() { throw new Error('instanceOf must be implemented by process-pool provider'); }
-  markUsed() { throw new Error('markUsed must be implemented by process-pool provider'); }
-  markRequestOk() { throw new Error('markRequestOk must be implemented by process-pool provider'); }
-  markInstanceNetFail() { throw new Error('markInstanceNetFail must be implemented by process-pool provider'); }
-  _retryPendingStop() { throw new Error('_retryPendingStop must be implemented by process-pool provider'); }
-  flushRestartPending() { throw new Error('flushRestartPending must be implemented by process-pool provider'); }
-  reconcileInstances() { throw new Error('reconcileInstances must be implemented by process-pool provider'); }
 
   accountQuotaSummary(acc) { return quota.accountQuotaSummary(acc); }
 
@@ -174,10 +166,7 @@ class ProviderBase {
   usageOf(acc) {
     if (!acc) return 'idle';
     if (this.activeAccount && this.activeAccount.keyId === acc.keyId) return 'in-use';
-    if (this.supports('instanceLifecycle')) {
-      const inst = this.instanceOf(acc);
-      if (inst && inst.pid) return 'warming';
-    }
+    // warming（实例已热但未在用）由 process-pool mixin 覆写派生；基座只认在用一个事实。
     return 'idle';
   }
 
