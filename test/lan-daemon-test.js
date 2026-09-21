@@ -15,12 +15,13 @@ const path = require('node:path');
 const fs = require('node:fs');
 const os = require('node:os');
 const { spawn } = require('node:child_process');
+const { safePort } = require(path.join(__dirname, '_ports.js'));
 const ROOT = path.join(__dirname, '..');
 const TMP = fs.mkdtempSync(path.join(os.tmpdir(), 'lan-daemon-test-'));
-const TARGET_A = 28100;
-const TARGET_B = 28101;
+const TARGET_A = safePort('lan-daemon', 0);
+const TARGET_B = safePort('lan-daemon', 1);
 // wanPort 不再硬编码：绑定权威是 daemon 侧端口注册表，实际端口经 ctl list 回读（portA/portB）。
-const CTL = 28105; // 避开默认 28104，防与未来生产冲突（config.lanCtlPort 覆盖）
+const CTL = safePort('lan-daemon', 5); // 避开段内 28104 默认位，防与未来生产冲突（config.lanCtlPort 覆盖）
 
 let passed = 0;
 let failed = 0;

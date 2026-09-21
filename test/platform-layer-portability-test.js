@@ -285,7 +285,8 @@ const TMP = fs.mkdtempSync(path.join(os.tmpdir(), 'platport-'));
   const { portable } = require(path.join(ROOT, 'src', 'platform', 'os', 'portable.js'));
   const tmpd = fs.mkdtempSync(path.join(os.tmpdir(), 'dsh-port-real-'));
   const pf = path.join(tmpd, 'run.pid');
-  const port = 41000 + (process.pid % 3000);
+  // 端口经 _ports.js 分段取（T1/T2 纪律）：真实 listen，必须落在安全段而非 ephemeral。
+  const port = require(path.join(__dirname, '_ports.js')).safePort('platform-layer-portability');
   const entry = path.join(tmpd, 'entry.js');
   fs.writeFileSync(entry, "require('net').createServer().listen(" + port + ",'127.0.0.1');setInterval(function(){},1000);");
   const ctx = { port, pidFile: pf, anchors: [entry] };
