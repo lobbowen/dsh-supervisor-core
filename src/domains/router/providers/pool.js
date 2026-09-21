@@ -28,16 +28,19 @@ function computeDesired(state) {
   const s = state || {};
   const usable = (s.accounts || []).filter((a) => s.isUsable(a)).slice().sort(byRegisteredAt);
   if (!usable.length) return { active: null, prewarm: null, list: [] };
-  // 槽位预算在此消费：在用槽 + 预热槽 = 存活进程上限；服务位恒存在，槽位全 0 时退化为在用 1。
+  // 槽位预算在此消费：在用 1 + 预热 ≤ totalSlots-1；在用必须在全池解析——
+  // 先截位再找锁定，登记序第 3 的锁定账号会被静默忽略（用户显式锁号绝不接受无感失效）。
   const totalSlots = ACTIVE_SLOTS + PREWARM_SLOTS;
-  const capped = usable.slice(0, Math.max(1, totalSlots));
   let active = null;
-  if (s.selectedAccountKeyId) active = capped.find((a) => a.keyId === s.selectedAccountKeyId) || null;
-  if (!active && s.activeKeyId) active = capped.find((a) => a.keyId === s.activeKeyId) || null;
-  if (!active) active = capped[0];
-  const rest = capped.filter((a) => a.keyId !== active.keyId);
-  let prewarm = s.prewarmKeyId ? rest.find((a) => a.keyId === s.prewarmKeyId) || null : null;
-  if (!prewarm) prewarm = rest[0] || null;
+  if (s.selectedAccountKeyId) active = usable.find((a) => a.keyId === s.selectedAccountKeyId) || null;
+  if (!active && s.activeKeyId) active = usable.find((a) => a.keyId === s.activeKeyId) || null;
+  if (!active) active = usable[0];
+  const rest = usable.filter((a) => a.keyId !== active.keyId);
+  let prewarm = null;
+  if (totalSlots > 1) {
+    if (s.prewarmKeyId) prewarm = rest.find((a) => a.keyId === s.prewarmKeyId) || null;
+    if (!prewarm) prewarm = rest[0] || null;
+  }
   const list = [active];
   if (PREWARM_SLOTS > 0 && prewarm) list.push(prewarm);
   return { active, prewarm: PREWARM_SLOTS > 0 ? prewarm : null, list };
