@@ -32,17 +32,19 @@ const ROOT = path.join(__dirname, '..');
 const results = [];
 const check = (n, c, x) => { results.push(!!c); console.log((c ? 'PASS' : 'FAIL') + ' ' + n + (x !== undefined && x !== '' ? '  ← ' + x : '')); };
 
-const proxy = fs.readFileSync(path.join(ROOT, 'src', 'domains', 'router', 'providers', 'proxy.js'), 'utf8');
+//  R-a/R-b/R-c/R-d 的判据对象（markUsed/markRequestOk/stopInstance 链/restartInstance/
+//   flushRestartPending）已随判据统一阶段抽入 process-pool.js mixin（4 空格缩进）——按实现文件读。
+const pool = fs.readFileSync(path.join(ROOT, 'src', 'domains', 'router', 'providers', 'process-pool.js'), 'utf8');
 const fwd = fs.readFileSync(path.join(ROOT, 'src', 'domains', 'router', 'handlers', 'forward.js'), 'utf8');
 const inflight = fs.readFileSync(path.join(ROOT, 'src', 'domains', 'router', 'model', 'inflight.js'), 'utf8');
 
 // -- R-a：清零时机 --
 {
-  const m = proxy.match(/markUsed\(inst\) \{[\s\S]{0,200}?\n  \}/);
+  const m = pool.match(/markUsed\(inst\) \{[\s\S]{0,200}?\n    \}/);
   check('R-a 定位到 markUsed', !!m, m ? 'ok' : '未找到');
   check('R-a markUsed **不再**清零 _unhealthyCount',
     !!m && !/_unhealthyCount\s*=/.test(m[0]), m ? '已移除' : '');
-  check('R-a 存在 markRequestOk（成功后才清零）', /markRequestOk\(inst\)/.test(proxy), '有');
+  check('R-a 存在 markRequestOk（成功后才清零）', /markRequestOk\(inst\)/.test(pool), '有');
   //  断言「调用了 markRequestOk」而不绑定具体实参名 ——
   //   P2 双事实源修复后实参已改为 instOf(...) 的结果（okInst），
   //   写死 `acc.instance` 会让「纯重构」误报（我第一版就踩了这个）。
@@ -68,8 +70,8 @@ const inflight = fs.readFileSync(path.join(ROOT, 'src', 'domains', 'router', 'mo
     !/\.markNetFail\s*\(/.test(strip(fwd)), '已改');
   check('R-b 改用真实存在的 markInstanceNetFail',
     /markInstanceNetFail/.test(strip(fwd)), '已改');
-  check('R-b 该方法确实定义在 proxy.js',
-    /markInstanceNetFail\s*\(instOrAcc\)/.test(proxy), '有定义');
+  check('R-b 该方法确实定义在 process-pool.js（mixin）',
+    /markInstanceNetFail\s*\(instOrAcc\)/.test(pool), '有定义');
 
   // -- R-b 升级（P3-B）：从「字符串出现过」升级为「实参正确 + 确实计数」的行为断言 --
   //   旧断言只查 markInstanceNetFail 字符串存在，故 forward.js 传错实参也绿。
@@ -97,13 +99,13 @@ const inflight = fs.readFileSync(path.join(ROOT, 'src', 'domains', 'router', 'mo
   check('R-b 反向：正确样本 inst 不误报', BARE_ACC.test('inst') === false, 'miss');
 
   // -- 行为面：沙箱内执行真实的 markInstanceProblem 本体，证明「计数」语义与实参形状要求 --
-  const mBody = proxy.match(/markInstanceProblem\(instOrAcc, reason\) \{[\s\S]*?\n  \}/);
+  const mBody = pool.match(/markInstanceProblem\(instOrAcc, reason\) \{[\s\S]*?\n    \}/);
   check('R-b 定位到 markInstanceProblem 实现', !!mBody, mBody ? 'ok' : '未找到');
   let impl = null;
   if (mBody) {
     try {
       const inner = mBody[0].replace(/^markInstanceProblem\(instOrAcc, reason\)\s*\{/, '');
-      impl = new Function('instOrAcc', 'reason', inner.slice(0, inner.lastIndexOf(String.fromCharCode(10) + '  }')));
+      impl = new Function('instOrAcc', 'reason', inner.slice(0, inner.lastIndexOf(String.fromCharCode(10) + '    }')));
     } catch { impl = null; }
   }
   check('R-b 行为断言前提：本体可在沙箱求值（不 require 产品状态根）', typeof impl === 'function', typeof impl);
@@ -129,11 +131,11 @@ const inflight = fs.readFileSync(path.join(ROOT, 'src', 'domains', 'router', 'mo
 // -- R-c：_restartPending 必须有读取点 --
 {
   // 写入点是赋值；读取点应出现在 `if (... _restartPending)` 或实参位置
-  const hasRead = /if\s*\([^)]*_restartPending\s*\)/.test(proxy)
-    || /flushRestartPending\([^)]*_restartPending/.test(proxy)
-    || /const\s+\w+\s*=\s*inst\._restartPending/.test(proxy);
+  const hasRead = /if\s*\([^)]*_restartPending\s*\)/.test(pool)
+    || /flushRestartPending\([^)]*_restartPending/.test(pool)
+    || /const\s+\w+\s*=\s*inst\._restartPending/.test(pool);
   check('R-c _restartPending 存在读取点（不再只写不读）', hasRead, '有');
-  check('R-c 存在 flushRestartPending 消费方法', /flushRestartPending\(inst\)/.test(proxy), '有');
+  check('R-c 存在 flushRestartPending 消费方法', /flushRestartPending\(inst\)/.test(pool), '有');
   check('R-c handlers/forward 在 inflight 归零时执行 flushRestartPending',
     /prov\.flushRestartPending\([^)]+\)/.test(fwd), '已接入');
   //  行为修复锁（PG-D3-4）：单一 end() 产生 flushRestartPending effect，
@@ -146,7 +148,7 @@ const inflight = fs.readFileSync(path.join(ROOT, 'src', 'domains', 'router', 'mo
 
 // -- R-d：退避置位时机 --
 {
-  const m = proxy.match(/restartInstance\(inst, reason\) \{[\s\S]*?\n  \}/);
+  const m = pool.match(/restartInstance\(inst, reason\) \{[\s\S]*?\n    \}/);
   check('R-d 定位到 restartInstance', !!m, m ? 'ok' : '未找到');
   if (m) {
     const body = m[0];
@@ -159,9 +161,9 @@ const inflight = fs.readFileSync(path.join(ROOT, 'src', 'domains', 'router', 'mo
 
 // -- 反向：成功路径仍要清零（防「修成永不清零」）--
 check('反向：成功路径保留了清零语义（markRequestOk 内有赋值）',
-  /markRequestOk\(inst\) \{[\s\S]{0,120}?_unhealthyCount\s*=\s*0/.test(proxy), '保留');
+  /markRequestOk\(inst\) \{[\s\S]{0,120}?_unhealthyCount\s*=\s*0/.test(pool), '保留');
 check('反向：markInstanceProblem 仍累加（熔断本身没被删）',
-  /_unhealthyCount\s*=\s*\(inst\._unhealthyCount \|\| 0\) \+ 1/.test(proxy), '保留');
+  /_unhealthyCount\s*=\s*\(inst\._unhealthyCount \|\| 0\) \+ 1/.test(pool), '保留');
 
 // -- D-4 / D-6：providers/probe.js 实例治理 --
 //   D-4 实例日志裸 createWriteStream({flags:'a'})：全仓唯一无轮转、且默认 0644 的日志落盘点。

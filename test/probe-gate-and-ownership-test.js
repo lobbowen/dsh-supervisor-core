@@ -35,7 +35,6 @@ const ROOT = path.join(__dirname, '..');
 const results = [];
 const check = (n, c, x) => { results.push(!!c); console.log((c ? 'PASS' : 'FAIL') + ' ' + n + (x !== undefined && x !== '' ? '  ← ' + x : '')); };
 
-const base = fs.readFileSync(path.join(ROOT, 'src', 'domains', 'router', 'providers', 'base.js'), 'utf8');
 //  providers 改造后 applyDetection 状态机下沉 policies/freeze.js（base 只剩薄委托）——
 //   E-a 判据必须读**实现文件**，否则文件一搬即静默假绿。
 const freezePolicySrc = fs.readFileSync(path.join(ROOT, 'src', 'domains', 'router', 'providers', 'policies', 'freeze.js'), 'utf8');

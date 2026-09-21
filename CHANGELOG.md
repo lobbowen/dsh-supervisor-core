@@ -6,6 +6,26 @@
 
 ## [未发布]
 
+### 判据统一改动专项清理：文档与注释中的假现状对齐（不含行为变更）
+
+- **注释残留**：base.js「process-pool 子类」措辞改「能力方（mixin ctor 装配钩子）」；
+  `usageOf` 基座 docstring 不再自称派生 warming（该派生已归 mixin 覆写）。
+  contract.js `exempt` 登记面收敛：基座只剩 detectAccount 一个抽象占位，proxy.js 的
+  「DG-5c 继承 SCC」条目随 DG-4 归零作废删除。
+- **测试面搬移补漏**：`router-circuit-breaker-test` 的 R-a/R-b/R-c/R-d 源码判据原读
+  proxy.js，池方法已迁 mixin 后会静默假红/假绿——改读 process-pool.js（含 4 空格缩进的
+  函数体闭合判据与沙箱求值取尾）；`probe-gate-and-ownership-test` 删除搬移后遗留的
+  base.js 死读取。
+- **SSOT 文档假现状对齐**：PROVIDER-GATEWAY-ARCHITECTURE §2.2/§5.1/§5.2/§5.3 的
+  「现状」列改为带 2026-09-21 复算时点的落地状态（预热已按 §4.4 恢复、ctl 白名单已落地、
+  direct 显式 unsupported）；§6.2 门禁表补 PG-9/PG-11；§7 从「Phase 0 ← 当前」改为逐
+  Phase 标注落地状态，并如实登记 **RouterService 标识符改名未执行**。
+  DOMAIN-STRUCTURE-DESIGN §10 合法继承豁免条目重写（原描述引用已删除的 11 个抛错占位
+  与硬编码行号）；provider-gateway 门禁头不再笼统宣称「Phase 1-5 全部落地」。README
+  规范索引 PG 范围更新。
+- 验证：node --check 全绿；静态门禁复跑（domain-structure DG-4=0、provider-gateway
+  31/31、circuit-breaker 58/58、probe-gate 36/36、round13 53/53）。
+
 ### 实例沙箱 W2 控制面：governor 完整决策策略 + 资源采样 + 监督拍接线（ARCHITECTURE-PLAN-instance-sandbox-governor）
 
 - **决策策略落地**（`governor.js#decide()` 纯函数，45 行预算推导扩为 206 行完整策略）：

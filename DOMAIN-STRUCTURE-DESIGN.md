@@ -204,7 +204,7 @@ router/
   渲染（`views.js`）、同类注册表查找鉴别（`ops.js` CRUD）、无原型裸 JSON 记录
   （`ports-bootstrap.js`）。逐文件精确配额登记在 PG-11 白名单，增减不匹配即红。
 - 新增能力：先在能力方文件（mixin 或专用 provider 类）实现并扩 `supports` 词表，调用方再以
-  `supports(cap)` 守卫；能力面契约在能力方声明，基座（`providers/base.js`）不携带抛错占位
+  `supports(cap)` 守卫；能力面契约在能力方声明，基座（`providers/base.js`）不携带池契约的抛错占位
   （占位会诱导调用方退回 typeof 猜测，且其 this 跨文件反向边正是 DG-4 豁免的来源）。
 
 **关键缺陷（设计中发现，须修）**：
@@ -400,6 +400,8 @@ shell/
 - ⚠ **伪耦合澄清**：任务书所称「router 调 `instances.sandboxRoot`」**不存在** ——
   `sandboxRoot` 全域仅 3 个消费者（`app/control/specs.js:47`、`instance/core.js:190` 定义、`instance/ops.js:205`）；
   router 里的 `this.instances` 是 **ProxyInstance**（router 自有模型），**同形不同物**。门禁需排除规则。
-- ⚠ **合法继承豁免**：`{providers/base, providers/proxy}` 的互相调用**不是隐式耦合** ——
-  `base.js:243-253` 的 11 个方法是**抽象契约占位**（抛 'must be implemented by process-pool provider'），
-  朴素判据会误报 12 处。
+- ⚠ **合法继承豁免**：`{providers/base, providers/process-pool}` 经 `withProcessPool` mixin 组合，
+  **不是隐式耦合** —— 基座只剩 1 个抽象占位（`detectAccount`，base 调 `this.detectAccount` 由
+  DG-4 的 abstractPlaceholders 自动豁免）；process-pool 的 11 个契约方法在能力方 mixin 声明并
+  实现（判据统一阶段3 收口，2026-09-21：DG-4 域内跨文件 this 已归零）。旧描述「base.js 的 11 个
+  抽象占位抛 'must be implemented by process-pool provider'」已随该收口作废。

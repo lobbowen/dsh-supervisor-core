@@ -88,7 +88,8 @@ class ProviderBase {
     const idx = this.accounts.findIndex((a) => a.keyId === keyId);
     if (idx < 0) return { ok: false, error: '账号不存在' };
     const acc = this.accounts[idx];
-    // 实例/端口清理属 process-pool 子类：经 ctor 注入的钩子执行（打破 base 到 proxy 的反向边）
+    // 实例/端口清理属 process-pool 能力方（钩子由 process-pool.js 的 mixin ctor 装配）：
+    // 经钩子执行以打破 base 到池的 this 反向边（DG-4）。
     if (this._hooks && typeof this._hooks.onDiscardAccount === 'function') {
       try { this._hooks.onDiscardAccount(acc); } catch {}
     }
@@ -162,7 +163,7 @@ class ProviderBase {
     }
   }
 
-  /** 使用状态纯派生：in-use=activeAccount 指向；warming=实例在跑但非在用；idle=其余。 */
+  /** 使用状态纯派生：in-use=activeAccount 指向；idle=其余。warming 由 process-pool mixin 覆写派生。 */
   usageOf(acc) {
     if (!acc) return 'idle';
     if (this.activeAccount && this.activeAccount.keyId === acc.keyId) return 'in-use';
