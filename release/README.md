@@ -272,7 +272,7 @@ release/
 
 - **内核**：唯一事实源 = 根 `package.json`（`bump.sh --core`；tag `v<内核>` 触发 build.yml）。语义化版本 + 两档预览后缀：`-BETA.n` / `-RC.n` / 无后缀=正式。
 - **壳**：独立于内核。版本在壳仓**三处互锁**（`src-tauri/Cargo.toml` / `tauri.conf.json` / `Cargo.lock`），由壳仓 `scripts/verify-shell-versions.js` 校验、`scripts/bump-shell.sh` 提升。
-- npm dist-tag（2026-09-16 发布通道契约，`RELEASE-CHANNEL-CONTRACT.md` §4）：`-BETA.n` → `beta`；`-RC.n` → `latest`（正式版占 latest），rc 别名在 publish 之后经 `npm dist-tag add ... rc` 补打；无后缀 → `latest`（publish-core.sh 自动判定）。`rollback` / `canary` 不由脚本设置（人工运维）。
+- npm dist-tag（发布通道契约 `RELEASE-CHANNEL-CONTRACT.md` §2/§4）：档位决定**别名**标签 —— `-BETA.n` → `beta`；`-RC.n` / 无后缀 → `latest` + 发布后补打 `rc` 别名。**`latest` 与档位无关**：两档发布后都由 `publish-core.sh::reconcile_latest_tag` 按 semver 只升不降地对齐到本次版本（含 BETA 线），回补失败即发布失败。`rollback` / `canary` 不由脚本设置（人工运维）。
 
 ## 端到端发布 SOP
 
