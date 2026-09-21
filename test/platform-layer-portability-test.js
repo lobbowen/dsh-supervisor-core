@@ -628,7 +628,7 @@ const TMP = fs.mkdtempSync(path.join(os.tmpdir(), 'platport-'));
   const fakeSpawn = (bin, args, env, onExit) => { spawned9.push(bin); exits9.push(onExit); return { on() {}, unref() {} }; };
   const asked9 = [];
   const r1 = br.launchIsolated(u9, {
-    defaultBrowser: db9, profileDir: '/P',
+    defaultBrowser: db9, profileDir: '/P', onExit: () => {},
     binAvailable: (b) => { asked9.push(b); return true; }, spawn: fakeSpawn,
   });
   check('X-9 条4 前提：产品预检只问解析出的那一个浏览器（无候选链可问）',
@@ -641,7 +641,7 @@ const TMP = fs.mkdtempSync(path.join(os.tmpdir(), 'platport-'));
   check('X-9 隔离形态接 onExit（关浏览器即取消登录），url 在 args 收尾',
     typeof exits9[0] === 'function' && plan9.args[plan9.args.length - 1] === u9, 'ok');
   const r1f = br.launchIsolated(u9, {
-    defaultBrowser: { bin: 'snap' }, profileDir: '/P',
+    defaultBrowser: { bin: 'snap' }, profileDir: '/P', onExit: () => {},
     binAvailable: () => true, spawn: fakeSpawn,
   });
   check('X-9 非隔离兜底（other 引擎/解析失败）= openCommand 的 bin、isolated:false、**不接 onExit**（其退出≠浏览器退出）',
