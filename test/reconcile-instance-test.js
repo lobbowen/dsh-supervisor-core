@@ -363,11 +363,19 @@ process.on('SIGTERM', () => { killSpawnedSync(); process.exit(143); });
     await new Promise((res) => setTimeout(res, 600));
     check('R12b 前置：进程存活、台账为空', pidlook.isAlive(pid) && p._terminatingPids.size === 0, 'alive=' + pidlook.isAlive(pid));
     p.stopInstance(inst); // SIGTERM -> 被 stub 忽略
-    // Windows 无 POSIX 信号语义：process.kill(pid,'SIGTERM') 实际等同强杀（TerminateProcess），
-    // stub 的 process.on('SIGTERM') handler 不生效 -> 进程被直接终止。产品 waitAllStopped 杀净的
-    // 行为在 Windows 上同样正确，仅"SIGTERM 被忽略"前提不存在——断言按平台区分。
+    // Windows 无 POSIX 信号语义：stub 的 process.on('SIGTERM') handler 根本不生效，
+    // carrier L1 的终止经 killTree 落为 `taskkill /T /F`（强杀，等价 SIGKILL）——进程必死。
+    // 但 taskkill 是**异步** spawn（platform/os/process.js），落刀有几十~几百 ms 窗口，
+    // 紧跟 stopInstance 判 isAlive 会输在时序上。故在升级 SIGKILL 预算（ESCALATE_MS=1500）
+    // 之前给 1200ms 有界等待：窗口内死亡只可能来自第一刀 taskkill，判据不空转。
     const winNoSig = process.platform === 'win32';
-    check('R12c stopInstance 后进程处理（POSIX：仍在=TERM 被忽略；Windows：已终止=无 SIGTERM 语义）',
+    if (winNoSig) {
+      const deadline = Date.now() + 1200;
+      while (pidlook.isAlive(pid) && Date.now() < deadline) {
+        await new Promise((res) => setTimeout(res, 50));
+      }
+    }
+    check('R12c stopInstance 后进程处理（POSIX：仍在=TERM 被忽略；Windows：taskkill 强杀在升级预算内杀净=无 SIGTERM 语义可抗）',
       winNoSig ? !pidlook.isAlive(pid) : pidlook.isAlive(pid), 'alive=' + pidlook.isAlive(pid));
     check('R12d pid 已入停服台账', p._terminatingPids.has(pid), '');
     // /proc 仅 Linux 有；Windows/macOS 无 zombie 概念（无回收滞后）-> 进程死即算死，statOf 恒 'GONE'
