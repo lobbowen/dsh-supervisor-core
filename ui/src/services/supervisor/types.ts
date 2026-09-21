@@ -116,7 +116,7 @@ export interface PortsResponse { records?: PortRecord[]; }
 
 // -- /instances ------------------------------------------
 export type InstanceDomain = "native" | "sandbox";
-export interface InstanceSandbox { privateTmp?: boolean; protectHome?: boolean; memoryMax?: string; cpuQuota?: string; }
+export interface InstanceSandbox { privateTmp?: boolean; protectHome?: boolean; }
 export interface InstanceState {
   pid?: number | null;
   running: boolean;
@@ -127,6 +127,8 @@ export interface InstanceState {
   /** 稳定性统计（与原生主卡一致，后端投影）：重启次数 / 最近故障原因 */
   restartCount?: number;
   lastFailure?: string | null;
+  /** 当次启动生效的动态配额（守卫按机器预算与活跃实例数推导；未启动过为空） */
+  allocation?: { memoryMax: string; cpuQuota: string } | null;
   installing?: boolean;
   installOk?: boolean;
   installError?: string | null;
@@ -466,8 +468,10 @@ export interface ShellUpdateCheck {
 export interface PlatformCapabilities {
   platform?: string;
   arch?: string;
-  /** 多实例（沙箱）支持——仅 Linux + systemd-run */
-  multiInstance?: boolean;
+  /** 能否运行沙箱实例舱（当前实现 = Linux + systemd-run） */
+  sandboxLaunch?: boolean;
+  /** 资源限额执行档位：cgroup 硬限额 / supervise 采样式 / none */
+  sandboxEnforcement?: "cgroup" | "supervise" | "none";
   /** 接管既有进程（端口/命令行反查） */
   pidAdoption?: boolean;
   /** 进程树终止（POSIX 组信号 / Windows taskkill /T） */

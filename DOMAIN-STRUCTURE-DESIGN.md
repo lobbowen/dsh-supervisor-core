@@ -94,14 +94,16 @@ domains/<domain>/
 
 > 口径（重要，防「为消红而放宽」的变体）：
 > - **目标列**取自下方 §5.1–§5.6 的定版目标（`≤N` 为硬设计目标，`~N` 为近似目标），**不得为了让表变绿而静默抬高**；
-> - **实测列**为写入时对当前树 `wc -l` 的实测值（2026-09-20 复算）；判据是**行数**，硬门禁只 `≤300`（DG-2: `>300` 才红）；
+> - **实测列**为写入时对当前树 `wc -l` 的实测值（2026-09-20 复算；`instance/*` 行为 2026-09-21 W2 控制面落地后复算；`platform/os/resstats.js`（W2 新增，150 行）属平台层不在本域内文件清单，同 `app/` 两处一并见下）；判据是**行数**，硬门禁只 `≤300`（DG-2: `>300` 才红）；
 > - 标 **超目标** 的条目：**后续任何新增行都会继续加深该债**；标 **贴线** 的条目：再加 1 行即越界。
-> - **硬门禁现状（不是「全部满足」）**：`src/domains/router/handlers/forward.js` 已 **324 行 > 300**，
->   即本表**至少一行已越硬门禁**。越线不被 CI 拦下是因为 `domain-structure-gate-test` 整体
+> - **硬门禁现状（不是「全部满足」）**：本表内已越 `>300` 硬线的有两行——
+>   `router/handlers/forward.js` 324（W2 前已越），以及 **W2 新增越线** `instance/lifecycle.js` 348
+>   （govern 采样-决策-处置内联进 supervise RUNNING 分支所致；见 §5.3 注释，压回属 W3/W4 结构步）。
+>   即本表**已有两行越硬门禁**。越线不被 CI 拦下是因为 `domain-structure-gate-test` 整体
 >   **report-only**（退出码恒 0，只有 `DG_STRICT=1` 才转硬失败），而 CI 从未设该变量 ——
 >   所以「门禁存在」不等于「门禁会红」。同一判据在 `src/app/` 下另有两处越线
 >   （`app/control/registry.js` 308、`app/main/process.js` 302），不在本表覆盖的域内文件清单里。
->   把这 3 个文件压回 300 以下，或把 `DG_STRICT=1` 纳入 CI，二者必居其一；在任一发生之前，
+>   把这 4 个文件压回 300 以下，或把 `DG_STRICT=1` 纳入 CI，二者必居其一；在任一发生之前，
 >   本表**不得**被读作「硬门禁已满足」。
 
 | 文件 | 目标 | 实测 | 状态 |
@@ -129,13 +131,14 @@ domains/<domain>/
 | `relay/index.js` | ≤60 | 12 | 达 |
 | `relay/daemon.js` | （不变）214 | 194 | 达（优于原值） |
 | `relay/port-segments.js` | （不变）22 | 19 | 达 |
-| `instance/index.js` | ≤95 | 95 | **贴线**（=95） |
-| `instance/model.js` | ≤140 | 99 | 达 |
-| `instance/sandbox.js` | ≤85 | 79 | 达 |
+| `instance/index.js` | ≤95 | 103 | **超目标 +8**（W2：resstats/machineFacts 注入位 + budgetSnapshot 门面） |
+| `instance/model.js` | ≤140 | 105 | 达 |
+| `instance/governor.js` | ≤85 | 206 | **超目标 +121**（W2：decide 两级预留/突发 + 迟滞 + 违规计数 + 准入 + 快照） |
+| `instance/sandbox.js` | ≤85 | 104 | **超目标 +19**（W1：布局按平台分派 + TMPDIR 推导；W2：MemoryHigh 属性） |
 | `instance/state-machine.js` | ≤85 | 74 | 达 |
-| `instance/store.js` | ≤100 | 128 | **超目标 +28** |
-| `instance/lifecycle.js` | ≤185 | 242 | **超目标 +57** |
-| `instance/ops.js` | ≤180 | 165 | 达 |
+| `instance/store.js` | ≤100 | 133 | **超目标 +33** |
+| `instance/lifecycle.js` | ≤185 | 348 | **超目标 +163**（W2：govern tick 内联；且 `>300` 已越 DG-2 硬线，report-only 故 CI 不红） |
+| `instance/ops.js` | ≤180 | 160 | 达 |
 | `instance/upgrade.js` | ≤330 | 231 | 达 |
 | `plugin/index.js` | ≤70 | 83 | **超目标 +13** |
 | `plugin/store.js` | ~180 | 193 | **超目标 +13** |
@@ -147,10 +150,10 @@ domains/<domain>/
 | `shell/watchdog.js` | ~185 | 211 | **超目标 +26** |
 | `shell/core.js` | ~95 | 106 | **超目标 +11** |
 
-**汇总**：超目标 **10** 项（router 2 / instance 2 / plugin 4 / shell 2）、贴线 **2** 项
-（`router/index.js` 150、`instance/index.js` 95）；其余达。上述 10 项即设计目标债务，
-**未抬高任何目标值**。**`≤300` 硬门禁不满足**：`router/handlers/forward.js` 324 已越线
-（见上方口径说明与硬门禁现状一条）。
+**汇总**：超目标 **13** 项（router 2 / instance 5 / plugin 4 / shell 2；instance 域五行按 W2 后实测定，2026-09-21 复算）、贴线 **1** 项
+（`router/index.js` 150）；其余达。上述 13 项即设计目标债务，
+**未抬高任何目标值**。**`≤300` 硬门禁不满足**：`router/handlers/forward.js` 324、`instance/lifecycle.js` 348
+已越线（见上方口径说明与硬门禁现状一条）。
 
 ### §5.1 router（13 文件 → 22 文件，最大 330 行）
 
@@ -231,7 +234,7 @@ relay/
 ⚠ **修正 DF-7 方向错误**：现 `manager.js → ./index`（编排依赖门面）；改 `ops.js → ./proxy`。
 ⚠ `daemon.js` **不得改名，也不得移动目录**（`probe.js:46` 是字面量 `/domains/relay/daemon.js`）。
 
-### §5.3 instance（4 文件 → 8 文件）
+### §5.3 instance（4 文件 → 9 文件，governor.js 为 W1 新增纯策略模块）
 
 ```
 instance/
@@ -239,8 +242,9 @@ instance/
 ├── model.js          ≤140  纯：模型 + 视图映射 + 序列化
 ├── sandbox.js        ≤85   纯：沙箱路径/目录推导
 ├── state-machine.js  ≤85   纯：4 个状态转移（deps 显式入参）
+├── governor.js       ≤85   纯：资源预算推导 + 决策策略（W1 起限额定义权归本文件；W2 增 decide/准入/快照）
 ├── store.js          ≤100  持久化 + ensureDirs
-├── lifecycle.js      ≤185  启停/监督（「怎么把单元跑起来」）
+├── lifecycle.js      ≤185  启停/监督（「怎么把单元跑起来」；W2 起 RUNNING 拍内联 govern tick：采样→决策→下发/处置）
 ├── ops.js            ≤180  编排（「一次操作的顺序」）
 └── upgrade.js        ≤330  沙箱 DSH 安装/检测/升级
 ```

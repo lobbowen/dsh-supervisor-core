@@ -54,7 +54,7 @@ macOS 的**壳自启 / 壳自愈从项目奠基提交（`8867942`, 2026-09-01）
 | C7 | 桌面通知 | ✅ `notify-send` | ✅ `osascript` | ✅ PowerShell 气泡 | `platform/os/notify.js` | A2 |
 | C8 | 打开浏览器（含隔离 profile；引擎 = **系统默认浏览器**，隔离参数按解析结果的引擎族展开） | ✅ `xdg-settings`+`.desktop` Exec 解析 → `xdg-open` 兜底 | ✅ LaunchServices 解析直启 → `open` 兜底 | ✅ 注册表 `Clients\StartMenuInternet` 解析直启 → `explorer.exe` 兜底 | `platform/os/browser.js` | A2 · AUDIT-REPORT §A4（win32 argv 不经 shell；原 `cmd /c start` 的 URL 二次解析注入面已消灭） |
 | C9 | 服务单元管理 | ✅ systemd | ❌ **显式** | ❌ **显式** | `platform/os/service.js` | A3 |
-| C10 | 沙箱多实例（transient） | ✅ `systemd-run` | ❌ **显式** | ❌ **显式** | `platform/os/service.js` | A3 |
+| C10 | 沙箱实例舱（原「沙箱多实例」，两维拆分声明：拉起 `sandboxLaunch` / 限额执行 `sandboxEnforcement`） | ✅ 拉起 + 限额 `cgroup`（`systemd-run` transient） | ❌ **显式**（launch=false、enforcement=none；portable 档接入前不虚报） | ❌ **显式**（同左） | `platform/os/capability-profile.js` + `domains/instance/{sandbox,governor}.js` + `platform/os/resstats.js`（W2 采样观测；governor 决策/准入三平台同跑，运行期限额动态化属 W3） | A1·A2·A3 · P-5 |
 | C11 | **守卫**开机自启 | ✅ systemd + linger | ✅ LaunchAgent | ✅ schtasks | `platform/os/autostart/index.js` | A2 |
 | C12 | **守卫**崩溃自愈 | ✅ `Restart=always` | ✅ `KeepAlive` | ✅ 保活归**桌面壳**（2026-09-15 起内核不再创建 watchdog 任务）| `platform/os/autostart/index.js` | A5 |
 | C13 | **壳**开机自启（原生机制） | ✅ XDG `.desktop` | ✅ LaunchAgent `com.dsh.supervisor.gui` | ✅ schtasks `DSH-Supervisor-GUI` | `platform/os/autostart/index.js` | A4 · A8 · P1–P5 |

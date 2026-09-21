@@ -6,7 +6,7 @@
 // 再按解析结果的引擎族展开隔离参数（chromium 无痕+随机 profile / firefox 私有窗口+专用 profile）。
 // 浏览器选择权在用户（默认浏览器），不在产品 —— 不再有「硬编码候选内核」链。
 // 无隔离能力的引擎（Safari 等）与非隔离兜底路径一样如实标 isolated:false，
-// 由调用方的登录超时/重新发起兜底；不监听其退出（open/xdg-open 的退出 ≠ 浏览器退出）。
+// 由调用方的登录超时/重新发起兜底；不监听其退出（open/xdg-open 的退出不等于浏览器退出）。
 // win32 不借道 `cmd /c start` —— URL 会被 cmd.exe 二次解析（& ^ " ( ) 均为活性字符），
 //   直启解析出的可执行文件或 explorer.exe（argv 数组不经 shell）。
 //   入口统一过 isSafeHttpUrl：仅 http(s) 绝对 URL 可进 argv。

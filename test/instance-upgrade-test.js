@@ -23,6 +23,7 @@ const logger = { info() {}, warn() {}, error() {}, debug() {} };
 
 (async () => {
   const { InstanceManager } = require(path.join(ROOT, 'src', 'domains', 'instance', 'index'));
+  const sandbox = require(path.join(ROOT, 'src', 'domains', 'instance', 'sandbox'));
   const { DistributionManager } = require(path.join(ROOT, 'src', 'platform', 'distribution', 'index'));
 
   // -- R1：fromUpgrade 直通 --
@@ -58,14 +59,17 @@ const logger = { info() {}, warn() {}, error() {}, debug() {} };
     mgr._setSandboxSupportedForTest(true);       // 绕过平台能力门（显式测试入口）
     const inst = {
       id, name: '升级用例', domain: 'sandbox', port: safePort('instance-upgrade', 0),
-      sandbox: { privateTmp: true, protectHome: false, memoryMax: '4G', cpuQuota: '150%' },
+      // 用户填额已废止：限额由 governor 启动时推导，sandbox 只保留结构开关。
+      sandbox: { privateTmp: true, protectHome: false },
       state: { phase: 'STOPPED' },
     };
     mgr.instances = [inst];
-    // 预置 install 目录的 DSH 入口，使 startInstance 不走沙箱安装
-    const dshLib = path.join(mgr.sandboxInstallDir(inst), 'lib', 'node_modules', '@deepseek-ai', 'dsh', 'lib');
-    fs.mkdirSync(dshLib, { recursive: true });
-    fs.writeFileSync(path.join(dshLib, 'bin.js'), '// stub');
+    // 预置 install 目录的 DSH 入口，使 startInstance 不走沙箱安装。
+    // 路径经 sandbox.dshEntry 推导：npm -g --prefix 的 node_modules 落点分平台
+    //（POSIX=install/lib/node_modules，win32=install/node_modules），硬编码 POSIX 形在 Windows runner 必失配。
+    const entry = sandbox.dshEntry(mgr.instancesRoot, inst);
+    fs.mkdirSync(path.dirname(entry), { recursive: true });
+    fs.writeFileSync(entry, '// stub');
 
     // A) 非升级路径：被并发作业挡住（幂等短路）——这是**正确**语义（防双开安装）
     const a = await mgr.startInstance(id);

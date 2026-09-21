@@ -152,14 +152,14 @@ const check = (n, c, x) => { results.push(!!c); console.log((c ? 'PASS' : 'FAIL'
     check('A1-a envStatus 暴露 capabilities', env.capabilities && typeof env.capabilities === 'object', JSON.stringify(env.capabilities));
     const c = env.capabilities || {};
     check('A1-b capabilities 含平台/能力字段',
-      typeof c.platform === 'string' && typeof c.multiInstance === 'boolean' && typeof c.pidAdoption === 'boolean' && typeof c.hostService === 'string',
+      typeof c.platform === 'string' && typeof c.sandboxLaunch === 'boolean' && typeof c.sandboxEnforcement === 'string' && typeof c.pidAdoption === 'boolean' && typeof c.hostService === 'string',
       JSON.stringify(c));
     check('A1-c capabilities 与 capabilityProfile 一致', c.hostService === require(path.join(ROOT, 'src', 'platform', 'os', 'index')).capabilityProfile().hostService, String(c.hostService));
     // 前端类型 + UI 消费（静态契约）
     const typesTs = fs.readFileSync(path.join(ROOT, 'ui', 'src', 'services', 'supervisor', 'types.ts'), 'utf8');
     check('A1-d 前端声明 PlatformCapabilities 且 EnvStatus 引用', /interface PlatformCapabilities/.test(typesTs) && /capabilities\?:\s*PlatformCapabilities/.test(typesTs), 'ok');
     const instTsx = fs.readFileSync(path.join(ROOT, 'ui', 'src', 'features', 'supervisor', 'InstancesPage.tsx'), 'utf8');
-    check('A1-e UI 消费 capabilities 并前置提示', instTsx.includes('envStatus()') && instTsx.includes('multiInstance') && instTsx.includes('sandboxUnsupported'), 'ok');
+    check('A1-e UI 消费 capabilities 并前置提示', instTsx.includes('envStatus()') && instTsx.includes('sandboxLaunch') && instTsx.includes('sandboxUnsupported'), 'ok');
     // 误导性错误指引已修正：不再指向不存在的裸字段路径
     //  步骤8a：instance 拆为 index/core/ops/upgrade 四文件，
   //   判据须读**整域**（否则文件拆分即静默失去覆盖面）。见 DIRECTORY-STRUCTURE-DESIGN 。
@@ -168,7 +168,7 @@ const check = (n, c, x) => { results.push(!!c); console.log((c ? 'PASS' : 'FAIL'
     .map((f) => fs.readFileSync(path.join(ROOT, 'src', 'domains', 'instance', f), 'utf8'))
     .join(String.fromCharCode(10));
     check('A1-f 沙箱错误指引指向真实端点/字段',
-      instSrc.includes('GET /env/status') && instSrc.includes('capabilities.multiInstance'),
+      instSrc.includes('GET /env/status') && instSrc.includes('capabilities.sandboxLaunch'),
       'ok');
   }
 

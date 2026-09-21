@@ -182,7 +182,7 @@ export const supervisorApi = {
     post<GenericOk & { main?: SupervisorInstance }>("/native/settings", patch),
 
   // -- instances --
-  instanceAdd: (p: { name: string; port: number; command?: string[]; memoryMax?: string; cpuQuota?: string }) =>
+  instanceAdd: (p: { name: string; port: number; command?: string[] }) =>
     post<GenericOk>("/instances/add", p),
   instanceUpdate: (id: string, patch: { guardian?: boolean; remoteEnabled?: boolean; remoteToken?: string }) =>
     post<GenericOk>("/instances/update", { id, ...patch }),

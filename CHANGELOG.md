@@ -6,29 +6,58 @@
 
 ## [未发布]
 
-### 路由域判据统一（方向三）：能力判据一律 supports()，process-pool 契约收口能力方 mixin
+### 实例沙箱 W2 控制面：governor 完整决策策略 + 资源采样 + 监督拍接线（ARCHITECTURE-PLAN-instance-sandbox-governor）
 
-- **错误设计**：路由判据 35 处散用 `p.kind === 'proxy'` 字面量分支与 `typeof p.X === 'function'`
-  猜测；11 个 process-pool 契约方法以基座抛错占位存在——基座永远实现不了它们，base 与 pool 的
-  this 图反向边靠 DG-4 豁免兜底，且占位文案诱导调用方退回 typeof。
-- **正解**：池能力面自 `proxy.js` 抽为 `providers/process-pool.js` mixin（withProcessPool；
-  supports = 基座与 POOL_CAPS 并集；抽离时方法体逐字节比对一致），重启编排器/删账号钩子的
-  ctor 接线随迁入 mixin 构造器；基座抛错占位删除，契约声明归能力方（PG-1 判据改为
-  「基座 detectAccount 抛错 + mixin 定义 11 个契约方法」）；`usageOf` 拆为基座 in-use/idle
-  加 mixin 覆写派生 warming；instance-lifecycle 模块函数 `stopInstance` 更名 `arbitrateStop`
-  消除与 mixin 方法的 DG-4c 同名歧义。
-- **判据迁移**：scheduler/endpoint/forward/parse/switch/admin/ops/quotasync 等 35 处改
-  `supports('instanceLifecycle'|'processPool'|'gracefulStop'|'reconcile'…)` 守卫；结算单价
-  由 kind 分支改多态 `pricingOf(fallback)`（direct 覆写返回官方单价）；切换策略输入去身份化
-  （`state.kind` 改布尔 `instancePool`）。
-- **B 类保留 + 防回潮**：持久化字段（store.js 序列化 2 处）、视图渲染（views.js 1 处）、
-  注册表查找（ops.js 3 处）、无原型裸 JSON（ports-bootstrap.js 1 处）共 7 处保留 kind 比较，
-  新门禁 PG-11 按文件精确配额登记（增减不匹配即红）。实施中一处由 A 类改判 B 类：
-  ports-bootstrap 读的是裸 providers.json 记录（无原型，supports 不可用），理由记入代码注释。
-- 文档：DOMAIN-STRUCTURE-DESIGN §5.1 增「能力判据规范」小节，目录树补 process-pool.js 行。
-- 验证：node --check 全绿；静态门禁 domain-structure（DG-4 归零 / DG-4c 消歧 / DG-4d
-  router=1 且均有实现）、provider-gateway 31/31（含 PG-11 四向自检）、round13 53/53、
-  directory-structure 无新增红；运行测试按仓库标准以 CI 为准。
+- **决策策略落地**（`governor.js#decide()` 纯函数，45 行预算推导扩为 206 行完整策略）：
+  两级配额——预留份额 = 机器预算(物理×0.7) / 活跃实例数（等权，无优先级档），突发池 = 物理内存减预算
+  的余量；占用达预留的 0.9 倍才按 `since`（启动时刻）先到先得领用突发，追加封顶 1 倍预留，
+  内存软顶 `MemoryHigh = 0.9×MemoryMax` 随 `unitProps` 落单元属性（CPU 可抢占、不设突发）。
+  目标值调整带迟滞：10% 死区内维持上轮值不动，跨死区单步最多增减 25%，防配额震荡。
+- **违规处置链**：内存连续 3 拍 / CPU 连续 5 拍超限判违规——先记事件 `inst_resource_violation`
+  （带实际值/目标值），再 `stopUnit` 收割，最后走既有状态机 `restart` 进 BACKOFF 自愈；
+  超限到重试上限仍归 FAILED（与崩溃链共用，不因放宽预算而静默清零）。采样缺失（探测失败、
+  进程未起）一律重置违规计数——**无证据不判违规**；每拍只处置本实例，他实例由其自身拍负责。
+- **准入闸**：`lifecycle.start()` 在任务占用检查后复算预算——若「现有活跃数 + 本实例」的等权份额
+  已低于 512M 保底，直接拒绝并给出「预算已满：K 实例已预留 X/YMB，停一个或等待释放」；
+  升级链（fromUpgrade）按既定裁决旁路（与任务闸同理）。BACKOFF 重试被拒不静默：
+  自然走 restart 计数直至重试超限 FAILED，故障原因可见。
+- **观测面新增** `platform/os/resstats.js`：进程树 rss / cpu-time 异步采样
+  （linux 直读 /proc、darwin `ps` 表、win32 `Get-CimInstance` JSON；解析器为纯函数、文本夹具可测），
+  单次采样 2s 有界且必须走 `exec.runOutAsync`（同步 execFileSync 会冻结监督拍整个 tick）；
+  cpuPct 为两拍间 delta（单核=100），采样失败保留上轮缓存、绝不当零。
+- **接线与展示**：supervise 的 RUNNING 分支同拍完成「观测→决策→下发/处置→展示值」——
+  配额变更写回 `state.allocation`（当前口径：展示值 + 下次启动生效；运行期 set-property 动态化属 W3），
+  实时占用写 `state.usage`（`viewRow` 透出）；`stop()` 清 usage 与运行期缓存。
+  新增门面 `InstanceManager.budgetSnapshot()`，`/env/status` 加 `sandboxBudget` 预算总览
+  （预算/已预留/可容纳实例数/CPU 份额）。
+- 门禁/测试同步：`governor-test` 增 G4 decide 矩阵（突发领用/池耗尽/上限封顶/迟滞步进/死区/
+  违规计数与重置/内存优先于 CPU）、G5 准入门限、G6 快照形态；resstats 解析夹具并入
+  `platform-parsers-and-commands-test`（Y-6 段）；违规处置链、突发展示、准入拒绝、采样空缺
+  永不处置四组行为测试并入 `instance-state-test`（第 7 段，端口段扩至 25）。
+  按 test-chain N-e 纪律全部并入既有宿主文件、**未新增链条目**（scripts.test 总长保持 Windows
+  cmd 8191 上限之内）。
+
+### 实例沙箱 W1 地基纠偏：能力字段拆分 + 动态限额 + win32 布局（ARCHITECTURE-PLAN-instance-sandbox-governor）
+
+- **能力单字段混装修正**：`multiInstance` 废止，拆为 `sandboxLaunch: boolean`（能否运行实例舱）与
+  `sandboxEnforcement: 'cgroup'|'supervise'|'none'`（限额由谁执行）两字段——合并声明会掩盖
+  「mac/win 可跑舱、仅缺内核强制」的真实形状（C11–C14 拆行教训）。W1 期间三平台取值不变形：
+  linux=launch/cgroup，darwin/win32/未知=false/none，无任何虚报。`sandbox.supported()`、
+  `/env/status`、面板能力门、不支持文案全部改问新字段。
+- **用户填额链废止**：`/instances/add`/`update` 不再接收 `memoryMax/cpuQuota`（传入即无副作用忽略，
+  盘上历史残留由 normalize 剔除）。限额定义权收归新增 `domains/instance/governor.js` 纯函数：
+  `机器预算(×HEADROOM 0.7) ÷ 活跃实例数` 等权推导，内存下限 512M、CPU 下限 100%，每次启动重算并
+  记入 `state.allocation`（视图行透出）。Linux 行为不回退：值仍经 `sandbox.unitProps` 落成
+  MemoryMax/CPUQuota 单元属性。
+- **win32 npm `-g --prefix` 布局修正**：依赖落点原硬编码 POSIX 形 `<install>/lib/node_modules`，
+  win32 实为 `<install>/node_modules`——新增 `sandbox.nodeModulesDir/dshEntry` 按平台分派，
+  启动命令、入口存在性检查、版本探测与测试夹具统一改走该推导（入口仍 node 直启 `lib/bin.js`，不经 `.cmd` 垫片）。
+- **隔离维度补齐**：沙箱实例独立 `TMPDIR=<根>/tmp`（win32 另设 `TMP/TEMP`；Linux 保留 PrivateTmp 双保险）；
+  实例根目录经 `fileProtect.ensurePrivateDir` 收紧（0700 / icacls），ensureDirs 一次到位。
+- 门禁/测试同步：`platform-capability-audit`（A1 枚举档位、A2 sandboxLaunch 实现产物含 governor、A3 显式 false+none）、
+  `four-platform-behavior-matrix`（14 键规范清单 + enforcement 档位穷举）、`capability-profile`、`cross-platform`、
+  `exec-return-contract` 判据改新字段；新增 `test/governor-test.js`（activeCount 拓扑 / allocation 平摊·下限·单调性 /
+  currentAllocation 形态）并入全量链。
 
 ### 智能路由一键登录：浏览器选择权归还系统默认浏览器
 

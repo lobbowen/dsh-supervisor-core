@@ -26,6 +26,8 @@ module.exports = {
     // 生命周期 + 探活 + 升级 + 定时
     'startInstance', 'stopInstance', 'supervise', 'probeInstance',
     'checkUpdate', 'upgradeInstance', 'upgradeStatus', 'startTimer',
+    // 资源预算总览（W2 观测面；/env/status 消费）
+    'budgetSnapshot',
     // 沙箱布局（纯路径推导 + 平台能力）
     'sandboxRoot', 'sandboxDataDir', 'sandboxInstallDir', 'sandboxSupported',
     // 出站 hooks（app/assembly/compose/observers.js 注入）
@@ -39,6 +41,7 @@ module.exports = {
       'load', 'save', 'list', 'addInstance', 'removeInstance', 'updateInstance',
       'startInstance', 'stopInstance', 'supervise', 'probeInstance',
       'checkUpdate', 'upgradeInstance', 'upgradeStatus', 'startTimer',
+      'budgetSnapshot',
       'sandboxRoot', 'sandboxDataDir', 'sandboxInstallDir',
     ],
   },
@@ -55,6 +58,8 @@ module.exports = {
     tasks: '统一安装/更新任务注册表',
     systemdDir: 'systemd user 单元目录',
     systemdTemplatePath: 'systemd 模板单元路径',
+    resstats: '进程树资源采样（platform/os/resstats；W2 行为测试注入缝，缺省用真实现）',
+    machineFacts: '机器事实供给函数（缺省 governor.machineFacts 读 os；测试注入定死预算）',
     hooks: {
       onRemoteChange: '实例远程配置变化（compose/observers.js 注入）',
       onRemove: '实例移除（compose/observers.js 注入）',

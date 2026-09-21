@@ -66,6 +66,7 @@ const SEGMENTS = {
   'upgrade': 22,
   'shell-watchdog-e2e': 23,
   'defects-batch-f': 24,
+  'instance-state': 25,
 };
 
 /** 取某测试文件的段基址（未登记则报错 —— 强制登记，避免静默撞号）。 */

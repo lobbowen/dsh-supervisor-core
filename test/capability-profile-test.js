@@ -12,14 +12,16 @@ const results = [];
 const check = (n, c, x) => { results.push(!!c); console.log((c ? 'PASS' : 'FAIL') + ' ' + n + (x ? '  ← ' + x : '')); };
 
 const cases = [
-  ['linux', 'x64', 'systemd', true, true],
-  ['darwin', 'arm64', 'launchd', false, true],
-  ['win32', 'x64', 'windows-service', false, true],
-  ['freebsd', 'x64', 'none', false, false],
+  ['linux', 'x64', 'systemd', true, 'cgroup', true],
+  ['darwin', 'arm64', 'launchd', false, 'none', true],
+  ['win32', 'x64', 'windows-service', false, 'none', true],
+  ['freebsd', 'x64', 'none', false, 'none', false],
 ];
-for (const [pl, ar, host, multi, pid] of cases) {
+for (const [pl, ar, host, launch, enf, pid] of cases) {
   const r = capabilityProfile(pl, ar);
-  check(pl + '/' + ar + ' hostService=' + host, r.hostService === host && r.multiInstance === multi && r.pidAdoption === pid, JSON.stringify(r));
+  check(pl + '/' + ar + ' hostService=' + host,
+    r.hostService === host && r.sandboxLaunch === launch && r.sandboxEnforcement === enf && r.pidAdoption === pid,
+    JSON.stringify(r));
   check(pl + ' platform/arch 透传', r.platform === pl && r.arch === ar, '');
 }
 

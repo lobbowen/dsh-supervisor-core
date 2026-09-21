@@ -16,7 +16,7 @@
 //
 //   1) `platform/os/index.js::hasTool` —— `ex.run(name,...,{stdio:'ignore'}) !== null`
 //      -> hasTool('node')/('systemctl')/('systemd-run') **恒 false**（实测）
-//      -> capabilities() 把 multiInstance/desktopNotify/autostart 一律降 false
+//      -> capabilities() 把 sandboxLaunch/desktopNotify/autostart 一律降 false
 //      -> **Linux 上沙箱（多实例）功能对所有用户不可用**（UI 报「当前平台不支持」）。
 //   2) `platform/os/file-protect.js::hasIcacls` —— 同形 -> Windows 上敏感文件/目录的
 //      icacls 收紧**静默失效**（一律返回 mode:'none'）。
@@ -30,7 +30,7 @@
 //   A2  exec.run 失败（ENOENT）仍返回 null —— 不能为了修 A1 把失败也变成"成功"
 //   A3  hasTool 对**必然存在**的 node 返回 true（旧实现在此恒 false）
 //   A4  service Provider 的 run 包装**不得**再强制 stdio:'ignore'（否则读输出恒空）
-//   A5  Linux：capabilities().multiInstance 必须与「systemd-run 是否真的存在」一致
+//   A5  Linux：capabilities().sandboxLaunch 必须与「systemd-run 是否真的存在」一致
 //   A6  Linux：isUnitActive 对**确实 active** 的单元返回 true
 // ---------------------------------------------------------------------------
 
@@ -156,12 +156,12 @@ if (process.platform === 'linux') {
   // systemd-run 是否存在（用**可靠的** runOut 探测，而非本测试要验证的 hasTool）
   const hasRun = ex.runOut('systemd-run', ['--version'], { timeoutMs: 3000 }) !== null;
   const caps = osIdx.capabilities();
-  check('A5 capabilities().multiInstance 与 systemd-run 实际存在一致',
-    caps.multiInstance === hasRun,
-    JSON.stringify({ multiInstance: caps.multiInstance, systemdRunExists: hasRun }));
+  check('A5 capabilities().sandboxLaunch 与 systemd-run 实际存在一致',
+    caps.sandboxLaunch === hasRun && caps.sandboxEnforcement === (hasRun ? 'cgroup' : 'none'),
+    JSON.stringify({ sandboxLaunch: caps.sandboxLaunch, sandboxEnforcement: caps.sandboxEnforcement, systemdRunExists: hasRun }));
   if (hasRun) {
     check('A5 反向：systemd-run 存在时必须为 true（旧实现恒 false）',
-      caps.multiInstance === true, String(caps.multiInstance));
+      caps.sandboxLaunch === true, String(caps.sandboxLaunch));
   }
 
   // 找一个确实 active 的 --user 单元，isUnitActive 必须为 true

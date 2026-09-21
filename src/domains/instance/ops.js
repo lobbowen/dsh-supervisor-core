@@ -139,11 +139,6 @@ function createOps(deps) {
       }
     }
     if (remoteChanged && hooks.onRemoteChange) hooks.onRemoteChange(inst);
-    // 历史/原生记录可能没有 sandbox 对象（model.normalizeInstance 只补 guardian 与 state，不建 sandbox）：
-    // 直接写 inst.sandbox.memoryMax 会抛 TypeError，而此处 guardian 与 remoteEnabled 可能已被改 -> 半改状态。
-    if (patch.memoryMax !== undefined || patch.cpuQuota !== undefined) inst.sandbox = inst.sandbox || {};
-    if (patch.memoryMax !== undefined) inst.sandbox.memoryMax = String(patch.memoryMax);
-    if (patch.cpuQuota !== undefined) inst.sandbox.cpuQuota = String(patch.cpuQuota);
     store.save();
     return { ok: true, instance: inst };
   }
