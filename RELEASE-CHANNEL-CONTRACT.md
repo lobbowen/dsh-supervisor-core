@@ -54,6 +54,29 @@
 
 **结论**：回退必须是**显式信号**（独立 tag），不能靠"推断"。
 
+### 「检测不到新版本」的排查顺序：先 tag，后凭据（2026-09-21 实测）
+
+**读路径全程不带凭据**。四个 `@dsh-sup/dsh-core-*` 包与 `@dsh-sup/shell-*` 都是 public，
+客户端（壳 `core.rs::latest_pick`、内核 `install.js::fetchNpmLatest`）只做匿名 HTTPS GET
+包级 packument，代码里既没有 `Authorization` 也没有 `_authToken`；整条链上唯一的凭据是
+**CI 发布步的 `NPM_TOKEN`**（经临时 userconfig 注入、不落盘，解析单源
+`release/scripts/_npm-auth.sh`，见 `RELEASE-AND-UPDATE-MECHANISM.md` §2.2「认证」）。
+所以「换了 GitHub 令牌 / npm 令牌」与「客户端检测不到新版本」**没有因果关系** —— 把它当成
+凭据问题会让真正的成因（通道 tag）多活一轮发布。
+
+因此报障「拉不到最新版」按此顺序判：
+
+1. `npm view @dsh-sup/dsh-core-<平台> dist-tags` —— `latest` 是否等于最后一次发布；
+   不等即 §2 RC-6 失守，处置是**回补 tag 或向前推版本**，不是查凭据。
+2. 逐镜像同查（镜像同步有延迟，壳是并行探全部源、按通道取最高，见 §3）。
+3. 以上都对才去看本机 npm 侧（`~/.npmrc` 里的过期 `_authToken` 会让**安装**步 401，
+   而**检测**步仍正常 —— 这两步症状不同，不要混为一谈）。
+
+2026-09-21 实测基线（`latest` 回补修复 PR #23 合入后）：四个平台包在
+npmjs / npmmirror / huaweicloud / tencent / cnpmjs 五源一致为 `latest = beta = 0.1.5-BETA.11`，
+各源 `dist.tarball` 均可 Range 取回；`npmreg.proxy.ustclug.org` 对包级 packument 返 302
+（不跟随重定向 → 该源在并行探测里恒为无效候选，属镜像清单事实，不是凭据问题）。
+
 ---
 
 ## §3 选版算法（**冻结**，两仓必须一致）

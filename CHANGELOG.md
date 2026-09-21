@@ -6,6 +6,15 @@
 
 ## [未发布]
 
+- 把两条**没有依据的规则**从口径里清除并写成明文（`RELEASE-STANDARD.md` §7 第 7 条、
+  `RELEASE-CHANNEL-CONTRACT.md` §2「检测不到新版本」的排查顺序）：
+  其一，「npm 同版本不可重发 → 保住版本号原地重发」—— 仓库里从来没有这条规则，各文档一直写的是
+  「提版本重来」；现补为红线：版本号一律相对 registry 上**已存在**的版本向前推，保号会让新代码在
+  客户端被判成「已装过」（客户端只看版本号），且 npm 端本就 409，保号得不到任何好处。
+  其二，「检测/更新内核的令牌不对」—— 读路径**全程匿名**（壳 `core.rs::latest_pick`、内核
+  `install.js::fetchNpmLatest` 只做 GET，无 `Authorization`），链上唯一凭据是 CI 发布步的 `NPM_TOKEN`；
+  把「拉不到最新版」归因于换令牌会掩盖真实成因（`latest` tag 陈旧，即本节下一条 RC-6）。
+  2026-09-21 逐源实测：四个平台包在五源均为 `latest = beta = 0.1.5-BETA.11`，`dist.tarball` 可取回。
 - 发布通道根因修复：**`latest` 不再只由「发布的是 RC」驱动**（`RELEASE-CHANNEL-CONTRACT.md` §2/RC-6、
   `release/scripts/publish-core.sh::reconcile_latest_tag`、门禁 `test/release-channel-gate-test.js` RC-G4-i..o）。
   旧口径下 BETA 档 `npm publish --tag beta` 之后再没人写 `latest`，而客户端选版链第 3 步只读 `latest`、
