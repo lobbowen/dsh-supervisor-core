@@ -156,9 +156,10 @@ async function _stopAllSandboxes(host) {
       let stopped = false;
       try {
         // 服务管理器抽象（跨平台审计）：编排层不直接调用 systemctl。
-        // 仅当 stopUnit 明确返回成功才认为单元已停：Linux 停止失败返回 false，
-        // 非 Linux（无用户单元）抛 CapabilityError；两条路径都不得把实例谎报为 STOPPED。
-        stopped = platform.service.current().stopUnit('dsh-web@' + inst.id, { timeoutMs: 20000 }) === true;
+        // 仅当 stopUnit 明确返回成功才认为单元已停，两条失败路径（false/抛错）都不得把实例谎报为 STOPPED。
+        // ctx = 域门面推导的身份锚（端口/run.pid/cmdline）：systemd 档忽略之，portable 档无锚即无从归属、绝不能盲杀。
+        stopped = platform.service.current().stopUnit('dsh-web@' + inst.id,
+          Object.assign({ timeoutMs: 20000 }, host.instances.launchCtx(inst))) === true;
       } catch (e) { host.logger.warn && host.logger.warn('shutdownAll stop sandbox ' + inst.id + ': ' + (e && e.message)); }
       if (!stopped) {
         // 未确认停止：保留原 phase，不落 STOPPED（否则下次按错误相位决策形成 ghost）。

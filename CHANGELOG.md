@@ -6,6 +6,64 @@
 
 ## [未发布]
 
+### 远程控制三态化收口：remoteMode 单状态取代多布尔并行，访问视图单一事实源
+
+- **根因**：远程意图由 `remoteEnabled`/`frpEnabled`/`frpRemotePort` 三个布尔加 main 侧
+  `patchDshMain` 拼出，「局域网」与「公网」并行存在而非互斥；二维码与就绪态在前端按这些
+  开关自行推导，于是出现「开了远程但码还是局域网地址」。端口侧 `inst.wanPort` 镜像与
+  relay 槽位注册表构成 ghost 双族（历史写死值经 lan-state 传播给 daemon，两边各信一份）。
+- **模型**：每受管对象（main 与各沙箱）一份 `remoteMode: off|lan|wan`，是远程意图的唯一
+  落盘字段。`frp.json` 只剩 frps 连接参数（`enabled` 总闸随三态废止：frpc 生命周期单一
+  条件 = 是否存在 wan 意图）。legacy 磁盘态经 `legacyRemoteMode` 一次性推导（`true`+`true`
+  →wan、`true` →lan、其余 →off），首次写盘后旧键即消失，读侧不留双轨。
+- **端口**：公网口与 relay 口**恒同号**（`remotePort = wanPort`），不存在第二套端口分配，
+  也没有 override 字段。绑定权威只在注册表（`byOwner` 复用）——关远程只停 server 不
+  `releaseOwner`，重开自动复用同口；`inst.wanPort` 镜像字段删除，lan-state 协议不再带端口。
+- **判定收口**（`relay/core.js` 纯函数，零 IO）：`projectRemoteView` 产出
+  `{mode, ready, accessUrl, reasons}`，`ready` 当且仅当 `reasons` 空，未就绪逐条给因
+  （relay 未监听 / 未设令牌 / 会话注入中 / 未配 frps 地址 / 隧道未建立）；`accessUrl` 的
+  host 由 mode 选（wan→`serverAddr`、lan→局域网地址），前端不再自行拼。**唯一写入口**
+  `setRemoteMode` 对 wan 前置 `validateWanAccess`（令牌闸）：该函数只有令牌入参、没有
+  端口参数，端口无自由度由同号纪律在结构上保证。`frpRemotePort` 手填公网口一并删除。
+- **API**：意图面收为 `POST /remote/{set-mode|set-token|frp-server|frp-install}`
+  （`{ok:false}` 一律非 2xx，安全闸拒因如实回显）；状态面 `GET /lan-access`（remote 视图）
+  `GET /remote/frp`。旧 `/lan/frp/*` 五条路由**不留兼容直接删**。`/native/settings` 白名单
+  收窄为仅 `guardian`，`/instances` 不再装饰任何远程字段（此前它另算一套 `lanUrl`，与
+  `projectRemoteView` 构成第二处访问判定来源，判定不一致即由此产生）。
+- **UI（与后端同批改，无半成品中间态）**：`LanPage` 一行一状态一开关——模式开关只在
+  off/lan 间切换，wan 由「局域网 / 公网」分段控件选择，两者写同一 `remoteMode`；二维码
+  仅在 `remote.ready` 时出，指向 `remote.accessUrl`（开远程即换远程码）；`reasons` 原文
+  进状态药丸 title，不再 UI 自证「未运行」。FRP 卡去掉总闸，`authToken` 保持 patch 语义
+  （留空省略字段）。
+- **门禁与判据**：`round13-router-relay-gaps` ① 段改钉单一意图入口（`setRemoteMode` 写入
+  前过闸 + 行为用例断言无令牌/弱令牌被拒且**未落盘**）、`main.js` 整文件零远程字段；
+  `token-contract-gate` 的 `LAN_STATE_ROW_KEYS` 收为 `{id,name,port,remoteMode,remoteToken}`；
+  `token-boundary` 的 `listLan` 白名单换为现役非机密字段并加 remote 视图结构判据；
+  `domain-structure-gate` DG-14 写目标清单删 `setFrp`、增 `setRemoteMode`/`setRemoteToken`；
+  `frp-resilience` R1 加「非 wan 意图不出隧道」与同号反向例；`lan-daemon` 集成测试不再硬编码
+  期望端口，改由 `ctl list` 回读实测绑定口（注册表权威的必然结果）。
+- **事件**：`dsh_frp_changed`/`lan_frp_changed` 随总闸废止删除；新增
+  `dsh_remote_changed`/`inst_remote_changed`（载荷 `mode`）与 `dsh_remote_token_changed`，
+  令牌类事件只记 `tokenSet` 布尔（TK-5 零明文纪律）。
+
+### 面板点「更新内核」不再是黑箱：消费壳中继的进度，等待上界改由壳下发（配 B4b）
+
+- **根因**：面板→壳桥只有「一问一答」。`kernelUpdateBridge.ts` 收到 progress 帧直接 `return` 丢弃，
+  且等待上界写死 `6 * 60 * 1000`，而壳侧内核安装预算是 17 分钟（壳仓 `bridge.rs`）。
+  于是面板必然先报「桌面壳无响应（更新请求超时）」——那不是结论，是面板自己编的结论；
+  按钮随之解禁，用户重试 = 两个进程并发写同一个 npm 全局前缀（单写入者契约要消灭的形状）。
+- **修法（不新增协议，补齐半途的桥）**：progress 帧现在被消费为 `KernelUpdateProgress`
+  （`status` 文字 + `progress` 0..1 或 null，null = 该步无可测分母，UI 于是只显文字不画假百分比）；
+  首帧带 `maxWaitMs` 时按 `maxWaitMs - 已等时长` 重设上界，旧壳无此字段才退回 `FALLBACK_MAX_WAIT_MS`
+  （刻意**大于**后端预算：宁可晚报，不可早解禁）。超时文案带最后一次进度原文。
+  协议版本保持 1（旧面板忽略未知帧，递增反而打断新旧并存的升级期）。
+- **UI**：`AboutCard` 内核版本行下增进行中一行（逐源/心跳文字 + 可选百分比），
+  请求发出即有反馈，终结（成败皆然）随 `run` 的 `onDone` 清除。
+- **门禁**：`test/kernel-update-single-writer-test.js` 扩 **SW-9**（进度被回调、上界取自 `d.maxWaitMs`、
+  代码行里不得再出现 `6 * 60 * 1000`、AboutCard 真的渲染 status），
+  并配两个反向夹具：旧桥整段（两判据皆红）与「补了回调但超时仍写死」（只红超时判据）。
+  契约与壳侧接线见壳仓 `docs/DESIGN-SHELL-ARCHITECTURE.md` §3.2c（K6/K7）。
+
 ### 反代账号生命周期引擎 W1：期望集纠偏 + 事件表落地 + 旧锁拆迁（PROXY-LIFECYCLE-STANDARD）
 
 - **根因**：进程起停时机散落在额度阈值（80% 备胎）、闲置宽限（markUsed/lastUsedAt）、
@@ -33,6 +91,19 @@
   sticky/端口归零/事件表同步回收断言）；circuit-breaker R-a 改锁「markUsed/lastUsedAt 零残留」；
   PG-1 契约表 markUsed -> ensureServable/reclaimAccount。本机静态门禁全绿；
   运行时契约由 CI 矩阵裁决（本机严禁跑测试套件）。
+
+### 壳看护的无头模式清单收为单一事实源（跨仓契约 D-9，配 B3b）
+
+- **根因**：守卫靠 `isShellProcess(cmdline)` 区分「真壳」与「壳自己跑的无头进程」，排除表是一条
+  手写正则。壳侧每加一个无头入口（`--platform-matrix` 此前已漏；2026-09-21 看护 Rust 化新增
+  `--watchdog`；`--run-guard` 从未登记）都可能让一个瞬时进程被当成「壳在运行」——
+  `decide()` 里 `alive > 0` 直接短路，真壳**永不**被拉起；`restartShell` 共用同一谓词，漏项还会
+  让它把运维进程当壳 SIGKILL（同一缺陷此前已因内联弱过滤修过一次）。
+- **修法**：排除表提为 `domains/shell/core.js` 的 `HEADLESS_FLAGS`（冻结清单 + 由它生成正则），
+  与壳侧 `main.rs`「Tauri 初始化之前 exit」的分支一一对应；契约写进 `KERNEL-DAEMON-CONTRACT.md` D-9。
+  纯核心纪律不变（清单仍是零出度的无 IO 事实）。
+- **验证**：`test/shell-watchdog-test.js` 新增 W2-f/g/h（三个漏项各自被排除）、W2-i（清单可枚举
+  且逐项生效）、W2-j 反空转（未登记的同名 flag 仍判为壳 ⇒ 证明 false 来自排除表而非名字没匹配）。
 
 ### 反代进程隔离标准化：平台事实上收 + 受管进程载体 + CP-5..9 牙齿（PROXY-ISOLATION-STANDARD）
 
@@ -102,6 +173,61 @@
 - 验证：node --check 全绿；静态门禁复跑（domain-structure DG-4=0、provider-gateway
   31/31、circuit-breaker 58/58、probe-gate 36/36、round13 53/53）。
 
+### 实例沙箱 W4 呈现定版：前端类型补齐 + 行展示配额/占用 + 档位如实标注（ARCHITECTURE-PLAN-instance-sandbox-governor）
+
+- **前端类型滞后补齐**（tsc 不会报这类缺口，故必须机器把尺）：`types.ts` 的 `InstanceState` 增
+  `usage?: { memMb, cpuPct, at } | null`（后端 viewRow 自 W2 已产出）、新增 `SandboxBudget` 接口并挂到
+  `EnvStatus.sandboxBudget`（后端 `/env/status` 自 W2 已产出）。声明缺失的后果不是编译失败而是**静默少显示**。
+- **列表行呈现**：底栏改「配额 内存 X · CPU Y（软限）+ 占用 ZMB · CPU W%」；占用只在真有采样时显示
+  （停止/未采到不渲染，**绝不以零充数**），tooltip 说明配额来源与执行档位。
+- **档位语义落到呈现**：能力门仍只在 `sandboxLaunch=false` 时前置提示（W3 后仅未知平台命中），
+  另按 `sandboxEnforcement` 分档标注——`cgroup` 内核硬限 / `supervise` 采样式软限（守卫按超标拍数
+  收割重启）/ `none` 无内核级限额；能力尚未回读（`caps===null`）时**一句档位话都不说**，
+  防「未确认即断言硬限」。添加表单同步显示当前档位（填额框自 W1 已删，此处只补语义交代）。
+- **验收标准第 2 条口径修正**：原写「`systemctl show` 断言」，实改为**执行器边界 argv 实录**
+  （新增 X-3d：注入假 exec，逐字校验 `--user set-property --runtime <unit> MemoryMax= MemoryHigh=
+  CPUQuota=` + 有界超时 + 空 alloc/非法名 fail-closed）。理由：在 CI runner 上真改宿主 systemd
+  属性留副作用，且 transient 单元不存在时命令本身就得起不来——argv 是这条链**在平台层的**唯一真产物
+  （systemd 收到属性后是否真限流属其自身语义，不在本仓断言面内，故 §六 条 2 标「内核侧生效待 CI」）。
+- 门禁/文档同步：`cross-platform-test` 新增 A1-g/A1-g2（前端类型与页面同源消费 usage/SandboxBudget/
+  软限标注，反向判据防「软限伪装成硬限」）；`PLATFORM-CAPABILITY-MATRIX.md` 新增「实例舱档位小节」
+  （launch/enforcement × 五档运行环境 + 宽严分离与认领语义 + 已裁决不做项），矩阵头计数 14→15；
+  README 索引两行状态随动（能力矩阵描述、计划状态改「已落地待 CI 验收」）；计划 §六 改题为
+  「验收标准与达成口径」并逐条标注证据面，**依赖真机行为的条目（1/2/4/5）一律不预勾**；
+  §五 两条「一期不做 / 一期不留」改为**定案**（重开条件写成证据，不写成期次）。
+- 验证：本机 `node --check` 与静态门禁（comment-pin/domain-structure/test-safety/test-chain/
+  docs-reference/cross-platform-architecture/layering/exec-bounded）全绿；UI 类型改动**未本机 typecheck**
+  （`ui/node_modules` 不存在，安装依赖属重操作且占资源），由 CI 的 `cd ui && npm run verify`
+  （typecheck + lint + test + build）裁决；A1-g/A1-g2/X-3d 的行为面判定同样交 CI。
+
+### 实例沙箱 W3 执行面：portable provider + 实测分档 dispatch + 运行期动态限额（ARCHITECTURE-PLAN-instance-sandbox-governor）
+
+- **三平台实例舱拉平**：新增 `platform/os/portable.js`（179 行）——无服务管理器依赖的执行 provider，
+  动词与 systemd 档同形（11 键方法集，X-3 以 `_testProviders` 静态对账强制两档一致）。实例身份采用
+  无状态认领：端口反查 + cmdline 锚点（`--port` / 可执行入口）复核，`run.pid` 仅在「已拉起未监听」
+  窗口作停止兜底，PID 复用由 cmdline 锚点判死；停止走宽严分离——`isUnitActive` 查询降级宽松
+  （无锚点时仅凭端口，查询失败返回三态 `null` 而非谎报不活跃），`stopUnit` 杀进程必须锚点命中，
+  未确认不杀返 `false`；端口回退路径命中 `ownGroup=false`，不把他进程组当本实例。
+  `setLimits` 恒 `false` 是档位声明而非缺陷（supervise 软档无内核强制）。
+- **运行期限额动态化**：systemd 档新增 `setLimits` = `systemctl --user set-property --runtime`
+  下发 MemoryMax/MemoryHigh/CPUQuota（`--runtime` 防 drop-in 黏住陈旧下限）；`_governTick` 在配额
+  跨死区变更且 `phase==='RUNNING'` 时当拍下发，不再「下次启动生效」。portable 档违规处置与启停
+  经同一 provider 形状收敛，`start`/`stop`/违规收割三处 ctx（port/timeoutMs/anchors）同源。
+- **dispatch 实测不写死**：`service.current()` 分档为数据驱动——linux 探测 `systemd-run` 可达即
+  systemd 硬档、不可达（容器/WSL1）落 portable 软档；darwin/win32 portable；未知平台 NONE 显式抛错。
+  能力声明随动：`sandboxLaunch` 三平台翻正 `true`，`sandboxEnforcement` darwin/win32 = `supervise`
+  （未知平台仍 false/none，无任何虚报）。域层零 `process.platform` 分支，分档全部收在 provider 侧。
+- **残留收口**：`_prepareSystemd` 增 `supportsUnits` 闸（mac/win 不再 mkdir systemd 结构）；
+  门面 `launchCtx` 入 contract PUBLIC_API（DG-10），`dshBin` 补登记（消费面自 67072da 起存在）。
+- 门禁/测试同步：判定性测试并入既有文件、**未新增链条目**——`platform-layer-portability-test`
+  重写 X-3（dispatch 不变式 `kind === (hasSystemdRun ? 'systemd' : 'portable')` + `_testProviders`
+  方法集对账），新增 X-3b（require.cache 注入假 pidlookup、空闲 PID 探测防真实信号，23 项语义断言）、
+  X-3c（真实宿主拉起→监听→认领→停止闭环，每平台 runner 各跑一次）；`exec-return-contract` A4b/A5
+  扩 setLimits 与分档不变式；`instance-state-test` 7A 扩 stop ctx、新增 7E（启动 ctx 同源、
+  动态下发、不变不重复下发、supportsUnits 闸）；`capability-profile`、`four-platform-behavior-matrix`
+  P-5、`platform-capability-audit` A2/A3、`cross-platform` 判据随 W3 事实翻转。
+  行为裁决以 CI 三平台矩阵为准；本机仅静态门禁与 `node --check`。
+
 ### 实例沙箱 W2 控制面：governor 完整决策策略 + 资源采样 + 监督拍接线（ARCHITECTURE-PLAN-instance-sandbox-governor）
 
 - **决策策略落地**（`governor.js#decide()` 纯函数，45 行预算推导扩为 206 行完整策略）：
@@ -122,7 +248,8 @@
   单次采样 2s 有界且必须走 `exec.runOutAsync`（同步 execFileSync 会冻结监督拍整个 tick）；
   cpuPct 为两拍间 delta（单核=100），采样失败保留上轮缓存、绝不当零。
 - **接线与展示**：supervise 的 RUNNING 分支同拍完成「观测→决策→下发/处置→展示值」——
-  配额变更写回 `state.allocation`（当前口径：展示值 + 下次启动生效；运行期 set-property 动态化属 W3），
+  配额变更写回 `state.allocation`（当前口径：展示值 + 下次启动生效；运行期 set-property 动态化属 W3，
+  该口径已被下方 W3 段取代），
   实时占用写 `state.usage`（`viewRow` 透出）；`stop()` 清 usage 与运行期缓存。
   新增门面 `InstanceManager.budgetSnapshot()`，`/env/status` 加 `sandboxBudget` 预算总览
   （预算/已预留/可容纳实例数/CPU 份额）。

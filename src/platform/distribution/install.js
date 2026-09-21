@@ -255,7 +255,9 @@ async function waitPortHealthy(opts) {
   if (!Number.isInteger(port) || port <= 0) return { ok: false, reason: 'waitPortHealthy: 非法端口 ' + o.port };
   const unit = o.unit || null;
   const stabilityMs = o.stabilityMs !== undefined ? o.stabilityMs : 15000;
-  const unitActive = () => service.isUnitActive(unit); // 平台层判定（无单元视为通过）
+  // 平台层判定（无单元视为通过）。portable 档拿不到单元概念，以 {port} 反查监听进程为活跃锚——
+  // 与下方 portListening 同锚，故对 portable 该检查退化为端口持续在线（正确语义）；systemd 档忽略 ctx 附加字段。
+  const unitActive = () => service.isUnitActive(unit, { port });
   const deadline = Date.now() + (o.timeoutMs || 60000);
   while (Date.now() < deadline) {
     if ((await portListening(host, port)) && unitActive()) {

@@ -26,6 +26,19 @@ function dshEntry(rootDir, inst) {
 }
 /** 沙箱实例独立临时目录：TMPDIR 是 PrivateTmp 的三平台一致泛化（win/mac 无命名空间可借）。 */
 function tmpDir(rootDir, inst) { return path.join(root(rootDir, inst), 'tmp'); }
+/** portable 档的 run.pid（仅「STARTING 未监听窗口」的停止兜底；systemd 档不读它）。 */
+function runPidFile(rootDir, inst) { return path.join(root(rootDir, inst), 'run.pid'); }
+
+/** 启停共用的身份上下文（portable provider 的归属锚；systemd provider 忽略这些附加字段）。
+ *  anchors 取「入口文件路径 + --port 参数」：均由 effectiveCommand 确定性推导，启停两侧同值；
+ *  cmdline 命中其一才认定「我们的进程」——防 PID 复用误杀与端口被他人占用时的错误连坐。 */
+function launchCtx(rootDir, dshBin, inst) {
+  const cmd = effectiveCommand(rootDir, dshBin, inst) || [];
+  const anchors = [];
+  if (cmd[1]) anchors.push(String(cmd[1]));
+  if (inst.port) anchors.push('--port ' + inst.port);
+  return { port: inst.port, pidFile: runPidFile(rootDir, inst), anchors };
+}
 
 /** 沙箱实例的启动命令：用「官方 npm install -g --prefix」装进该沙箱 install 目录的 DSH。 */
 function sandboxCommand(rootDir, inst) {
@@ -99,6 +112,6 @@ function supported(override) {
 }
 
 module.exports = {
-  root, dataDir, installDir, nodeModulesDir, dshEntry, tmpDir,
+  root, dataDir, installDir, nodeModulesDir, dshEntry, tmpDir, runPidFile, launchCtx,
   effectiveCommand, unitProps, sandboxEnv, supported,
 };

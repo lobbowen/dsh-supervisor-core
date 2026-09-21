@@ -63,8 +63,8 @@ const code = inst.split(String.fromCharCode(10))
   check('L-a rollback 只定义一次', defs === 1, defs + ' 处');
 }
 
-// -- L-b：删数据目录前复核 isUnitActive --
-check('L-b 复核 isUnitActive', /isUnitActive\(unit\)/.test(code), '有');
+// -- L-b：删数据目录前复核 isUnitActive（W3 起带身份锚 ctx，判据不再钉死参数表形态）--
+check('L-b 复核 isUnitActive', /isUnitActive\(unit[,)]/.test(code), '有');
 check('L-b 仍活跃时不删目录（条件含 !stillActive）', /!stillActive/.test(code), '有');
 check('L-b 仍活跃时记事件（不静默）', /inst_remove_data_preserved/.test(code), '有');
 

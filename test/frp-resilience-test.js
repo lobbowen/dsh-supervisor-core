@@ -26,13 +26,15 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   console.log('== R1 配置健壮性（loginFailExit）==');
   {
     const m = new FrpManager({ dir: TMP, logger, events: null });
-    const settings = { enabled: true, serverAddr: '1.2.3.4', serverPort: 7000, authToken: 'tok', user: 'dsh' };
-    const insts = [{ id: 'inst-abc12345', frpEnabled: true, frpRemotePort: 7001, wanPort: 28070 }];
+    const settings = { serverAddr: '1.2.3.4', serverPort: 7000, authToken: 'tok', user: 'dsh' };
+    const insts = [{ id: 'inst-abc12345', remoteMode: 'wan', wanPort: 28070 }];
     const { text, count } = m.buildConfig(settings, insts);
     check('R1-a 生成配置含 loginFailExit = false', /^loginFailExit = false$/m.test(text), 'ok');
-    check('R1-b 代理条目正确（localPort=wanPort, remotePort）', count === 1 && /localPort = 28070/.test(text) && /remotePort = 7001/.test(text), 'count=' + count);
+    check('R1-b 代理条目正确（公网口与 relay 口恒同号：localPort=remotePort=wanPort）', count === 1 && /localPort = 28070/.test(text) && /remotePort = 28070/.test(text), 'count=' + count);
     check('R1-c wanPort 缺失时不生成无效代理（防 frpc 解析失败）',
-      m.buildConfig(settings, [{ id: 'x', frpEnabled: true, frpRemotePort: 7001, wanPort: null }]).count === 0, 'ok');
+      m.buildConfig(settings, [{ id: 'x', remoteMode: 'wan', wanPort: null }]).count === 0, 'ok');
+    check('R1-d 非 wan 实例不进隧道（lan/off 均不生成）',
+      m.buildConfig(settings, [{ id: 'y', remoteMode: 'lan', wanPort: 28071 }, { id: 'z', wanPort: 28072 }]).count === 0, 'ok');
   }
 
   // -- R5：凭据落盘卫生 + API 回显掩码（AUDIT B-6/B-7）--
@@ -40,7 +42,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   {
     const D5 = fs.mkdtempSync(path.join(TMP, 'hyg-'));
     const m5 = new FrpManager({ dir: D5, logger, events: null });
-    m5.saveSettings({ enabled: true, serverAddr: '1.2.3.4', serverPort: 7000, authToken: 'S3CR3T-frp', user: 'dsh' });
+    m5.saveSettings({ serverAddr: '1.2.3.4', serverPort: 7000, authToken: 'S3CR3T-frp', user: 'dsh' });
     const raw5 = fs.readFileSync(m5.settingsFile, 'utf8');
     check('R5-a settings 落盘可读（写链路未被掩码改动破坏）', /S3CR3T-frp/.test(raw5), 'ok');
     if (process.platform !== 'win32') {
@@ -72,8 +74,8 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     check('R5-e status().settings 不回显 authToken 明文，只报 authTokenSet（AUDIT B-7，与 access.js 同规）',
       !('authToken' in st5.settings) && st5.settings.authTokenSet === true && !JSON.stringify(st5).includes('S3CR3T-frp'),
       JSON.stringify(st5.settings));
-    check('R5-f 非机密配置字段照常回显（UI 回填面不丢）',
-      st5.settings.serverAddr === '1.2.3.4' && st5.settings.enabled === true && st5.settings.serverPort === 7000,
+    check('R5-f 非机密配置字段照常回显（UI 回填面不丢；总闸字段已随三态模型废止）',
+      st5.settings.serverAddr === '1.2.3.4' && st5.settings.serverPort === 7000 && st5.settings.enabled === undefined,
       JSON.stringify(st5.settings));
   }
 
@@ -92,8 +94,8 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     fs.mkdirSync(path.dirname(m.binPath), { recursive: true });
     fs.writeFileSync(m.binPath, '#!/bin/sh\nsleep 300\n');
     fs.chmodSync(m.binPath, 0o755);
-    m.saveSettings({ enabled: true, serverAddr: '127.0.0.1', serverPort: 7000, authToken: 'tok', user: 'dsh' });
-    const insts = [{ id: 'inst-abc12345', frpEnabled: true, frpRemotePort: 7001, wanPort: 28070 }];
+    m.saveSettings({ serverAddr: '127.0.0.1', serverPort: 7000, authToken: 'tok', user: 'dsh' });
+    const insts = [{ id: 'inst-abc12345', remoteMode: 'wan', wanPort: 28070 }];
     m.syncFromInstances(insts);
     await sleep(400);
     const first = m.child;
@@ -116,8 +118,8 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     check('R3-a 主动 stop 清重启定时器', !m._restartTimer, 'ok');
     check('R3-b 主动 stop 后 child 为空且不再 spawn', m.child === null, 'ok');
 
-    // 停用（enabled=false）-> 即使退出也不重启
-    m.saveSettings({ enabled: false, serverAddr: '127.0.0.1', serverPort: 7000, authToken: 'tok', user: 'dsh' });
+    // 无代理（_lastCount=0）-> 即使退出也不重启（frpc 生命周期单一条件 = 是否存在 wan 隧道）
+    m.saveSettings({ serverAddr: '127.0.0.1', serverPort: 7000, authToken: 'tok', user: 'dsh' });
     m._intentionalStop = false;
     m._lastCount = 0;
     m._scheduleRestart();
@@ -135,8 +137,8 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     const D4 = fs.mkdtempSync(path.join(TMP, 'bad-'));
     const m4 = new FrpManager({ dir: D4, logger, events: { append() {} } });
     fs.mkdirSync(m4.binPath, { recursive: true });   // binPath 变成**目录**：existsSync 通过但不可执行
-    m4.saveSettings({ enabled: true, serverAddr: '127.0.0.1', serverPort: 7000, authToken: 'tok', user: 'dsh' });
-    m4.syncFromInstances([{ id: 'inst-abc12345', frpEnabled: true, frpRemotePort: 7001, wanPort: 28070 }]);
+    m4.saveSettings({ serverAddr: '127.0.0.1', serverPort: 7000, authToken: 'tok', user: 'dsh' });
+    m4.syncFromInstances([{ id: 'inst-abc12345', remoteMode: 'wan', wanPort: 28070 }]);
     check('R4-a start 不抛出（同步异常已降级为返回值）', true, 'ok');
     await sleep(500);
     check('R4-b 异步 spawn 失败已被处理（child 清空、进程未崩溃）', m4.child === null, 'child=' + (m4.child && m4.child.pid));

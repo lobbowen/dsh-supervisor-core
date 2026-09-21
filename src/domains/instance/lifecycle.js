@@ -21,8 +21,11 @@ function createLifecycle(deps) {
   const runtime = new Map();
   const machineFactsNow = () => (typeof machineFacts === 'function' ? machineFacts() : governor.machineFacts());
   /** 准备 systemd 用户目录并让位历史遗留模板（改名保留，绝不删除，不按内容判归属）。
-   *  模板会阻挡 systemd-run transient 单元；改名阻断效果相同但绝不丢数据。 */
+   *  模板会阻挡 systemd-run transient 单元；改名阻断效果相同但绝不丢数据。
+   *  W3：仅单元档执行——portable 档既无 systemd 目录可准备，也绝不该在 win/mac 上 mkdir 出
+   *  「~/.config/systemd/user」这种结构残留。 */
   function _prepareSystemd() {
+    if (!service.supportsUnits) return true;
     try {
       fs.mkdirSync(systemdDir, { recursive: true });
       if (fs.existsSync(systemdTemplatePath)) {
@@ -43,9 +46,11 @@ function createLifecycle(deps) {
       return false;
     }
   }
-  /** 清理残留同名 transient 单元（文件残留会让 systemd-run 报 already loaded）。 */
-  function _cleanStaleUnit(unit) {
-    const r = service.cleanTransient(unit);
+  /** 清理残留同名 transient 单元（文件残留会让 systemd-run 报 already loaded）。
+   *  ctx 为 portable 档的身份锚（run.pid/端口）：同名单元若有旧进程仍活（未监听窗口），
+   *  cleanTransient 负责先停再清；systemd 档忽略这些附加字段。 */
+  function _cleanStaleUnit(unit, ctx) {
+    const r = service.cleanTransient(unit, ctx);
     // 清理失败不再无条件记「cleaned」：原实现四步静默，日志对失败撒谎（N5）。
     if (r && r.ok === false) {
       logger.warn && logger.warn('clean stale transient unit 未完全生效: ' + unit +
@@ -88,9 +93,10 @@ function createLifecycle(deps) {
       inst.state.allocation = alloc;
       const props = sandbox.unitProps(inst, alloc);
       const { env, workingDir } = sandbox.sandboxEnv(instancesRoot, inst);
-      _cleanStaleUnit('dsh-web@' + inst.id);
+      const ctx = sandbox.launchCtx(instancesRoot, deps.dshBin, inst);
+      _cleanStaleUnit('dsh-web@' + inst.id, ctx);
       try {
-        service.startTransient({ unit: 'dsh-web@' + inst.id, cmd: cmdArr, env, props, workingDir });
+        service.startTransient({ unit: 'dsh-web@' + inst.id, cmd: cmdArr, env, props, workingDir, port: ctx.port, pidFile: ctx.pidFile, anchors: ctx.anchors });
       } catch (e) {
         const msg = 'systemd 启动失败: ' + (e.message || e);
         inst.state.lastError = msg;
@@ -147,7 +153,7 @@ function createLifecycle(deps) {
     if (!isSandboxSupported()) return { ok: false, error: '当前平台不支持沙箱实例（能力矩阵见 GET /env/status 的 capabilities.sandboxLaunch；限额执行档位见 capabilities.sandboxEnforcement）' };
     const unit = 'dsh-web@' + inst.id;
     let stopped;
-    try { stopped = service.stopUnit(unit, { timeoutMs: 20000 }); } // 有界，防 dbus 挂起冻结守卫
+    try { stopped = service.stopUnit(unit, Object.assign({ timeoutMs: 20000 }, sandbox.launchCtx(instancesRoot, deps.dshBin, inst))); } // 有界，防 dbus 挂起冻结守卫；ctx 为 portable 档身份锚
     catch (e) { stopped = false; logger.warn && logger.warn('[' + inst.id + '] 停止单元 ' + unit + ' 异常: ' + (e && e.message)); }
     if (stopped === false) {
       // 停止未确认：如实报错并保持原相位，绝不谎报已停止（否则 supervise 不再自愈、用户误以为已停）。
@@ -241,7 +247,16 @@ function createLifecycle(deps) {
         cpuPct: typeof rec.cpuPct === 'number' ? rec.cpuPct : null,
         at: now,
       };
-      if (entry.changed) target.state.allocation = entry.alloc;
+      if (entry.changed) {
+        target.state.allocation = entry.alloc;
+        // W3 运行期动态下发：单元活着才推（set-property 即时生效，不必等下次启动）；
+        // portable/测试假 provider 无 setLimits 或恒 false = 无内核强制，如实跳过——
+        // 展示值已更新，下次启动仍按新值生效，governor 不因下发失败走任何降级分支。
+        if (typeof service.setLimits === 'function' && target.state && target.state.phase === 'RUNNING') {
+          try { service.setLimits('dsh-web@' + entry.id, entry.alloc); }
+          catch (e) { logger.warn && logger.warn('[' + entry.id + '] setLimits 下发异常: ' + (e && e.message)); }
+        }
+      }
       if (!entry.violation || entry.id !== inst.id) continue; // 同租户违规由其自身监督拍处置（一拍内轮到）
       const v = entry.violation;
       const kindLabel = v.kind === 'memory' ? '内存' : 'CPU';
@@ -249,7 +264,8 @@ function createLifecycle(deps) {
       if (events) events.append('inst_resource_violation', { id: inst.id, name: inst.name, kind: v.kind, actual: v.actual, target: v.target });
       logger.warn && logger.warn('[' + inst.id + '] ' + reason);
       try {
-        service.stopUnit('dsh-web@' + inst.id, { timeoutMs: 20000 }); // 经 Provider 动词：cgroup 档即内核拆舱
+        // 经 Provider 动词：cgroup 档即内核拆舱；portable 档按端口/run.pid 锚点整树终止（W3）。
+        service.stopUnit('dsh-web@' + inst.id, Object.assign({ timeoutMs: 20000 }, sandbox.launchCtx(instancesRoot, deps.dshBin, inst)));
       } catch (e) {
         logger.warn && logger.warn('[' + inst.id + '] 违规停单元异常: ' + (e && e.message));
       }

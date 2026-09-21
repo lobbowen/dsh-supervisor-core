@@ -2,7 +2,8 @@
 
 // relay 域纯层（DL-G8：不 require node:fs/http/https/net/child_process）。
 // 只放判定与构造：来源信任、常数时间比较、令牌门卫决策、Cookie 取值、HTML polyfill 常量、
-// frpc.toml 文本生成、frp 设置归一、公网暴露安全闸；副作用一律留在 proxy/session/tunnel/frp 等 IO 层。
+// 远程访问模式归一（normalizeRemoteMode）、wan 前置闸（validateWanAccess）、访问视图投影
+// （projectRemoteView）、frpc.toml 文本生成、frp 设置归一；副作用一律留在 proxy/session/tunnel/frp 等 IO 层。
 
 const crypto = require('node:crypto');
 // 来源必须落在回环或 RFC1918 私有网段；复用 shared/ip 的同一份判定，绝不在本域重写第二份。
@@ -142,8 +143,7 @@ if (typeof crypto.randomUUID !== 'function') {
 /** settings 与 instances 生成 frpc.toml 文本（纯，无 IO）。
  *  loginFailExit 必须为 false：frpc 默认 true 时首次连不上 frps 即退出且不重试，隧道永久失效；
  *  置 false 让 frpc 自身持续重连。wanPort 未分配时不得写出无效 [[proxies]]。
- *  @returns {{ text:string, count:number }}
- */
+ *  端口纪律：公网口与本机 relay 口恒同号（remotePort = wanPort），不存在第二套端口分配。 */
 function buildFrpcToml(settings, instances) {
   const s = settings || {};
   const lines = [];
@@ -154,26 +154,26 @@ function buildFrpcToml(settings, instances) {
   lines.push('');
   let count = 0;
   for (const inst of instances || []) {
-    if (!inst.frpEnabled || !inst.frpRemotePort || !Number.isInteger(inst.wanPort) || inst.wanPort <= 0) continue;
+    if (normalizeRemoteMode(inst.remoteMode) !== 'wan' || !Number.isInteger(inst.wanPort) || inst.wanPort <= 0) continue;
     const name = (s.user || 'dsh') + '-lan-' + String(inst.id).slice(-8);
     lines.push('[[proxies]]');
     lines.push('name = "' + name.replace(/"/g, '') + '"');
     lines.push('type = "tcp"');
     lines.push('localIP = "127.0.0.1"');
     lines.push('localPort = ' + inst.wanPort);
-    lines.push('remotePort = ' + inst.frpRemotePort);
+    lines.push('remotePort = ' + inst.wanPort);
     lines.push('');
     count++;
   }
   return { text: lines.join('\n'), count };
 }
 
-/** frp 设置归并（patch 覆盖现值，纯）。 */
+/** frp 设置归并（patch 覆盖现值，纯）。frpc 进程生命周期由「是否存在 wan 实例」驱动，
+ *  设置面只有连接参数，没有总闸。 */
 function normalizeFrpSettings(patch, current) {
   const j = patch || {};
   const cur = current || {};
   return {
-    enabled: j.enabled !== undefined ? !!j.enabled : cur.enabled,
     serverAddr: String(j.serverAddr !== undefined ? j.serverAddr : cur.serverAddr).trim(),
     serverPort: Number(j.serverPort) || cur.serverPort,
     authToken: String(j.authToken !== undefined ? j.authToken : cur.authToken),
@@ -182,12 +182,11 @@ function normalizeFrpSettings(patch, current) {
 }
 
 /** frp 服务器地址前置校验（纯）：serverAddr 为空时 frpc 只会连到空地址、永不建隧道。
- *  ops.frpAction('settings') 仅在「启用」时据此拒启（关闭方向仍可保存空值）；
- *  frp.start() 在执行边界对任何 spawn 无条件复校。 */
+ *  wan 模式写入闸与 frp.start() 执行边界共用本判定。 */
 function validateFrpServerSettings(settings) {
   const s = settings || {};
   if (!String(s.serverAddr || '').trim()) {
-    return { ok: false, error: '启用 frp 前必须填写服务器地址（serverAddr）' };
+    return { ok: false, error: '启用公网访问前必须填写服务器地址（serverAddr）' };
   }
   return { ok: true };
 }
@@ -210,30 +209,53 @@ function backoffGate(f, cfg) {
   return { waitMs: Math.max(0, lockMs - (now - firstAt)) };
 }
 
-/** 公网暴露（frp）安全闸（纯）：relay 空 token 恒放行 + 回环呈现，公网可零认证触达特权 API。
- *  开启前强制要求已设访问令牌，并做端口合法性与实例间占用校验。
- *  单一事实源：app 侧 patchDshMain 与 relay 侧 setFrp 必须调用本函数，不得各写一份。
- *  @param {boolean} enabled
+/** 公网访问（wan）前置安全闸（纯）：relay 空 token 恒放行 + 回环呈现，公网可零认证触达特权 API。
+ *  进入 wan 模式前强制要求已设访问令牌；端口无自由度（公网口与 relay 口恒同号），
+ *  端口合法性/占用不在本闸——由 relay 槽位注册表单一事实源保证。
  *  @param {string} remoteToken
- *  @param {number|string} frpRemotePort
- *  @param {Array} peers  受管清单（含 id/name/frpEnabled/frpRemotePort）
- *  @param {string} selfId 当前实例 id（端口占用校验排除自身）
- *  @returns {{ok:true, port?:number}} 或 {{ok:false, error:string}}
+ *  @returns {{ok:true}|{ok:false, error:string}}
  */
-function validateFrpExposure({ enabled, remoteToken, frpRemotePort, peers, selfId }) {
-  if (!enabled) return { ok: true };
+function validateWanAccess({ remoteToken }) {
   const strength = remoteTokenStrength(remoteToken);
   if (!strength.ok) {
     const error = strength.reason === 'short'
       ? '远程访问令牌（remoteToken）至少 8 位：公网暴露可被暴力枚举，过短令牌等同无令牌'
-      : '开启公网暴露前请先为该实例设置远程访问令牌（remoteToken），否则 DSH 特权接口将对公网完全开放';
+      : '开启公网访问前请先为该实例设置远程访问令牌（remoteToken），否则 DSH 特权接口将对公网完全开放';
     return { ok: false, error };
   }
-  const port = parseInt(frpRemotePort, 10);
-  if (!Number.isInteger(port) || port <= 0 || port > 65535) return { ok: false, error: '无效的公网端口' };
-  const clash = (peers || []).find((x) => x.id !== selfId && x.frpRemotePort === port && x.frpEnabled);
-  if (clash) return { ok: false, error: '公网端口 ' + port + ' 已被实例「' + clash.name + '」占用' };
-  return { ok: true, port };
+  return { ok: true };
+}
+
+/** 远程访问模式读侧归一（纯）：磁盘/快照记录可能缺字段，一律收敛到 'off'，消费方不做真值猜测。 */
+function normalizeRemoteMode(v) {
+  return v === 'lan' || v === 'wan' ? v : 'off';
+}
+
+/** 远程访问视图投影（纯）——URL 与就绪态的唯一事实源，前端零判定直消费。
+ *  ready 语义：relay 在监听 且 DSH 会话 cookie 已注入（= 扫码即进入已认证会话）；
+ *  wan 模式额外要求 frpc 在跑（公网隧道存活）。未就绪的具体原因按优先级给出，供 UI 悬停呈现。
+ *  @param {{mode,relayListening,cookieReady,tokenSet,frpcRunning,serverAddr,lanAddress,wanPort}} v
+ *  @returns {{mode:string, ready:boolean, accessUrl:string|null, reasons:string[]}}
+ */
+function projectRemoteView(v) {
+  const x = v || {};
+  const mode = normalizeRemoteMode(x.mode);
+  if (mode === 'off') return { mode, ready: false, accessUrl: null, reasons: [] };
+  const reasons = [];
+  if (!x.relayListening) reasons.push('远程服务未就绪（relay 未监听）');
+  if (!x.tokenSet) reasons.push('未设访问令牌');
+  else if (!x.cookieReady) reasons.push('正在注入 DSH 会话…');
+  if (mode === 'wan') {
+    if (!String(x.serverAddr || '').trim()) reasons.push('未配置 frps 服务器地址');
+    if (!x.frpcRunning) reasons.push('公网隧道未建立（frpc 未运行）');
+  }
+  const ready = !reasons.length;
+  let accessUrl = null;
+  if (Number.isInteger(x.wanPort) && x.wanPort > 0) {
+    const host = mode === 'wan' ? String(x.serverAddr || '').trim() : String(x.lanAddress || '').trim();
+    if (host) accessUrl = 'http://' + host + ':' + x.wanPort + '/';
+  }
+  return { mode, ready, accessUrl, reasons };
 }
 
 module.exports = {
@@ -247,6 +269,8 @@ module.exports = {
   POLYFILL_SCRIPT,
   buildFrpcToml,
   normalizeFrpSettings,
+  normalizeRemoteMode,
   validateFrpServerSettings,
-  validateFrpExposure,
+  validateWanAccess,
+  projectRemoteView,
 };

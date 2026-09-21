@@ -3,12 +3,19 @@
 // 服务管理器抽象（Provider 分派）。
 // 铁律：平台无关域（domains/*、supervisor）不得直接调用 systemctl/launchctl/schtasks，一律经本模块；
 // 平台差异在此按 Provider 分派，未实现的能力显式抛 CapabilityError（绝不静默失败）。
+// 分派口径（ARCHITECTURE-PLAN-instance-sandbox-governor，实测不写死）：
+//   linux 且有 systemd-run -> systemd（cgroup 硬档，set-property 动态下发）；
+//   linux 无 user-systemd（容器/WSL1）-> portable —— 这类环境过去把沙箱功能整体判死，现一并解锁；
+//   darwin / win32 -> portable（采样式限额 supervise 档；Job Object / launchd plist 一期不做，属计划定案范围外）；
+//   未知平台 -> NONE（显式失败，不谎报；能力档位 sandboxLaunch=false 在域层入口即挡）。
 
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const exec = require('../util/exec');
 const input = require('../util/input');
+const execPath = require('./exec-path');
+const { portable } = require('./portable');
 
 /** 平台不具备该能力时抛出（调用方据此给出明确提示，而非 catch 后误报「启动失败/端口冲突」）。 */
 class CapabilityError extends Error {
@@ -111,9 +118,24 @@ const systemd = {
     if (!r.ok) throw new Error('systemd-run 失败: ' + (r.error || 'unknown') + (r.stderr ? ' | ' + String(r.stderr).trim() : ''));
     return true;
   },
+  /** 运行期改限额（W3 动态化）：systemctl --user set-property 立即生效，无需重启单元。
+   *  必带 --runtime：transient 单元本不落盘，不带它会把 drop-in 写进用户配置目录，
+   *  与「每次启动按当时拓扑重算」的 governor 语义失同步（陈旧下限永久黏住）。
+   *  值只来自 sandbox.unitProps 同源的 alloc（平台层翻译语义、不决定数额）。 */
+  setLimits(unit, alloc) {
+    if (unitNameViolation(unit)) return false; // 非法名绝不进 systemctl argv
+    const a = alloc || {};
+    const props = [];
+    if (a.memoryMax) props.push('MemoryMax=' + a.memoryMax);
+    if (a.memoryHigh) props.push('MemoryHigh=' + a.memoryHigh);
+    if (a.cpuQuota) props.push('CPUQuota=' + a.cpuQuota);
+    if (!props.length) return false;
+    return exec.runDetail('systemctl', ['--user', 'set-property', '--runtime', unit].concat(props),
+      { timeoutMs: 10000 }).ok;
+  },
 };
 
-/* 不支持用户单元的 Provider（macOS launchd / Windows 服务 / 未知平台） */
+/* 不支持任何实例舱的平台（未知平台）：动词形态保持完整（X-3 方法集一致），拉起/停止显式抛错 */
 function makeUnsupported(kind, label) {
   return {
     kind,
@@ -126,17 +148,31 @@ function makeUnsupported(kind, label) {
     transientUnitFile() { return null; },
     // 无 transient 单元可清 = 成功；返回形态与 systemd 一致，调用方无需分支（N5）。
     cleanTransient() { return { ok: true, errors: [] }; },
-    startTransient() { throw new CapabilityError(label + '：不支持 transient 实例（沙箱需 Linux + systemd-run）'); },
+    startTransient() { throw new CapabilityError(label + '：不支持拉起实例舱（portable 档未启用）'); },
+    setLimits() { return false; },
   };
 }
 
-const PROVIDERS = {
-  linux: systemd,
-  darwin: makeUnsupported('launchd', 'macOS launchd'),
-  win32: makeUnsupported('windows-service', 'Windows 服务/计划任务'),
-};
 const NONE = makeUnsupported('none', '当前平台无服务管理器');
 
-function current() { return PROVIDERS[PLATFORM] || NONE; }
+/** linux 上 systemd-run 的存在性：解析优先（resolveExecutable 即「可被 spawn」的准确语义，
+ *  与 index.hasTool 同一口径），解析覆盖不到的 PATH 变体用一次有界实测兜底。
+ *  结果模块期缓存：current() 在多个文件的模块顶层被调用，不在加载期反复 spawn。 */
+let _systemdRun = null;
+function hasSystemdRun() {
+  if (_systemdRun === null) {
+    _systemdRun = !!execPath.resolveExecutable('systemd-run') ||
+      exec.runOut('systemd-run', ['--version'], { timeoutMs: 3000 }) !== null;
+  }
+  return _systemdRun;
+}
 
-module.exports = { current, CapabilityError, kind: () => current().kind, PLATFORM, UNIT_NAME_RE, unitNameViolation };
+function current() {
+  if (PLATFORM === 'linux') return hasSystemdRun() ? systemd : portable;
+  if (PLATFORM === 'darwin' || PLATFORM === 'win32') return portable;
+  return NONE;
+}
+
+// _testProviders：X-3「provider 方法集完全一致」判据的静态对账缝——伪造 linux 且清空 PATH 时
+// current() 只能落 portable，systemd/NONE 的键集在任意宿主都拿得到，否则该不变量悄悄失去覆盖面。
+module.exports = { current, CapabilityError, kind: () => current().kind, PLATFORM, UNIT_NAME_RE, unitNameViolation, _testProviders: { systemd, portable, NONE } };

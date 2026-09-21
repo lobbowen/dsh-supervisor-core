@@ -554,7 +554,9 @@ function functionScan(src) {
 
 // -- DG-14 facade 只读 --
 const WRITE_VERB = /^(set|patch|install|apply|toggle|sync|start|stop|restart|enable|disable|update|remove|delete|reset)/i;
-const WRITE_TARGET_CALL = /\.(frpAction|setFrp|syncFrpc)\s*\(/;
+//   setFrp 随远程控制三态化收口删除；写目标清单对齐现役唯一写入口（lan.js#setRemoteMode/
+//   setRemoteToken/lanFrpc->frpAction/syncFrpc）。
+const WRITE_TARGET_CALL = /\.(frpAction|setRemoteMode|setRemoteToken|syncFrpc)\s*\(/;
 const FACADE_EXCEPTIONS = {
   'app/facade/lan.js': { listLan: '读触发 reconcile 对账（relay list），域契约标注 read-with-side-effect' },
   'app/facade/ports.js': { listPorts: '读触发端口激活探测，同上' },

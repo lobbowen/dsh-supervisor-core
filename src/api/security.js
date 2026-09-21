@@ -96,7 +96,7 @@ function originAllowed(req, apiPort) {
   //   C-2 裁决：现代浏览器对 **POST（含 form 提交）一律发 Origin**，
   //   缺 Origin 只可能来自非浏览器客户端——「无 Origin 写请求」不构成浏览器 CSRF 面。
   //   组合归零风险已由闸 1 fail-closed（缺 Host 即拒）封堵；本行语义保持并测试钉死
-  //   （defects-batch-f K6-b / lan-access-boundary E-a,E-b / core-test:146）。
+  //   （defects-batch-f K6-b / lan-access-boundary E-a,E-b / core-test）。
   const o = req.headers.origin;
   if (!o) return true; // curl / CLI / 同源 GET 无 Origin
   try {

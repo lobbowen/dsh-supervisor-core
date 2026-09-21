@@ -8,6 +8,8 @@
  * 协议与来源/目标校验在壳侧（docs/DESIGN-SHELL-ARCHITECTURE.md）；
  * 两侧各自持协议版本并由门禁锁定（壳 SW-1、内核 SW）。
  * 收方向同样有来源校验：面板只接受 `ev.source === window.parent` 的消息（UI 条 6，门禁 SW-8）。
+ * 进度与等待上界是壳侧契约 K6/K7：进度帧可多次且非终结，首帧的 `maxWaitMs` 才是本文件
+ * 允许的唯一时间事实源（壳仓 `bridge.rs` 定义，面板不自估）。
  */
 
 /** 协议版本：任何语义变更必须递增；须与壳 src/bridge.rs 的常量一致。 */
@@ -25,20 +27,46 @@ export type KernelUpdateResult = {
   error?: string | null;
 };
 
-/** 是否运行在桌面壳宿主内（无宿主 = 用独立浏览器打开面板，不能更新内核）。 */
-export function hasShellHost(): boolean {
-  try { return window.parent !== window; } catch { return false; }
-}
+/** 壳中继过来的安装进度（非终结，**可多次**：开工行 / 换源行 / npm 心跳行）。 */
+export type KernelUpdateProgress = {
+  stage?: string | null;
+  /** 壳侧 `domain/install.rs` 成形的文字（含真实心跳：已用时 / 输出行数 / 末行）。 */
+  status?: string | null;
+  /** 0..1 或 null —— null = 这一步**没有**可测分母，不得当成 0 用。 */
+  progress?: number | null;
+};
 
-/** 请求桌面壳更新内核并等待终结结果。 */
-export function requestKernelUpdate(timeoutMs = 6 * 60 * 1000): Promise<KernelUpdateResult> {
+/**
+ * 等待上界的**兜底值**：壳未在首帧给出 maxWaitMs 时（旧版壳）用这个。
+ *
+ * 为什么必须**明显大于**壳的预算（17 分钟）：面板按钮一旦超时解禁，用户就会重试，
+ *   而壳其实**还在**逐源安装 —— 旧实现写死的 6 分钟几乎必然先误报「桌面壳无响应」，
+ *   重试于是变成两个进程并发写同一个 npm 全局前缀。新壳经契约下发真实值，本常量只兜底。
+ */
+const FALLBACK_MAX_WAIT_MS = 20 * 60 * 1000;
+
+/** 请求桌面壳更新内核并等待终结结果；`onProgress` 每收到一帧进度回调一次（B4b）。 */
+export function requestKernelUpdate(onProgress?: (p: KernelUpdateProgress) => void): Promise<KernelUpdateResult> {
   return new Promise((resolve) => {
     if (!hasShellHost()) {
       resolve({ ok: false, error: "内核更新由桌面壳执行：请在桌面壳面板中操作。" });
       return;
     }
     const requestId = "kupd-" + Date.now() + "-" + Math.random().toString(36).slice(2, 8);
+    const startedAt = Date.now();
     let done = false;
+    // 超时文案要能说出「壳最后报到哪一步了」——裸的「无响应」把最有价值的线索丢掉了。
+    let lastStatus: string | null = null;
+    let timer = setTimeout(finishTimeout, FALLBACK_MAX_WAIT_MS);
+    function finishTimeout() {
+      finish(lastStatus
+        ? { ok: false, error: "桌面壳无响应（更新请求超时；最后一次进度：" + lastStatus + "）" }
+        : { ok: false, error: "桌面壳无响应（更新请求超时）" });
+    }
+    const arm = (ms: number) => {
+      clearTimeout(timer);
+      timer = setTimeout(finishTimeout, Math.max(0, ms));
+    };
     const finish = (r: KernelUpdateResult) => {
       if (done) return;
       done = true;
@@ -58,7 +86,20 @@ export function requestKernelUpdate(timeoutMs = 6 * 60 * 1000): Promise<KernelUp
       if (d.v !== BRIDGE_PROTOCOL_VERSION) return;
       if (d.type !== RESULT && d.type !== PROGRESS) return;
       if (d.requestId !== requestId) return;
-      if (d.type === PROGRESS) return; // 进度消息不终结请求
+      if (d.type === PROGRESS) {
+        // 进度帧不终结请求，但要做两件事：把文字交给 UI，以及**用后端下发的真实预算**
+        //   重设等待上界（只有首帧带 maxWaitMs；其余帧只刷新文案，顺带证明壳还活着）。
+        const status = typeof d.status === "string" && d.status ? d.status : null;
+        if (status) lastStatus = status;
+        onProgress?.({
+          stage: typeof d.stage === "string" ? d.stage : null,
+          status,
+          progress: typeof d.progress === "number" ? d.progress : null,
+        });
+        const maxWait = typeof d.maxWaitMs === "number" ? d.maxWaitMs : 0;
+        if (maxWait > 0) arm(maxWait - (Date.now() - startedAt));
+        return;
+      }
       finish({
         ok: d.ok === true,
         stage: (d.stage as string) ?? null,
@@ -67,7 +108,6 @@ export function requestKernelUpdate(timeoutMs = 6 * 60 * 1000): Promise<KernelUp
         error: (d.error as string) ?? null,
       });
     };
-    const timer = setTimeout(() => finish({ ok: false, error: "桌面壳无响应（更新请求超时）" }), timeoutMs);
     window.addEventListener("message", onMessage);
     try {
       // 壳主帧的 origin 是 Tauri 自定义协议（tauri://localhost 等），面板无从预知；
@@ -77,4 +117,9 @@ export function requestKernelUpdate(timeoutMs = 6 * 60 * 1000): Promise<KernelUp
       finish({ ok: false, error: String(e) });
     }
   });
+}
+
+/** 是否运行在桌面壳宿主内（无宿主 = 用独立浏览器打开面板，不能更新内核）。 */
+export function hasShellHost(): boolean {
+  try { return window.parent !== window; } catch { return false; }
 }

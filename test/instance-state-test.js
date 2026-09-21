@@ -159,13 +159,15 @@ check('副作用经 deps.save 显式发出（非隐式 this）', saves > 0, 'sav
         events: { append(name, data) { journal.push({ kind: 'event', name, data }); } },
         tasks: { isBusy: () => false, current: () => null, list: () => [] },
         service: {
-          daemonReload() { return true; },
-          stopUnit(unit) { journal.push({ kind: 'stopUnit', unit }); return true; },
+          daemonReload() { journal.push({ kind: 'daemonReload' }); return true; },
+          // W3：stopUnit 的 ctx（端口/run.pid/cmdline 锚 + timeoutMs 边界）纳入记录，供调用点判据核对
+          stopUnit(unit, o) { journal.push({ kind: 'stopUnit', unit, ctx: o }); return true; },
           resetFailed() { return true; },
           isUnitActive() { return false; },
           transientUnitFile() { return null; },
           cleanTransient() {},
           startTransient(o) { journal.push({ kind: 'startTransient', unit: o.unit }); transient.push(o); return true; },
+          setLimits(unit, alloc) { journal.push({ kind: 'setLimits', unit, alloc }); return true; },
         },
       }, extra || {}));
       mgr._setSandboxSupportedForTest(true);
@@ -203,6 +205,12 @@ check('副作用经 deps.save 显式发出（非隐式 this）', saves > 0, 'sav
       check('7A 事件载荷 {id,kind,actual,target}', ev && ev.data.id === 'g1' && ev.data.kind === 'memory'
         && ev.data.actual === 30000 && ev.data.target === 16384, JSON.stringify(ev && ev.data));
       check('7A 事件先于动作（既定纪律）', !!ev && stop > journal.indexOf(ev), 'stopIdx=' + stop);
+      // W3：违规处置经 Provider 动词 + 身份锚（portable 档据此归属，绝不盲杀；有界防冻结）
+      const stopEntry = stop >= 0 ? journal[stop] : null;
+      check('7A 违规 stopUnit 带身份锚与有界超时（W3 调用点）',
+        !!stopEntry && stopEntry.ctx && stopEntry.ctx.port === port && stopEntry.ctx.timeoutMs === 20000
+        && Array.isArray(stopEntry.ctx.anchors) && stopEntry.ctx.anchors.includes('--port ' + port),
+        stopEntry && JSON.stringify(stopEntry.ctx && stopEntry.ctx.anchors));
       check('7A 处置后走既有退避链：BACKOFF + restartCount=1',
         inst.state.phase === 'BACKOFF' && inst.state.restartCount === 1, inst.state.phase + ' n=' + inst.state.restartCount);
       check('7A 违规原因可见（lastFailure 带资源违规）', /资源违规:memory/.test(inst.state.lastFailure || ''), inst.state.lastFailure);
@@ -279,6 +287,53 @@ check('副作用经 deps.save 显式发出（非隐式 this）', saves > 0, 'sav
       check('7D 采样恒失败 -> 无证据不处置（六拍仍 RUNNING、零违规事件）',
         inst.state.phase === 'RUNNING' && !journal.some((j) => j.name === 'inst_resource_violation'), inst.state.phase);
       srv.close();
+    }
+    // 7E. W3 执行面调用点：单元档门控（非 systemd 平台零结构残留）+ 启停身份锚贯通 + setLimits 动态下发
+    {
+      const sdir = path.join(os.tmpdir(), 'dsh-w3-never-' + process.pid + '-' + Date.now());
+      const port = safePort('instance-state', 4);
+      const { mgr, journal, transient } = mkGovMgr({ systemdDir: sdir });
+      const inst = govInst('ge1', port, { phase: 'STOPPED', restartCount: 0, allocation: null });
+      mgr.instances = [inst];
+      mgr.save();
+      mgr._store.ensureDirs(inst);
+      const bin = sandbox.dshEntry(mgr.instancesRoot, inst);
+      fs.mkdirSync(path.dirname(bin), { recursive: true });
+      fs.writeFileSync(bin, '// fake entry for boundary recheck\n');
+      const r = await mgr.startInstance('ge1', { fromUpgrade: true });
+      check('7E 无 supportsUnits 的 provider：_prepareSystemd 门控直过（不 mkdir、不 daemonReload）',
+        r.ok === true && !journal.some((j) => j.kind === 'daemonReload') && !fs.existsSync(sdir), sdir);
+      const t0 = transient.find((x) => x.unit === 'dsh-web@ge1');
+      check('7E startTransient 带身份锚（port/run.pid/anchors 同源 launchCtx 推导）',
+        !!t0 && t0.port === port && t0.pidFile === sandbox.runPidFile(mgr.instancesRoot, inst)
+        && t0.anchors.includes('--port ' + port) && t0.anchors.includes(bin),
+        t0 && JSON.stringify(t0.anchors));
+      mgr.stopInstance('ge1');
+      const su = journal.filter((j) => j.kind === 'stopUnit').pop();
+      check('7E stopUnit 带**同一**身份锚与 20s 边界（启停同值防归属漂移）',
+        !!su && su.ctx && su.ctx.port === port && su.ctx.pidFile === t0.pidFile
+        && JSON.stringify(su.ctx.anchors) === JSON.stringify(t0.anchors) && su.ctx.timeoutMs === 20000,
+        su && JSON.stringify(su.ctx));
+
+      // setLimits：alloc 变化的 RUNNING 拍必须下发（值只来自 governor alloc）；不变拍不重发。
+      const port2 = safePort('instance-state', 5);
+      const srv2 = await listen(port2);
+      const g2 = mkGovMgr({
+        resstats: { sampleAsync: () => Promise.resolve({ rssBytes: 6000 * 1024 * 1024, cpuMs: 1000 }) },
+        machineFacts: () => ({ totalMemBytes: GiB(16), cpuCount: 8 }),
+      });
+      const inst2 = govInst('ge2', port2);
+      g2.mgr.instances = [inst2];
+      g2.mgr.supervise('ge2'); await sleep(10);
+      const sl = g2.journal.find((j) => j.kind === 'setLimits');
+      check('7E RUNNING 拍 alloc 变化即下发 setLimits（运行期动态化，不等重启）',
+        !!sl && sl.unit === 'dsh-web@ge2' && !!sl.alloc && sl.alloc.memoryMax === inst2.state.allocation.memoryMax,
+        sl && JSON.stringify(sl.alloc));
+      const n1 = g2.journal.filter((j) => j.kind === 'setLimits').length;
+      g2.mgr.supervise('ge2'); await sleep(10);
+      check('7E 未变化拍不重发 setLimits（迟滞收敛防写放大）',
+        g2.journal.filter((j) => j.kind === 'setLimits').length === n1, 'n=' + n1);
+      srv2.close();
     }
   }
 })().catch((e) => { check('B15 supervise 块无异常', false, e && e.message); }).then(() => {

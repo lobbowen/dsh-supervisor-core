@@ -9,8 +9,8 @@
 const linux = {
   // 沙箱舱拆两字段（multiInstance 一字段混装「能否跑舱」与「有无 cgroup」，掩盖降级形状）：
   // sandboxLaunch=能否运行实例舱；sandboxEnforcement=限额由谁执行（cgroup|supervise|none）。
-  sandboxLaunch: true,        // 平台期望：有 systemd-run（capabilities 实测覆写）
-  sandboxEnforcement: 'cgroup', // 期望 cgroup 硬限额；无 systemd-run 实测降 'none'
+  sandboxLaunch: true,        // W3 起恒可跑舱：有 systemd-run 走 cgroup 硬档，无则落 portable 软档（容器/WSL1 解锁）
+  sandboxEnforcement: 'cgroup', // 期望 cgroup 硬限额；无 systemd-run 实测降 'supervise'（采样式，无内核强制）
   pidAdoption: true,
   processTreeKill: true,
   desktopNotify: true,   // 期望 notify-send（实测覆写）
@@ -25,8 +25,8 @@ const linux = {
 
 /** darwin 档位：期望 launchd / osascript 实测覆写。 */
 const darwin = {
-  sandboxLaunch: false, // portable 拉起接入后置 true（见 ARCHITECTURE-PLAN-instance-sandbox-governor W3）
-  sandboxEnforcement: 'none', // 落地后为 'supervise'（采样式限额，无内核强制）
+  sandboxLaunch: true, // portable provider（platform/os/portable.js，W3）：spawn 独立进程组 + 端口/cmdline 锚点，无需外部工具
+  sandboxEnforcement: 'supervise', // 采样式限额（governor 违规处置），无内核强制——如实声明，launchd plist 一期不做
   pidAdoption: true,    // lsof
   processTreeKill: true,
   desktopNotify: true,  // 期望 osascript（实测覆写）
@@ -43,8 +43,8 @@ const darwin = {
 
 /** win32 档位：期望 schtasks/powershell/taskkill 实测覆写。 */
 const win32 = {
-  sandboxLaunch: false, // portable 拉起接入后置 true（见 ARCHITECTURE-PLAN-instance-sandbox-governor W3）
-  sandboxEnforcement: 'none', // 落地后为 'supervise'；Job Object 硬档届时另评
+  sandboxLaunch: true, // portable provider（W3）：windowsHide + CREATE_NEW_PROCESS_GROUP，整树终止走 taskkill
+  sandboxEnforcement: 'supervise', // 采样式限额；Job Object 硬档一期不做不预留（届时以真机数据另立项）
   pidAdoption: true,    // netstat
   // processTreeKill 已接入 _killTree（supervisor 的 SIGKILL 升级路径 + 接管实例路径），
   processTreeKill: true, // taskkill /PID /T /F（由 hasTool 覆写；使用点见 main-process._killTree）

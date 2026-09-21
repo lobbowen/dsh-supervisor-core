@@ -146,15 +146,17 @@ const check = (n, c, x) => {
     const client = rd('ui/src/services/supervisor/client.ts');
     check('G LanPage 不再调用 window.prompt（真实调用形态；注释提及不算）',
       !/window\.prompt\(\s*['"`]/.test(lan), 'ok');
-    check('G LanPage 高危开启三处确认（setPendingOn 装载 >=3）+ Dialog 渲染',
-      (lan.match(/setPendingOn\(\{/g) || []).length >= 3 && /Dialog open=\{!!pendingOn\}/.test(lan), 'ok');
+    check('G LanPage 高危开启两处确认（askOn/askWan setPendingOn 装载 >=2）+ Dialog 渲染',
+      // 旧第三处是 FRP 总闸开关：三态化收口删总闸（frpc 生命周期由「是否存在 wan 意图」驱动），
+      // 高危确认面随之只剩 off->lan 与 ->wan 两条开启路径。
+      (lan.match(/setPendingOn\(\{/g) || []).length >= 2 && /Dialog open=\{!!pendingOn\}/.test(lan), 'ok');
     check('G LanPage 令牌录入走 password Dialog',
       /Dialog open=\{!!tokenFor\}/.test(lan) && /type="password" autoComplete="new-password" placeholder="输入访问令牌"/.test(lan), 'ok');
     check('G B7-UI 不回填 authToken 且留空省略字段（patch 语义）',
       !/setFrpToken\(frp\.settings\.authToken/.test(lan) && /if \(t\) p\.authToken = t/.test(lan), 'ok');
     check('G B7-UI authToken 占位提示按 authTokenSet 切换',
       /authTokenSet \? "已设置 · 留空不修改，输入即轮换"/.test(lan), 'ok');
-    check('G client frpSettings 的 authToken 为可选字段',
+    check('G client remoteFrpServer 的 authToken 为可选字段（patch 语义；旧名 frpSettings 已随路由收口更名）',
       /authToken\?: string/.test(client), 'ok');
     check('G OverviewPage 停止主干 DSH 走确认对话框',
       /setConfirmStopDsh\(true\)/.test(overview) && /Dialog open=\{confirmStopDsh\}/.test(overview), 'ok');

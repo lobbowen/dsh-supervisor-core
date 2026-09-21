@@ -45,7 +45,7 @@ const FACETS = [
   // 域写动作下沉 app/domain-actions/（facade 只读），同一装配契约。
   //    P6-B：三者已改为**真 ctor 工厂**（实现体经显式 deps 取事实，不再直连 this），
   //   故不再走 `f.mod.methods` 分支 —— 用 factory 名在装配期构造，并把产物**平铺安装**到 host，
-  //   保证 api 消费面（sup.setRouterRunning / patchDshMain / setLanFrp …）名字逐个不变。
+  //   保证 api 消费面（sup.setRouterRunning / patchDshMain / setRemoteMode …）名字逐个不变。
   { name: 'domain-actions/router', mod: require('../domain-actions/router'), factory: 'createRouterActions' },
   { name: 'domain-actions/lan', mod: require('../domain-actions/lan'), factory: 'createLanActions' },
   { name: 'domain-actions/main', mod: require('../domain-actions/main'), factory: 'createMainActions' },
@@ -89,13 +89,14 @@ function installHostFirst(host, mod) {
  */
 /** 域写动作工厂的惰性 deps：装配期 host 尚未就绪，故一律 getter（与 collaborators.js 同范式）。
  *  覆盖三个工厂实际取用的全部成员（router: config/daemons/lifecycleManager/router/state/views；
- *  lan: ctl/daemons/lifecycleManager/lan；main: daemons/events/logger/state/views）。 */
+ *  lan: ctl/daemons/lifecycleManager/lan/state/views/instances/events/logger；main: daemons/events/logger/state/views）。 */
 function domainActionDeps(host) {
   return {
     getConfig: () => host.config,
     getDaemons: () => host.daemons,
     getState: () => host.state,
     getViews: () => host.views,
+    getInstances: () => host.instances,
     getRouter: () => host.router,
     getLan: () => host.lan,
     getCtl: () => host.ctl,

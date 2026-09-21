@@ -50,7 +50,7 @@ const SURFACE = [
   { path: '/native/install',      methods: ['POST'], domain: 'native', category: 'public', consumers: ['UI(OverviewPage)', 'CLI'], note: '异步安装（202）' },
   { path: '/native/uninstall',    methods: ['POST'], domain: 'native', category: 'public', consumers: ['UI(OverviewPage)'], note: '异步卸载（202）' },
   { path: '/native/upgrade',      methods: ['POST'], domain: 'native', category: 'public', consumers: ['UI(OverviewPage)', 'CLI(upgrade)'], note: '一键升级（失败回滚）' },
-  { path: '/native/settings',     methods: ['POST'], domain: 'native', category: 'public', consumers: ['UI(OverviewPage/LanPage)'], note: 'main 元数据补丁（guardian/remote/frp）' },
+  { path: '/native/settings',     methods: ['POST'], domain: 'native', category: 'public', consumers: ['UI(OverviewPage)'], note: 'main 元数据补丁（仅 guardian；远程意图唯一入口在 /remote/*）' },
 
   // 沙箱实例（instances.js）
   { path: '/instances',           methods: ['GET'],  domain: 'instances', category: 'public', consumers: ['UI(InstancesPage)'], note: '实例列表（+ POST /instances/{action}）' },
@@ -94,9 +94,12 @@ const SURFACE = [
   // 「测试」按钮必须经本端点由服务端探测（复用内核选源的同一探测规格）。
   { path: '/dist/registry/probe',   methods: ['POST'], domain: 'dist', category: 'public', consumers: ['UI(RegistryCard 测试按钮)'], note: '同源单源探活（服务端，不受页面 CSP 限制）' },
 
-  // 局域网/公网（relay.js）
-  { path: '/lan-access', methods: ['GET'], domain: 'relay', category: 'public', consumers: ['UI(LanPage)'], note: '远程代理列表' },
-  { path: '/lan/frp',    methods: ['GET'], domain: 'relay', category: 'public', consumers: ['UI(LanPage)'], note: 'FRP 状态（+ POST /lan/frp/{action}）' },
+  // 远程控制（relay.js：/lan-access 只读列表 + /remote/* 意图面）
+  //  写动作按 act 切片分派（pathname.startsWith('/remote/')，同 /instances/{action} 形态），
+  //   故四个 POST 子动作归 /remote/ 前缀行登记，不列精确路由（api-surface 双向一致：
+  //   精确行必须在源码以 pathname === 字面出现，act 切片形态列精确行即幽灵条目）。
+  { path: '/lan-access',       methods: ['GET'],  domain: 'relay', category: 'public', consumers: ['UI(LanPage)'], note: '远程代理列表（脱敏；remote 视图为访问 URL/就绪判定的单一来源）' },
+  { path: '/remote/frp',       methods: ['GET'],  domain: 'relay', category: 'public', consumers: ['UI(LanPage)'], note: 'frpc 状态（设置 + 运行态 + wan 暴露清单）' },
 
   // 任务（tasks.js）
   { path: '/tasks', methods: ['GET'], domain: 'tasks', category: 'public', consumers: ['UI(TasksPage)'], note: '统一任务列表（+ /tasks/{id}）' },
@@ -120,12 +123,12 @@ const PREFIXES = [
   { prefix: '/dist/',        domain: 'dist',      category: 'public',      consumers: ['UI'], note: '/dist/registry/{refresh|set}' },
   { prefix: '/guard/',       domain: 'guard',     category: 'public',      consumers: ['UI'], note: '/guard/version|changelog 等' },
   { prefix: '/instances/',   domain: 'instances', category: 'public',      consumers: ['UI'], note: '/instances/{add|remove|update|start|stop|check-update|open-web|upgrade}' },
-  { prefix: '/lan/frp/',     domain: 'relay',     category: 'public',      consumers: ['UI'], note: '/lan/frp/{settings|install|toggle|expose}' },
   { prefix: '/lifecycle',    domain: 'lifecycle', category: 'public',      consumers: ['UI', 'CLI'], note: '/lifecycle/{id}[/{action}]（唯一启停入口）' },
   { prefix: '/lifecycle/',   domain: 'lifecycle', category: 'public',      consumers: ['UI', 'CLI'], note: '同上（显式前缀）' },
   { prefix: '/logs',         domain: 'lifecycle', category: 'operational', consumers: ['诊断/审计'], note: '/logs/{tail|export}（events-tail 已删除：与 /events 语义重复）' },
   { prefix: '/native/',      domain: 'native',    category: 'public',      consumers: ['UI', 'CLI'], note: '/native/{status|install|uninstall|upgrade|...}' },
   { prefix: '/plugins/',     domain: 'plugins',   category: 'public',      consumers: ['UI'], note: '/plugins/{install|enable|disable|uninstall|update}' },
+  { prefix: '/remote/',      domain: 'relay',     category: 'public',      consumers: ['UI'], note: '/remote/{set-mode|set-token|frp-server|frp-install}（意图唯一入口；wan 前置闸=访问令牌 ≥8 位，空串=清除）' },
   { prefix: '/router/',      domain: 'router',    category: 'public',      consumers: ['UI'], note: '/router/... （ports/domain-summary 为 internal，见 SURFACE）' },
   { prefix: '/shell/',       domain: 'shell',     category: 'public',      consumers: ['壳', 'UI'], note: '/shell/{status|health|update-pending|check-update|restart}（壳更新强制，无回退）；⚠ health/update-pending 实为壳零调用的排障入口，见上方条目' },
   { prefix: '/self-update/', domain: 'guard',     category: 'public',      consumers: ['UI'], note: '/self-update/status（只读）；apply|restart-guard 已下架=410' },

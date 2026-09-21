@@ -19,11 +19,20 @@ function taskStateToView(s) {
 
 /** 磁盘文档实例记录映射到运行时记录（纯迁移，不落盘）。
  *  - 令牌收敛：历史遗留的 dshToken 列一律剔除（内存即刻断行，下次 save 落盘即清）；
+ *  - 远程控制三态化：legacy 布尔对（remoteEnabled/frpEnabled）推导为 remoteMode，
+ *    frp 手填口（frpRemotePort）与 wanPort 镜像字段一并剔除（端口权威在 relay 槽位注册表）；
  *  - guardian 缺省为关；
  *  - 重启后 FAILED 一律重置为「停止」（失败是一次性状态）。
  *  说明：令牌**源登记**（tokens.attach）是 IO，留在 store.load()，不进本函数。 */
 function normalizeInstance(inst) {
   if (Object.prototype.hasOwnProperty.call(inst, 'dshToken')) delete inst.dshToken;
+  if (inst.remoteMode !== 'lan' && inst.remoteMode !== 'wan') {
+    inst.remoteMode = inst.remoteEnabled === true ? (inst.frpEnabled === true ? 'wan' : 'lan') : 'off';
+  }
+  delete inst.remoteEnabled;
+  delete inst.frpEnabled;
+  delete inst.frpRemotePort;
+  delete inst.wanPort;
   // 用户填额链已废止：历史盘上记录残留的 memoryMax/cpuQuota 一律剔除，
   // 否则「删了入口但旧值仍被读」会造成静默的配额漂移（视图行同批不再暴露这两字段）。
   if (inst.sandbox) { delete inst.sandbox.memoryMax; delete inst.sandbox.cpuQuota; }
@@ -50,7 +59,7 @@ function createRecord(payload, id) {
     createdBy: 'user',
     command: Array.isArray(payload.command) ? payload.command : [],
     guardian: !!payload.guardian, // 进程守护(自动拉起)开关默认关（架构红线：未显式开启绝不自动拉起）
-    remoteEnabled: !!payload.remoteEnabled,
+    remoteMode: payload.remoteMode === 'lan' || payload.remoteMode === 'wan' ? payload.remoteMode : 'off',
     remoteToken: String(payload.remoteToken || ''),
     unitName: 'dsh-web@' + id,
     sandbox: {
@@ -75,7 +84,7 @@ function viewRow(inst, resolved) {
     domain: inst.domain || 'native',
     kind: inst.kind || inst.domain || 'native',
     guardian: inst.guardian,
-    remoteEnabled: inst.remoteEnabled,
+    remoteMode: inst.remoteMode || 'off',
     unitName: inst.unitName,
     sandbox: inst.sandbox,
     // 沙箱实例版本与更新（每实例独立 DSH 安装；native 无独立安装，返回 null 不显示）

@@ -20,25 +20,25 @@ function syncProxyQueued(host, inst) {
   return run;
 }
 
-/** 删除单个代理登记（移除原因写入事件）。 */
+/** 删除单个代理登记（移除原因写入事件）。
+ *  端口绑定分级处理：实例已删（stale）-> 释放注册表绑定；仅关远程（disabled）-> 保留绑定，
+ *  再开经 claim byOwner 复用同一端口（绑定唯一权威在注册表，实例记录无 wanPort 镜像）。 */
 function removeOne(host, proxy, inst) {
   host.logger.warn && host.logger.warn('[reconcile] remove proxy ' + proxy.id + ' wanPort=' + proxy.wanPort
-    + ' (inst=' + !!inst + ' remoteEnabled=' + (inst && inst.remoteEnabled) + ')');
+    + ' (inst=' + !!inst + ' remoteMode=' + (inst && inst.remoteMode) + ')');
   if (host._lanServers && host._lanServers[proxy.id]) host._stopLanServer(proxy.id);
-  portsvc.releaseOwner('relay:' + proxy.id); // 端口随 relay 移除（保留 inst.wanPort 绑定供再开复用）
+  if (!inst) portsvc.releaseOwner('relay:' + proxy.id);
   if (host.events) host.events.append('lan_instance_removed', { id: proxy.id, reason: !inst ? 'stale' : 'disabled' });
 }
 
 /** relay 运行 = 目标存活：up 则确保在监听，down 则暂停（保留注册）。
- *  令牌/frp 意图漂移复判（AUDIT B-1）：main 无 onRemoteChange 钩子、daemon 侧仅靠状态文件，
+ *  令牌/模式意图漂移复判（AUDIT B-1）：main 无 onRemoteChange 钩子、daemon 侧仅靠状态文件，
  *  热换钩子可能丢失变更 —— reconcile 是唯一兜底收敛点，比对代理缓存与实例现值，漂移即重走
- *  syncProxy（其快路径负责 setToken 热换 + syncFrpc 收敛）。 */
+ *  syncProxy（其快路径负责 setToken 热换 + mode 收敛 + syncFrpc）。 */
 async function ensureProxyRunning(host, proxy, inst) {
   const wantToken = String(inst.remoteToken || '');
-  const wantFrp = !!inst.frpEnabled;
-  const drifted = proxy.token !== wantToken
-    || proxy.frpEnabled !== wantFrp
-    || (proxy.frpRemotePort || null) !== (inst.frpRemotePort || null);
+  const wantMode = inst.remoteMode === 'lan' || inst.remoteMode === 'wan' ? inst.remoteMode : 'off';
+  const drifted = proxy.token !== wantToken || proxy.remoteMode !== wantMode;
   if (drifted && proxy.wanPort) {
     syncProxyQueued(host, inst).catch((e) => host.logger.warn && host.logger.warn('reconcile resync ' + inst.id + ': ' + e.message));
     return;
@@ -56,13 +56,13 @@ async function ensureProxyRunning(host, proxy, inst) {
   }
 }
 
-/** 剔除孤儿/关闭开关的代理；返回是否发生移除。 */
+/** 剔除孤儿/关闭远程的代理；返回是否发生移除。 */
 async function removeStaleProxies(host, insts) {
   let removed = false;
   const kept = [];
   for (const proxy of host.lanInstances) {
     const inst = insts.find((i) => i.port === proxy.dshPort);
-    if (!inst || !inst.remoteEnabled) {
+    if (!inst || (inst.remoteMode !== 'lan' && inst.remoteMode !== 'wan')) {
       removeOne(host, proxy, inst);
       removed = true;
     } else {
@@ -74,10 +74,10 @@ async function removeStaleProxies(host, insts) {
   return removed;
 }
 
-/** 确保 remoteEnabled=true 的实例都有代理注册（新开开关/新实例；串行防竞态）。 */
+/** 确保 remoteMode!=off 的实例都有代理注册（新开远程/新实例；串行防竞态）。 */
 function ensureRegistrations(host, insts) {
   for (const inst of insts) {
-    if (inst.remoteEnabled && !host.lanInstances.some((p) => p.dshPort === inst.port)) {
+    if ((inst.remoteMode === 'lan' || inst.remoteMode === 'wan') && !host.lanInstances.some((p) => p.dshPort === inst.port)) {
       syncProxyQueued(host, inst).catch((e) => host.logger.warn && host.logger.warn('reconcile syncProxy ' + inst.id + ': ' + e.message));
     }
   }
@@ -109,9 +109,9 @@ async function removeProxyForInstance(host, instId) {
   host.syncFrpc();
 }
 
-/** 实例启动时联动远程代理：remoteEnabled 且实例在跑时确保对应 relay 在监听。 */
+/** 实例启动时联动远程代理：remoteMode!=off 且实例在跑时确保对应 relay 在监听。 */
 async function instanceStart(host, inst) {
-  if (!inst || !inst.remoteEnabled || !inst.port) return;
+  if (!inst || !inst.port || (inst.remoteMode !== 'lan' && inst.remoteMode !== 'wan')) return;
   const existing = host.lanInstances.find((p) => p.dshPort === inst.port);
   if (existing) host._startLanServer(existing);
   else await syncProxyQueued(host, inst);

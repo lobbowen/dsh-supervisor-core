@@ -133,9 +133,9 @@ module.exports = {
         // daemon claimSlot byOwner 复用）；曾含 wanPort 导致守卫把历史写死值传播给 daemon，
         // 与注册表分裂成 ghost 双族。仅当内容真变化才落盘。
         const body = JSON.stringify({ instances: instances.map((i) => ({
-          id: i.id, name: i.name, port: i.port, remoteEnabled: !!i.remoteEnabled,
-          remoteToken: i.remoteToken || '', frpEnabled: !!i.frpEnabled,
-          frpRemotePort: i.frpRemotePort || null,
+          id: i.id, name: i.name, port: i.port,
+          remoteMode: i.remoteMode === 'lan' || i.remoteMode === 'wan' ? i.remoteMode : 'off',
+          remoteToken: i.remoteToken || '',
         })), tokens }, null, 1);
         if (body === d.readLastLanStateJson()) return;
         fs.mkdirSync(dir, { recursive: true });

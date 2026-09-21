@@ -5,11 +5,9 @@ const fs = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
 const http = require('node:http');
-// ⚠ P2 修复（2026-09-12）：本文件原直接 `require('node:child_process')` 并**裸调 execFileSync**（7 处），
-//   全部**无 timeout** —— systemctl/dbus 挂起时 CLI 会**无限阻塞**（用户看到命令卡死）。
-//   而 G9 门禁只扫 `src/`，**看不见 `bin/`** —— 故这些调用长期绕过统一执行器。
-//   现经 `src/platform/exec` 统一入口（有界 + SIGKILL + maxBuffer）；
-//   需要用户看到输出的场合传 `stdio: 'inherit'`（exec.js 支持透传）。
+// 外部命令经 `src/platform/exec` 统一入口执行（timeout 有界 + SIGKILL + maxBuffer）：
+//   systemctl/dbus 挂起时 CLI 有界报错而非无限阻塞（用户不会看到命令卡死）；
+//   需用户看到输出的场合传 `stdio: 'inherit'`（exec.js 支持透传）。
 const ex = require('../src/platform/util/exec');
 // systemctl / loginctl 是用户级操作，给足时间但**有上限**（挂起时如实报错而非卡死）。
 const CLI_SVC_TIMEOUT_MS = 30000;
@@ -22,11 +20,11 @@ function execInherit(bin, args) {
   return r;
 }
 
-// 包根解析（2026-09-11 修复 off-by-one）：
+// 包根解析：
 //   本文件有两种运行形态，__dirname 语义不同：
 //     源码态：node <repo>/bin/dsh-supervisor            -> __dirname = <repo>/bin
 //     发行态：esbuild 打成 core.cjs 后 require 执行      -> __dirname = <pkg>（core.cjs 旁）
-//   旧实现硬写 path.join(__dirname, '..')：源码态正确，发行态却指向**包外**，
+//   硬写 path.join(__dirname, '..')：只覆盖源码态；发行态却指向**包外**，
 //   导致 systemd 模板/desktop 模板路径错位、BIN_PATH 指向不存在的文件。
 //   现从 __dirname 逐级向上找含 package.json 的目录作为包根，两种形态均正确。
 function findPackageRoot(start) {
@@ -48,9 +46,9 @@ const USER_CONFIG = path.join(SUPERVISOR_DIR, 'config.json');
 // 内嵌默认配置（发行态唯一模板源）：发布物不再依赖 ROOT/config.json 外置文件（fresh-HOME 自举必需）。
 // command 用 PATH 查找的 'dsh'（用户本机路径由 install/壳写入用户配置；nativeCommand 会注入 --port）。
 // 配置单一事实源 = platform/service/config 的默认值；此处仅补充默认值未含的「模板必填项」
-// command（DSH 启动命令）与 healthUrl（探活地址）——避免默认配置在多处复制漂移（2026-09 收敛）。
+// command（DSH 启动命令）与 healthUrl（探活地址）——避免默认配置在多处复制漂移。
 //
-// ⚠ DS-G4（§4.2 反转法）：业务域配置键（如 daemon 控制通道端口 / 启用意图）**不在** platform
+// 业务域配置键（如 daemon 控制通道端口 / 启用意图）**不在** platform
 //   的模块级 DEFAULTS 里（那会让平台源码带域名词）。此处是**进程入口**，向 app/settings 取
 //   注入声明后经 buildDefaults 合成完整默认值 —— 落盘模板与反转前逐字一致（键名/值/键序均不变）。
 const { buildDefaults } = require('../src/platform/service/config');
@@ -62,10 +60,10 @@ const DEFAULT_CONFIG = Object.assign(
 );
 const STATE_FILE = path.join(SUPERVISOR_DIR, 'state.json');
 const EVENTS_FILE = path.join(SUPERVISOR_DIR, 'events', 'guard.events.log');
-// 跨平台命令行入口（P1 审计修复）：
+// 跨平台命令行入口：
 //   Unix    ：~/.local/bin/dsh-supervisor（软链到包内脚本，无扩展名）。
 //   Windows ：%APPDATA%\npm 下的 .cmd 垫片——Windows 可执行须有扩展名，且创建**符号链接**
-//             需管理员/开发者模式（普通用户 EPERM）→ 用 .cmd 而非 symlink。
+//             需管理员/开发者模式（普通用户 EPERM），故用 .cmd 而非 symlink。
 const IS_WINDOWS = process.platform === 'win32';
 const BIN_DIR = IS_WINDOWS
   ? path.join(process.env.APPDATA || path.join(os.homedir(), 'AppData', 'Roaming'), 'npm')
@@ -73,7 +71,7 @@ const BIN_DIR = IS_WINDOWS
 const BIN_PATH = path.join(BIN_DIR, IS_WINDOWS ? 'dsh-supervisor.cmd' : 'dsh-supervisor');
 
 // ---- 配置解析 ----
-// 解析顺序：DSH_SUPERVISOR_CONFIG 环境变量 → -c 参数 → 用户默认配置。
+// 解析顺序：优先 DSH_SUPERVISOR_CONFIG 环境变量，其次 -c 参数，再次用户默认配置。
 // 注意：只有 daemon/install 会自动从模板创建配置；status 等查询命令不产生写副作用。
 function findConfigPath() {
   const envCfg = process.env.DSH_SUPERVISOR_CONFIG;
@@ -142,7 +140,7 @@ function cmdLogs(name, lines) {
 function printSelfVersion() {
   // 统一走 infra/version.guardVersion()：SEA 形态由 esbuild --define 注入 __DSH_VERSION__，
   // 任意 cwd 自报正确版本；源码形态回退读仓库 package.json。独立读 ROOT/package.json 会让
-  // SEA 二进制 --version 恒报 vunknown（2026-09 实证修复）。
+  // SEA 二进制 --version 恒报 vunknown。
   const { guardVersion } = require('../src/platform/service/version');
   console.log('dsh-supervisor v' + guardVersion());
 }
@@ -176,7 +174,7 @@ function apiRequest(method, apiPath) {
 // 锁文件（可用 DSH_SUPERVISOR_LOCK_FILE 覆盖路径，供测试隔离/多实例部署）
 // 默认 ~/.dsh/supervisor/guard.lock 内容为本进程 pid：
 //  - O_EXCL 创建保证原子性（并发启动只有一个成功）；
-//  - 已存在时读 pid：进程存活 → 拒绝启动并退出非零；进程已死（崩溃残留）→ 清锁重试；
+//  - 已存在时读 pid：进程存活则拒绝启动并退出非零；进程已死（崩溃残留）则清锁重试；
 //  - SIGTERM/SIGINT/exit 统一释放；SIGKILL 无法捕获，靠下次启动的 pid 存活检测自愈。
 const LOCK_FILE = process.env.DSH_SUPERVISOR_LOCK_FILE || path.join(SUPERVISOR_DIR, 'guard.lock');
 
@@ -229,7 +227,7 @@ function releaseLock() {
 
 // ---- 子命令 ----
 function cmdDaemon() {
-  // 前向自愈迁移：旧位置（DSH 目录下）→ 产品状态根。必须在读/写配置前完成。
+  // 前向自愈迁移：旧位置（DSH 目录下）迁至产品状态根。必须在读/写配置前完成。
   const moved = stateRoot.migrateLegacy();
   for (const m of moved) console.log('[migrate] 状态目录迁移: ' + m);
   if (!acquireLock()) {
@@ -248,17 +246,17 @@ function cmdDaemon() {
     process.exit(1);
   }
   // 静态 require（esbuild 可跟随，使内核完整打入 bundle/打包态）——不能再用 path.join 动态拼接，
-  // 否则打包产物只含 CLI 壳、daemon 运行期仍依赖发行目录旁置的 src/（2026-09 架构审计实证）。
+  // 否则打包产物只含 CLI 壳、daemon 运行期仍依赖发行目录旁置的 src/。
   const { Supervisor } = require('../src/supervisor');
   const sup = new Supervisor(cfg, cfgPath);
-  // ⚠ 2026-09-12（P1 修复）：**必须等 shutdown 真正完成再退出**。
+  // **必须等 shutdown 真正完成再退出**：
   //
-  //   缺陷：原为 `sup.shutdown(); process.exit(0);` —— 但 `shutdown()` 内部要
+  //   `shutdown()` 内部要
   //     `await lifecycleManager.stopAll()`（停内嵌 router/lan：反代实例、relay、frpc、
-  //     端口释放）。那是**异步**的，而 `process.exit` 立即终止进程 → stop 只跑了同步前缀，
+  //     端口释放）。那是**异步**的；`process.exit` 立即终止进程，stop 只跑了同步前缀，
   //     子进程与端口**残留成孤儿**（正是 shutdown 里那段注释声称要防的事）。
   //
-  //   修法：等 shutdown 的 Promise settle 后再 exit；并加**兜底超时**（8s），
+  //   故等 shutdown 的 Promise settle 后再 exit；并加**兜底超时**（8s），
   //     防止某个模块的 stop 卡住导致进程永不退出（systemd 会再 SIGKILL，但那样更难排查）。
   //     重复信号：第二次直接强退（用户/服务管理器连续发信号时不该再等）。
   let _exiting = false;
@@ -294,7 +292,7 @@ function cmdDaemon() {
     excCount += 1;
     if (excCount >= 3) {
       console.error('[supervisor] 60s 内第 ' + excCount + ' 次未捕获异常，退出交由 systemd 拉起。');
-      // 同样等 shutdown 完成（P1 修复）；此处已有强退意图，故用优雅退出+超时兜底。
+      // 同样等 shutdown 完成；此处已有强退意图，故用优雅退出+超时兜底。
       gracefulExit(1);
     }
   });
@@ -343,7 +341,7 @@ function printStatus(s) {
 
 function cmdControl(action) {
   // 唯一入口（R3 C3-5a）：main 启停经统一生命周期 /lifecycle/dsh/{start|stop|restart}；
-  // 旧 /start|/stop|/restart 路由已删除——CLI 曾直打旧路由 → 恒 404（2026-09 修复）。
+  // 旧 /start|/stop|/restart 路由已删除——CLI 曾直打旧路由，恒 404。
   // 兼容性：新版 daemon 走 /lifecycle/dsh/*；对旧版 daemon（仅旧路由）做一次回退。
   const primary = '/lifecycle/dsh/' + action;
   apiRequest('POST', primary).then((r) => {
@@ -482,7 +480,7 @@ function cmdSelfUpdate(action) {
       return;
     }
     if (action === 'apply') {
-      // 单写入者契约（2026-09-15）：内核包只能由桌面壳安装（守卫不自装）。
+      // 单写入者契约：内核包只能由桌面壳安装（守卫不自装）。
       //   CLI 不再代跑安装；接口 /self-update/apply 已下架（410 KERNEL_UPDATE_SINGLE_WRITER）。
       console.error('内核更新由桌面壳执行（单写入者契约）：请在桌面壳面板「关于」中点「更新」。');
       console.error('本命令不再安装内核。');

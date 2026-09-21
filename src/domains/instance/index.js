@@ -59,7 +59,7 @@ class InstanceManager {
   find(id) { return this._store.instances.find((i) => i.id === id); }
   map(fn) { return this._store.instances.map(fn); }
 
-  /** 沙箱能力（实时求值）：仅 Linux+systemd 可用；保留显式覆写位供测试/嵌入方。 */
+  /** 沙箱能力（实时求值）：三平台均可跑舱（W3 portable 档）；保留显式覆写位供测试/嵌入方。 */
   get sandboxSupported() { return sandbox.supported(this._sandboxSupportedOverride); }
   _setSandboxSupportedForTest(v) { this._sandboxSupportedOverride = (v === null ? null : v === true); }
 
@@ -97,6 +97,9 @@ class InstanceManager {
   sandboxRoot(inst) { return sandbox.root(this.instancesRoot, inst); }
   sandboxDataDir(inst) { return sandbox.dataDir(this.instancesRoot, inst); }
   sandboxInstallDir(inst) { return sandbox.installDir(this.instancesRoot, inst); }
+  /** portable 档身份上下文（{port,pidFile,anchors}）：跨模块停止/复核调用点（shutdown）经门面取用，
+   *  不自行拼路径——锚点推导与 lifecycle 启停两侧必须同值，否则归属校验失效。systemd 档忽略附加字段。 */
+  launchCtx(inst) { return sandbox.launchCtx(this.instancesRoot, this.dshBin, inst); }
   _prepareSystemd() { return this._lifecycle._prepareSystemd(); }
 }
 

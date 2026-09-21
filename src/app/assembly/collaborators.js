@@ -44,7 +44,7 @@ const THIN_SPEC = {
     actNote: '_actNote', shadowHeartbeat: '_shadowHeartbeatBeat', shadowTickNote: '_shadowTickNote',
   },
   views: {
-    dshMain: 'dshMainView', exposurePeers: 'exposurePeers',
+    dshMain: 'dshMainView',
     routerDaemonActive: 'routerDaemonActive', routerStatus: 'routerStatus',
     status: 'statusSummary',
   },
@@ -193,7 +193,7 @@ function installThin(host) {
 }
 
 /** 安装 audit 协作方（真 ctor 工厂）：覆盖 installThin 刚装上的转发器，
- *  使 host.audit.orphan() 直达工厂（control/scheduler.js:30 的唯一消费点），
+ *  使 host.audit.orphan() 直达工厂（control/scheduler.js 的唯一消费点），
  *  而不再经 host._orphanAudit()。THIN_SPEC.audit 仍保留为接口声明与装配期校验出处。
  *  deps 全为惰性取值（装配期 host 尚未就绪）；抑制状态经 get/set 钩子与 host 字段同源。 */
 function installAuditFactory(host) {
@@ -217,7 +217,7 @@ function installAuditFactory(host) {
  *  覆盖 installThin 的转发器，使 host.ctl.* 与 host._* 走同一实现。
  *  getLanCtlCall 等宿主 getter 必须传 host 上的**实时**方法（每次调用重新取 + bind），
  *  因为测试会覆写 host._lanCtlCall 来验证「门面路径剔除令牌」
- *  （test/token-boundary-test.js:81 经 facade/lan.js:41 的 this.ctl.lanCall 生效）——
+ *  （token-boundary 测试经 facade/lan 门面的 this.ctl.lanCall 生效）——
  *  若在此固化实现，覆写面会失效。 */
 function installCtlFactory(host) {
   host.ctl = createCtl({

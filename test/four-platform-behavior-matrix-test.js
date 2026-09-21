@@ -114,14 +114,13 @@ function underFake(platform, arch, body) {
   const D = osLayer.capabilityProfile('darwin', 'x64');
   const W = osLayer.capabilityProfile('win32', 'x64');
   const U = osLayer.capabilityProfile('freebsd', 'x64');
-  check('P-5 只有 linux 声明 sandboxLaunch=true（沙箱 systemd-run）',
-    L.sandboxLaunch === true && D.sandboxLaunch === false && W.sandboxLaunch === false && U.sandboxLaunch === false,
+  check('P-5 三平台均声明 sandboxLaunch=true（W3：linux=systemd 硬档，darwin/win32=portable 软档），未知平台 false',
+    L.sandboxLaunch === true && D.sandboxLaunch === true && W.sandboxLaunch === true && U.sandboxLaunch === false,
     [L, D, W, U].map((x) => x.sandboxLaunch).join(','));
-  //  字段拆分：拉起能力与限额执行档位是两个正交维度（ portable 拉起接入后 darwin/win32
-  //  可为 launch=true、enforcement='supervise'），合并声明会掩盖档位缺口（C11–C14 教训）。
-  check('P-5 sandboxEnforcement 档位：linux=cgroup，其余=none',
-    L.sandboxEnforcement === 'cgroup' && D.sandboxEnforcement === 'none'
-    && W.sandboxEnforcement === 'none' && U.sandboxEnforcement === 'none',
+  //  字段拆分：拉起能力与限额执行档位是两个正交维度（W3 落地：三平台都能跑舱，但限额强制不同档）。
+  check('P-5 sandboxEnforcement 档位：linux=cgroup（期望），darwin/win32=supervise，未知=none',
+    L.sandboxEnforcement === 'cgroup' && D.sandboxEnforcement === 'supervise'
+    && W.sandboxEnforcement === 'supervise' && U.sandboxEnforcement === 'none',
     [L, D, W, U].map((x) => x.sandboxEnforcement).join(','));
   check('P-5 hostService 与平台一一对应（systemd/launchd/windows-service/none）',
     L.hostService === 'systemd' && D.hostService === 'launchd'

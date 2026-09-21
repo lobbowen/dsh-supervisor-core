@@ -36,7 +36,7 @@ src/
   services/supervisor/        数据层（唯一直接 fetch 的模块）
     types.ts                  全量领域类型（对齐 HTTP API 实契约）
     client.ts                 同源 HTTP 客户端（GET/POST 全端点）
-    polling.ts                运行态轮询中心（2s 快照：/status /instances /lan-access /lan/frp /router/status /router/providers + /events 增量）
+    polling.ts                运行态轮询中心（2s 快照：/status /instances /lan-access /remote/frp /router/status /router/providers + /events 增量）
     index.ts                  useSupervisorData hook（useSyncExternalStore）
 ```
 
@@ -74,7 +74,8 @@ src/
 - scripts：typecheck（tsc --noEmit）/ lint（eslint src）/ test（vitest run）/ verify（四者串联）。
 - ESLint：flat config + @babel/eslint-parser（preset-typescript + preset-react，字符串引用）。
   **原因（2026-09 定案）**：项目 TypeScript 7.0（preview 标 latest）与 typescript-eslint peer 上限 <6.1 冲突且运行时硬拒 TS7 —— eslint 侧放弃类型规则，纯类型由 tsc strict + noUnusedLocals 承担。
-- 单元测试：vitest（node env）+ vi.stubGlobal fetch 注入；覆盖 polling 事件合并去重 / in-flight 守卫、client 错误归一化与超时信号装配。
+- 单元测试：vitest（node env）+ vi.stubGlobal 注入（fetch / window）；覆盖 polling 事件合并去重 / in-flight 守卫、
+  client 错误归一化与超时信号装配、kernelUpdateBridge 的入站来源校验与进度/超时（vi.useFakeTimers）。
 
 ### 4.4 版本控制
 - 前端源码入外层 git 仓（2026-09-05 commit 3f87482 以 `skiff-original/` 纳入；2026-09-06 迁至 `dsh-supervisor/ui/`）；dist/ node_modules/ 不入库。

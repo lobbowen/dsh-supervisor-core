@@ -97,29 +97,43 @@ console.log('== A4 autostart 跨平台行为一致性 ==');
 // -- A3 声明=false 必须显式不支持 --
 console.log('== A3 不支持的能力必须显式报告 ==');
 {
-  // 沙箱拉起：darwin/win32 声明 false -> service Provider 必须抛 CapabilityError
+  // W3 后沙箱拉起三平台全解锁（darwin/win32 落 portable 软档）；显式不支持只剩**未知平台**：
+  // current() 必须落 NONE（makeUnsupported），动词抛 CapabilityError，绝不静默 no-op。
   const svcSrc = readOs('service.js');
-  check('A3 service.js darwin Provider 为显式不支持', /darwin:\s*makeUnsupported/.test(svcSrc), 'ok');
-  check('A3 service.js win32 Provider 为显式不支持', /win32:\s*makeUnsupported/.test(svcSrc), 'ok');
+  check('A3 service.js 未知平台 Provider 为 makeUnsupported 产物（NONE）', /NONE\s*=\s*makeUnsupported/.test(svcSrc), 'ok');
+  check('A3 current() 未知平台显式 return NONE（不落到任何真实现）', /return NONE;/.test(svcSrc), 'ok');
   check('A3 不支持路径抛 CapabilityError（非静默）',
     /throw new CapabilityError/.test(svcSrc), 'ok');
-  for (const pl of ['darwin', 'win32']) {
-    const r = capabilityProfile(pl, 'x64');
-    check('A3 ' + pl + ' sandboxLaunch 声明为 false 且档位为 none',
-      r.sandboxLaunch === false && r.sandboxEnforcement === 'none', JSON.stringify({ launch: r.sandboxLaunch, enf: r.sandboxEnforcement }));
-  }
+  const rU = capabilityProfile(UNKNOWN, 'x64');
+  check('A3 未知平台 sandboxLaunch 声明为 false 且档位为 none',
+    rU.sandboxLaunch === false && rU.sandboxEnforcement === 'none', JSON.stringify({ launch: rU.sandboxLaunch, enf: rU.sandboxEnforcement }));
   // 未知平台的壳自启必须显式不支持（已在 A4 覆盖行为侧）
 }
 
 // -- A2 声明=true 必须有实现产物 --
 console.log('== A2 声明能力必须有实现产物 ==');
 {
-  // 沙箱拉起（linux 声明 true）：能力位必须被执行侧真实消费，限额必须落成单元属性。
+  // 沙箱拉起（W3 后三平台声明 true）：能力位必须被执行侧真实消费。
+  // linux=cgroup 硬档（transient 单元属性 + setLimits 动态下发）；darwin/win32/无 systemd-run 的
+  // linux=portable 软档（spawn 拉起 + 锚点归属 + governor 采样处置）——声明 true 必须有实现产物。
   const sbxSrc = read('src/domains/instance/sandbox.js');
-  check('A2 沙箱拉起 Linux（transient 单元含 MemoryMax/CPUQuota 限额属性）',
+  check('A2 沙箱拉起 Linux 硬档（transient 单元含 MemoryMax/CPUQuota 限额属性）',
     /MemoryMax=/.test(sbxSrc) && /CPUQuota=/.test(sbxSrc), 'ok');
   check('A2 sandbox.supported() 消费 sandboxLaunch 能力位（不得另判平台）',
     /caps\.sandboxLaunch === true/.test(sbxSrc), 'ok');
+  const svcImpl = readOs('service.js');
+  check('A2 W3 运行期限额动态下发有实现产物（systemd.setLimits 经 set-property --runtime）',
+    /setLimits\(unit, alloc\)/.test(svcImpl) && /set-property/.test(svcImpl) && /--runtime/.test(svcImpl), 'ok');
+  const portImpl = readOs('portable.js');
+  check('A2 W3 portable 档有实现产物（detached 拉起 + cmdline 锚点归属 + 有界停止复核）',
+    /startTransient\(o\)/.test(portImpl) && /require\('\.\/spawn'\)/.test(portImpl)
+    && /matchesAnchors/.test(portImpl) && /STOP_WAIT_CAP_MS/.test(portImpl), 'ok');
+  for (const pl of ['darwin', 'win32']) {
+    const r = capabilityProfile(pl, 'x64');
+    check('A2 ' + pl + ' sandboxLaunch=true 由 portable 兑现（enforcement=supervise）',
+      r.sandboxLaunch === true && r.sandboxEnforcement === 'supervise',
+      JSON.stringify({ launch: r.sandboxLaunch, enf: r.sandboxEnforcement }));
+  }
   const govSrc = read('src/domains/instance/governor.js');
   check('A2 限额由 governor 动态推导（非用户填额）', /function allocation\(/.test(govSrc) && /HEADROOM/.test(govSrc), 'ok');
   const pidSrc = readOsDir('pidlookup');

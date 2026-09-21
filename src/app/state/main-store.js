@@ -36,11 +36,8 @@ function createMainStore(deps) {
         corrupt = false;
         return {
           guardian: j.guardian === true,
-          remoteEnabled: j.remoteEnabled === true,
+          remoteMode: legacyRemoteMode(j),
           remoteToken: String(j.remoteToken || ''),
-          frpEnabled: j.frpEnabled === true,
-          frpRemotePort: j.frpRemotePort || null,
-          wanPort: j.wanPort || null,
         };
       }
     } catch (e) {
@@ -49,7 +46,15 @@ function createMainStore(deps) {
       const l = logger();
       if (l && l.warn) l.warn('dsh-main.json 读/解析失败，写回将被拒绝直至显式重设 remoteToken: ' + ((e && e.message) || e));
     }
-    return { guardian: false, remoteEnabled: false, remoteToken: '', frpEnabled: false, frpRemotePort: null, wanPort: null };
+    return { guardian: false, remoteMode: 'off', remoteToken: '' };
+  }
+
+  /** 历史磁盘态一次性推导（legacy 布尔对 -> remoteMode 三态）；首次写盘后旧键即消失。 */
+  function legacyRemoteMode(j) {
+    if (j.remoteMode === 'lan' || j.remoteMode === 'wan') return j.remoteMode;
+    if (j.remoteEnabled === true && j.frpEnabled === true) return 'wan';
+    if (j.remoteEnabled === true) return 'lan';
+    return 'off';
   }
 
   /** 读 main 元数据（无文件则默认：守护关、远程关）。结果缓存到 live。 */
@@ -82,11 +87,8 @@ function createMainStore(deps) {
       fs.mkdirSync(dir, { recursive: true });
       const body = JSON.stringify({
         guardian: merged.guardian === true,
-        remoteEnabled: merged.remoteEnabled === true,
+        remoteMode: merged.remoteMode === 'lan' || merged.remoteMode === 'wan' ? merged.remoteMode : 'off',
         remoteToken: String(merged.remoteToken || ''),
-        frpEnabled: merged.frpEnabled === true,
-        frpRemotePort: merged.frpRemotePort || null,
-        wanPort: merged.wanPort || null,
       }, null, 2);
       writeAtomic(f, body, { mode: 0o600 });
     } catch (e) {

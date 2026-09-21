@@ -7,7 +7,7 @@
 // ## 缺陷：声称的门禁不存在，前端测试从未运行
 //
 // `ui/package.json` 提供 `verify = typecheck + lint + test + build`，
-// 且 `ui/src` 下有 3 个 .test.ts（15 个用例）——
+// 且 `ui/src` 下有若干 .test.ts——
 // 但**没有任何自动化路径会跑到它们**：
 //
 //   - `.github/workflows/build.yml` 的注释写「前端门禁已移出 CI，

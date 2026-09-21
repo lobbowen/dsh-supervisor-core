@@ -80,8 +80,9 @@ function capabilities() {
   const p = capabilityProfile();
   const pl = p.platform;
   if (pl === 'linux') {
-    p.sandboxLaunch = hasTool('systemd-run');
-    p.sandboxEnforcement = p.sandboxLaunch ? 'cgroup' : 'none';
+    // W3：跑舱不再依赖 systemd-run（缺它落 portable 软档）；实测只决定限额执行档位。
+    p.sandboxLaunch = true;
+    p.sandboxEnforcement = hasTool('systemd-run') ? 'cgroup' : 'supervise';
     p.desktopNotify = hasTool('notify-send');
     p.autostart = hasTool('systemctl');
   } else if (pl === 'darwin') {

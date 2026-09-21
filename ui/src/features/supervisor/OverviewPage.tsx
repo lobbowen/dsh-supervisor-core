@@ -399,11 +399,18 @@ function eventDetail(e: SupervisorEvent): string {
   if (e.type === "provider_quota_refreshed") return (d.provider || "") + " 额度已刷新";
   if (e.type === "proxy_update_available") return [(d.pkg || ""), (d.from || ""), (d.to || "")].filter(Boolean).join(" → ");
   if (e.type === "proxy_instance_started") return "port=" + (d.port ?? "") + (d.pid ? " pid=" + d.pid : "");
-  // 守护/远程/FRP 开关变更 —— 写清对象(原生/实例名) + 开/关
-  if (e.type === "dsh_guardian_changed" || e.type === "inst_guardian_changed" || e.type === "dsh_remote_changed" || e.type === "dsh_frp_changed") {
+  // 守护/远程开关变更 —— 写清对象(原生/实例名) + 目标状态（远程控制三态：关闭/局域网/公网）
+  if (e.type === "dsh_guardian_changed" || e.type === "inst_guardian_changed") {
     const who = d.name || (d.id === "main" ? "原生 DSH" : d.id || "实例");
-    const what = e.type.includes("guardian") ? "进程守护" : e.type.includes("remote") ? "远程控制" : "FRP";
-    return who + " · " + what + (d.enabled === true ? " → 开启" : " → 关闭");
+    return who + " · 进程守护" + (d.enabled === true ? " → 开启" : " → 关闭");
+  }
+  if (e.type === "dsh_remote_changed" || e.type === "inst_remote_changed") {
+    const who = d.name || (d.id === "main" ? "原生 DSH" : d.id || "实例");
+    return who + " · 远程控制 → " + (d.mode === "lan" ? "局域网" : d.mode === "wan" ? "公网" : "关闭");
+  }
+  if (e.type === "dsh_remote_token_changed" || e.type === "inst_remote_token_changed") {
+    const who = d.name || (d.id === "main" ? "原生 DSH" : d.id || "实例");
+    return who + " · 访问令牌" + (d.tokenSet === true ? " → 已设置" : " → 已清除");
   }
   // 通用指标字段拼装
   const parts: string[] = [];
@@ -436,9 +443,10 @@ const EVENT_TONE: Record<string, "ok" | "err" | "warn" | "boot" | "off"> = {
   dsh_not_installed: "warn", sigterm_sent: "warn", account_review: "warn",
   // 配置/开关变更(黄 warn)——与运行状态绿、异常红、启动蓝区分
   dsh_guardian_changed: "warn", inst_guardian_changed: "warn",
-  dsh_remote_changed: "warn", dsh_frp_changed: "warn",
+  dsh_remote_changed: "warn", inst_remote_changed: "warn",
+  dsh_remote_token_changed: "warn", inst_remote_token_changed: "warn", lan_frp_blocked: "warn",
   proxy_update_available: "warn", upgrade_started: "warn", upgrade_stopping_dsh: "warn",
-  inst_restarted: "warn", lan_frp_changed: "warn", native_uninstall_started: "warn",
+  inst_restarted: "warn", native_uninstall_started: "warn",
   account_discarded: "off", router_stopped: "off", proxy_instance_stopped: "off",
   inst_stopped: "off", inst_removed: "off", lan_instance_removed: "off",
   frpc_stopped: "off", plugin_uninstall_done: "off", native_uninstalled: "off",

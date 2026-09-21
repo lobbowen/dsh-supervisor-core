@@ -12,8 +12,8 @@ module.exports = {
   PUBLIC_API: [
     // 门面导出（createRelay 服务构造）
     'createRelay', 'frpPlatformTag', 'downloadUrls',
-    // LanManager（反代/frp 编排 + 对账）
-    'localAddresses', 'list', 'setFrp', 'frpStatus', 'frpAction', 'syncFrpc',
+    // LanManager（反代/frp 编排 + 对账；remoteMode 写入属 app 动作层，域内只收敛执行）
+    'localAddresses', 'list', 'frpStatus', 'frpAction', 'syncFrpc',
     'reconcile', 'targetReachable', 'removeProxyForInstance', 'syncProxy',
     'instanceStart', 'instanceStop', 'shutdown', 'applyToken',
     // FrpManager
@@ -23,7 +23,7 @@ module.exports = {
 
   classApi: {
     LanManager: [
-      'localAddresses', 'list', 'setFrp', 'frpStatus', 'frpAction', 'syncFrpc',
+      'localAddresses', 'list', 'frpStatus', 'frpAction', 'syncFrpc',
       'reconcile', 'targetReachable', 'removeProxyForInstance', 'syncProxy',
       'instanceStart', 'instanceStop', 'shutdown', 'applyToken',
     ],

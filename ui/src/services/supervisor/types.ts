@@ -129,6 +129,8 @@ export interface InstanceState {
   lastFailure?: string | null;
   /** 当次启动生效的动态配额（守卫按机器预算与活跃实例数推导；未启动过为空） */
   allocation?: { memoryMax: string; cpuQuota: string } | null;
+  /** 实测占用（监督拍采样回填；未采到/已停止为 null，与 allocation 成对展示） */
+  usage?: { memMb: number | null; cpuPct: number | null; at: number } | null;
   installing?: boolean;
   installOk?: boolean;
   installError?: string | null;
@@ -147,7 +149,8 @@ export interface SupervisorInstance {
   domain: InstanceDomain;
   kind?: string;
   guardian: boolean;
-  remoteEnabled?: boolean;
+  /** 远程控制三态意图（off|lan|wan）；就绪态/访问 URL 的单一来源是 LanItem.remote 视图。 */
+  remoteMode?: RemoteMode;
   unitName?: string;
   sandbox?: InstanceSandbox;
   version?: string | null;
@@ -156,9 +159,7 @@ export interface SupervisorInstance {
   updateJob?: InstanceUpdateJob | null;
   state?: InstanceState;
   authUrl?: string;
-  lanUrl?: string | null;
-  lanRunning?: boolean;
-  /** 后端实例装饰（src/api/instances.js:31）：loopback 时为 true；UI 未直读，属后端返回契约。 */
+  /** 后端实例装饰（src/api/domains/instances.js）：loopback 时为 true；UI 未直读，属后端返回契约。 */
   tokenPresent?: boolean;
 }
 /** /instances 响应（概念清分）：instances[] 仅沙箱（管理对象）；native 为原生主干 main 的只读条目
@@ -168,22 +169,28 @@ export interface InstancesResponse {
   native?: SupervisorInstance | null;
 }
 
-// -- /lan-access + /lan/frp ------------------------------
+// -- /lan-access + /remote/* ------------------------------
+/** 远程控制三态（唯一意图字段；写入口 /remote/set-mode）。 */
+export type RemoteMode = "off" | "lan" | "wan";
+/** 远程访问单一视图：后端 relay/core.projectRemoteView 是唯一事实源，前端零判定直消费。
+ *  ready = 可扫码即用（relay 监听 + cookie 已注入，wan 另要求 frpc 隧道存活）；
+ *  reasons 为未就绪的具体原因（按优先级），供悬停/提示呈现。 */
+export interface RemoteView {
+  mode: RemoteMode;
+  ready: boolean;
+  accessUrl: string | null;
+  reasons: string[];
+}
 export interface LanItem {
   id: string;
   name?: string;
   dshPort: number;
-  wanPort?: number;
-  token?: string;
-  dshToken?: string;
-  enabled: boolean;
-  localPort?: number;
+  wanPort?: number | null;
   running: boolean;
-  /** 公网暴露（frp）：由 /lan/frp/expose 驱动；remotePort 为 frps 侧端口。 */
-  frpEnabled?: boolean;
-  frpRemotePort?: number | null;
-  /** 访问令牌是否已设（布尔，后端不下发明文）——公网暴露的安全前置。 */
+  /** 访问令牌是否已设（布尔，后端不下发明文）——wan 模式的安全前置。 */
   tokenSet?: boolean;
+  /** 远程单一视图（mode/ready/accessUrl/reasons）；off 实例后端不下发条目时为 null。 */
+  remote?: RemoteView | null;
   /** 注入状态（后端白名单下发，不含任何令牌明文）：tokenSet/cookieReady + 最近成败。 */
   inject?: {
     tokenSet?: boolean;
@@ -194,16 +201,18 @@ export interface LanItem {
   } | null;
 }
 export interface LanAccessResponse { items: LanItem[]; addresses: string[]; }
-// /lan/frp 状态面不再回显 authToken 明文，只下发 authTokenSet 布尔；
+// /remote/frp 状态面不再回显 authToken 明文，只下发 authTokenSet 布尔；
 // UI 提交走 patch 语义——字段缺省=服务端保留现值，故此处 authToken 为可选（仅提交新值时带）。
-export interface FrpSettings { enabled?: boolean; serverAddr: string; serverPort: number; authToken?: string; authTokenSet?: boolean; user?: string; }
+// 无总闸字段：frpc 生命周期单一条件 = 存在 wan 模式的受管实例（syncFromInstances）。
+export interface FrpSettings { serverAddr: string; serverPort: number; authToken?: string; authTokenSet?: boolean; user?: string; }
 export interface FrpStatus {
   installed: boolean;
   running: boolean;
   pid?: number | null;
   settings: FrpSettings;
   logTail?: string[];
-  instancesExposed?: Array<{ id?: string; name?: string; wanPort?: number; remotePort?: number }>;
+  /** wan 暴露清单；port = 隧道口（与本机 relay wanPort 恒同号）。 */
+  instancesExposed?: Array<{ id?: string; name?: string; port?: number | null }>;
 }
 
 // -- router ----------------------------------------------
@@ -468,9 +477,9 @@ export interface ShellUpdateCheck {
 export interface PlatformCapabilities {
   platform?: string;
   arch?: string;
-  /** 能否运行沙箱实例舱（当前实现 = Linux + systemd-run） */
+  /** 能否运行沙箱实例舱（systemd 硬档 / portable 软档均可跑舱；仅未知平台为 false） */
   sandboxLaunch?: boolean;
-  /** 资源限额执行档位：cgroup 硬限额 / supervise 采样式 / none */
+  /** 资源限额执行档位：cgroup 内核硬限额 / supervise 采样式软限 / none 无强制 */
   sandboxEnforcement?: "cgroup" | "supervise" | "none";
   /** 接管既有进程（端口/命令行反查） */
   pidAdoption?: boolean;
@@ -484,6 +493,22 @@ export interface PlatformCapabilities {
   frpExpose?: boolean;
   /** 宿主服务形态 */
   hostService?: string;
+}
+/** 沙箱资源预算总览（governor.budgetSnapshot 形状，/env/status.sandboxBudget）。
+ *  内存一律 MB、CPU 一律百分比（单核=100），与后端同源，UI 不做单位换算。 */
+export interface SandboxBudget {
+  headroom: number;
+  memFloorMb: number;
+  totalMemMb: number;
+  budgetMb: number;
+  usedMb: number;
+  activeCount: number;
+  reservationMb: number;
+  cpuCount: number;
+  cpuBudgetPct: number;
+  cpuUsedPct: number;
+  /** 预算可容纳的下限实例数（面板「还能开几个」） */
+  capacity: number;
 }
 /** EnvCatalog 条目（platform/service/env-catalog 的 probe/summary 形状）。
  *  state 五态 ok/outdated/missing/configured/unconfigured；required 项必须在前端同现，
@@ -510,6 +535,8 @@ export interface EnvStatus {
   source?: string | null;
   catalog?: { ready?: boolean; items?: Record<string, EnvCatalogItem> };
   capabilities?: PlatformCapabilities | null;
+  /** 沙箱资源预算总览（governor 推导，未装配/查询失败为 null） */
+  sandboxBudget?: SandboxBudget | null;
   /** 桌面壳看护的观测快照：壳反复拉起失败时面板可见。 */
   shellWatchdog?: {
     enabled?: boolean;

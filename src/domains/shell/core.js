@@ -1,7 +1,7 @@
 'use strict';
 
 // shell 域纯核心（域内依赖图汇点，零出度，不引入任何模块）。
-// 汇集全部无 IO 判定/谓词/解析：DEFAULTS、isShellProcess、decide、exeFromCmdline、
+// 汇集全部无 IO 判定/谓词/解析：DEFAULTS、HEADLESS_FLAGS、isShellProcess、decide、exeFromCmdline、
 // isUpdatePhase、deriveState，与有副作用的 journal/restart/watchdog 分离；
 // 其它文件引用 core，而 core 无出边，保证单向与无环。
 // 纪律：本文件不得出现模块引入 / fs. / spawn( / process.kill / setInterval /
@@ -20,11 +20,24 @@ const DEFAULTS = {
   procPattern: 'dsh-supervisor-gui',
 };
 
+/** 壳的**无头模式**全集：桌面壳二进制自己以非 GUI 身份跑一次的入口清单。
+ *
+ * 这些进程的可执行文件名就是壳，但语义上「桌面壳在运行」为假。清单必须与壳侧 `main.rs`
+ *   里「在 Tauri 初始化之前 exit」的那批分支逐一对应 —— 漏一项，看护就会把一次瞬时进程
+ *   当成壳活着（`alive > 0` 直接短路，永不拉起真壳）。此后补三项：
+ *   `--platform-matrix`（此前已漏）、`--run-guard`（服务定义指向的守卫入口）、
+ *   `--watchdog`（Windows 计划任务每 5 分钟的看护入口，取代内嵌 PowerShell 脚本）。 */
+const HEADLESS_FLAGS = Object.freeze([
+  '--shell-update-plan', '--core-plan', '--node-plan', '--mirror-plan', '--env-plan',
+  '--service-plan', '--platform-matrix', '--run-guard', '--watchdog',
+]);
+const HEADLESS_RE = new RegExp(HEADLESS_FLAGS.join('|'));
+
 /** 判定进程是否为桌面壳主程序（而非本仓的无头自检进程）。 */
 function isShellProcess(proc) {
   const c = String((proc && proc.cmdline) || '');
   // 无头自检入口会同时匹配进程名，必须排除，否则看护会把自检当成壳。
-  if (/--shell-update-plan|--core-plan|--node-plan|--mirror-plan|--env-plan|--service-plan/.test(c)) return false;
+  if (HEADLESS_RE.test(c)) return false;
   return /dsh-supervisor-gui(\.exe)?/.test(c);
 }
 
@@ -103,4 +116,4 @@ function deriveState(id, journal) {
   };
 }
 
-module.exports = { DEFAULTS, isShellProcess, decide, isUpdatePhase, exeFromCmdline, deriveState };
+module.exports = { DEFAULTS, isShellProcess, decide, isUpdatePhase, exeFromCmdline, deriveState, HEADLESS_FLAGS };

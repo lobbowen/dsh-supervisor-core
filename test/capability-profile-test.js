@@ -11,10 +11,12 @@ const { capabilityProfile } = require(path.join(ROOT, 'src', 'platform', 'os'));
 const results = [];
 const check = (n, c, x) => { results.push(!!c); console.log((c ? 'PASS' : 'FAIL') + ' ' + n + (x ? '  ← ' + x : '')); };
 
+// W3 档位：三平台 sandboxLaunch 均 true（darwin/win32 走 portable 软档，限额经 governor 采样）；
+// 未知平台显式 false/none（A3 不谎报）。
 const cases = [
   ['linux', 'x64', 'systemd', true, 'cgroup', true],
-  ['darwin', 'arm64', 'launchd', false, 'none', true],
-  ['win32', 'x64', 'windows-service', false, 'none', true],
+  ['darwin', 'arm64', 'launchd', true, 'supervise', true],
+  ['win32', 'x64', 'windows-service', true, 'supervise', true],
   ['freebsd', 'x64', 'none', false, 'none', false],
 ];
 for (const [pl, ar, host, launch, enf, pid] of cases) {

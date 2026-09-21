@@ -28,7 +28,7 @@ const baseEndpoints: Record<string, object> = {
   "/status": { phase: "RUNNING", dshPid: 1 },
   "/instances": { instances: [] },
   "/lan-access": { items: [], addresses: [] },
-  "/lan/frp": { installed: false, running: false, settings: {} },
+  "/remote/frp": { installed: false, running: false, settings: {} },
   "/router/status": { running: false, usage: {} },
   "/router/providers": { presets: [], providers: [], proxyApps: [] },
   "/ports": { records: [] },

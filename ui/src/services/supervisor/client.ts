@@ -14,7 +14,7 @@ import type {
   AccessKeyResult, AccessKeyStatus, AutostartStatus, CloseActionStatus, EnvStatus, EventsPage, FrpStatus, GenericOk,
   GuardVersion, InstancesResponse, InstalledPluginsResponse, LanAccessResponse,
   LanPanelStatus, LifecycleModuleId, MarketResponse, NodeLtsStatus, PluginUpdatesResponse,
-  PortsResponse, ProvidersResponse, RegistryInfo, RouterStatus,
+  PortsResponse, ProvidersResponse, RegistryInfo, RemoteMode, RouterStatus,
   PluginJobStatus, ProxyUpdateStatus, SelfUpdateStatus, SupervisorInstance, SupervisorStatus, TasksResponse,
   ShellStatus, ShellUpdateCheck,
 } from "./types";
@@ -160,7 +160,7 @@ export const supervisorApi = {
   events: (after = 0, limit = 60) => get<EventsPage>(qs("/events", { after, limit })),
   instances: () => get<InstancesResponse>("/instances"),
   lanAccess: () => get<LanAccessResponse>("/lan-access"),
-  frp: () => get<FrpStatus>("/lan/frp"),
+  frp: () => get<FrpStatus>("/remote/frp"),
   routerStatus: () => get<RouterStatus>("/router/status"),
   providers: () => get<ProvidersResponse>("/router/providers"),
   tasks: () => get<TasksResponse>("/tasks"),
@@ -178,13 +178,14 @@ export const supervisorApi = {
   nativeUpgrade: (version?: string) => post<GenericOk>("/native/upgrade", version ? { version } : {}),
   nativeUninstall: () => post<GenericOk>("/native/uninstall"),
   // 原生主干(main)设置（概念清分：main 设置不走 /instances 沙箱域，统一 /native/settings）
-  nativeSettings: (patch: { guardian?: boolean; remoteEnabled?: boolean; remoteToken?: string; frpEnabled?: boolean; frpRemotePort?: number }) =>
+  // 仅 guardian；远程控制意图（模式/令牌）唯一入口在 remote* 系列（main 与沙箱同口）。
+  nativeSettings: (patch: { guardian?: boolean }) =>
     post<GenericOk & { main?: SupervisorInstance }>("/native/settings", patch),
 
   // -- instances --
   instanceAdd: (p: { name: string; port: number; command?: string[] }) =>
     post<GenericOk>("/instances/add", p),
-  instanceUpdate: (id: string, patch: { guardian?: boolean; remoteEnabled?: boolean; remoteToken?: string }) =>
+  instanceUpdate: (id: string, patch: { guardian?: boolean }) =>
     post<GenericOk>("/instances/update", { id, ...patch }),
   instanceRemove: (id: string) => post<GenericOk & { dataPreserved?: boolean; preserveReason?: string }>("/instances/remove", { id }),
   instanceStart: (id: string) => post<GenericOk>("/instances/start", { id }),
@@ -233,16 +234,16 @@ export const supervisorApi = {
   // 插件任务进度（job 模型）：install/update/uninstall 返回 jobId，前端轮询到 done/failed 消除黑盒
   pluginInstallStatus: (jobId: string) => get<PluginJobStatus>(qs("/plugins/install-status", { job: jobId })),
 
-  // -- lan / frp --
-  // 注（FRP 修复）：enabled 是 frpc 启动的**总闸**（后端 syncFromInstances 要求 settings.enabled=true），
-  // 此前 UI 从不提交该字段 -> 用户「配置了 frps 却永远不运行」。现必传。
-  // authToken 为 patch 语义——留空时**必须整体缺省该字段**（提交 '' 会被后端视为清除）。
-  frpSettings: (s: { serverAddr: string; serverPort: number; authToken?: string; enabled?: boolean }) =>
-    post<GenericOk>("/lan/frp/settings", s),
-  frpInstall: () => post<GenericOk>("/lan/frp/install"),
-  // 实例级公网暴露（后端 /lan/frp/expose；此前**零 UI 消费者** -> 永远 count=0 -> frpc 无代理可跑）
-  frpExpose: (id: string, frpEnabled: boolean, remotePort?: number) =>
-    post<GenericOk>("/lan/frp/expose", { id, frpEnabled, remotePort }),
+  // -- 远程控制（/remote/*：main 与沙箱同口，按 id 路由）--
+  /** 远程控制唯一写入口：三态 off|lan|wan（wan 前置闸=访问令牌，拒因在响应 error）。 */
+  remoteSetMode: (id: string, mode: RemoteMode) => post<GenericOk>("/remote/set-mode", { id, mode }),
+  /** 访问令牌唯一写入口（空串=清除）。 */
+  remoteSetToken: (id: string, token: string) => post<GenericOk>("/remote/set-token", { id, token }),
+  // frps 连接配置：patch 语义——authToken 留空时必须整体缺省该字段（提交 '' 会被后端视为清除）。
+  // 无总闸字段：frpc 常驻与否 = 是否存在 wan 模式实例。
+  remoteFrpServer: (s: { serverAddr: string; serverPort: number; authToken?: string }) =>
+    post<GenericOk>("/remote/frp-server", s),
+  remoteFrpInstall: () => post<GenericOk>("/remote/frp-install"),
 
   // -- settings / env / guard / registry --
   autostart: () => get<AutostartStatus>("/autostart"),
