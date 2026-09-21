@@ -1,10 +1,12 @@
 'use strict';
 
-// 反代供应商：账号=代理实例（进程），每账号一个实例（硬规则）。本文件是实例进程治理入口 +
-// 账号生命周期钩子 + 池/探测/重启/命令委托：命令拼装归 command.js，实例池决策归 pool.js，
-// spawn/探活/配额探测归 probe.js，重启重拉/对账归 restart.js，冻结/解冻状态机归 base.js 与 freeze.js。
+// 反代供应商：账号=代理实例（进程），每账号一个实例（硬规则）。process-pool 契约方法
+// （启停/重启/熔断/对账入口）在 process-pool.js mixin；本文件留 ctor、账号生命周期钩子与
+// 池/探测/命令委托：命令拼装归 command.js，实例池决策归 pool.js，spawn/探活/配额探测归
+// probe.js，重启重拉/对账归 restart.js，冻结/解冻状态机归 base.js 与 freeze.js。
 
 const { ProviderBase } = require('./base');
+const { withProcessPool } = require('./process-pool');
 const { keyFingerprint, maskKey } = require('./model');
 const { ProxyInstance } = require('../model');
 require('../port-segments'); // 本域端口段/独立池申报（require 即注入）
@@ -17,7 +19,7 @@ const restart = require('./restart');
 const poolPolicy = require('./pool');
 const life = require('./instance-lifecycle');
 
-class ProxyProvider extends ProviderBase {
+class ProxyProvider extends withProcessPool(ProviderBase) {
   constructor(opts) {
     super(opts);
     this.kind = 'proxy';
@@ -47,18 +49,7 @@ class ProxyProvider extends ProviderBase {
     };
   }
 
-  /** 能力声明：process-pool 具备实例生命周期。转发层据此决定是否走按需激活。 */
-  supports(cap) {
-    return ['instanceLifecycle', 'warmPool', 'switchBudget', 'reconcile', 'prewarm'].includes(cap);
-  }
-
-  accountOf(inst) { return this.accounts.find((a) => a.key === inst.key) || null; }
-
-  /** 账号 -> 实例映射（一账号一实例）：usageOf 派生 warming 的依据。 */
-  instanceOf(acc) {
-    if (!acc) return null;
-    return (this.instances || []).find((i) => i.keyId === acc.keyId) || acc.instance || null;
-  }
+  /** 能力声明：基座 ∪ process-pool 并集在 withProcessPool mixin 完成（process-pool.js）。 */
 
   async ensureInstance(key) {
     let inst = this.instances.find((i) => i.key === key);
@@ -66,28 +57,6 @@ class ProxyProvider extends ProviderBase {
     inst = new ProxyInstance({ key, keyId: keyFingerprint(key), maskedKey: maskKey(key), app: this.app, logger: this.logger, events: this.events });
     this.instances.push(inst);
     return inst;
-  }
-
-  /** 启动实例：并发去重（startingPromise）+ 全局串行（_startLock，防 npm 缓存锁风暴）。 */
-  async startInstance(inst) {
-    if (inst.pid) return { ok: true, already: true };
-    if (inst.startingPromise) return inst.startingPromise;
-    inst.startingPromise = (async () => {
-      try {
-        const lockWaitStart = Date.now();
-        while (this._startLock && Date.now() - lockWaitStart < 30000) { await new Promise((r) => setTimeout(r, 250)); }
-        if (this._startLock) return { ok: false, error: '实例启动互斥锁超时（前一次启动未完成）' };
-        this._startLock = true;
-        try {
-          return await this._doStart(inst);
-        } finally {
-          this._startLock = false;
-        }
-      } finally {
-        inst.startingPromise = null;
-      }
-    })();
-    return inst.startingPromise;
   }
 
   /** 解析启动命令（缓存优先 + fallback npx）：纯拼装委托 command.js，凭证剔除留在本层（纪律）。 */
@@ -113,24 +82,8 @@ class ProxyProvider extends ProviderBase {
   /** 启动实例（底层治理在 probe.js）。注意：方法保留在原型上，测试以 _doStart 打桩替换 spawn。 */
   async _doStart(inst) { return probe.spawnInstance(this, inst); }
 
-  /** 标记实例被请求使用：只记录 lastUsedAt（清零归 markRequestOk，避免熔断计数到不了阈值）。 */
-  markUsed(inst) {
-    if (!inst) return;
-    inst.lastUsedAt = Date.now();
-  }
-
-  /** 请求成功后清零失败计数（时机是熔断可达的全部要害）。不触碰健康监测的 _monitorFails。 */
-  markRequestOk(inst) {
-    if (!inst) return;
-    inst._unhealthyCount = 0;
-  }
-
   /** 实例停止仲裁（委托 instance-lifecycle.js）。 */
   _canStopInstance(acc) { return life.canStopInstance(this, acc); }
-  /** 实例停止（幂等）：在途/在用 -> 标记待停；force 跳过仲裁（委托 instance-lifecycle.js）。 */
-  stopInstance(inst, force) { return life.stopInstance(this, inst, force); }
-  /** 请求结束补刀（委托 instance-lifecycle.js）。 */
-  _retryPendingStop(acc) { return life.retryPendingStop(this, acc); }
 
   /** 等待全部 SIGTERM 在途子进程真正退出（实现与 zombie 判定在 probe.js）。 */
   async waitAllStopped(timeoutMs) { return probe.waitAllStopped(this, timeoutMs); }
@@ -141,75 +94,10 @@ class ProxyProvider extends ProviderBase {
   /** 实例生命周期监控（进程/端口/HTTP 卡死检测）。 */
   async monitorLifecycle() { return probe.monitorLifecycle(this); }
 
-  /** 实例重启：在途延后（_restartPending）+ 单实例退避（_restartAt）+ force 停止 + 重拉委托。
-   *  退避只在真正执行重启时置位；stop 失败必须可观测（重新记待重启并清退避，不静默黑洞）。 */
-  restartInstance(inst, reason) {
-    if (!inst || this._stopping) return;
-    if (!inst.pid && !inst.port) return;
-    if (Date.now() < (inst._restartAt || 0)) return; // 退避中
-    const acc = this.accountOf(inst);
-    if (acc && (acc.inflight || 0) > 0) {
-      inst._restartPending = reason || 'deferred';
-      if (this.logger && this.logger.info) this.logger.info('[proxy-instance] 在途请求中，重启延后 key=' + inst.maskedKey + ' reason=' + inst._restartPending);
-      return;
-    }
-    inst._restartAt = Date.now() + 120000; // 仅在真正执行时置退避
-    inst._restartPending = null;
-    if (this.logger && this.logger.warn) this.logger.warn('[proxy-instance] 实例重启 key=' + inst.maskedKey + ' port=' + inst.port + ' reason=' + reason);
-    const hadPid = !!inst.pid;
-    try { this.stopInstance(inst, true); } catch (e) { this.logger.warn && this.logger.warn('[proxy-instance] 重启 stop 异常: ' + (e && e.message)); }
-    if (inst.pid) {
-      let stillAlive = true;
-      try { stillAlive = (typeof pidlook !== 'undefined' && pidlook.isAlive) ? pidlook.isAlive(inst.pid) : true; } catch {}
-      if (stillAlive) {
-        inst._restartAt = 0;
-        inst._restartPending = reason || 'restart-stop-failed';
-        if (this.logger && this.logger.warn) this.logger.warn('[proxy-instance] 重启未能停止进程 pid=' + inst.pid + ' key=' + inst.maskedKey + '，已重新记待重启（不静默）');
-        return;
-      }
-    }
-    this._restart.respawn(inst, { acc, hadPid });
-  }
-
-  /** 请求级熔断：连续 >=2 次报错 -> 重启实例（与健康监测 _monitorFails 独立）。 */
-  markInstanceProblem(instOrAcc, reason) {
-    try {
-      const inst = instOrAcc && instOrAcc.pid ? instOrAcc : null;
-      if (!inst) return;
-      inst._unhealthyCount = (inst._unhealthyCount || 0) + 1;
-      inst.healthy = false;
-      inst._lastProblem = reason || 'unknown';
-      const failN = inst._unhealthyCount;
-      if (failN >= 2) {
-        inst._unhealthyCount = 0;
-        this.restartInstance(inst, 'req-' + (reason || 'unknown') + ' x' + failN);
-      }
-    } catch {}
-  }
-
-  /** 兼容旧名（保持对外调用不破）。 */
-  markInstanceNetFail(instOrAcc) { this.markInstanceProblem(instOrAcc, 'net-error'); }
-
-  /** 实例空闲后补做「被延后的重启」（_restartPending 的消费点，不再只写不读）。 */
-  flushRestartPending(inst) {
-    if (!inst || !inst._restartPending) return;
-    const acc = this.accountOf(inst);
-    if (acc && (acc.inflight || 0) > 0) return;
-    const why = inst._restartPending;
-    inst._restartPending = null;
-    if (this.logger && this.logger.info) {
-      this.logger.info('[proxy-instance] 实例已空闲，补做延后的重启 key=' + inst.maskedKey + ' reason=' + why);
-    }
-    try { this.restartInstance(inst, why); } catch (e) {
-      this.logger.warn && this.logger.warn('[proxy-instance] 补做重启异常: ' + (e && e.message));
-    }
-  }
-
   /** 模式级配额检测（策略注册与解析在 probe.js + quota-strategies.js）。 */
   async detectInstanceQuota(inst) { return probe.detectInstanceQuota(this, inst); }
 
   async addAccount(key, extra) { return life.addAccount(this, key, extra); }
-  async _waitHealthy(inst, tries) { return life.waitHealthy(this, inst, tries); }
   isAccountUsable(acc, opts) { return life.isAccountUsable(this, acc, opts); }
   /** 停掉账号实例（委托 instance-lifecycle.js）。 */
   _stopInstanceIfAny(acc) { return life.stopInstanceIfAny(this, acc); }
@@ -265,7 +153,6 @@ class ProxyProvider extends ProviderBase {
 
   prewarmAsync(acc) { return restart.prewarmAsync(this, acc); }
   _runReconcile(allowStop) { return restart.runReconcile(this, allowStop); }
-  reconcileInstances(opts) { return restart.reconcileInstances(this, opts); }
   reconcileNow() { return restart.reconcileNow(this); }
   isDesiredAccount(acc) { return poolPolicy.isDesired(this.desiredRunningAccounts(), acc); }
 
