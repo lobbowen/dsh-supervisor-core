@@ -79,9 +79,6 @@ class ProxyProvider extends withProcessPool(ProviderBase) {
   _cachedPkgBin(pkg) { return probe.cachedPkgBin(pkg); }
   _ensurePkgCached(app) { return probe.ensurePkgCached(this, app); }
 
-  /** 启动实例（底层治理在 probe.js）。注意：方法保留在原型上，测试以 _doStart 打桩替换 spawn。 */
-  async _doStart(inst) { return probe.spawnInstance(this, inst); }
-
   /** 实例停止仲裁（委托 instance-lifecycle.js）。 */
   _canStopInstance(acc) { return life.canStopInstance(this, acc); }
 

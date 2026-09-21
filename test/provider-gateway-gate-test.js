@@ -71,7 +71,7 @@ const proxySrc = read(PROXY);
 const directSrc = read(DIRECT);
 //  providers 已按功能切分（base/model/policies/store/command/pool/restart/probe）——
 //   本组判据（PG-6 凭证剔除 / PG-4 资源闸与预算）必须读**整组**，否则文件一搬即静默假绿。
-const providerSrc = proxySrc + String.fromCharCode(10) + read('src/domains/router/providers/command.js') + String.fromCharCode(10) + read('src/domains/router/providers/pool.js') + String.fromCharCode(10) + read('src/domains/router/providers/probe.js') + String.fromCharCode(10) + read('src/domains/router/providers/restart.js') + String.fromCharCode(10) + read('src/domains/router/providers/base.js') + String.fromCharCode(10) + read('src/domains/router/providers/model.js');
+const providerSrc = proxySrc + String.fromCharCode(10) + read('src/domains/router/providers/process-pool.js') + String.fromCharCode(10) + read('src/domains/router/providers/command.js') + String.fromCharCode(10) + read('src/domains/router/providers/pool.js') + String.fromCharCode(10) + read('src/domains/router/providers/probe.js') + String.fromCharCode(10) + read('src/domains/router/providers/restart.js') + String.fromCharCode(10) + read('src/domains/router/providers/base.js') + String.fromCharCode(10) + read('src/domains/router/providers/model.js');
 //  转发 IO 已拆到 handlers/forward.js（SSOT：forward-core.js 收敛为门面）——
 //   本组判据（PG-2 能力猜测 / PG-4 双预算使用）必须读**整组**，否则文件一搬即静默假绿。
 const forwardSrc = read(FORWARD) + String.fromCharCode(10) + read('src/domains/router/handlers/forward.js');
@@ -120,7 +120,9 @@ const idxSrc = read(IDX);
     throwsNotImpl >= 12,
     '当前声明 ' + throwsNotImpl + ' 个（应 ≥12）');
   // 能力声明 supports() 必须存在（两类 pattern 的差异靠它表达）
-  const proxySrc2 = read('src/domains/router/providers/proxy.js');
+  //  能力声明随 process-pool mixin 走（判据统一阶段③）——按整组读，文件一搬判据不失覆盖面。
+  const proxySrc2 = read('src/domains/router/providers/proxy.js') + String.fromCharCode(10)
+    + read('src/domains/router/providers/process-pool.js');
   const directSrc2 = read('src/domains/router/providers/direct.js');
   check('PG-1 两类 provider 均声明 supports()（能力可静态校验）',
     /supports\s*\(/.test(stripComments(proxySrc2)) && /supports\s*\(/.test(stripComments(directSrc2)),

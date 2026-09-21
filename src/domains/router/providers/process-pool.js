@@ -9,6 +9,7 @@
 
 const life = require('./instance-lifecycle');
 const restart = require('./restart');
+const probe = require('./probe');
 const pidlook = require('../../../platform/os/pidlookup');
 
 const POOL_CAPS = ['instanceLifecycle', 'warmPool', 'switchBudget', 'reconcile', 'prewarm',
@@ -50,6 +51,10 @@ function withProcessPool(Base) {
       })();
       return inst.startingPromise;
     }
+
+    /** 启动实例底层治理（spawn/探活在 probe.js）。方法在能力面上保持原型可覆写，
+     *  测试以 _doStart 打桩替换 spawn；留在 mixin 侧是为了 this 图单向（mixin 不回调消费方方法）。 */
+    async _doStart(inst) { return probe.spawnInstance(this, inst); }
 
     /** 标记实例被请求使用：只记录 lastUsedAt（清零归 markRequestOk，避免熔断计数到不了阈值）。 */
     markUsed(inst) {
