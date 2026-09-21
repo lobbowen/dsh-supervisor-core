@@ -36,7 +36,7 @@ class RouterService {
     const agents = endpoint.createAgents();
     state.agentHttp = agents.http; state.agentHttps = agents.https;
 
-    this.store = this._store = new RouterStore({ file: this.providerFile, usageFile: this.usageTotalsFile, logger: this.logger });
+    this.store = this._store = new RouterStore({ file: this.providerFile, logger: this.logger });
     const doc = this.store.load();
     state.providers = (doc.providers || []).map((p) => deserializeProvider(p, {
       createDirect: (o) => new DirectProvider(o), createProxy: (o) => new ProxyProvider(o),
@@ -75,7 +75,7 @@ class RouterService {
       createDirect: (o) => new DirectProvider(o), createProxy: (o) => new ProxyProvider(o),
       apps: PROXY_APPS, presets: PROVIDER_PRESETS, save: () => this._save(),
     });
-    this._viewDeps = { loadTotals: () => this.store.readUsage(), getUsage: () => this._forward.usage.getUsage(), quotaOverallStatus, semverCompare, ports, probe };
+    this._viewDeps = { getUsage: () => this._forward.usage.getUsage(), quotaOverallStatus, semverCompare, ports, probe };
   }
 
   get providers() { return this._state.providers; }

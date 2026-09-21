@@ -121,13 +121,17 @@ ProviderGateway（编排）
 ### 3.3 写权唯一性（决策 **A3 的推论**）
 
 ```
-设计：任一时刻，一个域的持久化文件只能有【一个写入者】。
-  providers.json           ← daemon 独占（守卫内嵌实例彻底只读）
-  router-usage-totals.json  ← daemon 独占（★ 当前不受写闸约束，见 P1-3）
+设计：任一时刻，一个域的持久化文件只能有【一个写入者】+【一个读写实现】。
+  providers.json            ← daemon 独占（守卫内嵌实例彻底只读）
+  router-usage-totals.json  ← daemon 独占（写闸与 providers 同源：canPersist 单闸）
   ports-router.json         ← daemon 独占
 ```
 
-**现状缺陷**：`_save()` 受 `_persistEnabled` 约束，但 `_writeTotals()` **不受** → "守卫只读"仅成立于 providers.json。
+**落地时点（2026-09-21 账本读写收口，取代立文时的缺陷描述）**：
+
+- 立文时缺陷「`_writeTotals()` 不受 `_persistEnabled` 约束」已修：`store/usage.js` 落盘前问注入的 `canPersist()`（闸由 `RouterStore.canPersist` 提供，PG-7 判据锁）。
+- **读写实现唯一**：`RouterStore` 上的第二读写面 `readUsage/writeUsage`（零消费）已删除，usage-totals.json 只由 `UsageLedger` 一处持有（PG-12 机器校验：router 域内除 store/usage.js 外不得再出现 usage 读写口）。
+- **鲜度纪律**：写者以内存为准（节流窗口内盘落后于内存，重读会丢在途账）；只读实例（守卫/内嵌）从不记账、盘上是别人的活账，`load()` 必须每次新鲜读盘——永久缓存会把面板冻结在进程启动时的旧快照。
 
 **设计**：**统一写权闸**——所有落盘经同一入口校验写权，而非每处自行判断。
 
@@ -309,6 +313,7 @@ reconcile / prewarm / processPool / gracefulStop）；key-pool 侧基座 `suppor
 | **PG-8** | 反向：判据能识别旧形态（门禁非空转）|
 | **PG-9** | daemon 入口必须有 `require.main === module` 守卫（require 不得拉起真实 daemon）|
 | **PG-11** | router 域 `kind === 'proxy'/'direct'` 字面量比较仅允许 B 类白名单逐文件精确配额（持久化/视图/注册表鉴别/裸 JSON）；能力判据一律 `supports()`。（编号 PG-10 已由 stripComments 词法自检占用）|
+| **PG-12** | 用量账本读写实现唯一（router 域除 `store/usage.js` 外不得出现第二 usage 读写口）；`UsageLedger.load()` 缓存命中以 `canPersist()` 为条件——只读实例不得吃永久缓存 |
 
 ---
 
@@ -330,9 +335,11 @@ Phase 3  逐层迁移                                  ← applyDetection 唯一
                                                       （endpoint.js）；转发接口以 supports 收口
 Phase 4  有进程侧深化（§4）                        ← 已落地（pool.js maxHot/maxWarm、
                                                       switchBudgetMs 双预算、prewarmAsync）
-Phase 5  收口                                      ← 判据统一 2026-09-21 收口（PG-1..PG-11
-                                                      全绿，以门禁运行为准）；DG 域结构门禁的
-                                                      report-only 红（行数超限）随后续批次收敛
+Phase 5  收口                                      ← 判据统一 + 账本读写收口 2026-09-21
+                                                      （PG-1..PG-12 全绿，以门禁运行为准；
+                                                      usage-totals 读写归一 store/usage.js）；
+                                                      DG 域结构门禁的 report-only 红（行数超限）
+                                                      随后续批次收敛
 ```
 
 ---

@@ -15,14 +15,15 @@
 //   PG-8 反向：判据能识别旧形态（门禁非空转）
 //   PG-9 daemon 入口必须有 require.main 守卫（require 不得拉起 daemon）
 //   PG-11 router 域 kind 字面量比较收敛于 B 类白名单（能力判据一律 supports()）
+//   PG-12 用量账本读写实现唯一（仅 store/usage.js）；只读实例每次新鲜读盘
 //
 // ## 为什么有本门禁
 //   本域从未被真正设计过（13 文件同日随初始提交搬入），累积了大量
 //   「隐式契约 + 无白名单 + 双事实源」。本文档类规范都配机器校验（一域一规范），
 //   本门禁即该设计的可执行部分。
 //
-//  PG 判据当前全绿（2026-09-21 判据统一收口时点；回潮即如实报 FAIL，不掩盖）。
-//   设计阶段推进状态见 PROVIDER-GATEWAY-ARCHITECTURE.md §7（RouterService 改名尚未执行）。
+//  PG 判据回潮即如实报 FAIL，不掩盖（收口过程与历史现状在 git log，不在此写时点）。
+//   设计阶段推进状态见 PROVIDER-GATEWAY-ARCHITECTURE.md（RouterService 改名尚未执行）。
 //   PG-8 与各处反向自检保证每条判据能命中旧形态样本（防空转）。
 // ---------------------------------------------------------------------------
 
@@ -329,6 +330,45 @@ const idxSrc = read(IDX);
     !KIND_CMP.test("if (p.supports('instanceLifecycle')) { p.startInstance(i); }"), 'miss');
   check('PG-11 反向：异名 kind（额度限流种类）不误伤',
     !/kind\s*[!=]==\s*['"](proxy|direct)['"]/.test("if (acc.limit.kind === 'rpm') {}"), 'miss');
+}
+
+// ---------------------------------------------------------------------------
+// PG-12 用量账本读写实现唯一（防第二读写口回潮）。
+//   router-usage-totals.json 的持有者只能有 store/usage.js 一处：旧形态是 store.js 自带
+//   readUsage/writeUsage 第二口（与 UsageLedger 同文件双实现），且 views 走盘、getUsage 走
+//   内存缓存，两面板鲜度不一致。收口后：写口唯一（PG-7 已过闸），读口唯一（UsageLedger.load），
+//   并锁死鲜度纪律——写者以内存为准（节流落后），只读实例必须每次读盘（缓存即冻结旧账）。
+//   接线面豁免：usageTotalsFile（deps 键名）只是路径传递，不触碰文件 IO，与本判据的
+//   /usageFile/ 不冲突（大小写敏感：usageTotalsFile 与 usageFile 不是同一键）。
+// ---------------------------------------------------------------------------
+{
+  const LEDGER = 'src/domains/router/store/usage.js';
+  const SECOND_PORT = /usageFile|readUsage\s*\(|writeUsage\s*\(|_writeTotals\s*\(/;
+  const files = [];
+  (function walk(dir) {
+    for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+      const f = path.join(dir, e.name);
+      if (e.isDirectory()) walk(f); else if (e.name.endsWith('.js')) files.push(f);
+    }
+  })(path.join(ROOT, 'src/domains/router'));
+  const viol = [];
+  for (const f of files) {
+    const rel = path.relative(ROOT, f).split(path.sep).join('/');
+    if (rel === LEDGER) continue;
+    if (SECOND_PORT.test(stripComments(fs.readFileSync(f, 'utf8')))) viol.push(rel);
+  }
+  check('PG-12 账本读写实现唯一（router 域除 store/usage.js 外无第二 usage 读写口）',
+    viol.length === 0, viol.length ? '第二口: ' + viol.join(', ') : '唯一实现 ' + LEDGER);
+  // 鲜度纪律：UsageLedger.load 的缓存命中必须以「本实例是写者」为条件（只读必落回读盘）。
+  const ledgerCode = stripComments(read(LEDGER));
+  check('PG-12 只读实例不得吃永久缓存（load 缓存命中以 canPersist 为条件）',
+    /if\s*\(\s*this\.totals\s*&&\s*this\._canPersist\(\)\s*\)\s*return\s+this\.totals/.test(ledgerCode),
+    'ok');
+  // 反向（防空转）：旧 store.js 第二口样本必须命中；usageTotalsFile 接线不误伤。
+  check('PG-12 反向：旧第二读写口命中',
+    SECOND_PORT.test(stripComments('this.usageFile = f; readUsage() { return 1; } writeUsage(t) { return 2; }')), 'hit');
+  check('PG-12 反向：usageTotalsFile 路径接线不误伤',
+    !SECOND_PORT.test(stripComments("opts.usageTotalsFile; this.usageTotalsFile = x")), 'miss');
 }
 
 // ---------------------------------------------------------------------------

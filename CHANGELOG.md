@@ -6,6 +6,25 @@
 
 ## [未发布]
 
+### 账号账本读写收口：usage-totals 单一实现 + 只读实例鲜度纪律（PG-12）
+
+- **缺陷（行为变更，内嵌只读模式）**：`UsageLedger.load()` 一次读盘后永久缓存；守卫/内嵌实例
+  无写权、从不记账，其 `status` 总量摘要因此冻结在进程启动时的旧快照，而同屏 `listProviders`
+  账号行走 `store.readUsage()` 新鲜读盘——两面板两个鲜度源。`views.status` 里
+  「loadTotals 确保用量缓存就绪」的注释与代码不符（返回值被丢弃，且并不填账本缓存）。
+- **读源统一**：`load()` 缓存命中改为以 `canPersist()` 为条件——写者内存为准（节流窗口内
+  盘落后于内存，重读丢在途账），只读实例每次新鲜读盘；views 两个用量消费面（status 摘要、
+  listProviders byKey）收敛到 `deps.getUsage()` 单一入口。
+- **第二读写口删除**：`RouterStore.readUsage/writeUsage`（writeUsage 全仓零消费）与
+  `usageFile` 字段整体删除，router-usage-totals.json 自此只由 `store/usage.js` 持有；
+  store.js 头注释同步为现状。
+- **防回潮**：provider-gateway 门禁新增 PG-12（router 域除 store/usage.js 外出现第二 usage
+  读写口即红 + 只读不得吃永久缓存 + 2 条反向自检）；SSOT §3.3 由「现状缺陷」改写为落地时点，
+  §6.2 补 PG-12 行，§7 Phase 5 与 README PG 范围同步。
+- 验证：node --check 全绿；静态门禁（provider-gateway 35/35、domain-structure 88 过/0 硬红、
+  probe-gate 36/36、circuit-breaker 58/58、round13-robustness 26/26、docs-reference 14/14）；
+  运行时行为（status/listProviders 鲜度）由 CI 裁决。
+
 ### 判据统一改动专项清理：文档与注释中的假现状对齐（不含行为变更）
 
 - **注释残留**：base.js「process-pool 子类」措辞改「能力方（mixin ctor 装配钩子）」；

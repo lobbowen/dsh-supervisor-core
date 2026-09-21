@@ -1,10 +1,12 @@
 'use strict';
 
-// router 域持久化（providers.json + 用量 + 写权单闸）。
+// router 域持久化（providers.json + 写权单闸）。
 // 写权单闸（PG-7）：本类是唯一判定「此刻能否落盘」的地方——服务级写开关（setPersistEnabled）
-// 与文件级健康（loadedOk）之并。save/writeUsage 都在方法体内自查 canPersist()，调用方不再各自判断。
-// 用量读写（readUsage/writeUsage）归口本文件。落盘走 platform/util/fs 的 writeAtomic 单源
-// （tmp 名含 pid+毫秒，防并发写混合内容）；本文件的 renameSync 只用于把损坏原件改名保留现场。
+// 与文件级健康（loadedOk）之并。save 在方法体内自查 canPersist()，调用方不再各自判断；
+// 用量账本（router-usage-totals.json）的读写唯一实现在 store/usage.js 的 UsageLedger，
+// 本类不带第二读写口——闸以谓词（this.canPersist）由门面注入账本。落盘走 platform/util/fs 的
+// writeAtomic 单源（tmp 名含 pid+毫秒，防并发写混合内容）；本文件的 renameSync 只用于把损坏
+// 原件改名保留现场。
 // provider 反序列化：纯映射，工厂经 deps 注入，使 store 不 require providers（保持叶子方向）；
 // stateDir 由注入的 config.stateFile 派生，provider 落盘/落日志必须用它，不得各自 os.homedir()。
 
@@ -15,7 +17,6 @@ const { writeAtomic } = require('../../platform/util/fs');
 class RouterStore {
   constructor(opts) {
     this.file = opts.file;
-    this.usageFile = (opts && opts.usageFile) || null;
     this.logger = (opts && opts.logger) || null;
     // 本次启动是否已成功读过盘（用于「空态立即回写」的放大效应防护）
     this.loadedOk = false;
@@ -65,30 +66,6 @@ class RouterStore {
     fs.mkdirSync(path.dirname(this.file), { recursive: true });
     // 注意：tmp 名必须唯一；固定 '.tmp' 会让两个进程并发写同一临时文件，rename 出混合内容。
     writeAtomic(this.file, JSON.stringify({ providers: providers.map((p) => p.serialize()) }, null, 2), { mode: 0o600 });
-    return true;
-  }
-
-  /** usage-totals.json 读盘（兼容旧格式补默认字段，防 undefined 崩溃）。 */
-  readUsage() {
-    let t;
-    try { t = JSON.parse(fs.readFileSync(this.usageFile, 'utf8')); } catch {}
-    if (!t || typeof t !== 'object') t = {};
-    t.requests = t.requests || 0;
-    t.promptTokens = t.promptTokens || 0;
-    t.completionTokens = t.completionTokens || 0;
-    t.totalTokens = t.totalTokens || 0;
-    t.costUsd = t.costUsd || 0;
-    t.errors = t.errors || 0;
-    if (!t.byModel || typeof t.byModel !== 'object') t.byModel = {};
-    if (!t.byKey || typeof t.byKey !== 'object') t.byKey = {};
-    return t;
-  }
-
-  /** usage-totals.json 原子写；唯一 tmp 命名 + 写权单闸。未过闸返回 false。 */
-  writeUsage(totals) {
-    if (!this.canPersist() || !totals || !this.usageFile) return false;
-    fs.mkdirSync(path.dirname(this.usageFile), { recursive: true });
-    writeAtomic(this.usageFile, JSON.stringify(totals), { mode: 0o600 });
     return true;
   }
 }
