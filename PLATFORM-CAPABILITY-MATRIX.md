@@ -52,7 +52,7 @@ macOS 的**壳自启 / 壳自愈从项目奠基提交（`8867942`, 2026-09-01）
 | C5 | 端口 → PID 反查 | ✅ `/proc` + `ss` 兜底 | ✅ `lsof` | ✅ `netstat -ano` | `platform/os/pidlookup/index.js` | A2 |
 | C6 | 进程列表 / 命令行读取 | ✅ `pgrep -af` | ✅ `pgrep` + `ps` | ✅ CIM | `platform/os/pidlookup/index.js` | A2 |
 | C7 | 桌面通知 | ✅ `notify-send` | ✅ `osascript` | ✅ PowerShell 气泡 | `platform/os/notify.js` | A2 |
-| C8 | 打开浏览器（含隔离 profile） | ✅ `xdg-open` | ✅ `open -na` | ✅ 直启 `chrome.exe`（隔离）/ `explorer.exe`（默认浏览器兜底） | `platform/os/browser.js` | A2 · AUDIT-REPORT §A4（win32 argv 不经 shell；原 `cmd /c start` 的 URL 二次解析注入面已消灭） |
+| C8 | 打开浏览器（含隔离 profile；引擎 = **系统默认浏览器**，隔离参数按解析结果的引擎族展开） | ✅ `xdg-settings`+`.desktop` Exec 解析 → `xdg-open` 兜底 | ✅ LaunchServices 解析直启 → `open` 兜底 | ✅ 注册表 `Clients\StartMenuInternet` 解析直启 → `explorer.exe` 兜底 | `platform/os/browser.js` | A2 · AUDIT-REPORT §A4（win32 argv 不经 shell；原 `cmd /c start` 的 URL 二次解析注入面已消灭） |
 | C9 | 服务单元管理 | ✅ systemd | ❌ **显式** | ❌ **显式** | `platform/os/service.js` | A3 |
 | C10 | 沙箱多实例（transient） | ✅ `systemd-run` | ❌ **显式** | ❌ **显式** | `platform/os/service.js` | A3 |
 | C11 | **守卫**开机自启 | ✅ systemd + linger | ✅ LaunchAgent | ✅ schtasks | `platform/os/autostart/index.js` | A2 |

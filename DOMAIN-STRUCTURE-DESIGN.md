@@ -119,7 +119,7 @@ domains/<domain>/
 | `router/store/usage.js` | ≤160 | 150 | 达 |
 | `router/model/inflight.js` | ≤90 | 53 | 达 |
 | `router/router-ops.js` | ≤100 | 34 | 达 |
-| `router/ops/browser.js` | ≤140 | 83 | 达 |
+| `router/ops/browser.js` | ≤140 | 75 | 达 |
 | `router/ops/oauth.js` | ≤190 | 140 | 达 |
 | `router/ops/apps-registry.js` | ≤230 | 186 | 达 |
 | `router/ops/quotasync.js` | ≤140 | 89 | 达 |

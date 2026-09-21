@@ -342,35 +342,80 @@ const TMP = fs.mkdtempSync(path.join(os.tmpdir(), 'platport-'));
     && br.isSafeHttpUrl('') === false, 'ok');
   check('A4 反向：cmd 形态会被判据识别（旧计划含 /c start 即违规）',
     JSON.stringify({ cmd: 'cmd', args: ['/c', 'start', '', u] }).indexOf('start') >= 0, 'hit');
-  check('A4 findChromeWin：三根目录都不存在 → null（不抛）',
-    br.findChromeWin({ 'ProgramFiles': '/nonexistent-a', 'ProgramFiles(x86)': '/nonexistent-b', LOCALAPPDATA: '/nonexistent-c' }, () => false) === null, 'null');
-  check('A4 findChromeWin：命中 LOCALAPPDATA 且路径拼接正确',
-    br.findChromeWin({ LOCALAPPDATA: 'C:\\Users\\x\\AppData\\Local' }, (p) => p.indexOf('Google') >= 0 && p.endsWith('chrome.exe')) !== null, 'hit');
 
-  const dp = br.isolatedPlan('darwin', u, { antiArgs: ['--a', '--b'] });
-  check('X-8 darwin 隔离计划 = open -na "Google Chrome" --args <antiArgs>',
-    dp.kind === 'single' && dp.bin === 'open'
-    && JSON.stringify(dp.args) === JSON.stringify(['-na', 'Google Chrome', '--args', '--a', '--b']), JSON.stringify(dp.args));
-  const wp = br.isolatedPlan('win32', u, { profileDir: '/P', antiArgs: ['--a'], chromeBin: 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe' });
-  check('X-8 win32 隔离计划（有 chrome）= 直启 chrome.exe：incognito + user-data-dir + antiArgs + url，**无 cmd**',
-    wp.kind === 'single' && wp.bin === 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe'
-    && wp.isolated === true && wp.envKind === 'anti'
-    && JSON.stringify(wp.args) === JSON.stringify(['--incognito', '--user-data-dir=/P', '--a', u]),
-    JSON.stringify(wp.args));
-  const wf = br.isolatedPlan('win32', u, { profileDir: '/P', antiArgs: ['--a'] });
-  check('X-8 win32 隔离计划（无 chrome）= explorer.exe 兜底，isolated=false 明示不隔离',
-    wf.bin === 'explorer.exe' && wf.isolated === false && JSON.stringify(wf.args) === JSON.stringify([u]),
-    JSON.stringify(wf));
-  const lp = br.isolatedPlan('linux', u, { antiArgs: ['--a'] });
-  check('X-8 linux 候选链：首 Edge、尾 xdg-open、共 7 个（顺序即防风控强度）',
-    lp.kind === 'chain' && lp.candidates.length === 7
-    && lp.candidates[0].bin === 'microsoft-edge' && lp.candidates[6].bin === 'xdg-open',
-    lp.candidates.map((c) => c.bin).join('>'));
-  check('X-8 linux 候选链：xdg-open 兜底 isolated=false；其余前 5 个 isolated=true',
-    lp.candidates[6].isolated === false && lp.candidates.slice(0, 5).every((c) => c.isolated === true),
+  // —— 默认浏览器解析：纯函数侧（三端解析器的输入->输出可在任意宿主穷举）——
+  check('X-8 engineOf：chromium 派生系（chrome/chromium/msedge/brave/opera/vivaldi/thorium）',
+    ['google-chrome', '/usr/bin/chromium-browser', 'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe',
+     'brave-browser', 'opera', 'vivaldi-stable', 'thorium'].every((b) => br.engineOf(b) === 'chromium'), 'ok');
+  check('X-8 engineOf：firefox/librewolf=firefox；safari/snap/xdg-open=other',
+    br.engineOf('firefox') === 'firefox' && br.engineOf('/usr/lib/firefox/firefox') === 'firefox'
+    && br.engineOf('librewolf') === 'firefox'
+    && br.engineOf('/Applications/Safari.app/Contents/MacOS/Safari') === 'other'
+    && br.engineOf('snap') === 'other' && br.engineOf('xdg-open') === 'other', 'ok');
+  check('X-8 regValueOf：REG_SZ 值提取',
+    br.regValueOf('    (默认)    REG_SZ    Google Chrome') === 'Google Chrome', 'ok');
+  check('X-8 exeFromCmdLine：引号形态与裸 .exe 形态；非 exe 命令行 → null',
+    br.exeFromCmdLine('"C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe" -- "%1"') === 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe'
+    && br.exeFromCmdLine('C:\\Windows\\explorer.exe %1') === 'C:\\Windows\\explorer.exe'
+    && br.exeFromCmdLine('notepad') === null, 'ok');
+  check('X-8 parseExecLine：URL 字段码剔除 + env 去壳 + 引号分词',
+    JSON.stringify(br.parseExecLine('/usr/bin/firefox %u')) === JSON.stringify({ bin: '/usr/bin/firefox', baseArgs: [] })
+    && JSON.stringify(br.parseExecLine('env DISPLAY=:0 brave-browser --ozone-platform=x11 %U')) === JSON.stringify({ bin: 'brave-browser', baseArgs: ['--ozone-platform=x11'] })
+    && JSON.stringify(br.parseExecLine('"google chrome"  --incognito %u')) === JSON.stringify({ bin: 'google chrome', baseArgs: ['--incognito'] }),
     'ok');
-  check('X-8 linux Firefox 用 --private-window（不是 --incognito）',
-    JSON.stringify(lp.candidates[5].args) === JSON.stringify(['--private-window', u]), JSON.stringify(lp.candidates[5].args));
+  {
+    const fakeReg = (bin, args) => {
+      const key = args[1];
+      if (key === 'HKCU\\Software\\Clients\\StartMenuInternet') return '    (默认)    REG_SZ    MSEdgeRedirect\r\n';
+      if (key === 'HKCU\\Software\\Clients\\StartMenuInternet\\MSEdgeRedirect\\shell\\open\\command') return '    (默认)    REG_SZ    "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe" -- "%1"\r\n';
+      return null;
+    };
+    const dw = br.resolveDefaultWin(fakeReg);
+    check('X-8 resolveDefaultWin：HKCU ProgID -> open\\command -> 绝对 msedge.exe（Edge 装机即默认，不再是「产品挑内核」）',
+      dw && dw.bin === 'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe', JSON.stringify(dw));
+  }
+  {
+    const dl = br.resolveDefaultLinux(
+      (bin) => (bin === 'xdg-settings' ? 'firefox.desktop\n' : null),
+      () => '[Desktop Entry]\nName=Firefox\nExec=/usr/lib/firefox/firefox %u\n\n[Desktop Action new-window]\nExec=/usr/lib/firefox/firefox --new-window %u\n',
+      () => true, { XDG_DATA_HOME: '/fake/share' }, '/fake/home');
+    check('X-8 resolveDefaultLinux：desktop 主条目 Exec 还原真实命令（Desktop Action 段不取）',
+      dl && dl.bin === '/usr/lib/firefox/firefox' && JSON.stringify(dl.baseArgs) === '[]', JSON.stringify(dl));
+    check('X-8 resolveDefaultLinux：desktop 名不合白名单（路径穿越/控制字符）→ null（不读任意文件）',
+      br.resolveDefaultLinux(() => '../etc/passwd', () => '', () => true, {}, '/h') === null, 'null');
+  }
+  {
+    const dm = br.resolveDefaultMac(() => 'com.google.chrome\t/Applications/Google Chrome.app\tGoogle Chrome\n');
+    check('X-8 resolveDefaultMac：bundle id + app path + CFBundleExecutable -> 直启路径',
+      dm && dm.bin === '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome' && dm.bundleId === 'com.google.chrome', JSON.stringify(dm));
+    check('X-8 resolveDefaultMac：EMPTY/无输出 → null（降级非隔离 open）',
+      br.resolveDefaultMac(() => 'EMPTY') === null && br.resolveDefaultMac(() => null) === null, 'ok');
+  }
+
+  // —— 隔离计划（纯函数；输入 = 解析出的默认浏览器）——
+  const pc = br.isolatedPlan('linux', u, { defaultBrowser: { bin: 'google-chrome', baseArgs: [] }, profileDir: '/P', size: [1280, 800], lang: 'zh-CN' });
+  check('X-8 隔离计划（chromium）= 默认浏览器直启：incognito + user-data-dir + size/lang + url 收尾，无 cmd',
+    pc.bin === 'google-chrome' && pc.isolated === true && pc.watch === true && pc.envKind === 'anti'
+    && JSON.stringify(pc.args) === JSON.stringify(['--incognito', '--user-data-dir=/P', '--window-size=1280,800', '--lang=zh-CN',
+      '--no-first-run', '--no-default-browser-check', '--disable-session-crashed-bubble', u]),
+    JSON.stringify(pc.args));
+  const pf = br.isolatedPlan('linux', u, { defaultBrowser: { bin: '/usr/lib/firefox/firefox' }, profileDir: '/P' });
+  check('X-8 隔离计划（firefox）= --no-remote --profile <tmp> -private-window（新实例，退出可监听）',
+    pf.isolated === true && JSON.stringify(pf.args) === JSON.stringify(['--no-remote', '--profile', '/P', '-private-window', u]),
+    JSON.stringify(pf.args));
+  const ps = br.isolatedPlan('darwin', u, { defaultBrowser: { bin: '/Applications/Safari.app/Contents/MacOS/Safari' }, profileDir: '/P' });
+  check('X-8 Safari 默认 = open 非隔离兜底（isolated:false/watch:false），不再强拉其他内核',
+    ps.bin === 'open' && ps.isolated === false && ps.watch === false && JSON.stringify(ps.args) === JSON.stringify([u]), JSON.stringify(ps));
+  const pn = br.isolatedPlan('win32', u, { defaultBrowser: null, profileDir: '/P' });
+  check('X-8 解析不到默认浏览器 = explorer.exe 非隔离兜底（win32），明示 isolated=false',
+    pn.bin === 'explorer.exe' && pn.isolated === false, JSON.stringify(pn));
+  const pg = br.isolatedPlan('linux', u, { defaultBrowser: { bin: 'google-chrome' } });
+  check('X-8 反向：chromium 但缺 profileDir 不冒充隔离（退回非隔离，防并入既有实例后 onExit 恒误报）',
+    pg.isolated === false && pg.bin === 'xdg-open', JSON.stringify(pg));
+  const pb = br.isolatedPlan('linux', u, { defaultBrowser: { bin: 'brave-browser', baseArgs: ['--ozone-platform=x11'] }, profileDir: '/P' });
+  check('X-8 desktop baseArgs 原样带入（隔离参数在其后、url 收尾；无 size/lang 则不发对应参数）',
+    JSON.stringify(pb.args) === JSON.stringify(['--ozone-platform=x11', '--incognito', '--user-data-dir=/P',
+      '--no-first-run', '--no-default-browser-check', '--disable-session-crashed-bubble', u]), JSON.stringify(pb.args));
 }
 
 // -- X-5：反向（判据必须能识别宿主泄漏与静默误声明）--
@@ -409,55 +454,49 @@ const TMP = fs.mkdtempSync(path.join(os.tmpdir(), 'platport-'));
   check('X-9 条3 裸名候选保留交 execFile 的 PATH 解析（预检不扩大）',
     /candidates = \['ss',/.test(ssSrc), 'ok');
 
-  // launchIsolated spawn 前预检（binAvailable + spawn **双**注入 -> 宿主无关、零真实进程）
-  //   只注入 binAvailable 并比 `r1.bin === plan.bin` 不够：产品的上报形态按分支不同 ——
-  //   single 报 **plan.label**（darwin='Google Chrome'、win32='explorer'/'chrome'），
-  //   chain 才报 c.bin。只比等值时 linux 恰好相等，**darwin 与 win32 宿主必红**；
-  //   且未注入 spawn 时还会在 CI 机器上真起一次浏览器。
-  //   故注入 spawn 缝，断言「被真 spawn 的是哪个 bin」+「返回值与计划一致」。
+  // launchIsolated spawn 前预检（defaultBrowser + binAvailable + spawn **三注入** -> 宿主无关、
+  //   零真实进程、零注册表/LaunchServices/xdg-settings 真实查询）。
+  //   条 4 同源原则不变，输入从 chromeBin 换成 defaultBrowser：浏览器是谁由系统解析，
+  //   夹具注入的即解析结果本身，产品与夹具对同一输入出同一计划。
   const u9 = 'http://127.0.0.1:28999/x';
-  //   夹具规划必须与产品规划**同源**，且不能依赖「这台机器装了什么」：
-  //   若夹具自行假定「无 chrome」而产品内部去 findChromeWin()（装了 Chrome 时计划变成
-  //   chrome.exe 绝对路径、label='chrome'），注入的 binAvailable 对产品真正询问的 bin 恒 false
-  //   -> 一个进程都不起、返回 ok:false，看起来像产品缺陷。
-  //   故 chromeBin 是显式入参（缺省仍为运行期探测），夹具固定注入探测结果，
-  //   两侧规划同一入参即同一计划；Chrome 在/不在两种形态由 isolatedPlan 的纯函数用例覆盖。
-  const chromeBin9 = br.findChromeWin();
-  const plan9 = br.isolatedPlan(process.platform, u9, { profileDir: '/P', antiArgs: ['--a'], chromeBin: chromeBin9 });
-  const pick = plan9.kind === 'single' ? plan9 : plan9.candidates[5]; // 本例的可达候选只有一个
-  const wantSpawn = pick.bin;
-  const wantReport = plan9.kind === 'single' ? plan9.label : pick.bin;
+  const db9 = { bin: 'google-chrome', baseArgs: [] };
+  const plan9 = br.isolatedPlan(process.platform, u9, { defaultBrowser: db9, profileDir: '/P' });
   const spawned9 = [];
-  const fakeSpawn = (bin) => { spawned9.push(bin); return { on() {}, unref() {} }; };
+  const exits9 = [];
+  const fakeSpawn = (bin, args, env, onExit) => { spawned9.push(bin); exits9.push(onExit); return { on() {}, unref() {} }; };
   const asked9 = [];
   const r1 = br.launchIsolated(u9, {
-    antiArgs: ['--a'], chromeBin: chromeBin9,
-    binAvailable: (b) => { asked9.push(b); return b === wantSpawn; }, spawn: fakeSpawn,
+    defaultBrowser: db9, profileDir: '/P',
+    binAvailable: (b) => { asked9.push(b); return true; }, spawn: fakeSpawn,
   });
-  // 前提例：把「夹具规划 == 产品规划」本身变成可判事实。没有它，不同源只会表现为
-  //   「一个进程都不起 + ok:false」，读起来像产品缺陷（本次就是这样绕了一个 run）。
-  //    三次改判：chain 分支产品对**全部**候选做预检
-  //   （`filter` 语义，问完 7 个才挑第一个可用的），故「问的第一个 == 可达的第一个」恒假 ——
-  //   产品对、判据错。同源的正确表述是**序列逐位相同**，与可达位在哪一格无关。
-  const seq9 = plan9.kind === 'single' ? [plan9.bin] : plan9.candidates.map((c) => c.bin);
-  check('X-9 条4 前提：产品预检所问的 bin 序列与夹具规划逐位同源',
-    asked9.length > 0 && seq9.indexOf(wantSpawn) >= 0 && asked9.join('|') === seq9.join('|'),
-    '产品问=' + JSON.stringify(asked9) + ' 计划=' + JSON.stringify(seq9)
-    + ' 可达=' + wantSpawn + ' 形态=' + plan9.kind);
-  check('X-9 条4 首个可达候选真的被 spawn（宿主无关，三端同形）',
-    spawned9.length === 1 && spawned9[0] === wantSpawn, JSON.stringify(spawned9) + ' want=' + wantSpawn);
-  check('X-9 条4 返回值如实上报（single 报 label / chain 报 bin，皆取自计划）',
-    r1.ok === true && r1.bin === wantReport && r1.isolated === pick.isolated,
-    JSON.stringify(r1) + ' want=' + wantReport + '/' + pick.isolated);
-  const r2 = br.launchIsolated(u9, { antiArgs: ['--a'], binAvailable: () => false, spawn: fakeSpawn });
-  check('X-9 条4 全候选不可达 → ok:false/bin:null（旧实现先返回 ok:true/死 bin，error 异步才到）',
+  check('X-9 条4 前提：产品预检只问解析出的那一个浏览器（无候选链可问）',
+    asked9.length === 1 && asked9[0] === plan9.bin, JSON.stringify(asked9));
+  check('X-9 条4 默认浏览器真的被 spawn（宿主无关，三端同形）',
+    spawned9.length === 1 && spawned9[0] === plan9.bin, JSON.stringify(spawned9) + ' want=' + plan9.bin);
+  check('X-9 条4 返回值如实上报（ok/label/isolated 取自同一计划）',
+    r1.ok === true && r1.bin === plan9.label && r1.isolated === plan9.isolated,
+    JSON.stringify(r1) + ' want=' + plan9.label + '/' + plan9.isolated);
+  check('X-9 隔离形态接 onExit（关浏览器即取消登录），url 在 args 收尾',
+    typeof exits9[0] === 'function' && plan9.args[plan9.args.length - 1] === u9, 'ok');
+  const r1f = br.launchIsolated(u9, {
+    defaultBrowser: { bin: 'snap' }, profileDir: '/P',
+    binAvailable: () => true, spawn: fakeSpawn,
+  });
+  check('X-9 非隔离兜底（other 引擎/解析失败）= openCommand 的 bin、isolated:false、**不接 onExit**（其退出≠浏览器退出）',
+    r1f.ok === true && r1f.isolated === false && typeof exits9[1] !== 'function', JSON.stringify(r1f));
+  spawned9.length = 0;
+  const r2 = br.launchIsolated(u9, { defaultBrowser: db9, profileDir: '/P', binAvailable: () => false, spawn: fakeSpawn });
+  check('X-9 条4 预检不过 → ok:false/bin:null（旧实现先返回 ok:true/死 bin，error 异步才到）',
     r2.ok === false && r2.bin === null, JSON.stringify(r2));
   check('X-9 条4 反向：预检不过时**一个进程都不起**（"不 spawn 必死的 bin" 不再只是注释）',
-    spawned9.length === 1, '累计 spawn ' + spawned9.length + ' 次');
-  const r3 = br.launchIsolated('file:///c:/x', { binAvailable: () => true, spawn: fakeSpawn });
+    spawned9.length === 0, '累计 spawn ' + spawned9.length + ' 次');
+  const r3 = br.launchIsolated('file:///c:/x', { defaultBrowser: db9, binAvailable: () => true, spawn: fakeSpawn });
   check('X-9 条4 反向：非法 URL 依旧直接拒（预检不绕过 A4 闸门）',
-    r3.ok === false && spawned9.length === 1, JSON.stringify(r3));
+    r3.ok === false && spawned9.length === 0, JSON.stringify(r3));
   const brSrc = fs.readFileSync(path.join(ROOT, 'src', 'platform', 'os', 'browser.js'), 'utf8');
+  check('X-8 反向：平台层源码不再指定任何浏览器内核（无 Google Chrome 硬编码/无候选链/findChromeWin 已除名）',
+    !/Google Chrome/.test(brSrc) && !/microsoft-edge/.test(brSrc) && !/chromium-browser/.test(brSrc)
+    && !/findChromeWin/.test(brSrc), 'clean');
   check('X-9 条4 预检分形态：绝对路径判执行位、裸名走 PATH 解析',
     /if \(bin\.includes\('\/'\) \|\| bin\.includes\('\\\\'\) \|\| \/\^\[A-Za-z\]:\[\\\\\/\]\/\.test\(bin\)\) return isExecutableFile\(bin\);/.test(brSrc)
     && /return resolveExecutable\(bin\) !== null;/.test(brSrc), '有');

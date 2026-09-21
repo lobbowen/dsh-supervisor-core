@@ -6,6 +6,30 @@
 
 ## [未发布]
 
+### 智能路由一键登录：浏览器选择权归还系统默认浏览器
+
+- **错误设计**：Command Code 一键登录的隔离打开不走系统默认浏览器，而是由产品指定浏览器内核 ——
+  darwin 硬编码 `open -na 'Google Chrome'`（默认浏览器是别的就被强拉 Chrome；没装 Chrome 直接打不开）、
+  win32 用 `findChromeWin` 在 Program Files 三根目录探测 `chrome.exe`、linux 按
+  `microsoft-edge→google-chrome→chromium…` 候选链择一。且 darwin 分支 spawn 的是 `open`，
+  它拉起浏览器后立即退出 —— 「关闭浏览器即取消登录」的 onExit 在 macOS 上语义本就是坏的。
+- **修法（能力零删减，方向反转）**：`platform/os/browser.js` 新增 `resolveDefaultBrowser`
+  （win32 注册表 `Clients\StartMenuInternet`→`shell\open\command`；darwin LaunchServices bundle id→
+  app 内真实可执行文件；linux `xdg-settings`+`.desktop` 主条目 `Exec` 行还原，env 包装去壳、
+  URL 字段码剔除），再按解析结果的**引擎族**（`engineOf`）展开隔离参数：chromium 系
+  `--incognito --user-data-dir=<随机 profile>`、firefox 系 `--no-remote --profile <tmp> -private-window`，
+  TZ/LANG/窗口尺寸随机化保留在策略层（`router/ops/browser.js` 改为传意图，不再自带 chromium 方言）。
+  Safari/包装器等无隔离能力的引擎如实 `isolated:false` 走 `open/xdg-open/explorer.exe` 非隔离打开，
+  由 180s 登录超时与「重新发起即取消」兜底。
+- **Safari 缺口的边界（实测 commandcode.ai 后认定可接受）**：auth 端点仅认 `callback/state`，
+  无 `select_account` 类参数；但已登录会话也必须显式点 Authorize，不存在静默复用旧账号签发。
+  非隔离引擎的真实损失仅「再添加其他账号需先在网页退出或用无痕」。
+- **onExit 由修复而非牺牲**：chromium 独立 profile / firefox `--no-remote` 均为新实例进程，
+  直启后可监听退出；三端语义一致（原 darwin 分支为假）。
+- 门禁同步：`platform-layer-portability-test` X-8/X-9 改为注入 `defaultBrowser` 解析结果
+  （夹具与产品同源原则不变），新增「平台层源码不再指定任何浏览器内核」反向判据；
+  `PLATFORM-CAPABILITY-MATRIX.md` C8 行按新实现改写。
+
 ### 第 3b 轮：结构判定假象 + 单平台构建旁路 + 一次性证据当现状
 
 - **结构门禁的「全部满足」是假的**：`ARCHITECTURE-ACCEPTANCE.md` §二 写「终态 257 文件 / 最大 300 行 /
