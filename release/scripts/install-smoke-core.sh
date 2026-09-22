@@ -36,7 +36,21 @@ PORTS_JSON="$SMOKE_HOME/supervisor/ports.json"
 DAEMON_LOG="$SMOKE_HOME/daemon.log"
 # 高位端口：即便被占，守卫会自己顺延并把实际端口写进 ports.json，故下面按登记值复核而非信任此值。
 CONFIG_PORT=45757
-printf '{"apiPort":%d}\n' "$CONFIG_PORT" > "$SMOKE_HOME/supervisor/config.json"
+TARGET_PORT=45758
+# command / healthUrl 是**业务键**，不在平台默认值里（它们由桌面壳装机时写进 config.json）。
+# 只写 apiPort 会让 daemon 在 normalize 处 fail-fast，报的还不是自己的错。
+# 被管目标用 test/mock-target.js 顶替（与 S13 同一夹具，不另造第二份）：判的是装出来的那条命令
+# 能否起守卫、绑 API 端口、登记 ports.json，DSH 本体不随本子包发布。
+REPO_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
+MOCK="$REPO_ROOT/test/mock-target.js"
+[ -f "$MOCK" ] || fail "缺目标夹具 $MOCK（守卫需要一个可探测的 healthUrl）"
+if command -v cygpath >/dev/null 2>&1; then MOCK="$(cygpath -w "$MOCK")"; fi
+# 路径一律经 argv 传入，不拼进 JS 字面量：Windows 的转换后路径含反斜杠，插值即成语法陷阱。
+node -e 'const fs=require("fs");const [home,mock,tport,apiPort]=process.argv.slice(1);
+fs.writeFileSync(home+"/supervisor/config.json",JSON.stringify({apiHost:"127.0.0.1",apiPort:Number(apiPort),
+  command:["node",mock,String(tport)],healthUrl:"http://127.0.0.1:"+tport+"/"},null,2)+"\n")' \
+  "$SMOKE_HOME" "$MOCK" "$TARGET_PORT" "$CONFIG_PORT" \
+  || fail "写入 $SMOKE_HOME/supervisor/config.json 失败"
 
 # 卸载按包名（不是安装 spec）：目录形态从 package.json 取（路径经 argv 传入，避免 shell 变量插进 JS 字面量），
 #   registry spec 去掉尾部 @version。

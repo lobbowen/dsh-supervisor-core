@@ -39,6 +39,10 @@ const judges = {
   singleApi: (t) => /\[ "\$CNT" != "1" \]/.test(t) && /supervisor-api 登记应为唯一/.test(t),
   cleanupTrap: (t) => /trap cleanup/.test(t) && /npm rm -g/.test(t),
   daemonInstalled: (t) => /dsh_run daemon/.test(t),
+  // 守卫配置的 command / healthUrl 属业务键，平台默认值里没有；漏写就是 daemon 起不来。
+  // 夹具取仓内唯一那一份 mock-target.js，路径经 argv 传入（Windows 转换后的路径含反斜杠）。
+  configBusinessKeys: (t) => /command:\["node",mock/.test(t) && /healthUrl:"http:\/\/127\.0\.0\.1:"/.test(t)
+    && /test\/mock-target\.js/.test(t) && /cygpath/.test(t),
 };
 
 // -- G1 脚本本体 --
@@ -115,6 +119,7 @@ console.log('== G4 反向：坏夹具让判据返回 false ==');
     singleApi: 'cat ports.json',
     cleanupTrap: 'npm i -g "$PKG"',
     daemonInstalled: 'node src/supervisor.js',
+    configBusinessKeys: "printf '{\"apiPort\":%d}\\n' \"$CONFIG_PORT\" > \"$SMOKE_HOME/supervisor/config.json\"",
   };
   const bad = Object.entries(rev).filter(([k, s]) => judges[k](s));
   check('G4-rev 每条坏夹具都不被误判为通过', bad.length === 0, bad.map((x) => x[0]).join(', ') || '全部判 false');
