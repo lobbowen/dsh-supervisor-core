@@ -6,6 +6,45 @@
 
 ## [未发布]
 
+## [0.1.6-BETA.2]（2026-09-22）
+
+本版不含行为变更：按 DEVELOPMENT-TRACK §6.1 对 `src/` 与 `ui/` 全部源文件逐文件压缩注释，
+并以真实实现为准纠正失实注释。内核运行时依赖仍为 0。
+
+### 全仓注释压缩：论文式长块清零，注释行 6369 降至 4394（-31%）
+
+- **规模**：323 个源文件（285 个被改，28 个本已合规）注释行 6369 降至 4394，净删 2008 行；
+  含尾随注释的行占比 21.0% 降至 15.8%（非空代码行 25955 不变）。
+- **块形**：注释块长度分布改为 1 行 1759 / 2 行 571 / 3 行 307 / 4 行 143，**5 行及以上清零**
+  （原 118 个长块全部拆解）。执行口径量化下发为「任意注释块 4 行内、文件头 3 行内」。
+- **删除项**：批次号与轮次号、CI run 号、红/绿/崩溃过程史、`AUDIT-日期` 与 `§X-n` 交叉引用、
+  「原判据…现改为…」式勘误链、拆文件路线图注释、同一事实在两处的重复表述。
+  契约编号（TK-/INV-/DS-/RC-/W1..W4/CP-/PG-）作为仍然生效的判据名保留。
+- **字符纪律**：注释内的箭头、制表框线、带圈数字、几何符号与 `§`/`·`/NBSP 一律换成 ASCII 或中文标点。
+
+### 失实注释纠正：约 70 处「注释说的」与「代码做的」不一致按实现改写
+
+- `domains/router/scheduler.js`：30s 生命周期监控原自称「不做 HTTP 探活」，实为带探活；
+  `refreshReadyAccounts` 原写「预热」，代码无此动作。
+- `platform/os/index.js`：darwin/win32 分支原宣称 launchd / windows-service，实为 portable 载体。
+- `platform/service/token/kinds.js`：`list()` 顺序原写成由 `KIND_ORDER` 决定，实为插入序。
+- `api/security.js`：原宣称不放开子域通配，`tauri:` 协议实际仍接受 `*.tauri.localhost`。
+- `app/daemons/process.js`：`_orphanAudit` 原写消费 `classify` 结果，实为不消费。
+- `platform/service/token/exchange.js` 缓存口径自相矛盾、`domains/instance/upgrade.js`
+  「手动强制刷新」不存在、`app/settings/versions.js` 解析行写错（实为 `dsh-supervisor v<ver>`）、
+  `ui/vite.config.ts` 端口写 3100（`apiPort` 默认 36360）等，逐条按现状改写。
+- 同类纠正散布于 api/assembly/control/relay/router/plugin/shell/service 各域，共约 70 处。
+
+### archive 文档随批订正
+
+- `archive/design-notes/` 下 13 篇的「范围」行号与规模随拆分现状刷新，
+  并在迁移前现状段顶部标注该段为立项取证、非当前事实（按「所有改动单批次」一并入批）。
+
+- 验证：285 个源文件用仓内 `test/_strip.js` 比对，空白化注释后代码逐字节一致（7 个 `.tsx` 的
+  差异全为删掉的 `{/* */}` JSX 注释子节点，无可执行代码变化）；241 x `node --check` 全过；
+  comment-pin 门禁 27 passed / 0 hard fail、CS-1 字符白名单与 CS-2 叙事禁令 477 文件 0 命中；
+  PR #26 上 precheck / test（全量运行时套件）/ 四平台 build 全绿。
+
 ## [0.1.6-BETA.1]（2026-09-22）
 
 本版主线：远程控制三态化收口、面板内核更新进度桥、反代生命周期 W1 + 进程隔离标准化、
