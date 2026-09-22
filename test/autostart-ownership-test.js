@@ -16,6 +16,8 @@
 //   P3 GUI plist 只表达「登录启动」：RunAtLoad + Aqua，**无 KeepAlive**（崩溃归看护）
 //   P4 GUI 自启在无法定位壳可执行文件时**不盲写**（否则登录时静默失败）
 //   P5 未知平台显式不支持（绝不静默成功）
+//   P6 XDG 自启模板内嵌（不再读外置 desktop/ 目录）
+//   P7 存在层归壳：三平台的 setAutostart 都不建立/不删除**守卫**服务定义（P2 的平台无关版）
 //
 // 全部离线：只做源码与纯函数断言，不调用 launchctl、不写真实 LaunchAgents。
 // ---------------------------------------------------------------------------
@@ -29,6 +31,7 @@ const check = (n, c, x) => { results.push(!!c); console.log((c ? 'PASS' : 'FAIL'
 //  域结构改造：autostart 已拆为 autostart/{index,win32,darwin,linux}.js ——
 //   按目录聚合读取，P1/P3/P6 判据的覆盖面不因切分而静默失效。
 const AUTO = path.join(POS, 'autostart');
+const { blankComments } = require('./_strip');
 const asSrc = fs.readdirSync(AUTO).filter((f) => f.endsWith('.js')).sort()
   .map((f) => fs.readFileSync(path.join(AUTO, f), 'utf8')).join(String.fromCharCode(10));
 const autostart = require(AUTO);
@@ -62,6 +65,39 @@ console.log('== P2 内核不写/不删守卫 plist ==');
   //    已知设计债：内核 macOS 的 enable/disable 仍需与该 label 一致 ——
   //     正确形态是壳把 label 经**运行期契约产物**（如 registry.json）投给内核，
   //     或在壳仓发布物中固定，而非内核硬编码 + 跨仓比对源码。见 RELEASE-STANDARD.md 。
+}
+
+// -- P7 存在层归壳：三平台都不建/不删守卫服务定义（P2 的平台无关版）--
+console.log('== P7 三平台不建/不删守卫服务定义 ==');
+{
+  // 判据按**行内共现**成立：定义标识与建/删动作同一行，才说明这行在动守卫的定义本身。
+  //   enable/disable 与 bootstrap/bootout 只是把用户意图和载入状态作用在**既有定义**上，许可。
+  const GUARD_ID = /dsh-supervisor\.service|GUARD_LABEL|['"]DSH-Supervisor['"]/;
+  const DEFINE_ACT = /writeFileSync|writeAtomic|renameSync|unlinkSync|rmSync|['"]\/Create['"]|['"]\/Delete['"]/;
+  const definesGuard = (src) => blankComments(src).split(String.fromCharCode(10))
+    .some((l) => GUARD_ID.test(l) && DEFINE_ACT.test(l));
+  const bodyOf = (rel) => (/function setAutostart\([\s\S]*?\n\}/
+    .exec(fs.readFileSync(path.join(AUTO, rel), 'utf8')) || [''])[0];
+  for (const rel of ['linux.js', 'darwin.js', 'win32.js']) {
+    const body = bodyOf(rel);
+    check('P7 ' + rel + ' 已切出 setAutostart 实现（覆盖面非空）', body.length > 40, body ? 'ok' : '未找到函数体');
+    check('P7 ' + rel + ' 不建立/不删除守卫服务定义', !!body && !definesGuard(body), 'ok');
+  }
+  // 反向：四类「内核动守卫定义」的旧形态必须被抓到，否则上面三条是空转的正则。
+  check('P7 反向：判据认出旧形态（mac 双写并删守卫 plist / win 建守卫任务 / linux 写 unit）',
+    [
+      "  writeAtomic(laFile(GUARD_LABEL), macPlist(gui));",
+      "  fs.unlinkSync(laFile(GUARD_LABEL));",
+      "  ex.runDetail('schtasks', ['/Create', '/TN', 'DSH-Supervisor', '/F']);",
+      "  writeAtomic(unit, 'dsh-supervisor.service');",
+    ].every(definesGuard), 'hit');
+  check('P7 反向：合法形态不误报（enable/disable、载入既有定义、只动 GUI 产物）',
+    [
+      "  { const r = ex.runDetail('systemctl', ['--user', on ? 'enable' : 'disable', 'dsh-supervisor.service']);",
+      '      if (macLoaded(GUARD_LABEL)) macBootout(GUARD_LABEL);',
+      "      const r = ex.runDetail('schtasks', ['/Create', '/TN', 'DSH-Supervisor-GUI', '/F']);",
+      '      writeAtomic(file, macGuiPlist(gui), { mode: 0o644 });',
+    ].some(definesGuard) === false, 'ok');
 }
 
 // -- P3 GUI plist 内容约束 --
