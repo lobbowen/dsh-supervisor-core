@@ -9,6 +9,8 @@ const http = require('node:http');
 //   systemctl/dbus 挂起时 CLI 有界报错而非无限阻塞（用户不会看到命令卡死）；
 //   需用户看到输出的场合传 `stdio: 'inherit'`（exec.js 支持透传）。
 const ex = require('../src/platform/util/exec');
+// 守卫锁的让位判定要看持有者的真实命令行（pid 存活在 Windows 上不足以证明它是守卫）。
+const { readCmdline } = require('../src/platform/os/pidlookup');
 // systemctl / loginctl 是用户级操作，给足时间但**有上限**（挂起时如实报错而非卡死）。
 const CLI_SVC_TIMEOUT_MS = 30000;
 
@@ -177,13 +179,34 @@ function apiRequest(method, apiPath) {
 //  - 已存在时读 pid：进程存活则拒绝启动并退出非零；进程已死（崩溃残留）则清锁重试；
 //  - SIGTERM/SIGINT/exit 统一释放；SIGKILL 无法捕获，靠下次启动的 pid 存活检测自愈。
 const LOCK_FILE = process.env.DSH_SUPERVISOR_LOCK_FILE || path.join(SUPERVISOR_DIR, 'guard.lock');
+const LOCK_OWNER = { pid: process.pid, started: Date.now(), entry: process.argv[1] || '' };
+
+// 锁内容是 JSON（pid / started / entry）。旧格式只有一个 pid 数字，读侧必须兼容 ——
+// 否则一次升级就会把所有在用实例的锁看成无效，进而双守卫并存。
+function readLock() {
+  let raw;
+  try { raw = fs.readFileSync(LOCK_FILE, 'utf8'); } catch { return null; }
+  try {
+    const j = JSON.parse(raw);
+    if (j && Number.isInteger(j.pid) && j.pid > 0) return j;
+  } catch {}
+  const pid = parseInt(raw, 10);
+  return Number.isInteger(pid) && pid > 0 ? { pid } : null;
+}
+
+// 让位的前提是「那确实是本产品的守卫在跑」。只看 pid 存活在 Windows 上不成立：
+// 进程句柄未释放、或 pid 已被复用，process.kill(pid, 0) 都会成功，于是守卫锁永远
+// 挡着一个根本不存在的守卫，而用户端只剩一句「端口不可达」。
+function isOwnGuardEntry(cmdline) {
+  return typeof cmdline === 'string' && cmdline.includes('dsh-supervisor');
+}
 
 function acquireLock() {
   fs.mkdirSync(SUPERVISOR_DIR, { recursive: true });
   const tryCreate = () => {
     try {
       const fd = fs.openSync(LOCK_FILE, 'wx');
-      fs.writeSync(fd, String(process.pid));
+      fs.writeSync(fd, JSON.stringify(LOCK_OWNER));
       fs.closeSync(fd);
       return true;
     } catch (e) {
@@ -195,19 +218,15 @@ function acquireLock() {
     }
   };
   if (tryCreate()) return true;
-  // 锁已存在：检查持有者 pid
-  let holder = null;
-  try {
-    holder = parseInt(fs.readFileSync(LOCK_FILE, 'utf8'), 10);
-  } catch {}
-  if (Number.isInteger(holder) && holder > 0) {
-    try {
-      process.kill(holder, 0);
-      return false; // 持有者存活：已有守卫在运行
-    } catch (err) {
-      if (err.code === 'EPERM') return false; // 存在但无权发信号：视为存活
-      // ESRCH：持有者已退出（崩溃残留），继续清理
-    }
+  const held = readLock();
+  if (held) {
+    let alive = false;
+    try { process.kill(held.pid, 0); alive = true; } catch (err) { alive = err.code === 'EPERM'; }
+    const cmdline = alive ? readCmdline(held.pid) : null;
+    if (alive && !cmdline) return false; // 读不到命令行时保守让位：宁可不起，不要双守卫
+    if (alive && isOwnGuardEntry(cmdline)) return false;
+    console.log('[supervisor] 清理陈旧守卫锁（持有 pid ' + held.pid
+      + (alive ? ' 存活但命令行不是本产品的守卫入口：' + cmdline : ' 已退出') + '）');
   }
   try {
     fs.unlinkSync(LOCK_FILE);
@@ -217,11 +236,9 @@ function acquireLock() {
 
 function releaseLock() {
   try {
-    if (fs.existsSync(LOCK_FILE)) {
-      const holder = parseInt(fs.readFileSync(LOCK_FILE, 'utf8'), 10);
-      // 只释放自己的锁：避免误删后来者重建的锁
-      if (holder === process.pid) fs.unlinkSync(LOCK_FILE);
-    }
+    const held = readLock();
+    // 只释放自己的锁：避免误删后来者重建的锁
+    if (held && held.pid === process.pid) fs.unlinkSync(LOCK_FILE);
   } catch {}
 }
 

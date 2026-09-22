@@ -9,7 +9,8 @@
 //   D-2  对外声明实际端口：supervisor-api 写入 ports.json
 //   D-3  /healthz 可用（壳的唯一就绪判据）
 //   D-4  内核 install **不再**写服务定义/autostart（唯一所有者=壳）— 反向非空转
-//   D-5  单实例：guard.lock 占用即退出非零
+//   D-5  单实例：guard.lock 由**本产品的守卫**占用才让位；陈旧锁（持有者已退出，或 pid
+//        被复用到别的进程）必须被接管，否则守卫永远起不来，用户端只剩「端口不可达」
 // ---------------------------------------------------------------------------
 
 const fs = require('node:fs');
@@ -71,6 +72,19 @@ check('D-4 反向：当前 install 不被误判', !looksLikeDeploy(installBody),
 
 // -- D-5：单实例 --
 check('D-5 acquireLock + 退出非零', /function acquireLock/.test(cli) && /已有守卫实例在运行/.test(cli) && /process\.exit\(1\)/.test(cli), 'ok');
+// 让位的判据必须是「那确实是守卫在跑」，不是「这个 pid 还活着」：Windows 上 pid 会被复用，
+// 且进程句柄未释放时 process.kill(pid, 0) 也成功 —— 只看存活就等于把锁永久交给一个不存在的守卫。
+check('D-5 让位前按命令行锚点判定持有者是本产品守卫', /isOwnGuardEntry\(cmdline\)/.test(cli) && /readCmdline\(held\.pid\)/.test(cli), 'ok');
+check('D-5 命令行读不到时保守让位（宁可不起，不双守卫）', /if \(alive && !cmdline\) return false/.test(cli), 'ok');
+check('D-5 陈旧锁被接管并留痕', /清理陈旧守卫锁/.test(cli) && /fs\.unlinkSync\(LOCK_FILE\)/.test(cli), 'ok');
+// 锁内容升级为 JSON（pid/started/entry），但读侧必须兼容旧格式：否则一次升级就把所有在用
+// 实例的锁看成无效，反而制造双守卫。
+check('D-5 锁内容为 JSON 且读侧兼容纯 pid 旧格式', /JSON\.stringify\(LOCK_OWNER\)/.test(cli) && /parseInt\(raw, 10\)/.test(cli), 'ok');
+check('D-5 只释放自己的锁（按解析后的 pid 比）', /held && held\.pid === process\.pid/.test(cli), 'ok');
+// 反向：旧形态（只看 pid 存活就 return false）必须被上面的判据抓到，证明非空转。
+const legacyOnly = "if (Number.isInteger(holder) && holder > 0) { try { process.kill(holder, 0); return false; } catch (err) { if (err.code === 'EPERM') return false; } }";
+check('D-5 反向：只认 pid 存活的旧形态被识别为违规',
+  !/isOwnGuardEntry\(cmdline\)/.test(legacyOnly) && !/if \(alive && !cmdline\) return false/.test(legacyOnly), 'ok');
 
 // -- D-6：绑定后登记**实际端口**（P6 就绪判据的单一来源）--
 // 判据跨文件：实现随步骤 7 下沉到 app/assembly/api-rebind.js（见上 D-2），故在整组上断言。
