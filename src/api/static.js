@@ -44,10 +44,13 @@ const MIME = {
   '.png': 'image/png',
   '.ico': 'image/x-icon',
 };
-// frame-ancestors 'none'：面板写操作是同源 fetch，而 originAllowed 对同源 iframe 同样放行——
-// 第三方页嵌入面板后诱导一次单击即可开公网暴露/停实例。禁止任何页面 framing 是唯一
-// 在 Origin 闸之外仍然成立的防线（点击劫持与框选拖拽都发生在框架内）。
-const CSP = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'";
+// frame-ancestors 必须是**壳 origin 白名单**而不是 'none'：桌面壳以内容 iframe 承载本面板
+//  （壳主帧 origin 与 api/security.js 的 isShellOrigin 同一集合），'none' 连它一起拒 -> 面板永远
+//  空白。白名单不外溢：不放 'self'（面板自身不做同源嵌套框架），第三方页仍全禁——面板写操作是
+//  同源 fetch 而 originAllowed 对同源 iframe 同样放行，一次单击即可开公网暴露/停实例，所以框架
+//  禁令仍是 Origin 闸之外的唯一防线。浏览器直接访问面板属顶层导航，不受本指令约束。
+const FRAME_ANCESTORS = "tauri://localhost http://tauri.localhost https://tauri.localhost";
+const CSP = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; frame-ancestors " + FRAME_ANCESTORS;
 
 function serveStatic(res, file, corsOrigin) {
   if (!UI_DIR) {
