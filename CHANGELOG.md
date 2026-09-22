@@ -6,6 +6,62 @@
 
 ## [未发布]
 
+## [0.1.6-BETA.4]（2026-09-22）
+
+本版是「运行意图单源」的方向③判据统一：域 A 的意图从此各只有一个落点、一个写者，
+读侧判据不再被投影/镜像反喂。行为变更三条（ST-1 / ST-2c / ST-2 收口），判据补齐五条。
+内核运行时依赖仍为 0。
+
+### ST-1 router 运行意图收单源：保活/游离判据只读持久化 config
+
+现场：「该不该活着」读两个源（`config.routerAutostart` 或 视图/目录的 `desired`），镜像与库里不一致时
+以镜像为准 —— 写库半途失败或被拒的 `start` 抛异常会留下 `desired=running` 的幻影意图，
+被停掉的 router-daemon 每拍重拉、面板关掉仍在跑。
+
+- 读侧：`app/daemons/supervise.js` 的保活判据、`app/audit/orphan-scan.js` 的游离判据只看持久化/结构性意图本身。
+- 写侧补齐分叉口：`ManagedLifecycle.start()` 的异常分支与 `ok:false` 同语义复位 `desired`；
+  adapters 缺 `setRouterRunning` 写口时显式拒绝，不再退回直调内嵌 router
+  （内嵌回退本就在 `setRouterRunning` 内部，能力零损失）。
+- 停止路径的两处裸赋值改走早就存在的 `wantStopped()` 出口（与启动路径的 `wantRunning()` 对称）。
+- 判据：GD-6 在去注释源码上断言两分支与两条 want 判据不读 `desired`（含正反合成样本）；
+  `test/session-lifecycle-test.js` 的 ST-1 段锁写侧三态（缺写口拒绝 / 不留意图 / 有写口只经写口）。
+
+### ST-2c 沙箱运行意图收单写者：落点进实例 state，stop 按来源分档，keepDesired 废止
+
+- 意图落点改为实例自己的 `inst.state.desired`：`lifecycle.start()` 走到真正要拉起/安装才记 `running`，
+  被拒的 start（作业在飞、预算已满）不留意图；升级收尾与插件生效的重启同样经此表达。
+- `stop(id, {intent})` 分两档：默认 `user` 才落 `stopped`；`transient` 只停这一次，不抹用户意图。
+- 目录侧 `sandboxSpec` 改为**只投影**该落点，不再读 `state.phase` —— 心跳同步与启动对齐由「禁止直写」
+  转为「允许且只能投影意图」，`keepDesired` 旗标随唯一落点成立而成为死代码，全仓删除。
+- 老库一次性种子：字段缺失时按当时实然相位猜一次，此后再不由 `phase` 推导（崩溃退避、自动临时停都不抹意图）。
+- 判据：GD-7 扩为意图单写者 ratchet（域内 `BASELINE` 计数 + 旗标回潮判红 + 四类反向样本），
+  GD-8 扩为来源/消费者三态分类（`noLanding` / `violating` / `landingGaps`）；
+  ML-1 与 D-8 断言按新形态有意翻动（原「动作路径不得带旗标」三条改为「意图只有一个写者」）。
+- **已知缺口（GD-8 的 GAP_BASELINE 显式登记）**：沙箱意图有落点、暂无决策消费者 ——
+  不靠新增开机自动启动来「补」，等那条决策判据立项。
+
+### IL-2 存在层归壳的判据从 macOS 扩到三平台
+
+`KERNEL-DAEMON-CONTRACT` D6 早写了「内核不建立/不服务化自己的定义」，但执法只有 macOS 一份：
+linux 的 unit 与 win32 的守卫任务在自启路径上无人看守。新增 P7 —— 三平台 `setAutostart` 体内，
+守卫定义标识与建/删动作不得同行共现（`enable`/`disable`/`bootstrap`/`bootout` 作用在既有定义上属许可，
+含四类旧形态反向样本 + 合法形态不误报），并登记为门禁 D-10。
+
+### A9 / L-6 两条新判据：违例显式登记为基线，不改行为
+
+- A9（`platform-capability-audit`）：`guardAutostart` 声明为 `true` 必须有真正作用于守卫的关闭路径，
+  只写 GUI 产物不算。实盘 linux/darwin 有、win32 无（守卫任务与看护任务均归壳建），违例按 ML-2 形态登记。
+- L-6（`layering-and-dependency`）：api 层不得读注入对象的下划线私有成员 —— require 图看不见这条边。
+  基线登记 `shell.js`（`sup._sessionHalting`，会话退出意图在 api 自算）与 `dist.js` 各 2 行，按命中行数计。
+
+### 判据基线与注释订正
+
+- ML-2 生命周期视图直写违例基线：router 侧 12 处下调到 10（走出口后不再是直写），
+  并把表内行号按现状重新逐条机器核对；文档里未钉死的「29 处」总数改为交给 GD-7 判据。
+- `test/autostart-ownership-test.js` 头注释失实纠正：P4/P5 会真调平台实现，故本套件不在本机直跑。
+- 契约文档随批：`GUARD-DOMAIN-MODEL.md` §6.2 增「读侧同规则」并改写收口形态，§5 登记 GD-6/GD-7/GD-8；
+  `README.md` 守护域行同步到 GD-1..GD-8。
+
 ## [0.1.6-BETA.3]（2026-09-22）
 
 本版只含一处行为修复：守卫锁的让位判据（D-5 扩展）。
