@@ -43,13 +43,13 @@ function createRouterActions(deps) {
       if (rt.mode === 'daemon' && rt.stopping) {
         config.routerAutostart = false;
         state.persistConfigPatch({ routerAutostart: false });
-        if (rlc) { rlc.desired = 'stopped'; rlc._monitoring = false; rlc._setPhase('stopped'); rlc.healthy = false; }
+        if (rlc) { rlc.wantStopped(); rlc._monitoring = false; rlc._setPhase('stopped'); rlc.healthy = false; }
         return { ok: true, mode: 'daemon', ...views.routerStatus() };
       }
       const r = router.stop();
       config.routerAutostart = false;
       state.persistConfigPatch({ routerAutostart: false });
-      if (rlc) { rlc.desired = 'stopped'; rlc._monitoring = false; rlc._setPhase('stopped'); rlc.healthy = false; }
+      if (rlc) { rlc.wantStopped(); rlc._monitoring = false; rlc._setPhase('stopped'); rlc.healthy = false; }
       return { ok: r.ok !== false, already: !!r.already, mode: 'embedded', ...views.routerStatus() };
     },
   };

@@ -473,7 +473,7 @@ const lanBranch = fnBody ? lanBranchOf(fnBody) : null;
   const LIFECYCLE_WRITE_RE = /\.\s*(?:_monitoring|desired|healthy|phase)\s*=(?!=)|_setPhase\s*\(/g;
   // 登记基线：rel -> { n: 处数上限, legal: 是否为 承认的合法出口 }
   const BASELINE = {
-    'src/app/domain-actions/router.js': { n: 12, legal: false },
+    'src/app/domain-actions/router.js': { n: 10, legal: false },
     'src/app/assembly/bootstrap.js': { n: 9, legal: false },
     'src/app/session/shutdown.js': { n: 2, legal: false },
     'src/app/daemons/supervise.js': { n: 1, legal: false },
