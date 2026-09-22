@@ -50,7 +50,7 @@ const apiSources = [
   read('src/supervisor.js'),
   read('src/app/assembly/api-rebind.js'),
 ].join('\n');
-check('D-2 supervisor-api 写入 ports.json', /ports(?:Shared)?\.register\('supervisor-api'/.test(apiSources), 'ok');
+check('D-2 supervisor-api 写入 ports.json', /ports(?:Shared)?\.register(?:Sole)?\('supervisor-api'/.test(apiSources), 'ok');
 
 // -- D-3：healthz --
 const apiSrc = ['src/api/index.js', 'src/api/domains/lifecycle.js'].map((f) => { try { return read(f); } catch { return ''; } }).join('\n');
@@ -71,11 +71,34 @@ check('D-4 反向：旧写服务定义形态被识别', looksLikeDeploy(legacy),
 check('D-4 反向：当前 install 不被误判', !looksLikeDeploy(installBody), 'ok');
 
 // -- D-5：单实例 --
-check('D-5 acquireLock + 退出非零', /function acquireLock/.test(cli) && /已有守卫实例在运行/.test(cli) && /process\.exit\(1\)/.test(cli), 'ok');
+check('D-5 acquireLock 未取得锁即退出非零', /function acquireLock/.test(cli) && /未取得守卫锁/.test(cli) && /process\.exit\(1\)/.test(cli), 'ok');
 // 让位的判据必须是「那确实是守卫在跑」，不是「这个 pid 还活着」：Windows 上 pid 会被复用，
 // 且进程句柄未释放时 process.kill(pid, 0) 也成功 —— 只看存活就等于把锁永久交给一个不存在的守卫。
 check('D-5 让位前按命令行锚点判定持有者是本产品守卫', /isOwnGuardEntry\(cmdline\)/.test(cli) && /readCmdline\(held\.pid\)/.test(cli), 'ok');
-check('D-5 命令行读不到时保守让位（宁可不起，不双守卫）', /if \(alive && !cmdline\) return false/.test(cli), 'ok');
+// 每一条让位都必须带**原因**：真机上「已有守卫实例在运行，本进程退出」出现过两次，而现场
+// 无从区分「确有守卫」与「wmic 读不到命令行 + 残留锁」——后者是永不自愈的死局。
+const lockBody = cli.slice(cli.indexOf('function acquireLock'), cli.indexOf('function releaseLock'));
+const bareYield = (src) => /if \(alive && !cmdline\) return false/.test(src) || /isOwnGuardEntry\(cmdline\)\) return false/.test(src);
+check('D-5 让位必须返回原因（无裸 return false 让位）', !bareYield(lockBody) && /return '持有 pid /.test(lockBody), 'ok');
+check('D-5 反向：裸让位旧形态被识别为违规', bareYield("if (alive && !cmdline) return false;\nif (alive && isOwnGuardEntry(cmdline)) return false;"), 'ok');
+// 命令行读不到时不再无条件让位：锁续约（mtime）是第三个独立证据，被强制杀掉留下的锁必须可回收。
+check('D-5 锁续约与陈旧回收（心跳超阈值即接管）',
+  /const LOCK_HEARTBEAT_MS/.test(cli) && /fs\.utimesSync\(LOCK_FILE/.test(cli)
+    && /silent >= LOCK_STALE_MS/.test(lockBody) && /startLockHeartbeat\(\)/.test(lockBody), 'ok');
+check('D-5 读不到命令行且锁仍在续约时仍保守让位', /保守让位/.test(lockBody), 'ok');
+// 活着的前任守卫很可能就是「壳刚下令停止、还没咽气」的那一个（Windows 的停止请求按命令行强杀，
+// 从发起到退出要几秒）。撞锁即退 = 前任一死锁就永久留着、端口没人监听。必须**有界**等它退出；
+// 窗口耗尽仍按单实例让位（并发双守卫比晚起几秒严重得多）。
+check('D-5 撞锁后有界等待前任退出（不立刻放弃）',
+  /const LOCK_TAKE_RETRY_MS/.test(cli) && /while \(pidAlive\(held\.pid\)\)/.test(lockBody)
+    && /napSync\(LOCK_TAKE_NAP_MS\)/.test(lockBody) && /Date\.now\(\) >= deadline/.test(lockBody), 'ok');
+// 存活判定收单源：让位分支与等待循环必须问同一个问题，两处各写一遍就会对同一 pid 给出不同答案。
+check('D-5 pid 存活判定单源（EPERM 算存活）',
+  /function pidAlive\(pid\)/.test(cli) && /return e\.code === 'EPERM'/.test(cli)
+    && !/process\.kill\(held\.pid/.test(lockBody), 'ok');
+const yieldAtOnce = "if (cmdline && isOwnGuardEntry(cmdline)) { return '持有 pid ' + held.pid + ' 存活'; }";
+check('D-5 反向：撞锁即让位的旧形态确实未等待（证明上一条非空转）',
+  !/while \(pidAlive/.test(yieldAtOnce) && /return '持有 pid /.test(yieldAtOnce), 'ok');
 check('D-5 陈旧锁被接管并留痕', /清理陈旧守卫锁/.test(cli) && /fs\.unlinkSync\(LOCK_FILE\)/.test(cli), 'ok');
 // 锁内容升级为 JSON（pid/started/entry），但读侧必须兼容旧格式：否则一次升级就把所有在用
 // 实例的锁看成无效，反而制造双守卫。
@@ -84,19 +107,20 @@ check('D-5 只释放自己的锁（按解析后的 pid 比）', /held && held\.p
 // 反向：旧形态（只看 pid 存活就 return false）必须被上面的判据抓到，证明非空转。
 const legacyOnly = "if (Number.isInteger(holder) && holder > 0) { try { process.kill(holder, 0); return false; } catch (err) { if (err.code === 'EPERM') return false; } }";
 check('D-5 反向：只认 pid 存活的旧形态被识别为违规',
-  !/isOwnGuardEntry\(cmdline\)/.test(legacyOnly) && !/if \(alive && !cmdline\) return false/.test(legacyOnly), 'ok');
+  !/isOwnGuardEntry\(cmdline\)/.test(legacyOnly) && bareYield(legacyOnly), 'ok');
 
 // -- D-6：绑定后登记**实际端口**（P6 就绪判据的单一来源）--
 // 判据跨文件：实现随步骤 7 下沉到 app/assembly/api-rebind.js（见上 D-2），故在整组上断言。
-// 释放登记的实现形态为 require('.../ports').shared.release(prev, 'system:supervisor-api')
-// （owner 字符串必须一致），故匹配点从 `ports.release(` 收窄到调用本身 `.release(prev, ...)`——
-// 仍是「顺延时以同一 owner 释放旧登记」这一不变量，未放宽。
-check('D-6 listen 回调登记实际端口', /ports(?:Shared)?\.register\('supervisor-api', port\)/.test(apiSources), 'ok');
-check('D-6 端口顺延时释放旧登记', /\.release\(prev, 'system:supervisor-api'\)/.test(apiSources), 'ok');
-// 反向：只登记配置端口（不登记实际端口）的旧形态必须判为未落实
-const registersActual = (src) => /ports(?:Shared)?\.register\('supervisor-api', port\)/.test(src);
-check('D-6 反向：只登记配置端口的旧形态被识别', !registersActual("ports.register('supervisor-api', this.config.apiPort);"), 'ok');
-check('D-6 反向：当前实现被判为已落实', registersActual(apiSources), 'ok');
+// 实际端口登记必须是 registerSole：登记表以端口号为键，顺延时旧端口的记录是**另一条**记录，
+// 只 release 它不足以立住「同 role 唯一」——该调用被 catch{} 包住且忽略返回值，
+// 留下两条 supervisor-api 时「按 role 取号」（内核 ports.get / 壳读 ports.json）能拿到没人监听的端口。
+check('D-6 listen 回调登记实际端口（同 role 唯一）', /ports(?:Shared)?\.registerSole\('supervisor-api', (?:port|host\.config\.apiPort)\)/.test(apiSources), 'ok');
+const poolSrc = read('src/platform/service/ports/pool.js');
+check('D-6 registerSole 先清除同 role 的其它端口记录', /registerSole\(role, port\)/.test(poolSrc) && /r\.role === role && existing !== p/.test(poolSrc), 'ok');
+check('D-6 装配期登记也走唯一化', /ports\.registerSole\('supervisor-api', host\.config\.apiPort\)/.test(read('src/app/assembly/bootstrap.js')), 'ok');
+// 反向：两条登记形态必须被识别为未落实
+check('D-6 反向：只 register 实际端口 + release 旧端口的形态被识别为违规',
+  !/registerSole\('supervisor-api'/.test("portsShared.register('supervisor-api', port); portsShared.release(prev, 'system:supervisor-api');"), 'ok');
 
 // -- D-7：数据/日志路径经注入的 stateDir，不得各自 os.homedir()（G6）--
 const proxySrc = read('src/domains/router/providers/proxy.js');

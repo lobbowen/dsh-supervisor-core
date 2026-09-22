@@ -81,6 +81,19 @@ class PortRegistry {
     return p;
   }
 
+  /** 登记固定端口，并保证该 role 在全表唯一（先清除同 role 的其它端口记录再登记）。
+   *  登记表以端口号为键，避让/重绑后新端口是**追加**记录；只 release 旧端口不足以立住不变式
+   *  （该调用在内核侧被 catch{} 包住且忽略返回值），残留两条同 role 记录时任何「按 role 取号」
+   *  的读法（本表 get、桌面壳读 ports.json）都可能拿到一个没人监听的端口。
+   *  @returns {number} port */
+  registerSole(role, port) {
+    const p = Number(port);
+    for (const [existing, r] of [...this._records]) {
+      if (r.role === role && existing !== p) this._records.delete(existing);
+    }
+    return this.register(role, p);
+  }
+
   /** 登记用户配置端口（实例内部端口等）；冲突（固定/保留池/已占）抛错。 */
   registerUser(port, owner) {
     const p = Number(port);
@@ -115,10 +128,15 @@ class PortRegistry {
   }
 
   /* 查询 */
-  /** 按 role 取端口（固定端口）。 */
+  /** 按 role 取端口（固定端口）。同 role 有多条（老版本避让留下的残留记录）时取**最新登记**：
+   *  桌面壳读 ports.json 用的是同一判据，两侧不许对「哪个端口是当前的」给出不同答案。 */
   get(role) {
-    for (const r of this._records.values()) if (r.role === role) return r.port;
-    return null;
+    let best = null;
+    for (const r of this._records.values()) {
+      if (r.role !== role) continue;
+      if (!best || (r.createdAt || 0) >= (best.createdAt || 0)) best = r;
+    }
+    return best ? best.port : null;
   }
 
   isRegistered(port) { return this._records.has(Number(port)); }

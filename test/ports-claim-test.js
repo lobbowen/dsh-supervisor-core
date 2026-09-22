@@ -140,6 +140,41 @@ const RANGE = { base: 28130, count: 50 };
       && /_confirmRegister/.test(fs.readFileSync(path.join(ROOT, 'src', 'platform', 'service', 'ports', 'alloc.js'), 'utf8')), '有');
   }
 
+  // == KI1：固定 role 全表唯一 —— 避让/重绑后「按 role 取号」不许拿到没人监听的僵尸端口 ==
+  {
+    const SOLE = 'supervisor-api';
+    const pA = safePort('ports-claim', 4);
+    const pB = safePort('ports-claim', 5);
+    const pOld = safePort('ports-claim', 6);
+    const pNew = safePort('ports-claim', 7);
+    const pMain = safePort('ports-claim', 8);
+    const sp = new PortRegistry({ file: path.join(TMP, 'ports-sole.json') });
+    sp.register(SOLE, pA);
+    sp.registerSole(SOLE, pB);
+    const after = sp.list().filter((r) => r.role === SOLE);
+    check('KI1 registerSole 换端口后同 role 只剩一条', after.length === 1 && after[0].port === pB, JSON.stringify(after));
+    check('KI1 get(role) 指向新端口', sp.get(SOLE) === pB, String(sp.get(SOLE)));
+    sp.reload();
+    check('KI1 唯一性落盘（桌面壳读同一文件，看不到僵尸端口）',
+      sp.list().filter((r) => r.role === SOLE).length === 1, JSON.stringify(sp.list()));
+    sp.register('dsh-main', pMain);
+    sp.registerSole(SOLE, pB);
+    check('KI1 registerSole 只清同 role，不误删其它固定端口',
+      sp.get('dsh-main') === pMain && sp.get(SOLE) === pB, JSON.stringify(sp.list()));
+
+    // 反向样本：老版本（避让只追加记录、release 被 catch 吞掉）留下的双记录仍在表内。
+    // 判据必须取**最新登记**，且要能证明「首个命中即返回」的老读法会取错——否则本条空转。
+    const sz = new PortRegistry({ file: path.join(TMP, 'ports-zombie.json') });
+    sz._records.set(pOld, { port: pOld, role: SOLE, owner: 'system:' + SOLE, createdAt: 1 });
+    sz._records.set(pNew, { port: pNew, role: SOLE, owner: 'system:' + SOLE, createdAt: 2 });
+    check('KI1 残留双记录时 get(role) 取最新登记', sz.get(SOLE) === pNew, String(sz.get(SOLE)));
+    check('KI1 反向：老读法「首个命中」确实会取到僵尸端口 ' + pOld + '（判据非空转）',
+      [...sz._records.values()].find((r) => r.role === SOLE).port === pOld, '首命中');
+    sz.registerSole(SOLE, pNew);
+    check('KI1 registerSole 能把老版本留下的僵尸记录清掉（升级后自愈）',
+      sz.list().filter((r) => r.role === SOLE).length === 1 && sz.get(SOLE) === pNew, JSON.stringify(sz.list()));
+  }
+
   const failed = results.filter((r) => !r);
   console.log('\n结果: ' + (results.length - failed.length) + ' passed, ' + failed.length + ' failed');
   process.exit(failed.length ? 1 : 0);
