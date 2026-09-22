@@ -23,6 +23,9 @@
 //   A4 行为一致  模块的跨平台行为必须与 capabilityProfile 的声明一致
 //   A5 自愈真伪  自愈类能力的声明必须匹配实际机制（不得声称存在而实现被条件屏蔽）
 //   A6 无回归    历史错误声明不得重新出现
+//   A7 壳自愈    声明必须匹配实际机制（同 A5，覆盖三平台看护）
+//   A8 自启产权  内核不得越权写/删守卫服务定义（定义归壳）
+//   A9 守卫自启  guardAutostart 声明为 true ⇒ 内核必须有真正作用于守卫的关闭路径
 // ---------------------------------------------------------------------------
 
 const fs = require('node:fs');
@@ -42,7 +45,7 @@ const readOsDir = (d) => fs.readdirSync(path.join(POS, d)).filter((f) => f.endsW
  *    不剥离就会把解释文字误判为实际代码（首版即因此 3 项误报）。 */
 // 阶段六 P6-A：剥离统一走 test/_strip.js 的**字符级单一实现**（去掉引号奇偶启发式 ——
 //   该启发式对多层/转义引号不可靠）。语义等价或更强：字符串/正则字面量感知，只多删注释。
-const { stripComments: stripCommentsLex } = require('./_strip');
+const { stripComments: stripCommentsLex, blankComments } = require('./_strip');
 function stripComments(src) { return stripCommentsLex(src); }
 
 const { capabilityProfile } = require(POS);
@@ -276,6 +279,49 @@ console.log('== A8 自启所有权不变量 ==');
   }
   // 3) 内核不再持有守卫 plist 模板
   check('A8 内核已删除 macPlist（守卫定义归壳）', !/function macPlist/.test(asSrc), 'ok');
+}
+
+// -- A9 守卫自启：声明 <-> 内核有没有真正作用于守卫的关闭路径 --
+console.log('== A9 守卫自启：声明 ↔ 内核可关闭性 ==');
+{
+  // 判据形态：该平台 setAutostart 体内**某一行同时**出现守卫标识与关闭动作。
+  // 只写 GUI 产物（壳自启）不算关闭守卫自启；'DSH-Supervisor-GUI' 因引号闭合不同不会被当成守卫标识。
+  const GUARD_ID = /['"]dsh-supervisor\.service['"]|\bGUARD_LABEL\b|\bGUARD_TASK\b|['"]DSH-Supervisor['"]/;
+  const OFF_ACT = /:\s*'disable'|'disable-linger'|,\s*false\s*\)|\/DISABLE\b|['"]\/Delete['"]/;
+  function guardOffEvidence(src) {
+    const body = (/function setAutostart\([\s\S]*?\n\}/.exec(src) || [''])[0];
+    return body.split(String.fromCharCode(10)).some((l) => GUARD_ID.test(l) && OFF_ACT.test(l));
+  }
+  /** 已知违例基线（显式登记，只减不增；同 ML-2 形态）。补上关闭路径后必须同步撤登记。 */
+  const NO_OFF_PATH = {
+    win32: '守卫任务与看护任务均由壳建立，内核 setAutostart 只写 DSH-Supervisor-GUI —— 面板关不掉守卫自启',
+  };
+  const violating = [];
+  for (const pl of PLATFORMS) {
+    const claimed = capabilityProfile(pl, 'x64').guardAutostart === true;
+    const ev = guardOffEvidence(blankComments(readOs('autostart/' + pl + '.js')));
+    if (claimed && !ev) violating.push(pl);
+    check('A9 ' + pl + ' 声明(' + claimed + ')↔内核关闭路径(' + ev + ') 一致或违例已登记',
+      !claimed || ev || pl in NO_OFF_PATH, NO_OFF_PATH[pl] || 'ok');
+  }
+  check('A9 违例平台集合 ⊆ 登记集合（新增平台关不掉守卫自启即判红）',
+    violating.every((p) => !!NO_OFF_PATH[p]),
+    violating.length ? '违例: ' + violating.join(',') : '无违例（登记表应随之清空）');
+  check('A9 登记集合无死条目（已能关闭的平台必须撤登记）',
+    violating.length === Object.keys(NO_OFF_PATH).length && violating.every((p) => !!NO_OFF_PATH[p]),
+    '违例=' + (violating.join(',') || '无') + ' 登记=' + (Object.keys(NO_OFF_PATH).join(',') || '无'));
+  check('A9 未知平台不得声称可关守卫自启',
+    capabilityProfile(UNKNOWN, 'x64').guardAutostart === false);
+  // 反向自检（合成样本，不依赖真实数据）：同一判据必须认出合规形态并拒绝 GUI-only 形态。
+  const LF9 = String.fromCharCode(10);
+  const synthGuardOff = ['function setAutostart(on) {',
+    "  ex('systemctl', ['--user', on ? 'enable' : 'disable', 'dsh-supervisor.service']);", '}'].join(LF9);
+  const synthGuiOnly = ['function setAutostart(on) {',
+    "  ex('schtasks', ['/Delete', '/TN', 'DSH-Supervisor-GUI', '/F']);", '}'].join(LF9);
+  check('A9 反向：守卫标识+关闭动作必被认出、只删 GUI 任务必判无路径',
+    guardOffEvidence(synthGuardOff) === true && guardOffEvidence(synthGuiOnly) === false, 'hit');
+  check('A9 反向：函数体定位失败时判无路径（不得把空body当通过）',
+    guardOffEvidence('const x = 1;') === false, 'hit');
 }
 
 const failed = results.filter((r) => !r);
