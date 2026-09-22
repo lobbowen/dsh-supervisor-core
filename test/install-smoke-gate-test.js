@@ -10,7 +10,7 @@
 // 锁定不变量：
 //   G1 脚本存在且 bash 形态（shebang + set -euo pipefail）
 //   G2 build.yml 引用脚本；build job 内的冒烟步在所有触发下都跑（无 tag-only if、无 continue-on-error）
-//   G3 published-smoke job 存在、needs build、仅 tag/dispatch、从公开 registry 装（@dsh-sup/dsh-core-…@ver）而非 dist/
+//   G3 published-smoke job 存在、needs 到 release（不抢发布）、tag 成功或 dispatch、从公开 registry 装（@dsh-sup/dsh-core-…@ver）而非 dist/
 //   G4 脚本含真判据：--version 相等 / self-check: OK / healthz 轮询 / supervisor-api 唯一记录 / 卸载 trap / daemon 用装出来的命令
 //   G5 真判据所在行不得用 || true 兜空
 //   每条判据配反向样本：坏夹具必须让判据返回 false（证明判据有牙、非恒真）。
@@ -79,11 +79,24 @@ console.log('== G3 published-smoke job ==');
   check('G3-e 冒烟公开包不挂载 NPM_TOKEN', !/NPM_TOKEN/.test(sec), 'ok');
   check('G3-f 重试有延迟且只有末轮决定判据（break 于成功、末轮失败才 exit）',
     /sleep/.test(sec) && /break/.test(sec) && /exit "\$rc"/.test(sec), 'ok');
+  // G3-i/G3-j：发布后半必须等**同一 run 的发布动作**完成。npm 发布在 release job 里，
+  //   只 needs build 会抢先起跑（线上已发好、冒烟却因 404 耗尽预算判红）；
+  //   而少了 always()，非 tag 运行里 release=skipped 会把本 job 连带跳过（假绿，比红更坏）。
+  check('G3-i 依赖 release（发布后冒烟不得与发布动作赛跑）',
+    /needs:\s*\[[^\]]*\brelease\b[^\]]*\]/.test(sec), (sec.match(/needs:.*/) || ['(无 needs)'])[0]);
+  check('G3-j if 要求发布真成功 + always() 保住 dispatch 补跑通道',
+    /always\(\)/.test(sec) && /needs\.release\.result\s*==\s*'success'/.test(sec),
+    (sec.match(/^ {4}if:.*$/m) || ['(无 if)'])[0]);
   // 反向：从本地 dist/ 装、或缺 registry 前缀、或 tag-only（漏 dispatch）都要判 false。
   check('G3-g 反向：识别「从 dist/ 装」的坏样本',
     !(/@dsh-sup\/dsh-core-/.test('x dist/npm/y') && !/dist\//.test('x dist/npm/y')), 'hit');
   check('G3-h 反向：识别「tag-only、漏 dispatch」的坏 if',
     !(/startsWith\(github\.ref,\s*'refs\/tags\/v'\)/.test("if: startsWith(github.ref, 'refs/tags/v')") && /workflow_dispatch/.test("if: startsWith(github.ref, 'refs/tags/v')")), 'hit');
+  {
+    const race = "  needs: [precheck, build]\n    if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'";
+    check('G3-k 反向：识别「抢先于发布」的坏 needs 与漏 always() 的坏 if',
+      !/needs:\s*\[[^\]]*\brelease\b[^\]]*\]/.test(race) && !/always\(\)/.test(race), 'hit');
+  }
 }
 
 // -- G4 真判据存在 --

@@ -343,9 +343,12 @@ jobs:
   # 与 build job 内的安装包冒烟共用同一脚本，区别只在装的是 registry 里的包而非本地 dist/。
   #   registry/unpkg 传播有分钟级延迟，故重试数轮；只有最后一轮的失败才决定判据（早期轮失败
   #   不算永久红）。公开包无需 NPM_TOKEN，本 job 也不挂载任何令牌。
+  # ⚠ 必须 needs release：npm 发布动作在 release job 里，只依赖 build 会在**同一 run 内**与发布赛跑，
+  #   四平台各 4 轮 45s 预算耗尽后判红——而线上其实已经发好了（追修于 0.1.6-BETA.5 补充批）。
+  #   always() 不可省：tag 之外的运行里 release 是 skipped，不加 always 本 job 会被连带跳过（假绿）。
   published-smoke:
-    needs: [precheck, build]
-    if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
+    needs: [precheck, build, release]
+    if: ${{ always() && (github.event_name == 'workflow_dispatch' || (startsWith(github.ref, 'refs/tags/v') && needs.release.result == 'success')) }}
     strategy:
       fail-fast: false
       matrix:
@@ -384,7 +387,7 @@ jobs:
           VER="${VER_INPUT:-$(node -p 'require("./package.json").version')}"
           SPEC="@dsh-sup/dsh-core-$OS_TAG-$ARCH@$VER"
           echo "  发布后冒烟目标: $SPEC"
-          ATTEMPTS=4
+          ATTEMPTS=6
           i=0
           rc=1
           while [ "$i" -lt "$ATTEMPTS" ]; do

@@ -157,6 +157,7 @@ console.log('== T5 workflow precheck ==');
   check('T5-f precheck 用 npm view 探测', /npm view/.test(code), 'ok');
   check('T5-h release 同时依赖 precheck 与 build', /needs:\s*\[precheck,\s*build\]/.test(code), 'ok');
   // 发布后冒烟 job（安装包冒烟的后半）：名称含连字符，必须仍能被 jobSection 解析出非空段。
+  //   判据形状（依赖 release、if 三要素）由 install-smoke-gate-test.js 的 G3 单点锁定，不在此重复。
   check('T5-i published-smoke job 能被 jobSection 取到（非空段）',
     require(path.join(__dirname, '_workflow.js')).jobSection(y, 'published-smoke').length > 0, 'ok');
 }

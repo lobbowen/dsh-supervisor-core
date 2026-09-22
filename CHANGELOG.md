@@ -16,8 +16,13 @@
   `self-check: OK` + `guardVersion` 比对 → 隔离状态根起 `daemon` → `/healthz` 2xx → `ports.json` 唯一
   `supervisor-api` 记录且端口一致 → `npm rm -g` 收尾（不覆盖应用内更新落盘）。
 - `build.yml`：build job 在 dry-run 后、发布前对 `dist/npm/@dsh-sup/dsh-core-<os>-<arch>` 跑（S6b，四平台 PR/push/tag 都跑）；
-  新增 `published-smoke` job 从**公开 registry** 按 `@dsh-sup/dsh-core-<os>-<arch>@<ver>` 跑发布后半（S7b，仅 tag / dispatch，重试至末轮定判据）。
-- 门禁：新增 `test/install-smoke-gate-test.js`（含反向样本），并在 `all-platforms-test.js` T5 组校验 `published-smoke` 可被 `jobSection` 解析。
+  新增 `published-smoke` job 从**公开 registry** 按 `@dsh-sup/dsh-core-<os>-<arch>@<ver>` 跑发布后半（S7b，重试至末轮定判据）。
+  它 `needs: [precheck, build, release]`：npm 发布在 `release` job 内，只依赖 `build` 会让冒烟与同一 run 的发布赛跑，
+  包还没上架就 404 到耗尽重试（判据红而线上其实正常）。`if` 里的 `always()` 不是修饰词，是手动
+  `workflow_dispatch(ver=…)` 补跑历史版本的唯一通道 —— 非 tag 运行里 `release` 为 skipped，缺它本 job 会被连带跳过。
+- 门禁：新增 `test/install-smoke-gate-test.js`（G1–G5 含反向样本；G3-i/G3-j 专钉上面那条依赖与 `always()`），
+  并在 `all-platforms-test.js` T5 组校验 `published-smoke` 可被 `jobSection` 解析；
+  规范 JSON 的 `ciJobs`/`specGates`/`entries` 三处清单同步收录本 job 与其脚本、门禁，使「文档列出=CI 存在」双向成立。
 
 ## [0.1.6-BETA.5]（2026-09-23）
 
