@@ -1,6 +1,6 @@
 'use strict';
 
-// 账号/供应商管理辅助。deps 注入：{findProvider, save, ports, maskKey, logger}。
+// 账号/供应商管理辅助（deps 注入）。
 
 function createAdminOps(deps) {
   const d = deps || {};
@@ -34,8 +34,7 @@ function createAdminOps(deps) {
       p.instances = (p.instances || []).filter((i) => !gone.has(i.keyId));
     }
     const removed = before - p.accounts.length;
-    // added 反映真实结果：逐个 await，失败（discarded）如实分类。
-    // 并发保持原语义（Promise.all 等齐结果，不串行）。
+    // added 反映真实结果：并发保持 Promise.all 等齐全部结果（不串行）。
     const candidates = ((opts && opts.add) || [])
       .map((k) => String(k).trim())
       .filter((t) => t && !p.accounts.some((a) => a.key === t));
@@ -74,8 +73,8 @@ function createAdminOps(deps) {
     const prevSelected = p.selectedAccountKeyId || null;
     p.selectedAccountKeyId = keyId;
     save();
-    // 切换即确保目标就绪（引擎门面，budgetMs=null 等满探活周期——显式切换的启动预算，
-    // 裁决 1）；失败回滚 selected 并回收半成品进程（防坏账号粘滞导致 429 循环）。
+    // 切换即确保目标就绪（引擎门面，budgetMs=null 等满探活周期——显式切换的启动预算）；
+    // 失败回滚 selected 并回收半成品进程（防坏账号粘滞导致 429 循环）。
     if (p.supports('instanceLifecycle')) {
       const sv = await p.ensureServable(acc, { budgetMs: null }).catch((e) => ({ ok: false, error: e && e.message }));
       if (!sv || !sv.ok) {
@@ -86,7 +85,7 @@ function createAdminOps(deps) {
         if (logger && logger.warn) logger.warn('[select] ' + errMsg + ' key=' + (acc.maskedKey || keyId) + ' sv=' + JSON.stringify(sv));
         return { ok: false, error: errMsg };
       }
-      // 角色变化即回收退位者（事件表）：期望集重算 + 非期望实例经停止仲裁回收（在途 drain 补刀）。
+      // 角色变化即回收退位者：期望集重算 + 非期望实例经停止仲裁回收（在途 drain 补刀）。
       p.reconcileNow();
     }
     return { ok: true, selected: keyId };
@@ -102,7 +101,6 @@ function createAdminOps(deps) {
     const idx = (p.accounts || []).findIndex((a) => a.keyId === keyId);
     if (idx < 0) return { ok: false, error: '账号不存在' };
     if (p.supports('instanceLifecycle') && p.accounts[idx].instance) {
-      // 删除路径必须 force。
       try { p.stopInstance(p.accounts[idx].instance, true); } catch {}
       try { ports.unregister('proxy:' + keyId); } catch {}
       p.accounts[idx].instance.port = null;

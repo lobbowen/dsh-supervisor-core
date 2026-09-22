@@ -42,26 +42,22 @@ class InstanceStore {
     for (const inst of this.instances) {
       model.normalizeInstance(inst);
       this._stripLegacyStateKeys(inst);
-      // 唯一令牌节点：沙箱实例登记“源”（journald 单元 dsh-web@<id>），令牌获取/分发由服务统一负责。
-      // 只登记 journald 单元（天然持久、-g 取最近行=当前进程新令牌）；不登记 file——沙箱重启轮换新令牌
-      // 只打 journal，若复用恢复文件会缓存旧令牌 block journal。
+      // 唯一令牌节点：沙箱实例登记「源」（journald 单元 dsh-web@<id>），令牌获取/分发由服务统一负责；
+      // 只登记 journald、不登记 file：沙箱重启后新令牌只写 journal，恢复文件会缓存旧令牌 block journal。
       if (inst.domain === 'sandbox' && this.tokens) this.tokens.attach(inst.id, { unit: 'dsh-web@' + inst.id });
     }
     this.syncPorts();
     return this.instances;
   }
 
-  /** 清历史遗留的未声明 state 字段。**只在内存删、本方法不写盘**；下次 save（5s tick 或任意内容变化）
-   *  由 save() 全量序列化内存数组而自然落地，故幂等：文件既已无该键，再 load 即无键可删。
-   *  state.version：阶段五已停止写入（upgrade.js 的两处赋值删除），且内核/测试/壳仓**零消费者**、
-   *  createRecord 声明的 state 形状不含它（version 显示走 readInstalledVersion 实时读盘）。
-   *  同型先例：model.normalizeInstance 同样在加载期删遗留键 dshToken（有测试断言该行为）。 */
+  /** 清历史遗留的未声明 state 字段。只在内存删、本方法不写盘；下次 save() 全量序列化自然落地，故幂等。
+   *  state.version：内核/测试/壳仓零消费者，版本显示走 readInstalledVersion 实时读盘，已从记录形状声明中移除。 */
   _stripLegacyStateKeys(inst) {
     if (inst.state && Object.prototype.hasOwnProperty.call(inst.state, 'version')) delete inst.state.version;
   }
 
-  /** 损坏现场隔离：先告警，再把损坏文件改名为 .corrupt-<ts> 保留现场，最后清空内存。
-   *  rename 先于清空（后续 save 会覆盖原文件）；rename 后原文件不再被覆盖。 */
+  /** 损坏现场隔离：先告警，再把损坏文件改名为 .corrupt-<ts> 保留现场，最后清空内存——
+   *  rename 必须先于清空，后续 save 才不会覆盖原损坏文件。 */
   _quarantineCorrupt(err) {
     const bak = this.instancesFile + '.corrupt-' + Date.now();
     this.logger && this.logger.warn && this.logger.warn('instances.json 读取/解析失败，备份后清空: ' + (err && err.message) + ' -> ' + bak);
@@ -70,7 +66,7 @@ class InstanceStore {
     this._replace([]);
   }
 
-  /** 原地替换数组内容（**保持数组对象身份**，外部引用不失效）。 */
+  /** 原地替换数组内容（保持数组对象身份，外部引用不失效）。 */
   _replace(list) {
     if (list === this.instances) return; // 自赋值：先清空会丢数据
     this.instances.length = 0;
@@ -80,9 +76,8 @@ class InstanceStore {
   replace(list) { this._replace(list); }
 
   save() {
-    // 落盘失败（磁盘满/权限/只读）必须降级而非抛出：本方法从 5s tick 循环调用，一旦抛错会经
-    // setInterval 到 uncaughtException 触发守卫 3 次退出重启。内存是权威，失败只记日志，
-    // 下次内容变化时重试。
+    // 落盘失败（磁盘满/权限/只读）必须降级不抛：本方法从 5s tick 循环调用，抛错会经 setInterval 到
+    // uncaughtException 触发守卫退出重启。内存是权威，失败只记日志，下次内容变化时重试。
     try {
       const body = JSON.stringify({ instances: this.instances }, null, 2);
       if (body === this._lastBody) return; // 内容未变不写盘（tick 每 5s 全量调用，稳态零写放大）
@@ -94,11 +89,10 @@ class InstanceStore {
     }
   }
 
-  /** 实例端口注册表派生同步：端口真源是 instances.json（内存数组，用户配置值）；registry 的 inst:*
-   *  记录是派生投影，把配置端口纳入全局冲突视图（防动态分配段撞实例端口），非记忆绑定。
-   *  全量对账：内存有而 registry 缺则 registerUser；registry 有 inst:* 而内存无对应实例则 unregister。
-   *  同 owner 已登记端口与当前配置端口不一致（端口已变）时，先 unregister 旧登记再按新端口
-   *  registerUser——否则旧 inst:* 记录因「该 id 仍存在」而永久泄漏。 */
+  /** 端口登记派生同步：真源是 instances.json 内存数组（用户配置值），registry 的 inst:* 记录只是派生投影，
+   *  把配置端口纳入全局冲突视图（防动态分配段撞实例端口）。全量对账：内存有而 registry 缺则 registerUser，
+   *  registry 有 inst:* 而内存无该实例则 unregister；端口变更时先卸旧登记再按新端口注册，
+   *  否则旧 inst:* 记录因「该 id 仍存在」永久泄漏。 */
   syncPorts() {
     for (const inst of this.instances) {
       const id = String(inst.id || '');
@@ -120,7 +114,7 @@ class InstanceStore {
   }
 
   /** 为沙箱实例建独立目录（根 + 数据 + 依赖 + 临时）。实例根一次性收紧权限：
-   *  同机他用户的跨舱互读是隔离清单里唯一没被目录布局本身挡住的一格。 */
+   *  同机他用户的跨舱互读是隔离清单里唯一未被目录布局本身挡住的一格。 */
   ensureDirs(inst) {
     const r = fileProtect.ensurePrivateDir(sandbox.root(this.instancesRoot, inst));
     if (r && r.ok === false) this.logger && this.logger.warn && this.logger.warn('实例根权限收紧失败 ' + r.mode + ': ' + r.reason);

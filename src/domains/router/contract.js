@@ -1,6 +1,6 @@
 'use strict';
 
-// router 域契约声明（DOMAIN-STRUCTURE-DESIGN 第10节；纯数据，零 require）。
+// router 域契约声明（纯数据，零 require）。
 // exports=index.js 的 module.exports 字面量键（DG-9）；PUBLIC_API=全仓消费点+冻结对外契约面（DG-10）；
 // deps.hooks=DG-4b 豁免出处；pure=零 IO require 的纯文件（DG-3）；exempt=DG-4 合法例外。
 

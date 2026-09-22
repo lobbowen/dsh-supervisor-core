@@ -1,10 +1,8 @@
 'use strict';
 
-// 插件市场 HTTP JSON/文本原语（market-net）。
-// 体积上限 + 非 2xx 直接失败 + 重定向最多 5 跳 + 目标协议校验。
-// 重定向必须校验协议：file:// 会让 http.get 同步抛 ERR_INVALID_PROTOCOL，且此处
-// 位于响应回调内，会逃逸为进程级 uncaughtException（registry 可配任意 https 或
-// 302 可达第三方镜像）。
+// 插件市场 HTTP JSON/文本原语：体积上限 + 非 2xx 直接失败 + 重定向最多 5 跳 + 目标协议校验。
+// 重定向必须校验协议：file:// 会让 http.get 同步抛 ERR_INVALID_PROTOCOL，且此处位于响应回调内，
+// 会逃逸为进程级 uncaughtException（registry 可配任意 https，302 可落到第三方镜像）。
 // 注意：test/round8-fixes-test.js J-g 按源码断言本文件保留两条协议校验。
 
 const http = require('node:http');
@@ -55,7 +53,7 @@ function getText(url, timeoutMs = 8000, redirectsLeft = 5) {
       if ([301, 302, 303, 307, 308].includes(res.statusCode) && res.headers.location) {
         res.resume();
         if (redirectsLeft <= 0) return reject(new Error('too many redirects from ' + url));
-        // 同上：重定向目标必须校验协议（file:// 会让 http.get 同步抛）。
+        // 同 getJson：重定向目标必须校验协议。
         const next = String(res.headers.location);
         if (!/^https?:\/\//i.test(next)) return reject(new Error('重定向到不支持的协议: ' + next.slice(0, 64)));
         return getText(next, timeoutMs, redirectsLeft - 1).then(resolve, reject);

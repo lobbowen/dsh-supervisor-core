@@ -1,25 +1,17 @@
 'use strict';
 
-// 外部输入的统一字符集 / 形态闸。
-//
-// 为什么单源：version / unit 名 / 包名 / argv 项 / 安装前缀 / 账本键此前分散在三处各写一份白名单
-//   （shared/version 的严格 semver、os/service 的 UNIT_NAME_RE、distribution/install 的
-//   PKG_NAME_RE + BAD_ARGV_CHAR_RE）。本仓的病灶从来不是「哪一份写错」，而是
-//   **新增入口时无处可抄** —— 每多一个「把外部字符串拼进 argv / 文件路径 / 对象键」的
-//   调用点，就多一次「作者以为不用校验」的机会。本文件是那把尺子的唯一存放处。
-//
-// 边界：这里只做**字符集 / 形态**判定。语义级校验留在各自的域，且不得反向依赖本文件：
-//   - URL 可达性 / SSRF / 私网字面量 -> distribution/policies.js（isValidOrigin）与 api C-8 闸；
-//   - 版本大小与通道语义 -> app/native/policies.js + shared/version.js。
+// 外部输入的统一字符集 / 形态闸：version / unit 名 / 包名 / argv 项 / 安装前缀 / 账本键白名单 regex 的唯一存放处。
+// 边界：这里只做字符集 / 形态判定；语义级校验留在各自的域且不得反向依赖本文件：
+//   URL 可达性/SSRF -> distribution/policies.js（isValidOrigin）与 api 层闸；版本语义 -> app/native/policies.js + shared/version.js。
 
 /** npm 包名（含 scope）：`dsh` / `@deepseek-ai/dsh`。字符集从严，宁误杀不漏放。 */
 const PKG_NAME_RE = /^(@[a-zA-Z0-9._-]+\/)?[a-zA-Z0-9._-]+$/;
 
 /** argv 项的禁用字符集：空白 + 全部 shell 元字符/引号/控制符。命中即拒。
- *   反斜杠的例外见 WIN_ABS_PATH_RE（win32 盘符绝对路径是合法 argv，CI run17 实测教训）。 */
+ *  反斜杠的例外见 WIN_ABS_PATH_RE：win32 盘符绝对路径是合法 argv。 */
 const ARGV_UNSAFE_RE = /[\s;|&<>`'"$(){}\\*?~#]/;
 
-/** 盘符绝对路径整体形态：仅当该项**完整匹配**时豁免禁用字符集里的 `\\`。
+/** 盘符绝对路径整体形态：仅当该项完整匹配时豁免禁用字符集里的 `\\`。
  *  其余禁用字符（`;`、引号、`$`、空白等）仍被拦；含空白的路径必须走 commandTemplate 拆项。 */
 const WIN_ABS_PATH_RE = /^[A-Za-z]:\\[^;|&<>`'"$*?~#\s]*$/;
 
@@ -82,10 +74,8 @@ function unitNameViolation(unit) {
 }
 
 /** 归一「来自外部、会被当作对象键」的名字（账本 byModel / 分组 map 等）。
- *  与直接判错不同：账本要**继续累计**，所以违规值折进兜底桶而不是丢弃（B19 的上限语义不变）。
- *  @param {string} raw
- *  @param {{max?:number, empty?:string, unsafe?:string}} [opts]
- *  @returns {string} */
+ *  与直接判错不同：账本要继续累计，违规值折进兜底桶而不是丢弃，长度上限语义不变。
+ *  @param {{max?:number, empty?:string, unsafe?:string}} [opts] @returns {string} */
 function ledgerKey(raw, opts) {
   const o = opts || {};
   const max = typeof o.max === 'number' ? o.max : 128;

@@ -1,10 +1,8 @@
 'use strict';
 
-// daemon 探活（probe）：经 ctl 端口的监听者 cmdline 判定独立 daemon 是否在运行。
-// 守卫探测到 daemon 在跑就不再内嵌启动，避免双占 ctl 口，只做监督。
-// 导出形态 { methods }，方法经 this 协作。
-//
-// 阶段六 B-1 补齐：属性级去 this（改经按 host 缓存的**惰性 deps**）。方法名/{ methods }/逐字体保留。
+// daemon 探活（probe）：经 ctl 端口监听者的 cmdline 判定独立 daemon 是否在运行。
+// 守卫探测到 daemon 在跑就不再内嵌启动（避免双占 ctl 口），只做监督。
+// 导出形态 { methods }；实现体经按 host 缓存的惰性 deps（WeakMap）取事实。
 const pidlook = require('../../platform/os/pidlookup');
 
 const DEPS = new WeakMap();
@@ -16,9 +14,7 @@ function depsOf(host) {
 
 module.exports = {
   methods: {
-    /** 独立 router-daemon 是否在运行（探测 ctl 端口监听者 cmdline 是否 router-daemon）。
-     *  守卫探测到 daemon 在跑就不再内嵌启动 router（避免双占 ctl 口），只做监督
-     *  （lifecycleManager 周期探活 ctl 口，异常时拉起 daemon）。 */
+    /** 独立 router-daemon 是否在运行（探测 ctl 端口监听者 cmdline）。 */
     _routerDaemonActive() {
       const d = depsOf(this);
       try {
@@ -31,9 +27,8 @@ module.exports = {
       } catch { return false; }
     },
 
-    /** lan-daemon 模式是否启用（结构性部署选择，非用户意图开关）。
-     *  config.lanDaemon === true 时 lan 由独立 daemon 承载（ctl 通道），
-     *  否则内嵌 LanManager。这是部署形态选择（壳写配置），不对用户暴露。 */
+    /** lan-daemon 模式是否启用：config.lanDaemon 是结构性部署选择（壳写配置，无面板入口、不对用户
+     *  暴露）——true 时 lan 由独立 daemon 承载（ctl 通道），否则内嵌 LanManager。 */
     lanDaemonEnabled() { const d = depsOf(this); const cfg = d.config(); return !!(cfg && cfg.lanDaemon === true); },
 
     _lanDaemonActive() {

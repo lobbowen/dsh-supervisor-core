@@ -6,29 +6,21 @@ const execPath = require('../../platform/os/exec-path');
 
 // 域：实例管理 API（沙箱实例 CRUD/启停/open-web/版本更新）。
 const crypto = require('node:crypto');
-// dsh-auth 换取（派生令牌）直接引令牌组件的 exchange 子模块：
-// 换取是令牌组件的职责（不是 platform/os 的平台差异）；不走 token/index.js 门面是因为
-// 冻结 API 只导出 DshTokenService/parseDshTokenLine，新增门面导出会扩大冻结面。
+// 换取 dsh-auth 是令牌组件的职责，不走 token/index.js 门面：门面导出会扩大冻结 API 面。
 const { bootstrapDshCookie } = require('../../platform/service/token/exchange');
 
-// 本机浏览器「一次性授权码」表（open-web 专用）。
-// 为什么需要它：open-web 要把本机系统浏览器带到实例的 DSH 页面。若把 DSH 令牌拼进 URL
-//   交给 platform.browser.open，该 URL 会原样进入 spawn argv，同机任意进程 ps 即可看到
-//   会话令牌（违反 SSOT TK-G6，也与 router/providers/proxy.js 的「api-key 绝不进
-//   cmdline」冲突）。现在令牌不出本进程：只把一次性、限时、用后即删的随机码交给浏览器，
-//   浏览器凭码回 /open，由服务端完成令牌换取 dsh-auth cookie。码泄露也几乎无用
-//   （30s TTL + 一次性 + 只能换到本机回环会话 cookie）。键=码，值={ id, exp }；仅内存不落盘。
+// open-web 一次性授权码表（键=码，值={ id, exp }，仅内存）。DSH 令牌绝不进 URL：URL 原样进
+// spawn argv，同机任意进程 ps 即可读到会话令牌（TK-G6）。浏览器只拿限时单次码回 /open 换 cookie。
 const OPEN_WEB_CODES = new Map();
 const OPEN_WEB_CODE_TTL_MS = 30000;
 
-/** 签发一次性授权码：写入内存表并返回码本身。 */
 function issueOpenWebCode(id) {
   const code = crypto.randomUUID();
   OPEN_WEB_CODES.set(code, { id, exp: Date.now() + OPEN_WEB_CODE_TTL_MS });
   return code;
 }
 
-/** 校验并**一次性消费**授权码：返回 { id }；不存在/已过期返回 null（过期项顺手清理）。 */
+/** 校验并一次性消费授权码，返回 { id }；不存在/已过期返回 null。 */
 function consumeOpenWebCode(code) {
   if (!code) return null;
   const rec = OPEN_WEB_CODES.get(code);
@@ -38,37 +30,29 @@ function consumeOpenWebCode(code) {
   return { id: rec.id };
 }
 
-/** 清除授权码（换取失败/异常时调用），避免留下可用凭证。 */
+/** 撤销授权码（换取失败/异常时调用），避免留下可用凭证。 */
 function dropOpenWebCode(code) { if (code) OPEN_WEB_CODES.delete(code); }
 
 function owns(pathname) {
   return pathname === '/open' || pathname === '/instances' || pathname.startsWith('/instances/');
 }
 
-// GET /open?code=<一次性码>：服务端换取 dsh-auth cookie 并回跳 DSH 页面（令牌全程不出服务端）。
-//   1) 校验并消费一次性码（TTL 30s，用后即删）得到实例 id；无 code 返回 404，
-//      带 code 但无效/已过期返回 400（实现不区分二者）。
-//   2) tokOf(id) 从唯一令牌节点取该实例令牌（TK-4：按需读，不缓存）。
-//   3) bootstrapDshCookie 向该实例回环 DSH 换取 dsh-auth-* cookie。
-//   4) Set-Cookie: <dsh-auth-*>; Path=/; HttpOnly，303 到 DSH 端口根路径。
-// cookie 不区分端口：在 127.0.0.1:<apiPort> 种下后，浏览器访问 127.0.0.1:<dshPort>
-// 也会携带（与 relay 种 dsh_lan_token 同一机制）。
+// GET /open?code=<一次性码>：消费码取实例 id，用 tokOf 的令牌向该实例回环 DSH 换 dsh-auth-* cookie，
+// 303 到 DSH 端口根路径；令牌全程不出本进程。无 code 返 404，无效/过期码返 400。
 function handleOpen(ctx) {
   const { sup, req, res, identity, originAllowed, tokOf } = ctx;
-  // 不得从 ctx 取 url：网关构造的 ctx 不含 url 键，`const { url } = ctx` 恒为 undefined，
-  //   url.searchParams 会抛 TypeError 并被网关兜底成 HTTP 500。
-  //   与本仓其它域一致：从 req.url 自行解析（见 lifecycle.js 的 new URL(req.url, ...)）。
+  // 从 req.url 自行解析：网关构造的 ctx 不含 url 键，取 ctx.url 恒为 undefined。
   const url = new URL(req.url, 'http://localhost');
-  // 回跳目标由实例真实端口（it.port）与固定回环主机生成，绝不取自请求参数，无开放重定向。
+  // 回跳目标只由实例真实端口与固定回环主机生成，绝不取自请求参数。
   const apiPort = sup.config.apiPort;
   const code = url.searchParams.get('code');
   const deny = (status, msg) => { res.writeHead(status, { 'Content-Type': 'text/plain; charset=utf-8' }); res.end(msg); };
-  // 授权码是回环本机凭证：只允许本机来源，且写语义请求须经既有 CSRF 深化闸。
+  // 授权码是回环本机凭证：只允许本机来源，写语义请求须过既有 CSRF 深化闸。
   if (!identity.loopback) return deny(403, '仅允许本机访问');
   if (!originAllowed(req, apiPort)) return deny(403, 'origin not allowed');
   const rec = consumeOpenWebCode(code);
   if (!rec) return deny(code ? 400 : 404, code ? '授权码无效或已过期' : '缺少授权码');
-  // 实例解析：main 走守卫核心视图，沙箱走实例列表（与 get 的 decorate 同源）。
+  // 实例解析与 GET /instances 的 decorate 同源：main 走守卫核心视图，沙箱走实例列表。
   const it = (rec.id === 'main' && sup.dshMainView && typeof sup.dshMainView === 'function')
     ? sup.dshMainView()
     : ((sup.instances.list() || []).find((x) => x.id === rec.id) || null);
@@ -78,8 +62,7 @@ function handleOpen(ctx) {
   return bootstrapDshCookie('127.0.0.1', it.port, tok).then((cookie) => {
     if (!cookie) return deny(400, '令牌换取失败');
     res.writeHead(303, {
-      // SameSite=Strict——cookie 跨端口共享是本设计意图（回环同源，
-      // 端口不参与 site 判定），但必须杜绝跨站导航/子资源携带（旧值缺省=Lax）。
+      // 跨端口共享 cookie 是设计意图（回环同源，端口不参与 site 判定），故须 Strict 杜绝跨站携带。
       'Set-Cookie': cookie + '; Path=/; HttpOnly; SameSite=Strict',
       'Location': 'http://127.0.0.1:' + it.port + '/',
     });
@@ -87,28 +70,14 @@ function handleOpen(ctx) {
   }).catch((e) => { dropOpenWebCode(code); deny(500, (e && e.message) || 'open failed'); });
 }
 
-// command 的 fail-closed 闸 = 结构闸 + 入口白名单（N11 / 审计 A2）：command 会被原样经
-//   startTransient 交给 systemd-run，任意二进制或任意脚本因此等同「以守卫身份执行任意命令」。
-// 信任边界：/instances/add 已经 originAllowed + （LAN 时）access key 鉴权，属操作者信任边界；
-//   但「任意可执行 / 任意脚本」不由本端点承担。路径存在性不作为放行依据。
-// 允许的两种形态（UI「启动命令」占位符即形态 A）：
-//   A. node 族打头 -> [node, <绝对路径的 DSH 入口>, ...其后为参数]
-//   B. DSH 入口打头 -> [<DSH 入口>, ...其后为参数]
-// 形态 A 的三重校验（缺一即 400）：
-//   1) command[1] 必须存在且是**绝对路径** —— 相对入口会按沙箱 workingDir（data 目录，
-//      沙箱内可写）解析，形成「沙箱写文件 -> 守卫重启执行」的二级面；
-//   2) 必须是 DSH 入口，三者之一：官方包内入口（<前缀>/node_modules/@deepseek-ai/dsh/lib/bin.js，
-//      即内核 exec-path.dshJsIn()/resolveDsh() 的产出形态）、dsh 族 basename、或配置的 dshBin；
-//   3) 否则 ["node", "/tmp/evil.js"] 之类等于任意脚本执行。
-// 已知残留（如实登记，见 design-notes/_p3-c-api-hardening.md）：basename 判据仍可被
-//   「把脚本命名为 dsh*.js / dsh / dsh-supervisor」绕过；真正的结构解是启动期（inst.id 可得后）
-//   用 realpath + 安装根前缀复校，属 domains/instance 范围。
-// 400 契约：结构非法、入口不在白名单、或 node 族缺少/非绝对/错配 DSH 入口 -> 400 { ok:false, error }；
-//   缺失/[] = 走沙箱默认命令（默认命令由域内 effectiveCommand 生成，不经本闸）。
+// command 原样经 startTransient 交给 systemd-run，任意二进制即「以守卫身份执行任意命令」，故本闸 fail-closed = 结构校验 + 入口白名单，路径存在性不作为放行依据。
+// 允许两形态：A [node, <绝对路径的 DSH 入口>, ...参数]（相对入口按沙箱可写的 data 目录解析，故必须绝对）；B [<DSH 入口>, ...参数]；
+// command 缺失/[] = 沙箱默认命令（域内 effectiveCommand 生成），不经本闸；非法一律 400 { ok:false, error }。
+// 已知残留：basename 判据可被「把脚本命名为 dsh*.js」绕过，由执行前 realpath 归属复校兜底（domains/instance/lifecycle.js 共用 exec-path.commandEntryViolation）。
 function commandShapeError(command, dshBin) {
   if (command === undefined || command === null) return null;
   if (!Array.isArray(command)) return 'command 必须为参数数组';
-  if (!command.length) return null; // 空数组 = 用沙箱默认命令，保持既有行为
+  if (!command.length) return null; // 空数组 = 用沙箱默认命令
   if (command.length > 64) return 'command 参数过多（上限 64）';
   for (const a of command) {
     if (typeof a !== 'string') return 'command 每项必须为字符串';
@@ -124,14 +93,10 @@ function commandShapeError(command, dshBin) {
   const DSH_ENTRY = new Set(['dsh', 'dsh.js', 'dsh-supervisor', 'dsh-supervisor.js']);
   const baseOf = (p) => String(p).split(/[\\/]/).pop().toLowerCase();
   const normPath = (p) => String(p).replace(/\\/g, '/');
-  // 绝对路径：POSIX /…、Windows 盘符 X:\…、UNC \\…（形态 A 的硬要求，见头注 1）。
+  // 绝对路径：POSIX /…、Windows 盘符 X:\…、UNC \\…（形态 A 的硬要求）。
   const isAbsolute = (p) => /^(?:[A-Za-z]:[\\/]|[\\/])/.test(String(p));
-  // 官方 DSH 包内入口：<任意前缀>/node_modules/@deepseek-ai/dsh/lib/bin.js —— 内核自己的
-  //   exec-path.dshJsIn()/resolveDsh() 产出的就是它，若不放行则「内核规范入口被自己拒绝」。
-  // 官方 DSH 包内入口。**复用 exec-path.dshJsIn 作单一事实源**（原先在此硬编码
-  //   '/node_modules/@deepseek-ai/dsh/' 子串，与内核解析器各写一份、有漂移风险）：
-  //   先按规范尾巴取出前缀，再用 dshJsIn 重新拼出入口，归一后须与原文逐字一致。
-  //   较原实现略严：'.../@deepseek-ai/dsh/其它/bin.js' 这类非规范尾形不再放行。
+  // 官方包内入口 <前缀>/node_modules/@deepseek-ai/dsh/lib/bin.js：取出前缀后用 exec-path.dshJsIn
+  // 重拼并逐字比对，避免在此硬编码内核解析器的路径形态；不放行则内核自己的规范入口被本闸拒绝。
   const PKG_TAIL = '/node_modules/@deepseek-ai/dsh/lib/bin.js';
   const isDshPackageEntry = (p) => {
     if (baseOf(p) !== 'bin.js') return false;
@@ -144,11 +109,8 @@ function commandShapeError(command, dshBin) {
   const isConfiguredDshBin = (p) => typeof dshBin === 'string' && dshBin !== '' && p === dshBin
     && !NODE_HEAD.has(baseOf(dshBin));
   const FORMS = '可用 [node, <绝对路径的 DSH 入口>, ...参数] 或 [<DSH 入口>, ...参数]';
-  // 决策复用执行边界的同一纯函数（**单一事实源**，与启动期 realpath 复校同规）：
-  //   requireAbsoluteEntry=true  —— 形态 A（node 打头）必须绝对路径（P4 语义，不变）；
-  //   allowEntry                 —— 保留 P4 的 basename/包形态/dshBin 白名单（**不削弱**）；
-  //   files=knownDshEntries()    —— 追加「内核自己解析出的已知 DSH 入口」（SSOT 复用，
-  //                                 替代原先在 api 层硬编码包路径形态的做法）。
+  // 判定复用执行边界的同一纯函数（与执行前复校同规）：requireAbsoluteEntry 保形态 A 的绝对路径
+  // 硬要求，allowEntry 保留包形态/basename/dshBin 白名单，files 追加内核解析出的已知入口。
   const sharedErr = execPath.commandEntryViolation(command, {
     requireAbsoluteEntry: true,
     files: execPath.knownDshEntries({ dshBin }),
@@ -163,7 +125,7 @@ function commandShapeError(command, dshBin) {
     return 'command[0] 为 node 时 command[1] 必须是 DSH 入口（dsh / dsh.js / dsh-supervisor / dsh-supervisor.js，'
       + '或 <前缀>/node_modules/@deepseek-ai/dsh/lib/bin.js）；' + FORMS;
   }
-  // 形态 B：入口自身即 DSH。相对路径（含分隔符）会被按沙箱可写工作目录解析 => 由共享判据拒绝（较 P4 收紧）。
+  // 形态 B：入口自身即 DSH；带分隔符的相对路径按沙箱可写工作目录解析，由共享判据拒绝。
   return sharedErr + '；' + FORMS + '；需要其它可执行请走插件安装通道';
 }
 
@@ -171,35 +133,27 @@ function handle(ctx) {
   const { sup, req, res, pathname, identity, send, collectBody, originAllowed, tokOf } = ctx;
   function openInSystemBrowser(url) { return platform.browser.open(url); }
 
-    // 本机浏览器落地页（一次性码换取 dsh-auth cookie）：不属 /instances 前缀，但消费的正是
-    // open-web 签发的码，与实例解析/tokOf 同源，放在本域避免第二份实现。
+    // /open 落地页不属 /instances 前缀，但消费本域签发的一次性码、与 tokOf 同源，故不再建第二份实现。
     if (req.method === 'GET' && pathname === '/open') return handleOpen(ctx);
 
     if (req.method === 'GET' && pathname === '/instances') {
-      // 附加打开链接：仅本机直连 authUrl（带 DSH 会话 token，回环 Host 才附带）。
-      // token 一律从唯一令牌节点按实例解析（见 tokOf）：原生与沙箱同源。
-      // 远程可用性（模式/就绪/访问 URL）不在此装饰——单一来源是 /lan-access 的 remote 视图。
-      // 概念清分：
-      //   instances[] = 沙箱实例（管理对象：CRUD/启停/升级全属沙箱 API）
-      //   native      = 原生主干 main（唯一；其生命周期/升级不属 /instances 沙箱 API：
-      //                 启停 /lifecycle/dsh/*、安装/升级/卸载 /native/*。此处仅提供只读条目
-      //                 供横切视图取端口/开关，不带沙箱 CRUD 语义）
+      // authUrl 只在回环来源附带 DSH 会话 token，token 一律按实例从唯一令牌节点取（原生/沙箱同源）。
+      // 概念清分：instances[] = 沙箱实例（CRUD/启停/升级）；native = main 的只读条目，供横切视图取
+      // 端口/开关，其生命周期与升级走 /lifecycle/dsh/* 与 /native/*，不落在本 API。
       const decorate = (it) => {
         const tok = tokOf(it.id);
         const out = Object.assign({}, it);
-        // API 边界令牌剔除：main 视图含 remoteToken（进程内供 LanManager mainOf 消费），绝不外传。
+        // main 视图含 remoteToken（进程内供 LanManager mainOf 消费），API 边界必须剔除。
         delete out.remoteToken;
         const loopback = identity.loopback;
         out.authUrl = (tok && loopback)
           ? ('http://127.0.0.1:' + it.port + '/?token=' + encodeURIComponent(tok))
           : ('http://127.0.0.1:' + it.port + '/');
         out.tokenPresent = loopback && !!tok;
-        // 远程可用性/访问 URL 的单一来源是 /lan-access 的 remote 视图（projectRemoteView）；
-        // 本列表只携带原始字段（remoteMode 等），不重复推导。
+        // 远程可用性/访问 URL 单一来源是 /lan-access 的 remote 视图，本列表只携带原始字段。
         return out;
       };
       const render = () => {
-        // 概念清分：沙箱来自 InstanceManager；原生主干(main)来自守卫核心 dshMainView()（不再混存沙箱数组）
         const sandboxes = (sup.instances.list() || []).filter((i) => i.domain === 'sandbox');
         const main = (sup.dshMainView && typeof sup.dshMainView === 'function') ? sup.dshMainView() : null;
         return send(200, {
@@ -218,15 +172,12 @@ function handle(ctx) {
           if (act === 'add') {
             const cmdErr = commandShapeError(j.command, sup.instances && sup.instances.dshBin);
             if (cmdErr) return send(400, { ok: false, error: cmdErr });
-            // addInstance 为 async（含端口占用探测）：必须等结果再作答，否则 send 收到的是
-            // Promise（r.ok 恒 undefined 导致恒 400，且响应体不可序列化）。
+            // addInstance 是 async（含端口占用探测），必须等结果作答：send 收到 Promise 会让 r.ok 恒 undefined。
             return Promise.resolve(sup.instances.addInstance(j))
               .then((r) => send(r && r.ok ? 200 : 400, r))
               .catch((e) => send(500, { ok: false, error: (e && e.message) || String(e) }));
           }
-          // 沙箱/原生清分护栏：main（原生主干）的生命周期/更新不属沙箱实例 API。
-          // 原生主干唯一操作渠道：启停 /lifecycle/dsh/*、安装/升级/卸载/版本 /native/*。
-          // 此处拦截一切落到 main 的管理动作（防双轨：守卫 spawn 语义 vs systemd-run 沙箱语义）。
+          // 护栏：落到 main 的管理动作一律拒绝，避免守卫 spawn 与 systemd-run 沙箱两套语义并存。
           if (j.id) {
             const target = sup.instances.find(j.id);
             if (target && target.domain === 'native' && act !== 'open-web') {
@@ -236,28 +187,22 @@ function handle(ctx) {
               return send(400, { ok: false, error: hint });
             }
           }
-          // remove/update/stop 与 start 同规：{ok:false} 必须如实映射为非 2xx，
-          //   恒 200 会让面板显示「已删除/已更新/已停止」而实际未生效（未验证不得报成功）。
+          // 域动作的 {ok:false} 一律映射为非 2xx：恒 200 会让面板显示「已删除/已停止/已启动」而实际未生效。
           if (act === 'remove' && j.id) { const r = sup.instances.removeInstance(j.id); return send(r && r.ok ? 200 : 400, r); }
           if (act === 'update' && j.id) { const r = sup.instances.updateInstance(j.id, j); return send(r && r.ok ? 200 : 400, r); }
-          // start 不得恒 200：startInstance 有 {ok:false} 分支（平台不支持沙箱 / 沙箱安装失败 /
-          //   systemd 启动失败），一律 send(200, r) 会让面板显示「已启动」而实际无进程
-          //（违反本仓「未验证不得报成功」不变量），start 应如实映射 HTTP 状态。
           if (act === 'start' && j.id) return Promise.resolve(sup.instances.startInstance(j.id))
             .then((r) => send(r && r.ok ? 200 : 400, r))
             .catch((e) => send(500, { ok: false, error: e.message }));
           if (act === 'stop' && j.id) { const r = sup.instances.stopInstance(j.id); return send(r && r.ok ? 200 : 400, r); }
-          // 用系统默认浏览器打开该实例的 DSH Web（解决 Tauri/WebView 中 window.open 被拦）。
-          // TK-G6：URL 内不得含 DSH 令牌（会原样进入 spawn argv，同机进程经 ps 可读），
-          //   只带一枚一次性授权码（/open 换取）。
+          // 用系统默认浏览器打开实例 Web（Tauri/WebView 内 window.open 被拦）。
+          // TK-G6：URL 只带一次性授权码，令牌本身不得进 spawn argv。
           if (act === 'open-web' && j.id) {
             try {
-              // 概念清分：main 走守卫核心视图；沙箱走实例列表
               const it = (j.id === 'main' && sup.dshMainView && typeof sup.dshMainView === 'function')
                 ? sup.dshMainView()
                 : ((sup.instances.list() || []).find((x) => x.id === j.id) || null);
               if (!it) return send(404, { ok: false, error: '实例不存在' });
-              // 安全校验：只允许本机回环 + 该实例真实端口（防开放重定向）
+              // 只跳该实例的真实回环端口，防开放重定向
               if (!(Number(it.port) > 0)) return send(400, { ok: false, error: '非法端口' });
               const code = issueOpenWebCode(j.id);
               const url = 'http://127.0.0.1:' + sup.config.apiPort + '/open?code=' + code;
@@ -280,6 +225,5 @@ function handle(ctx) {
   return send(405, { error: 'method not allowed' });
 }
 
-// handleOpen 一并导出：供测试直接做行为断言（与 api/index.js 导出 originAllowed 同理——
-// 仅源码正则不足以证明「令牌不进 URL」，必须能真实驱动 /open 并看 Set-Cookie）。
+// handleOpen 一并导出：源码正则证明不了「令牌不进 URL」，须能真实驱动 /open 并看 Set-Cookie。
 module.exports = { owns, handle, handleOpen, issueOpenWebCode, consumeOpenWebCode };

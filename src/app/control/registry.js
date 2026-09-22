@@ -1,33 +1,20 @@
 'use strict';
 
-// 管家注册机（ManagedRegistry）—— 控制平面的声明目录。
-//
-// 定位：守卫核心层 = 大管家。本目录记录「管家直接负责」的受管对象的应然声明与所有权：
-//   - 身份（kind/id/name）
-//   - 应然（desired：用户意图 / guardian：自动拉起策略）——持久，由业务申报
-//   - 所有权（端口 owner 引用 / root 路径 / unit 或 daemon 声明 / 进程模式）——持久
-//   - 类型适配器引用（observe/apply 实现留在类型模块，经 registerAdapter 挂接，不持久化）
-//
-// 铁律 —— **SSOT 在 GUARD-DOMAIN-MODEL.md**（含 keepDesired 例外）；本处是摘要，
-//   两份冲突时以该契约为准：
-//   1) 实然（pid/占用/健康）只来自观测，绝不写回目录；
-//   2) 注册即存在、注销即不存在（限管家直接负责的对象）；域自治对象不入簿（经 ctl 摘要）；
-//   3) 目录不是第二状态源：phase 由调谐循环驱动，业务不得直接改目录 phase；
-//   4) 路径由 root 派生，不登记路径清单；端口只登记所有权引用（联动统一端口注册表）。
-//
+// 管家注册机（ManagedRegistry）——守卫直接负责的受管对象声明目录：身份、应然
+// （desired/guardian，业务申报、持久）、所有权（端口/root/unit/daemon）、类型适配器挂接。
+// SSOT 与铁律（实然绝不写回目录；phase 由调谐循环驱动、业务不得直改；路径由 root 派生；
+// 域自治对象不入簿）在契约 GUARD-DOMAIN-MODEL，两份冲突以契约为准。
 
 const fs = require('node:fs');
 const path = require('node:path');
 const { writeAtomic } = require('../../platform/util/fs');
 const { DESIRED, MANAGED_KINDS, kindMeta, registerKind: registerManagedKind, isDomainA, createEntry, normalizeOwnership } = require('./managed-object');
 
-/** 进程生命周期唯一词表。phase 含一个操作态 'installing'（对应安装任务）；
- *  升级/卸载态在 TaskRegistry，不在 phase。 */
+/** 进程生命周期唯一词表。'installing' 是对应安装任务的操作态；升级/卸载态在 TaskRegistry，不在 phase。 */
 const PHASES = ['stopped', 'installing', 'starting', 'running', 'draining', 'backoff', 'failed', 'restarting'];
 
 const { runHeartbeat } = require('./heartbeat');
 
-/** 类型适配器：observe/apply 实现（类型模块注册；不进持久化）。 */
 class ManagedRegistry {
   /**
    * @param {object} opts { file?: string(managed-objects.json), logger?, events?, ports? }
@@ -39,10 +26,10 @@ class ManagedRegistry {
     this.ports = (opts && opts.ports) || null; // 统一端口注册表（owner 释放联动；可选）
     this._objects = [];           // 内存目录（顺序 = 注册序）
     this._byId = new Map();
-    this._adapters = {};          // kind -> { observe, apply }
-    // 是否「从既有磁盘文件加载」（状态单源判定）：true = 目录已有权威 desired，state.json 不回灌；
-    //   false = 首启/老库迁移，允许 state.json 的 desired 作一次性种子。
-    // 必须记录「构造前是否存在」而非 _save 之后——构造函数随后会创建文件，否则判定失真。
+    this._adapters = {};          // kind -> { observe, apply }（类型模块挂接；不持久化）
+    // 状态单源判定：true = 目录已有权威 desired，state.json 不回灌；false = 首启/老库迁移，
+    // 允许 state.json 的 desired 作一次性种子。必须记录「构造前是否存在」——构造函数随后会
+    // 创建文件，事后再查判定失真。
     this._loadedFromDisk = false;
     this._saveBlocked = false; // 损坏且连改名保全都失败时置真，本进程禁绝对目录文件的覆盖写
     if (this.file) {
@@ -57,33 +44,32 @@ class ManagedRegistry {
     try {
       raw = JSON.parse(fs.readFileSync(this.file, 'utf8'));
     } catch (e) {
-      // 既有文件不可读/损坏 != 首启空目录：当空目录继续会让任一 upsert 用派生内容覆盖原文件，
-      //   desired/guardian/崩溃计数永久丢失。故改名 .bad-<ts> 保全原始字节，并以「未加载」态启动
-      //   （允许 state.json 种子回灌）。
+      // 既有文件损坏 != 首启空目录：当空目录继续会让任一 upsert 用派生内容覆盖原文件，
+      // desired/guardian 永久丢失。故改名 .bad-<ts> 保全原始字节，并以「未加载」态启动
+      // （允许 state.json 种子回灌）。
       if (this._loadedFromDisk) {
         this._log('warn', 'managed-objects 读/解析失败，按损坏保全处理: ' + ((e && e.message) || e));
-        this._loadedFromDisk = false; // 允许 state.json desired 一次性种子回灌
+        this._loadedFromDisk = false;
         let bak = null;
         try {
           bak = this.file + '.bad-' + Date.now();
           fs.renameSync(this.file, bak);
         } catch (e2) {
-          this._saveBlocked = true; // 连保全改名都失败 -> 本进程禁绝对该路径的覆盖写
+          this._saveBlocked = true; // 连改名保全都失败 -> 本进程禁对该路径覆盖写
           this._log('warn', 'managed-objects 损坏备份失败，持久化已禁用: ' + ((e2 && e2.message) || e2));
         }
         this._event('managed_registry_corrupt', { backup: bak, error: (e && e.message) || String(e) });
       }
-      return; // 首启/文件缺失或损坏降级：空目录
+      return;
     }
     const arr = (raw && Array.isArray(raw.objects)) ? raw.objects : [];
     for (const o of arr) {
-      // 逐条容错：单条坏 entry（缺 id/字段异常）不得中断整份加载，否则其后合法条目全部静默丢失。
+      // 逐条容错：单条坏 entry 不得中断整份加载，否则其后合法条目全部静默丢失
       try {
-        if (!o || !kindMeta(o.kind)) continue; // 未知类型/损坏条目：跳过（不阻断启动）
-        // guardian 只在域 A 传：域 B 的旧残留（早期版本曾写 true）经 createEntry 自然丢弃，
-        //   配合 _save 不写该字段，升级后首次落盘即完成归一，无需一次性迁移脚本。
+        if (!o || !kindMeta(o.kind)) continue; // 未知类型/损坏条目跳过，不阻断启动
+        // guardian 只在域 A 传：域 B 旧残留经 createEntry 自然丢弃、_save 也不写该字段，
+        // 升级后首次落盘即归一，无需迁移脚本。
         const e = createEntry({ kind: o.kind, id: o.id, name: o.name, desired: o.desired, guardian: isDomainA(o.kind) ? o.guardian : undefined, ownership: o.ownership });
-        // 恢复持久化的受管阶段(仅合法值;观测不恢复)
         if (PHASES.includes(o.phase)) e.phase = o.phase;
         if (Number.isInteger(o.backoffLevel)) e.backoffLevel = o.backoffLevel;
         if (typeof o.backoffUntil === 'number' && o.backoffUntil > Date.now()) e.backoffUntil = o.backoffUntil;
@@ -125,8 +111,8 @@ class ManagedRegistry {
     } catch (e) { this._log('warn', 'managed-objects 持久化失败: ' + (e && e.message)); }
   }
 
-  /** 崩溃/退避字段变化时的持久化入口：防抖 50ms 合并同拍多次变更，避免写放大。
-   *  仅落盘目录文件；由 supervisor._persistCrashField 在字段变更后调用。 */
+  /** 崩溃/退避字段变化的持久化入口：防抖 50ms 合并同拍多次变更避免写放大；
+   *  由 supervisor._persistCrashField 在字段变更后调用。 */
   persistCrashState() {
     if (this._crashSaveTimer) return; // 已排期，合并
     this._crashSaveTimer = setTimeout(() => {
@@ -151,7 +137,7 @@ class ManagedRegistry {
     if (i >= 0) this._objects.splice(i, 1);
   }
 
-  /** 注册新类型能力（未来扩展；显式声明，非 CRD）。委托纯模型 managed-object。 */
+  /** 注册新类型能力（显式声明，非通用 CRD；实现与判据见 managed-object.js）。 */
   registerKind(kind, meta) {
     registerManagedKind(kind, meta);
     return this;
@@ -176,8 +162,8 @@ class ManagedRegistry {
     return e;
   }
 
-  /** 对象变更申报（desired/guardian/ownership/name）。
-   *  `guardian` 是域 A 专有：域 B 基础设施忽略它并清除历史残留。 */
+  /** 对象变更申报（desired/guardian/ownership/name）。guardian 是域 A 专有：
+   *  域 B 基础设施既不写入，还主动删键清除早期版本残留（下一次 update 即归一）。 */
   update(id, patch) {
     const e = this.get(id);
     if (!e) return { ok: false, error: '未注册: ' + id };
@@ -186,8 +172,6 @@ class ManagedRegistry {
       if (!DESIRED.includes(p.desired)) return { ok: false, error: '非法 desired: ' + p.desired };
       e.desired = p.desired;
     }
-    // guardian 仅域 A 可改：域 B 基础设施无此字段——既不写入，也主动清除历史残留
-    //   （早期版本曾写 true；删除该键使既有 entry 在下一次 update 时归一）。
     if (isDomainA(e.kind)) {
       if (p.guardian !== undefined) e.guardian = p.guardian === true;
     } else if ('guardian' in e) {
@@ -196,8 +180,8 @@ class ManagedRegistry {
     if (p.name !== undefined) e.name = String(p.name || e.id);
     if (p.ownership !== undefined) {
       const old = e.ownership.ports;
-      // 合并而非整体替换：update 是部分补丁接口，只提供 ports 的调用方不应把
-      //   rootPath/unit/daemonScript/processMode 静默清成 null。
+      // 合并而非整体替换：这是部分补丁接口，只带 ports 的调用方不应把
+      // rootPath/unit/daemonScript/processMode 静默清成 null。
       e.ownership = normalizeOwnership(Object.assign({}, e.ownership, p.ownership));
       this._syncPortsOwner(e, true);
       for (const op of old) { if (!e.ownership.ports.some((np) => np.port === op.port)) this._releasePort(op.port, e.id); }
@@ -213,10 +197,9 @@ class ManagedRegistry {
     const e = this.get(id);
     if (!e) return { ok: false, error: '未注册: ' + id };
     const o = opts || {};
-    // 节流游标随对象一起复位：唯一读写点在 heartbeat，这里是生命周期边界上的清除口。
+    // 节流游标复位（唯一读写点在 heartbeat），这里是生命周期边界上的清除口
     e._nextTickAt = null;
-    // 级联停/清理由调用方决定（域业务保留最终权力）；目录只做该做的：
-    // 1) 释放所有权端口（若注入统一端口注册表，按 owner=本对象释放）
+    // 级联停/清理由调用方决定（域业务保留最终权力）；目录只释放所有权端口（按 owner）并移出簿册
     for (const op of e.ownership.ports) this._releasePort(op.port, e.id);
     if (o.onBeforeRemove) { try { o.onBeforeRemove(e); } catch (err) { this._log('warn', 'onBeforeRemove(' + e.id + '): ' + (err && err.message)); } }
     this._drop(e);
@@ -225,10 +208,8 @@ class ManagedRegistry {
     return { ok: true };
   }
 
-  /** 释放本对象持有的端口（按 owner）。
-   *  `PortRegistry.release(port, ownerId)` 的 owner 校验不可绕过：这里绝不回退成无 owner 的释放
-   *    （那会误删他人端口登记）。返回值仅用于日志——不匹配即 no-op 是期望行为，不是错误。
-   */
+  /** 释放本对象持有的端口（按 owner）。绝不回退成无 owner 的释放——那会误删他人登记；
+   *  owner 不匹配时 release 返回失败是期望行为，不视为错误，仅日志。 */
   _releasePort(port, ownerId) {
     if (!this.ports || typeof this.ports.release !== 'function') return;
     try { this.ports.release(port, ownerId); } catch (err) {
@@ -250,11 +231,8 @@ class ManagedRegistry {
   byKind(kind) { return this._objects.filter((o) => o.kind === kind); }
   count() { return this._objects.length; }
 
-  /** 唯一心跳：薄委托 runHeartbeat（单拍调度、节流、单对象超时隔离在 control/heartbeat.js）。
-   *  观测写入口仍是本实例的 applyObservation/setPhase。
-   *  @param {number} [intervalMs] 心跳拍宽（默认 5000）
-   *  @returns {Promise<{ observed: string[], errors: string[] }>}
-   */
+  /** 唯一心跳：薄委托 runHeartbeat（单拍调度、节流、单对象超时隔离在 control/heartbeat.js）；
+   *  观测写入口仍是本实例的 applyObservation/setPhase。 */
   heartbeat(intervalMs) { return runHeartbeat(this, intervalMs); }
 
   /** 观测写入（仅由 heartbeat/类型 observe 调用；实然不进持久化）。 */

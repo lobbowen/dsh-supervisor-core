@@ -1,12 +1,8 @@
 'use strict';
 
-// 插件域门面（组合 + 导出）。
-// 域内单向分层：model/policies（纯）-> targets/cli/store（叶子 IO）-> layers（写队列）
-// -> jobs（纯状态作业服务）-> restart -> ops/updater（编排）-> index（组合根）。
-// jobs 对 ops 零出边、store.listInstalled 收 targets 入参，消除旧 this 调用环与反向边。
-// 组合手法：构造期创建 jobs/layers，其余经 ctx 显式传入；门面保留同名可覆盖转发方法
-// （resolveTargets/installedOn/_runCli/_setBundleEnabledInner/_scrubPluginLayersInner 等），
-// 既有测试以实例属性桩替换这些名字；转发是显式一行，不构成隐式 this 耦合。
+// 插件域门面（组合根 + 导出）。域内单向分层：model/policies（纯）-> targets/cli/store（叶子 IO）-> layers（写队列）-> jobs
+// -> restart -> ops/updater（编排）-> index；jobs 对 ops 零出边、store.listInstalled 收 targets 入参以消除反向边。组合手法：构造期创建 jobs/layers，其余经 ctx 显式传入。
+// 门面保留同名可覆盖转发方法（resolveTargets/installedOn/_runCli/_setBundleEnabledInner/_scrubPluginLayersInner 等）：既有测试以实例属性桩替换这些名字，改名即断。
 
 const { PROTECTED } = require('./model');
 const store = require('./store');

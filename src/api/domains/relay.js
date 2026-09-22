@@ -1,13 +1,7 @@
 'use strict';
 
-// 域：远程控制 API（/lan-access 只读列表 + /remote/* 读写）。
-// 路由面（判据统一后的唯一意图面）：
-//   GET  /lan-access        远程代理列表（脱敏，见 app/facade/lan.js）
-//   GET  /remote/frp        frpc 状态（设置 + 运行态 + wan 暴露清单）
-//   POST /remote/set-mode   {id,mode:off|lan|wan} 远程控制唯一写入口
-//   POST /remote/set-token  {id,token}            访问令牌唯一写入口
-//   POST /remote/frp-server {serverAddr,...}      frps 连接配置保存并应用
-//   POST /remote/frp-install                      安装 frpc
+// 域：远程控制 API。/lan-access 为只读脱敏列表（见 app/facade/lan.js）；/remote/* 为唯一意图面：
+// set-mode 是远程控制唯一写入口、set-token 是访问令牌唯一写入口，另有 frp 状态/配置/安装。
 // 写动作全部经 supervisor 门面（app/domain-actions/lan.js），本层不做域判断。
 function owns(pathname) {
   return pathname === '/lan-access' || pathname === '/remote/frp' || pathname.startsWith('/remote/');
@@ -50,7 +44,7 @@ function handle(ctx) {
       });
       return;
     }
-  // 域内未匹配(方法/子路径)：全局兜底语义(与单文件时代一致)
+  // 域内未匹配(方法/子路径)：全局兜底语义
   if (req.method === 'GET' || req.method === 'POST') return send(404, { error: 'not found', path: pathname });
   return send(405, { error: 'method not allowed' });
 }

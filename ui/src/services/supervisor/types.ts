@@ -1,10 +1,6 @@
 /**
- * ============================================================================
- * supervisor 宿主 — 领域类型（对齐 dsh-supervisor HTTP API 实契约）
- * ============================================================================
- * 来源：src/presentation/api.js 全路由 + ui/（core.js / views-* / app.js）消费字段 + 线上抽样。
+ * supervisor 宿主领域类型（对齐 dsh-supervisor HTTP API 实契约）。
  * 只放纯数据类型，不含任何实现。
- * ============================================================================
  */
 
 // -- /status ----------------------------------------------
@@ -48,8 +44,7 @@ export interface UpgradeState {
   logTail?: string[];
 }
 
-// 会话生命周期：与 phase 正交——phase 是 main 状态机相位，
-// sessionState 是整个服务链的运行相位（退出中/已退出）。
+// 与 phase 正交：phase 是 main 状态机相位，sessionState 是整个服务链的运行相位。
 export type SessionState = "starting" | "running" | "stopping" | "stopped" | "failed" | string;
 
 export interface SupervisorStatus {
@@ -57,7 +52,7 @@ export interface SupervisorStatus {
   phase?: DshPhase;
   sessionState?: SessionState;
   guardVersion?: string;
-  /** 安装标识（UUID v4）：灰度名单的匹配依据，面板底部外显供用户申请灰度。 */
+  /** 安装标识（UUID v4）：灰度名单的匹配依据。 */
   installId?: string | null;
   dshPid?: number | null;
   dshPort?: number | null;
@@ -108,7 +103,7 @@ export interface PortRecord {
   role: string;
   owner: string | null;
   createdAt: number;
-  /** 端口当前真实激活状态：正在监听=true（激活）；未监听=false（停用） */
+  /** 端口当前是否真实在监听（true=激活，false=停用）。 */
   active?: boolean;
 }
 export interface PortsResponse { records?: PortRecord[]; }
@@ -124,7 +119,7 @@ export interface InstanceState {
   phase?: string;
   lifecyclePhase?: "STARTING" | "RUNNING" | "INSTALLING" | "BACKOFF" | "FAILED" | "STOPPED" | string;
   lastError?: string | null;
-  /** 稳定性统计（与原生主卡一致，后端投影）：重启次数 / 最近故障原因 */
+  /** 稳定性统计（后端投影，与原生主卡同源）：重启次数 / 最近故障原因 */
   restartCount?: number;
   lastFailure?: string | null;
   /** 当次启动生效的动态配额（守卫按机器预算与活跃实例数推导；未启动过为空） */
@@ -159,11 +154,11 @@ export interface SupervisorInstance {
   updateJob?: InstanceUpdateJob | null;
   state?: InstanceState;
   authUrl?: string;
-  /** 后端实例装饰（src/api/domains/instances.js）：loopback 时为 true；UI 未直读，属后端返回契约。 */
+  /** 后端实例装饰（src/api/domains/instances.js）：loopback 时为 true；属后端返回契约。 */
   tokenPresent?: boolean;
 }
-/** /instances 响应（概念清分）：instances[] 仅沙箱（管理对象）；native 为原生主干 main 的只读条目
- *  （横切视图如远程控制取用；其生命周期/升级不属沙箱 API——启停走 /lifecycle/dsh/*，安装/升级走 /native/*）。 */
+/** /instances 响应：instances[] 仅沙箱（管理对象）；native 为原生主干 main 的只读条目。
+ *  main 的生命周期/升级不属沙箱 API：启停走 /lifecycle/dsh/*，安装/升级走 /native/*。 */
 export interface InstancesResponse {
   instances: SupervisorInstance[];
   native?: SupervisorInstance | null;
@@ -173,8 +168,7 @@ export interface InstancesResponse {
 /** 远程控制三态（唯一意图字段；写入口 /remote/set-mode）。 */
 export type RemoteMode = "off" | "lan" | "wan";
 /** 远程访问单一视图：后端 relay/core.projectRemoteView 是唯一事实源，前端零判定直消费。
- *  ready = 可扫码即用（relay 监听 + cookie 已注入，wan 另要求 frpc 隧道存活）；
- *  reasons 为未就绪的具体原因（按优先级），供悬停/提示呈现。 */
+ *  ready = 可扫码即用（relay 监听 + cookie 已注入，wan 另要求 frpc 隧道存活）；reasons = 未就绪原因（按优先级）。 */
 export interface RemoteView {
   mode: RemoteMode;
   ready: boolean;
@@ -201,9 +195,8 @@ export interface LanItem {
   } | null;
 }
 export interface LanAccessResponse { items: LanItem[]; addresses: string[]; }
-// /remote/frp 状态面不再回显 authToken 明文，只下发 authTokenSet 布尔；
-// UI 提交走 patch 语义——字段缺省=服务端保留现值，故此处 authToken 为可选（仅提交新值时带）。
-// 无总闸字段：frpc 生命周期单一条件 = 存在 wan 模式的受管实例（syncFromInstances）。
+// /remote/frp 状态面只下发 authTokenSet 布尔，不回显令牌明文；提交为 patch 语义（字段缺省=服务端保留现值），
+// 故 authToken 可选（仅提交新值时带）。无总闸字段：frpc 生命周期单一条件 = 存在 wan 模式受管实例（syncFromInstances）。
 export interface FrpSettings { serverAddr: string; serverPort: number; authToken?: string; authTokenSet?: boolean; user?: string; }
 export interface FrpStatus {
   installed: boolean;
@@ -306,7 +299,6 @@ export interface ProxyAppInfo {
 export interface RouterStatus {
   running: boolean;
   autostart?: boolean;
-  // conflict?: boolean —— 已移除
   activatedProviders?: number;
   usage: {
     requests: number;
@@ -443,8 +435,7 @@ export interface SelfUpdateStatus {
 }
 export interface GuardVersion { version?: string; commit?: string; latest?: string; updateAvailable?: boolean; upstream?: string; }
 // -- 桌面壳（Tauri 壳）版本与更新 ------------------------------
-// 产品语义：关于卡需同时呈现「桌面壳版本」与「内核版本」，
-// 且「检查更新」要对两者一起检测。壳版本来自壳启动时写入的 identity.json（经 /shell/status）。
+// 壳版本来自壳启动时写入的 identity.json（经 /shell/status）。
 export interface ShellIdentity {
   version?: string;
   platform?: string;
@@ -473,7 +464,7 @@ export interface ShellUpdateCheck {
   updateAvailable?: boolean;
   error?: string | null;
 }
-// 平台能力矩阵（A1 接线）：三平台静态档位 x 实际工具探测；UI 据此灰化/提示不支持项。
+// 平台能力矩阵：三平台静态档位 x 实际工具探测，UI 据此灰化/提示不支持项。
 export interface PlatformCapabilities {
   platform?: string;
   arch?: string;
@@ -511,8 +502,7 @@ export interface SandboxBudget {
   capacity: number;
 }
 /** EnvCatalog 条目（platform/service/env-catalog 的 probe/summary 形状）。
- *  state 五态 ok/outdated/missing/configured/unconfigured；required 项必须在前端同现，
- *  不得只挑 Node 渲染（环境卡曾因此对 npm 失明）。 */
+ *  state 五态 ok/outdated/missing/configured/unconfigured；required 项必须在前端同现，不得只挑 Node 渲染。 */
 export interface EnvCatalogItem {
   label: string;
   required?: boolean;
@@ -525,8 +515,7 @@ export interface EnvCatalogItem {
 }
 export interface EnvStatus {
   node?: { detected?: string; runtime?: string | null; path?: string | null };
-  /** npm 与 node 同构三段：detected = 本机实跑版本，runtime = 壳投放的实跑版本（null = 未回读），
-   *  path = 契约解析到的可执行。旧形状只有 detected，面板因此无从区分「没装」与「壳没回读」。 */
+  /** npm 与 node 同构三段：detected = 本机实跑版本，runtime = 壳投放的实跑版本（null = 未回读），path = 契约解析到的可执行。 */
   npm?: { detected?: string; runtime?: string | null; path?: string | null };
   git?: { detected?: string };
   ok?: boolean;
@@ -552,13 +541,8 @@ export interface EnvStatus {
   } | null;
 }
 /** Node.js 环境检测（GET /env/node-lts）。
- *
- *   正契约（此前声明了后端**从不产出**的字段）：
- *    旧声明含 latestLts / ltsName / updateAvailable，而内核
- *    `src/app/settings/node-lts.js::nodeLtsStatus()` **明确不做远端查询**
- *    （避免守卫启动依赖网络），实返只有 { ok, current, major, ltsLine, suggested,
- *    fetchedAt, cached }。于是前端那两个分支恒不可达、类型声明与实现分叉。
- *    现按真实返回对齐。若产品确需「官方最新 LTS」，应另开端点或改走壳 env_status 契约。 */
+ *  内核 src/app/settings/node-lts.js::nodeLtsStatus() 不做远端查询（避免守卫启动依赖网络），
+ *  实返 { ok, current, major, ltsLine, suggested, fetchedAt, cached }，本类型与之对齐。 */
 export interface NodeLtsStatus {
   ok: boolean;
   /** 当前系统 Node 版本（如 26.7.0） */
@@ -591,9 +575,8 @@ export interface LifecycleModuleState {
   monitoring?: boolean;
   error?: string | null;
   startedAt?: string | null;
-  // 无 restartCount：它是「用户意图被守护触发了几次」的语义（域 A），
-  //   而本接口描述的是托管生命周期项的视图；域 A 计数在别处
-  //   （/status 的 restartCount = dsh；instance.state.restartCount = 沙箱）。
+  // 不含 restartCount：它是「用户意图被守护触发了几次」的运行态计数，
+  //   在别处暴露（/status 的 restartCount = dsh；instance.state.restartCount = 沙箱）。
   detail?: unknown;
 }
 

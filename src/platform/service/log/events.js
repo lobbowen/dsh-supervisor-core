@@ -4,19 +4,9 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { writeAtomic } = require('../../util/fs');
 
-// 事件日志：append-only JSONL，每行 { seq, ts, type, data }。seq 从既有日志最大序号
-// 续号，供 /events?after= 增量拉取。按大小轮转（超过 maxBytes 改名 <file>.1，保留
-// 一代）；seq 全局单调，跨轮转增量读由 readSince 同时扫描两代文件。
-// seq / rotatedSeq 持久化到 <file>.meta.json（原子写），重启后从 meta 恢复：
-// 保证 seq 全局单调不重号，且已轮转的 .1 仍参与增量读取（旧实现 rotatedSeq 仅内存态，
-// 重启后 .1 事件永久不可见）。meta 缺失/损坏时回退扫描当前文件续号（不丢新事件）。
-// 写放大收敛。旧实现每事件 = statSync + appendFileSync
-//   + writeFileSync(tmp) + renameSync —— meta 每事件全量重写是主要成本。
-//   现：1) 尺寸按已写字节估算，仅在估算越阈时真 stat 复核后才改名（多写者漂移不误轮转）；
-//   2) meta 每 META_SAVE_EVERY 个 seq 落一次盘，**轮转时立即落**（rotatedSeq 必须即时持久化）；
-//   3) 续号取 max(meta.seq, 文件尾部实际最大 seq) —— 节流窗口内的 seq 只活在内存里，
-//     不看文件就重启会重号（readSince 双代合并即重复/乱序）。事件流 append-only 且 seq
-//     单调，故末行即最大，无需全文扫描；末行不可解析时回退全扫描。
+// 事件日志：append-only JSONL，行 { seq, ts, type, data }；seq 全局单调，供 /events?after= 增量拉取；按大小轮转保留一代 .1，跨轮转增量读由 readSince 双代合并。
+// seq/rotatedSeq 持久化到 <file>.meta.json（原子写），重启从 meta 续号；meta 缺失/损坏回退扫描双代文件续号（不丢新事件）。
+// 续号取 max(meta.seq, 文件尾实际最大 seq)——meta 每 META_SAVE_EVERY 才落一次盘、只看 meta 会重号；append-only 且单调 => 末行即最大，末行不可解析回退全扫描。轮转时 meta 立即落盘（rotatedSeq 不即时持久化则 .1 事件重启后不可见）；尺寸按已写字节估算、越阈真 stat 复核（多写者漂移不误轮转）。
 const META_SAVE_EVERY = 32;
 
 class Events {
@@ -25,7 +15,7 @@ class Events {
     this.maxBytes = typeof maxBytes === 'number' && maxBytes > 0 ? maxBytes : 5 * 1024 * 1024;
     // 行级 producer.process：由事件文件所属进程注入，跨进程聚合/审计据此区分来源。
     this.process = (opts && opts.process) || null;
-    this.rotatedSeq = null; // 轮转水位：旧文件（.1）中事件的最大 seq + 1（即 last + 1）
+    this.rotatedSeq = null; // 轮转水位：.1 中最后一条事件的 seq（readSince 按 after < rotatedSeq 决定是否扫旧代）
     this.seq = 0;
     this.metaFile = file ? file + '.meta.json' : null;
     this._est = null;      // 已估字节；null = 需重新 stat
@@ -35,7 +25,7 @@ class Events {
         fs.mkdirSync(path.dirname(file), { recursive: true });
       } catch {}
       this._loadMeta();
-      // 条 13)：无论 meta 是否可用，都必须与文件实际内容对齐（meta 可能被节流落在后面）。
+      // 无论 meta 是否可用，都必须与文件实际内容对齐（meta 可能被节流落在后面）。
       const fileMax = this._fileMaxSeq();
       if (fileMax > this.seq) this.seq = fileMax;
       this._metaSavedSeq = this.seq;
@@ -83,7 +73,7 @@ class Events {
     return max;
   }
 
-  // 条 13)：文件实际最大 seq —— 只读尾部（append-only + seq 单调 => 末行即最大）。
+  // 文件实际最大 seq —— 只读尾部（append-only + seq 单调，末行即最大）。
   // 末行不可解析（截断起点落在行中 / 崩溃残留半行）时从后往前找首条完整记录；
   // 整段都解析不出（文件为空/刚轮转走）才回退 _maxSeq() 全扫描，含 .1 防与旧代重号。
   _fileMaxSeq() {
@@ -121,8 +111,7 @@ class Events {
       this._est = real;
       if (real < this.maxBytes) return;
       const backup = this.file + '.1';
-      // POSIX rename 到已存在路径是原子覆盖，不要 unlink：旧实现 unlink+rename 两步
-      // 若在中间崩溃会丢一代事件。
+      // rename 到已存在路径即原子覆盖，勿先 unlink：unlink+rename 两步间崩溃会丢一代事件。
       fs.renameSync(this.file, backup);
       this.rotatedSeq = this.seq;
       this._est = 0;
@@ -161,11 +150,11 @@ class Events {
       this._est = null; // 写盘结果未知：账本作废，下一事件重新 stat
       console.error('[events] append failed:', e.message);
     }
-    // 条 12)：meta 节流落盘；写盘失败时立即落一次（保住已成功的 seq 事实）。
+    // meta 节流落盘；写盘失败时立即落一次（保住已成功的 seq 事实）。
     if (this.seq - this._metaSavedSeq >= META_SAVE_EVERY || !wrote) this._saveMeta();
     // 写盘失败可观测，供 EventHub 水位不推进、下轮补齐（RC5.2 契约）；不可恒吞错误致水位虚进。
     this._lastAppendOk = wrote;
-    // 守卫事件零延迟可见：已接 EventHub 则同步推入聚合流（同进程单写，无多写者）。
+    // 已接 EventHub 则同步推入聚合流（同进程单写，无多写者）。
     if (this._hub && typeof this._hub.pushGuard === 'function') {
       try { this._hub.pushGuard(out); } catch (e2) { console.error('[events] hub push failed:', e2 && e2.message); }
     }

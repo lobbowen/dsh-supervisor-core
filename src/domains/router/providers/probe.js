@@ -1,7 +1,7 @@
 'use strict';
 
-// 实例运行时探活与进程治理（B10/B11）：IO 模块，覆盖 spawn、健康探活、生命周期监控、npm 包
-// 缓存、实例配额探测。一律经 provider 显式入参，不持有实例/域状态。
+// 实例运行时探活与进程治理（IO 模块）：spawn、健康探活、生命周期监控、npm 包缓存、实例配额探测。
+// 一律经 provider 显式入参，不持有实例/域状态。
 // 进程载体（拉起/归属判定/终止）唯一走 platform/os/carrier（PROXY-ISOLATION-STANDARD L1）。
 
 const path = require('node:path');
@@ -15,11 +15,9 @@ const { getQuotaStrategy } = require('./quota-strategies');
 const { quotaOverallStatus } = require('./policies/quota');
 const { cachedPkgBin, ensurePkgCached } = require('./pkg-cache');
 const stateRoot = require('../../../platform/service/state-root');
-// 实例日志落盘统一走平台层轮转写入器（0600 + 超阈值改名 .1，保留一代）。
 const { Rotator } = require('../../../platform/service/log/log');
 const INSTANCE_LOG_MAX_BYTES = 2 * 1024 * 1024;
 
-/** 启动实例（底层治理）：认领/弃用幸存者 -> 端口分配/等待 -> 命令 -> env -> spawn -> 日志。 */
 async function spawnInstance(provider, inst) {
   const app = provider.app;
   if (!app) return { ok: false, error: '未知反代应用' };
@@ -37,7 +35,7 @@ async function spawnInstance(provider, inst) {
       if (pkgMarker && cmd.indexOf(pkgMarker) >= 0) {
         if (provider.logger && provider.logger.warn) provider.logger.warn('[proxy-instance] 重启幸存者弃用重拉 pid=' + boundPid + ' port=' + inst.port + '（stdio 归属旧代，禁 adopt）');
         if (provider.events) provider.events.append('proxy_instance_survivor_reclaimed', { app: provider.proxyAppId, port: inst.port, pid: boundPid, reason: 'restart-survivor-stdio-unsafe' });
-        // 幸存者来路不明（旧代/手动）：外来 pid 一律不组信号，Windows 走 taskkill 整树（B13 纪律）。
+        // 幸存者来路不明（旧代/手动）：外来 pid 一律不组信号，Windows 走 taskkill 整树。
         try { procOS.killTree(boundPid, 'SIGKILL'); } catch {}
         const dl = Date.now() + 3000;
         while (Date.now() < dl && (await ports.isTaken(inst.port, 'proxy:' + (inst.keyId || 'unknown')).catch(() => false))) {
@@ -82,10 +80,8 @@ async function spawnInstance(provider, inst) {
     }
   }
   if (launch.registry) { envVars.npm_config_registry = launch.registry; envVars.NPM_CONFIG_REGISTRY = launch.registry; }
-  // 实例 stdout/stderr 全量落盘 + 关键词行落事件（stateDir 由 Provider 注入，D7）
-  // 落盘统一走平台层 Rotator —— 原先裸
-  //   fs.createWriteStream({flags:'a'}) 是全仓唯一的无轮转日志（反代 stdout 可无界增长），
-  //   且默认 0644（Rotator 首建即 0600：实例日志含启动令牌 URL/环境变量派生行）。
+  // 实例 stdout/stderr 全量落盘 + 关键词行落事件（stateDir 由 Provider 注入）。
+  // 落盘必须走 Rotator：首建即 0600（实例日志含启动令牌 URL/环境变量派生行），且超阈值轮转防无界增长。
   const logFilter = /error|streaming|idle|timeout|ECONN|abort|socket|finish|truncat/i;
   const baseDir = provider.stateDir || stateRoot.supervisorDir();
   let logWriter = null;
@@ -103,8 +99,8 @@ async function spawnInstance(provider, inst) {
       if (provider.logger && provider.logger.warn) provider.logger.warn('[proxy-instance] ' + src + ': ' + l.slice(0, 400));
     }
   };
-  // 身份锚点（隔离标准 L2 声明的衍生物）：包名 + '--port' 须同时出现在载体进程与其
-  //   子孙监听者的 cmdline，与 run.pid 配合判归属——防 PID 复用误杀，三平台同语义。
+  // 身份锚点（隔离标准 L2 的衍生物）：包名 + '--port' 须同时出现在载体进程与其
+  //   子孙监听者的 cmdline，配合 run.pid 判归属——防 PID 复用误杀，三平台同语义。
   const anchors = [];
   if (app.pkg) anchors.push(String(app.pkg));
   anchors.push('--port ' + port);
@@ -142,8 +138,8 @@ async function spawnInstance(provider, inst) {
     if (provider.events) provider.events.append('proxy_instance_stopped', { app: provider.proxyAppId, port, code });
   });
   child.on('error', (err) => {
-    // error 事件=进程从未成功存活（ENOENT 等 spawn 失败派生）：pid 已无，态必须回 COLD——
-    // DEAD 的定义是「进程在但不健康」（model.js），写 DEAD+pid=null 是词表自相矛盾的化石。
+    // error = 进程从未成功存活（ENOENT 等 spawn 失败派生）：pid 已无，态必须回 COLD
+    //   （DEAD 的定义是「进程在但不健康」，见 model.js）。
     if (inst.pid === child.pid) { inst.pid = null; inst.healthy = false; inst.status = INSTANCE_STATES.COLD; }
     if (provider.events) provider.events.append('proxy_instance_failed', { app: provider.proxyAppId, port, error: err.message });
   });
@@ -152,7 +148,7 @@ async function spawnInstance(provider, inst) {
   return { ok: true, port, pid: child.pid };
 }
 
-/** 实例探活：纯 HTTP 探测并回报 inst.healthy（不持有任何计数）。 */
+/** 实例探活：纯 HTTP 探测并回报 inst.healthy；本函数不持有任何失败计数。 */
 async function healthInstance(provider, inst) {
   if (!inst || !inst.port) return;
   const app = provider.app;
@@ -172,13 +168,13 @@ async function healthInstance(provider, inst) {
   }
 }
 
-/** 实例生命周期监控：进程存活 + 端口监听 + HTTP 卡死检测（连续 >=3 次 kill 重拉）。 */
+/** 实例生命周期监控：进程存活 + 端口归属 + HTTP 卡死检测（连续失败 kill 重拉）。 */
 async function monitorLifecycle(provider) {
   if (provider._stopping || provider.activated !== true) return;
   for (const inst of (provider.instances || [])) {
     if (!inst || !inst.pid || !inst.port) continue;
     // DEAD 只是「进程在但不健康」：不得在此跳过，否则 HTTP 探活与 _monitorFails 无法跨轮累积，
-    // 连续 3 次 kill 重拉的分支恒不可达。继续探活，直至命中重拉或进程消亡。
+    // 连续 3 次 kill 重拉的分支恒不可达。
     let alive = false;
     try { alive = pidlook.isAlive ? pidlook.isAlive(inst.pid) : true; } catch {}
     if (!alive) {
@@ -264,7 +260,7 @@ function probeAfterResponseFreeze(provider, acc) {
   }, 300);
 }
 
-/** 等待全部 SIGTERM 在途子进程真正退出（优雅退出专用，根治停服孤儿化）。 */
+/** 等待全部 SIGTERM 在途子进程真正退出（优雅退出专用，防停服遗留孤儿进程）。 */
 async function waitAllStopped(provider, timeoutMs) {
   const dl = Date.now() + (timeoutMs || 3000);
   const sweep = () => {

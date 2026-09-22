@@ -18,9 +18,9 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 async function applyPluginChange(ctx, target, kind, onLog) {
   const log = (m) => { try { if (typeof onLog === 'function') onLog(m); } catch {} };
   if (!target) return false;
-  // 本路径注入的是**裸 InstanceManager**，INV-S1 退出门只在
-  //   外层适配器（instance-adapter）—— 退出中 in-flight 的卸载/更新作业仍可停起实例
-  //   （9-18 同类新路径）。域侧自查注入谓词（E-3 单源），停止即视为未生效（下次启动自然生效）。
+  // 本域注入的是裸 InstanceManager，INV-S1 退出门只在外层适配器（control/instance-adapter.js），
+  //   故退出中 in-flight 的卸载/更新作业仍可直接停起实例。这里自查注入谓词（E-3 单源）：
+  //   退出中即跳过重启并视为未生效（下次启动自然生效）。
   try {
     if (typeof ctx.exitIntended === 'function' && ctx.exitIntended()) {
       log('会话退出中：跳过插件变更生效重启（将在下次启动时生效）');

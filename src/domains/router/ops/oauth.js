@@ -2,8 +2,8 @@
 
 const fs = require('node:fs');
 
-// Command Code OAuth 一键登录（IO + 状态）。状态收敛于本工厂闭包（不再散在 RouterService 的
-// this 上）；端口登记沿用 platform/service/ports（分配即登记 / 配对释放）。
+// Command Code OAuth 一键登录（IO + 状态）。状态收敛于本工厂闭包；端口登记沿用
+// platform/service/ports（分配即登记 / 配对释放）。
 
 const crypto = require('node:crypto');
 const { createServer } = require('node:http');

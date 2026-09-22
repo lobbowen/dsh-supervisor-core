@@ -1,8 +1,8 @@
 'use strict';
 
 // 原生 DeepSeek Harness（原生 DSH）生命周期门面——组合 + 委托，无业务实现。
-// 公共导出面（NativeManager）：消费方 src/supervisor.js、api/domains/native.js、
-//   app/assembly/compose.js、app/settings/versions.js，以及 native-* / precheck / upgrade 等测试。
+// 公共导出面 NativeManager 的消费方：supervisor、api/domains/native、assembly/compose、
+//   app/settings/versions 等门面装配入口。
 
 const path = require('node:path');
 const os = require('node:os');
@@ -25,7 +25,7 @@ class NativeManager {
     this.npmRoot = opts.npmRoot || null;    // npm 全局根（测试可注入隔离目录）
     // npm 启动形态的注入口（构造期依赖注入，生产留空 = 走运行期契约/平台解析）。
     // 解构 require 是值绑定、patch 无效，故做成构造期可注入，结构上保证测试不触碰真实 npm。
-    // 注入即接管整对：给了 _npmBin 就不继承契约前缀参数（否则假解释器会去跑真 npm-cli.js）。
+    // 注入即接管整对（见 npm.npmLaunch 说明）。
     this._npmBin = opts.npmBin || null;
     this._npmBinArgs = opts.npmBinArgs || null; // 前置参数（以 node 执行包内 JS 的形态）
     this.hooks = opts.hooks || {};          // 守卫生命周期钩子（升级停/起 DSH 时回调）

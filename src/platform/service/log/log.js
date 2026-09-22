@@ -9,14 +9,12 @@ const path = require('node:path');
 
 const LEVELS = { debug: 10, info: 20, warn: 30, error: 40 };
 
-/** 条 1：账本回读真实 stat 的行间隔（防多写者漂移长期累积）。 */
+/** 账本回读真实 stat 的行间隔（防多写者漂移长期累积）。 */
 const RESYNC_WRITES = 64;
 
-// 轮转写入器：逐行追加，超限轮转（保留一代 .1），绝不无限增长。
-// **尺寸记账**取代「每行 statSync」。旧实现每条日志一次
-//   statSync —— DSH 输出高峰期是纯开销。现首写取一次真值、其后按已写字节累加；
-//   每 RESYNC_WRITES 行回读真实 stat（同一路径可能被另一进程写，估算会漂移），
-//   写盘/轮转异常时也立刻作废账本，下一行重新 stat —— 宁可多 stat，不可长期错账。
+// 轮转写入器：逐行追加，超 maxBytes 改名 .1 保留一代，绝不无限增长。
+// 尺寸记账取代「每行 statSync」：首写取一次真值、其后按已写字节累加；每 RESYNC_WRITES 行回读
+// 真实 stat（同一路径可能被另一进程写，估算会漂移）；写盘/轮转异常即作废账本重新 stat。
 class Rotator {
   constructor(file, maxBytes) {
     this.file = file;
@@ -65,7 +63,7 @@ class Rotator {
     } catch { return 0; }
   }
 
-  // 读取日志尾部至多 n 行（空行省略；供测试/调试读已落盘内容）。文件不存在返回空数组。
+  // 读取日志尾部至多 n 行（空行省略；文件不存在返回空数组）。
   tail(n) {
     if (!this.file) return [];
     try {

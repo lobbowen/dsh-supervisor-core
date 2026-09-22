@@ -18,11 +18,11 @@ async function checkUpdates(ctx, force) {
       const c = ctx._updCache[p.name];
       if (c && !force && (Date.now() - c.at) < ctx._updTTL) latest = c.latest;
       else {
-        // 插件均为第三方 npm 包：latest 优先，latest 缺失/非法才回落 versions 最高
-        // （取 registry 全量最高会把他人杂 tag 当候选，不可用）。
+        // 插件均为第三方 npm 包：选版单源在 dist.fetchNpmLatest（latest 优先，缺失/非法才回落 versions
+        // 最高；取 registry 全量最高会把他人杂 tag 当候选）。
         if (st === 'npm' && ctx.dist) { try { latest = await ctx.dist.fetchNpmLatest(p.name); } catch {} }
-        // 只在**取到**时写缓存：失败（latest=null）若写进去，等于把「registry 不可达」负缓存
-        // _updTTL 之久，此后 checkUpdates 一律显示「无更新」且不再重试（backlog #13）。
+        // 只在取到时写缓存：失败（latest=null）若写进去，等于把「registry 不可达」负缓存 _updTTL 之久，
+        // 此后 checkUpdates 一律显示「无更新」且不再重试。
         if (latest !== null) ctx._updCache[p.name] = { latest, at: Date.now() };
       }
       meta.set(p.name, { specType: st, latest });
@@ -58,7 +58,7 @@ async function update(ctx, name, targetStr) {
   if (c && (Date.now() - c.at) < ctx._updTTL) latest = c.latest;
   else {
     if (ctx.dist) { try { latest = await ctx.dist.fetchNpmLatest(name); } catch {} }
-    // 与 checkUpdates 同一负缓存口径（同文件第二处写入点，同类缺陷一并收口）：取失败不写缓存。
+    // 与 checkUpdates 同一负缓存口径（本函数第二处写入点）：取不到不写缓存。
     if (latest !== null) ctx._updCache[name] = { latest, at: Date.now() };
   }
   if (!latest) return { ok: false, error: '无法获取 ' + name + ' 的最新版本（registry 不可达），请检查网络后重试' };

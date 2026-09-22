@@ -6,16 +6,10 @@
 const ex = require('../../platform/util/exec');
 const runtimeContract = require('../../platform/contract/runtime');
 
-/**
- * npm 启动形态 `{ program, args }`（成对取值，绝不拆用）。
- *
- * 为什么成对：契约可能是「node + 包内 npm-cli.js」，只取 program 会把它降级成裸跑 node；
- *   反之只取 args 会把参数塞给别的解释器。旧实现这里 program 走 ambient PATH、args 恒空，
- *   于是 GUI 环境（PATH 里没有 nvm/fnm 的 npm）下「装 DSH / 卸载 / 探测 root」全失败，
- *   而同一时刻分发层用的是契约解析结果 —— 两个答案、一个事实。
- * 为什么注入即接管整对：测试注入 fake npm 时通常是「node 跑一段假脚本」，
- *   此时继承契约的前缀参数会让假解释器去跑真 npm-cli.js（真实副作用）。
- */
+/** npm 启动形态 `{ program, args }`：必须成对取值、同源一次解析，绝不拆用。
+ *  契约可能是「node + 包内 npm-cli.js」——只取 program 会降级成裸跑 node，只取 args 会把参数塞给别的解释器；
+ *  program 走 ambient PATH 在 GUI 环境（PATH 里没有 nvm/fnm 的 npm）下安装/卸载/探测 root 全失败。
+ *  注入即接管整对：测试注入 fake npm 时不继承契约前缀参数，否则假解释器会去跑真 npm-cli.js（真实副作用）。 */
 function npmLaunch(host) {
   const h = host || {};
   if (h._npmBin) {
@@ -43,8 +37,8 @@ function checkEnvironment(host) {
   return { ok: errors.length === 0, errors, npmRoot: resolveNpmRoot(host) };
 }
 
-/** 最新版本（统一分发通道；packageName 是第三方包语义——latest 优先，缺失/非法才回落
- *  versions 最高。契约 第三方段落，条 7 改判，勿再写「全量最高」。 */
+/** 最新版本（统一分发通道）。第三方包语义：latest 通道优先，缺失/非法才回落 versions
+ *  最高——由 dist.fetchLatestVersion 保证，调用侧勿自行取 versions 最高。 */
 async function latestVersion(host) {
   if (!host.dist || !host.config.packageName) throw new Error('分发服务未初始化，无法查询最新版本');
   const channel = host.config.releaseChannel || 'npm';

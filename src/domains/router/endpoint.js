@@ -2,11 +2,9 @@
 
 const https = require('node:https');
 
-// Q8 激活与端点启停 + Q9 请求分派与 HTTP 装配。域内唯一 require('node:http') 并 createServer
+// 供应商激活与端点启停 + 请求分派与 HTTP 装配。域内唯一 require('node:http') 并 createServer
 // 的地方；转发经注入的 forward.proxyFor，实例保障经注入的 scheduler.ensureProviderInstances，
-// 本文件不 require 实现（手法 B）。
-//
-// 契约导出：createEndpoint(deps)；deps={ state, logger, events, ports, forward, getProvider, save, scheduler }。
+// 本文件不 require 实现。
 
 const http = require('node:http');
 const { readBody } = require('./handlers/parse');
@@ -90,7 +88,7 @@ function createEndpoint(deps) {
         try { p.apiPort = await ports.allocate('providerApi', 'providerApi:' + id); } catch (e) { p.apiPort = null; }
         if (p.apiPort) { try { if (!ports.isRegistered(p.apiPort)) ports.registerUser(p.apiPort, 'providerApi:' + id); } catch {} }
       }
-      // 工业标准：池满必须显式失败——绝不静默「激活了但无端点」。
+      // 端口池满必须显式失败——绝不静默「激活了但无端点」。
       if (!p.apiPort) {
         p.activated = false;
         const cap = (ports.capacity && ports.capacity().providerApi) || null;
@@ -120,8 +118,8 @@ function createEndpoint(deps) {
     return { ok: true, id, activated: false };
   }
 
-  /** 守卫/路由器启动恢复：已激活供应商端点 + 反代主实例常驻（幂等）。
-   *  兼容迁移：旧激活供应商可能尚无 apiPort，启动时补分配（此后持久化，重启复用）。 */
+  /** 守卫/路由器启动恢复：已激活供应商端点 + 反代实例常驻对账（幂等）。
+   *  旧数据可能无 apiPort：补分配后持久化，此后重启复用。 */
   async function startActivatedProviders() {
     for (const p of state.providers || []) {
       if (p.activated !== true) continue;

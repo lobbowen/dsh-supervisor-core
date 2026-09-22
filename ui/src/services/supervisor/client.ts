@@ -1,15 +1,6 @@
-/**
- * ============================================================================
- * supervisor HTTP API 客户端（同源 fetch，生产由 dsh-supervisor:3100 托管）
- * ============================================================================
- * - 唯一允许直接 fetch 的模块（页面通过 services 层间接使用）
- * - GET 纯读；写操作方法名后缀 Post/Action 显式标注
- * - 错误统一 throw Error（含后端 error/message）
- * -  但 http() 只看 HTTP 状态码：2xx 里的 `{ ok: false }` 属于**数据**（如探活端点的
- *   「探测不通」），不当作异常抛出。写操作的「假成功」由 failureFromResult 统一判据（UI 条 5）。
- * - 生产同源（/…），开发跨端口用 vite proxy 转发（去掉 Origin 走回环）
- * ============================================================================
- */
+/** supervisor HTTP API 客户端（同源 fetch，生产由 dsh-supervisor 托管）：唯一允许直接 fetch 的模块，页面经 services 层间接使用，GET 纯读；
+ *  http() 只看 HTTP 状态码，2xx 里的 { ok:false } 视为数据（如探活不通）不抛，写操作假成功由 failureFromResult 统一判据（UI 条 5）；
+ *  生产同源（/…），开发跨端口用 vite proxy 转发（去掉 Origin 走回环）。 */
 import type {
   AccessKeyResult, AccessKeyStatus, AutostartStatus, CloseActionStatus, EnvStatus, EventsPage, FrpStatus, GenericOk,
   GuardVersion, InstancesResponse, InstalledPluginsResponse, LanAccessResponse,
@@ -19,20 +10,16 @@ import type {
   ShellStatus, ShellUpdateCheck,
 } from "./types";
 
-// API 根：面板始终由守卫内核 HTTP 同源托管
-// （壳 go_panel 按 config.apiPort 动态给 URL，页面与守卫 API 同源直连，无硬编码端口/无透传）。
+// API 根：面板由守卫内核同源托管（壳按 config.apiPort 动态给 URL，无硬编码端口/无透传）。
 const BASE = "";
 
-/** 默认请求超时（R2 修复）：此前全部 fetch 无超时/无取消，后端挂起时按钮永久 busy。
- *  轮询 read 与本地写操作均应在该窗口内完成；慢网下由轮询层 in-flight 守卫兜底。 */
+/** 默认请求超时：轮询 read 与本地写操作均应在该窗口内完成；慢网下由轮询层 in-flight 守卫兜底。 */
 const DEFAULT_TIMEOUT_MS = 15_000;
 
-// -- 访问密钥------------------------------------------
-// 后端 api/transport/server.js 对**非回环**请求 fail-closed：无匹配 key 一律 401
-// （连静态页也被拦），此前 UI 从不携带 key -> 局域网面板设置密钥后整页瘫痪。
-// key 仅存本机 localStorage（绝不入仓库/日志）。bootstrap 入口：首次以
-// http://<lan>:<port>/?access_key=KEY 访问，模块加载即把 key 从 URL 搬入存储并
-// replaceState 抹掉参数（不留历史/不刷日志），此后同源请求统一带 Bearer 头。
+// -- 访问密钥 ------------------------------------------
+// 后端 api/transport/server.js 对非回环请求 fail-closed：无匹配 key 一律 401（连静态页也被拦）。
+// key 仅存本机 localStorage（绝不入仓库/日志）。bootstrap：首次以 http://<lan>:<port>/?access_key=KEY
+// 访问时，模块加载即把 key 从 URL 搬入存储并 replaceState 抹掉参数（不留历史），此后同源请求统一带 Bearer 头。
 const ACCESS_KEY_STORAGE = "dsh.apiAccessKey";
 
 function readStoredAccessKey(): string {
@@ -72,7 +59,7 @@ function withTimeout(ms: number): { signal: AbortSignal; clear: () => void } {
 /** 统一错误提取：后端约定 {error|message}，缺省 HTTP 状态 */
 async function http<T>(method: string, path: string, body?: unknown, opts?: HttpOptions): Promise<T> {
   const timeoutMs = opts?.timeoutMs ?? DEFAULT_TIMEOUT_MS;
-  // 同源/壳内直连 fetch（守卫托管同源或壳 asset 源走 CORS 白名单）；统一浏览器 fetch 路径
+  // 同源/壳内直连 fetch（守卫托管同源，或壳 asset 源走 CORS 白名单）；统一浏览器 fetch 路径
   const { signal, clear } = withTimeout(timeoutMs);
   const headers: Record<string, string> = {};
   // 本机存过访问密钥就统一带 Bearer（回环请求后端本就豁免，多带无害且换 IP 访问零配置）。
@@ -104,7 +91,7 @@ async function http<T>(method: string, path: string, body?: unknown, opts?: Http
         ? msg + "（访问密钥缺失或已更新：请用带 ?access_key= 的链接重新进入，或在本机 127.0.0.1 面板重新保存密钥）"
         : msg,
     ) as Error & { status?: number };
-    err.status = res.status; // 轮询层据此区分「401 鉴权失败」与「真离线」（B8）
+    err.status = res.status; // 轮询层据此区分「401 鉴权失败」与「真离线」
     throw err;
   }
   return data as T;
@@ -112,13 +99,10 @@ async function http<T>(method: string, path: string, body?: unknown, opts?: Http
 const get = <T>(p: string, opts?: HttpOptions) => http<T>("GET", p, undefined, opts);
 const post = <T>(p: string, body?: unknown, opts?: HttpOptions) => http<T>("POST", p, body ?? {}, opts);
 
-/** 从 **2xx 响应体**里提取失败原因。
- *
- *  后端有多个写端点形如 `send(200, { ok: true, ...r })`；当 r 自带 `ok: false`
- *  （如 /dist/registry/probe 的非法 origin）展开会把 ok 覆盖成 false，但 HTTP 仍是 200。
- *  而 http() 只在 `!res.ok`（状态码）时抛错 —— 于是「被拒的操作」在界面上表现为成功 toast。
- *  这里给出单一判据，供共享动作 hook（useSupervisorAction.run）与页面复用。
- *  返回 null = 不是这种失败形态（包括 result 为 null/非对象/无 ok 键）。 */
+/** 从 2xx 响应体里提取失败原因。
+ *  后端多个写端点形如 send(200, { ok: true, ...r })，当 r 自带 ok:false（如 /dist/registry/probe 非法 origin）
+ *  会把 ok 覆盖成 false 但 HTTP 仍 200，而 http() 只看状态码，故被拒操作需此处判据（供 useSupervisorAction.run 消费）。
+ *  返回 null = 不是这种失败形态（result 为 null/非对象/无 ok 键）。 */
 export function failureFromResult(result: unknown): string | null {
   if (!result || typeof result !== "object") return null;
   const r = result as { ok?: unknown; error?: unknown; message?: unknown };
@@ -144,7 +128,6 @@ async function getText(path: string): Promise<string> {
   } finally { clear(); }
 }
 
-/** 查询参数拼接 */
 function qs(base: string, params: Record<string, string | number | undefined>) {
   const sp = new URLSearchParams();
   for (const [k, v] of Object.entries(params)) if (v !== undefined && v !== "") sp.set(k, String(v));
@@ -155,8 +138,8 @@ function qs(base: string, params: Record<string, string | number | undefined>) {
 export const supervisorApi = {
   // -- 运行态 --
   status: () => get<SupervisorStatus>("/status"),
-  // 注：/session/status 是**壳**（Rust get_session_state）与外部脚本的读取口；
-  // UI 不发额外请求——会话态已随 /status（2s 轮询）以 sessionState 字段投影返回（避免双路径）。
+  // 注：/session/status 是壳（Rust get_session_state）与外部脚本的读取口；UI 不发额外请求，
+  // 会话态已随 /status（2s 轮询）以 sessionState 字段投影返回（避免双路径）。
   events: (after = 0, limit = 60) => get<EventsPage>(qs("/events", { after, limit })),
   instances: () => get<InstancesResponse>("/instances"),
   lanAccess: () => get<LanAccessResponse>("/lan-access"),
@@ -165,20 +148,18 @@ export const supervisorApi = {
   providers: () => get<ProvidersResponse>("/router/providers"),
   tasks: () => get<TasksResponse>("/tasks"),
   ports: () => get<PortsResponse>("/ports"),
-  // -- 统一生命周期（归一化：模块启停/状态单一控制路径 /lifecycle/{id}/…，
-  //    取代分散的 /start|/stop|/router/start|/router/stop —— 后端语义等价且 daemon 监督感知）--
+  // -- 统一生命周期：模块启停/状态走单一控制路径 /lifecycle/{id}/…，后端语义等价且 daemon 监督感知 --
   lifecycleStart: (id: LifecycleModuleId) => post<GenericOk & { ok?: boolean }>("/lifecycle/" + id + "/start"),
   lifecycleStop: (id: LifecycleModuleId) => post<GenericOk & { ok?: boolean }>("/lifecycle/" + id + "/stop"),
   // 注：GET /lifecycle/{id} 保留为后端 REST 面（单模块查询，供脚本/curl）；UI 未使用故不设 client 方法。
 
   // -- native DSH --
-  // 后端返回 { ok, ...versionInfo() }（含 updateAvailable/latest/installed）；此前误标 GenericOk -> 契约漏字段。
   nativeCheckUpdate: () => post<GenericOk & { updateAvailable?: boolean; latest?: string; installed?: string | null }>("/native/check-update"),
   nativeInstall: () => post<GenericOk>("/native/install"),
   nativeUpgrade: (version?: string) => post<GenericOk>("/native/upgrade", version ? { version } : {}),
   nativeUninstall: () => post<GenericOk>("/native/uninstall"),
-  // 原生主干(main)设置（概念清分：main 设置不走 /instances 沙箱域，统一 /native/settings）
-  // 仅 guardian；远程控制意图（模式/令牌）唯一入口在 remote* 系列（main 与沙箱同口）。
+  // 原生主干 main 设置走 /native/settings（非 /instances 沙箱域），仅 guardian；
+  // 远程控制意图（模式/令牌）唯一入口在 remote* 系列（main 与沙箱同口）。
   nativeSettings: (patch: { guardian?: boolean }) =>
     post<GenericOk & { main?: SupervisorInstance }>("/native/settings", patch),
 
@@ -202,8 +183,7 @@ export const supervisorApi = {
   providerDeactivate: (id: string) => post<GenericOk>("/router/providers/deactivate", { id }),
   providerRefresh: (id: string) => post<GenericOk>("/router/providers/refresh", { id }),
   providerKeysSet: (id: string, p: { removeMasked?: string[]; add?: string[] }) =>
-    // 新增 discarded/discardedKeys —— 后端如实回报被丢弃的 Key 及原因，
-    //   UI 据此提示「N 个里 M 个失败」，不再一律报成功。
+    // 后端回报被丢弃的 Key 及原因（discarded/discardedKeys），UI 据此提示部分失败，而非一律报成功。
     post<GenericOk & {
       added?: number; removed?: number;
       discarded?: number; discardedKeys?: { key: string; error: string }[];
@@ -219,7 +199,7 @@ export const supervisorApi = {
   proxyLoginWait: (timeoutMs: number) => post<GenericOk & { apiKey?: string }>("/router/proxy/login/wait", { timeoutMs }, { timeoutMs: Math.max(LONG_TIMEOUT_MS, timeoutMs + 30_000) }),
   proxyUpdateCheck: () => post<GenericOk>("/router/proxy/update/check"),
   proxyUpdateApply: (appId: string) => post<GenericOk>("/router/proxy/update/apply", { appId }),
-  // 反代更新进度（后端注释承诺的「job 模型，前端轮询消除黑盒」）：多实例依次更新的进度可视化
+  // 反代更新进度：job 模型，前端轮询消除黑盒；steps 逐实例，支持多实例依次更新的进度可视化。
   proxyUpdateStatus: (appId: string) => get<ProxyUpdateStatus>(qs("/router/proxy/update/status", { appId })),
 
   // -- plugins --
@@ -239,8 +219,7 @@ export const supervisorApi = {
   remoteSetMode: (id: string, mode: RemoteMode) => post<GenericOk>("/remote/set-mode", { id, mode }),
   /** 访问令牌唯一写入口（空串=清除）。 */
   remoteSetToken: (id: string, token: string) => post<GenericOk>("/remote/set-token", { id, token }),
-  // frps 连接配置：patch 语义——authToken 留空时必须整体缺省该字段（提交 '' 会被后端视为清除）。
-  // 无总闸字段：frpc 常驻与否 = 是否存在 wan 模式实例。
+  // frps 连接配置：authToken 留空时必须整体缺省该字段（提交 '' 会被后端清除现值）。
   remoteFrpServer: (s: { serverAddr: string; serverPort: number; authToken?: string }) =>
     post<GenericOk>("/remote/frp-server", s),
   remoteFrpInstall: () => post<GenericOk>("/remote/frp-install"),
@@ -258,8 +237,7 @@ export const supervisorApi = {
   registrySet: (p: { mode: "auto" | "manual"; origins: string[]; manualOrigin?: string }) =>
     post<GenericOk & RegistryInfo>("/dist/registry/set", p),
   registryRefresh: () => post<GenericOk & RegistryInfo>("/dist/registry/refresh"),
-  /** 同源单源探活（服务端探测，不受页面 CSP connect-src 'self' 约束）。
-   *原先由浏览器直连用户填的镜像 -> 被 CSP 拦截 -> 恒报「探测失败」。 */
+  /** 同源单源探活：由服务端探测，不受页面 CSP connect-src 'self' 约束（浏览器直连用户填的镜像会被拦截）。 */
   registryProbe: (origin: string) => post<GenericOk & { origin: string; ok: boolean; latencyMs: number | null; probe?: string }>("/dist/registry/probe", { origin }),
   /** 内核更新状态（只读）：安装/重启由桌面壳执行（单写入者契约，见 kernelUpdateBridge）。 */
   selfUpdateStatus: () => get<SelfUpdateStatus>("/self-update/status"),
@@ -270,7 +248,7 @@ export const supervisorApi = {
   shellCheckUpdate: () => post<ShellUpdateCheck>("/shell/check-update"),
   /** 重启桌面壳：壳的自更新发生在启动时（门 0），故「应用壳更新」= 重启壳。 */
   shellRestart: () => post<GenericOk>("/shell/restart"),
-  // 更新日志（A4 断点修复）：/changelog 返回 text/plain（DSH 版本信息 + 升级指引 + Releases 链接）。
+  // /changelog 返回 text/plain（DSH 版本信息 + 升级指引 + Releases 链接）。
   dshChangelog: () => getText("/changelog"),
   // 管家自身更新日志：本地 CHANGELOG.md 原文。
   guardChangelog: () => getText("/guard/changelog"),

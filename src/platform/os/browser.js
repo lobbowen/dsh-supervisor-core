@@ -1,29 +1,19 @@
 'use strict';
 
-// 平台化浏览器打开：三端同一 open(url) 接口；仅接受本机回环 URL（调用方已校验），失败返回 false。
-// launchIsolated 用**系统默认浏览器**做隔离打开：先向操作系统解析默认浏览器
-// （win32 注册表 Clients\StartMenuInternet / darwin LaunchServices / linux xdg-settings+desktop Exec），
-// 再按解析结果的引擎族展开隔离参数（chromium 无痕+随机 profile / firefox 私有窗口+专用 profile）。
-// 浏览器选择权在用户（默认浏览器），不在产品 —— 不再有「硬编码候选内核」链。
-// 无隔离能力的引擎（Safari 等）与非隔离兜底路径一样如实标 isolated:false，
-// 由调用方的登录超时/重新发起兜底；不监听其退出（open/xdg-open 的退出不等于浏览器退出）。
-// win32 不借道 `cmd /c start` —— URL 会被 cmd.exe 二次解析（& ^ " ( ) 均为活性字符），
-//   直启解析出的可执行文件或 explorer.exe（argv 数组不经 shell）。
-//   入口统一过 isSafeHttpUrl：仅 http(s) 绝对 URL 可进 argv。
+// 三端同一 open(url) 接口。隔离打开用系统默认浏览器：先向操作系统解析默认浏览器（win32 注册表 Clients\StartMenuInternet /
+//   darwin LaunchServices / linux xdg-settings + desktop Exec），再按解析结果的引擎族展开隔离参数（chromium 无痕 + 随机 profile / firefox 私有窗口 + 专用 profile）。
+// 浏览器选择权在用户不在产品；无隔离能力的引擎如实标 isolated:false，降级由调用方的登录超时兜底。
 
 const fs = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
-// 异步 spawn 统一封装（固定 windowsHide:true）；浏览器打开完全脱离本进程，
-// 用 detachedIgnored（detached + stdio ignore）。
 const spawnOS = require('./spawn');
-// spawn 前的可用性预检依赖 PATH 解析与执行位判定。
 const { resolveExecutable, isExecutableFile } = require('./exec-path');
-// 默认浏览器解析要跑一次性只读查询（reg query / xdg-settings / osascript），
-// 统一走有界 exec（timeout/SIGKILL/windowsHide），失败返回 null 即降级。
+// 默认浏览器解析是一次性只读查询（reg query / xdg-settings / osascript）：走有界 exec，失败即降级。
 const exec = require('../util/exec');
 
-/** 仅接受 http/https 绝对 URL（A4：进 argv 前的唯一闸门；解析失败即拒）。 */
+/** 进 argv 前的唯一闸门：只校验协议为 http/https 的绝对 URL，不校验主机
+ *  （调用方两种都传：open 传本机回环实例地址，launchIsolated 传外部 OAuth 授权页）。 */
 function isSafeHttpUrl(url) {
   try {
     const u = new URL(String(url));
@@ -31,11 +21,10 @@ function isSafeHttpUrl(url) {
   } catch { return false; }
 }
 
-/** 平台到打开 URL 的命令（纯函数，可穷举；不 spawn）。
- *  win32 用 explorer.exe 直启（ShellExecute 走默认浏览器），**不再有 cmd /c start 的
- *  二次解析注入面**；空标题陷阱随 cmd 一并消失。
- *  未知平台有意退化为 xdg-open（best-effort 且失败静默）：这里不宣称任何能力，只尽力尝试；
- *  与 autostart 不同 —— 那里要向用户宣称服务管理器 kind，故未知平台必须显式 none。 */
+/** 平台到打开 URL 的命令（纯函数，不 spawn）。win32 用 explorer.exe 直启（ShellExecute 走默认浏览器），
+ *  绝不走 `cmd /c start`：argv 不经 shell，URL 不会被 cmd.exe 二次解析（& ^ " ( ) 均为活性字符）。
+ *  未知平台有意退化为 xdg-open：这里不宣称任何能力，只尽力尝试；autostart 相反 —— 它要向用户
+ *  宣称服务管理器 kind，故未知平台必须显式 none。 */
 function openCommand(platform, url) {
   const pl = platform || process.platform;
   if (pl === 'darwin') return { cmd: 'open', args: [url] };
@@ -64,11 +53,9 @@ function _spawnDetached(bin, args, env, onExit) {
   return child;
 }
 
-/** 引擎族分类（纯函数，按可执行文件名判定）。
- *  chromium：支持 --incognito/--user-data-dir 的派生系（Chrome/Chromium/Edge/Brave/Vivaldi/Opera/Thorium）；
- *  firefox：支持 --profile + -private-window 的 Gecko 系（含 LibreWolf/Waterfox）；
- *  other：Safari 与无法注入隔离参数的包装启动器（snap/flatpak 的 Exec 首 token 不是浏览器本体，
- *        归此类按「不隔离」处理正是如实结果 —— 包装器的沙箱本就拒绝自定义 profile 目录）。 */
+/** 引擎族分类（纯函数，按可执行文件名判定）：chromium 认 --incognito/--user-data-dir，
+ *  firefox 认 --profile + -private-window，other（Safari 与 snap 之类包装启动器）不注入隔离参数。
+ *  包装器的 Exec 首 token 不是浏览器本体，归 other 正是如实结果：其沙箱本就拒绝自定义 profile 目录。 */
 function engineOf(bin) {
   const base = String(bin || '').toLowerCase().split(/[\\/]/).pop();
   if (/(chrome|chromium|msedge|edge|brave|vivaldi|opera|thorium)/.test(base)) return 'chromium';
@@ -92,8 +79,8 @@ function tokenizeExec(line) {
   return toks;
 }
 
-/** Exec 行 -> {bin, baseArgs}（URL 字段码剔除；`env VAR=x bin` 包装去壳）。
- *  解析不出可执行首 token 时返回 null（调用方降级为非隔离打开）。 */
+/** Exec 行 -> {bin, baseArgs}：URL 字段码剔除、`env VAR=x bin` 包装去壳；
+ *  解析不出可执行首 token 返回 null（调用方降级为非隔离打开）。 */
 function parseExecLine(line) {
   let toks = tokenizeExec(line).filter((t) => t !== '%%' && !/^%[a-zA-Z]$/.test(t));
   if (toks[0] === 'env') {
@@ -105,7 +92,6 @@ function parseExecLine(line) {
   return { bin: toks[0], baseArgs: toks.slice(1) };
 }
 
-/** reg query 的默认值输出 -> REG_SZ 值（纯函数）。 */
 function regValueOf(out) {
   const m = String(out || '').match(/REG_SZ\s+(.*)/);
   return m ? m[1].trim() : null;
@@ -148,9 +134,8 @@ const MAC_JXA = [
 ].join('');
 
 /** darwin：LaunchServices 取 https 默认 handler 的 bundle id 与应用路径，拼出真实可执行文件。
- *  直启可执行文件而非 `open -na`：open 立即退出，其 exit 事件与浏览器退出无关，
- *  「关闭浏览器即取消登录」只有直启才成立。解析失败（含新版 macOS LSCopy 弃用返回空）
- *  由调用方降级为非隔离 open。 */
+ *  直启可执行文件而非 `open -na`：open 立即退出，其 exit 与浏览器退出无关，
+ *  「关闭浏览器即取消登录」只有直启才成立；解析失败（含新版 macOS LSCopy 返回空）由调用方降级。 */
 function resolveDefaultMac(runOut) {
   const out = runOut('osascript', ['-l', 'JavaScript', '-e', MAC_JXA]);
   if (!out) return null;
@@ -161,7 +146,7 @@ function resolveDefaultMac(runOut) {
 }
 
 /** linux：xdg-settings 得默认浏览器 desktop 文件名，在其 .desktop 主条目 Exec 行还原真实命令。
- *  搜索目录含 snap 桌面目录（Exec 首 token 为 snap -> engineOf other -> 不隔离，如实降级）。 */
+ *  搜索目录含 snap 桌面目录（其 Exec 首 token 不是浏览器本体，按不隔离处理）。 */
 function resolveDefaultLinux(runOut, readFile, exists, env, home) {
   const id = runOut('xdg-settings', ['get', 'default-web-browser']);
   const desktop = id && id.trim();
@@ -189,8 +174,7 @@ function resolveDefaultLinux(runOut, readFile, exists, env, home) {
   return null;
 }
 
-/** 解析系统默认浏览器 -> {bin, baseArgs, bundleId?} | null。
- *  全部为只读查询（reg/xdg-settings/osascript），任一失败返回 null（调用方降级非隔离）。
+/** 解析系统默认浏览器 -> {bin, baseArgs, bundleId?} | null；全部为只读查询，任一失败返回 null。
  *  @param {{runOut?:Function, readFile?:Function, exists?:Function, env?:object, home?:string}} [o]
  *    注入缝供行为测试：CI 机器不真起浏览器也不真查注册表。 */
 function resolveDefaultBrowser(platform, o) {
@@ -208,8 +192,8 @@ function resolveDefaultBrowser(platform, o) {
   } catch { return null; }
 }
 
-/** 平台到隔离打开的命令规划（纯函数，可穷举；不 spawn、不做解析 I/O）。
- *  输入 defaultBrowser 为 resolveDefaultBrowser 的结果；null/other 引擎 -> openCommand 非隔离兜底。
+/** 平台到隔离打开的命令规划（纯函数，不 spawn、不做解析 I/O）。
+ *  defaultBrowser 为 resolveDefaultBrowser 的结果；null 或 other 引擎 -> openCommand 非隔离兜底。
  *  @param {{defaultBrowser?:{bin:string,baseArgs?:string[]}|null, profileDir?:string,
  *           size?:number[], lang?:string}} [opts] */
 function isolatedPlan(platform, url, opts) {
@@ -238,29 +222,19 @@ function isolatedPlan(platform, url, opts) {
   return { bin: c.cmd, args: c.args, isolated: false, watch: false, envKind: 'sys', label: c.cmd };
 }
 
-/** 条 4：spawn 前的可用性预检。绝对路径 -> 直接判执行位；裸名 -> PATH 解析。
- *  为什么必须在 spawn 前判：Node 的 ENOENT 是**异步** error 事件，旧实现
- *  `child.on('error', () => tryNext())` 的递归返回值被丢弃 —— tryNext() 已先返回
- *  ok:true/该 bin，降级链形同虚设（错误 bin 被如实上报，且没有任何候选真正接力）。 */
+/** spawn 前的可用性预检：绝对路径判执行位，裸名走 PATH 解析。
+ *  必须在 spawn 前判：Node 的 ENOENT 是异步 error 事件，spawn 返回时已成功，
+ *  事后挂 error 处理器只能吞掉它，改不了已经上报的 ok/bin。 */
 function binAvailable(bin) {
   if (!bin) return false;
   if (bin.includes('/') || bin.includes('\\') || /^[A-Za-z]:[\\/]/.test(bin)) return isExecutableFile(bin);
   return resolveExecutable(bin) !== null;
 }
 
-/**
- * 以系统默认浏览器做隔离打开（OAuth 一键登录用）。
- * 浏览器是谁由操作系统决定；产品只决定「以何种隔离参数打开它」。
- * @param {{profileDir?:string, size?:number[], lang?:string, antiEnv?:object, sysEnv?:object,
- *          onExit?:Function, binAvailable?:Function, spawn?:Function,
- *          resolveDefault?:Function, defaultBrowser?:object|null, resolveDeps?:object}} [o]
- *        binAvailable 可注入（条 4：行为测试不依赖宿主装了什么浏览器）；
- *        spawn 亦可注入（同条：否则 darwin/win32 宿主上本用例会在 CI 机器里真起浏览器）；
- *        resolveDefault/defaultBrowser 可注入 —— 夹具与产品共用同一份计划输入
- *        （缺省为运行期 resolveDefaultBrowser），否则「产品问到的浏览器」与「夹具认定的
- *        候选」不同源，预检恒 false 表现为不起进程。
- * @returns {{ok:boolean, bin:string|null, isolated:boolean}} bin=null 表示打不开
- */
+/** 以系统默认浏览器做隔离打开（OAuth 一键登录用）：浏览器由操作系统决定，产品只决定「以何种隔离参数打开它」。
+ *  @param o 注入点：binAvailable/spawn —— 行为测试不依赖宿主浏览器、不在 CI 机器真起浏览器；
+ *  defaultBrowser —— 夹具与产品必须共用同一份计划输入，否则预检判定不同源恒 false。
+ *  @returns {{ok:boolean, bin:string|null, isolated:boolean}} bin=null 表示打不开 */
 function launchIsolated(url, o) {
   const opts = o || {};
   if (!isSafeHttpUrl(url)) return { ok: false, bin: null, isolated: false };
@@ -277,7 +251,7 @@ function launchIsolated(url, o) {
     const plan = isolatedPlan(process.platform, url, {
       defaultBrowser: db, profileDir: opts.profileDir, size: opts.size, lang: opts.lang,
     });
-    // 同样按条 4 预检——不可用即如实 ok:false，不 spawn 必死的 bin。
+    // spawn 前预检：不可用即如实 ok:false，不 spawn 必死的 bin。
     if (!avail(plan.bin)) return { ok: false, bin: null, isolated: false };
     const env = plan.envKind === 'anti' ? antiEnv : sysEnv;
     const p = spawnWith(plan.bin, plan.args, env, plan.watch ? onExit : undefined);

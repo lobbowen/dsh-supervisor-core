@@ -3,20 +3,14 @@
 const scripts = require('./scripts');
 
 // 受管 daemon 运行时（生命周期实例 / ensure 结果翻译 / lan 保活与状态同步）。
-// 导出形态 { methods }，方法经 this 协作。
-//
-// 阶段六 B-1 原地去 this：实现体不再经 this 的隐式方法调用取事实，改经按 host 缓存的
-// **惰性 deps**（WeakMap；getter 每次读 host 实时值，装配期 host 未就绪也安全）。方法仍以
-// { methods } 导出、名字与体逐字保留：装配路径 installMethods(host, mod.methods) 不变，
-// 且 TK-G4（读 _syncLanState 体）与 G10-d（读顶层 require('./scripts') 与 daemonScript 调用）
-// 等**读源码形态**的门禁覆盖面不变；AT 棘轮的直接方法调用计数归零。
-// 唯一的 this 出现在 depsOf(this)（作为 WeakMap 键）。
+// 导出形态 { methods }，方法名与体逐字保留（TK-G4、G10-d 等门禁按源码形态读这些方法）。
+// 实现体不经 this 的隐式方法调用取事实，改经按 host 缓存的惰性 deps（WeakMap，getter 每次读 host
+// 实时值，装配期 host 未就绪也安全）；唯一的 this 出现在 depsOf(this)（作为 WeakMap 键）。
 
 const fs = require('node:fs');
 const path = require('node:path');
 const pidlook = require('../../platform/os/pidlookup');
 const { writeAtomic } = require('../../platform/util/fs');
-// process.js 导出命名导出 `{ DaemonLifecycle }`，且与本文件同目录。
 const { DaemonLifecycle } = require('./process');
 
 const DEPS = new WeakMap();
@@ -35,7 +29,7 @@ function depsOf(host) {
       views() { return host.views; },
       tokenService() { return host.tokenService; },
       router() { return host.router; },
-      // 同模块兄弟方法经 host 上的既有安装转发（等价于原经 this 的调用；外部覆写 host 方法仍生效）。
+      // 同模块兄弟方法经 host 上的既有安装转发（外部覆写 host 方法仍生效）。
       dshMainView() { return host.dshMainView(); },
       daemonLifecycle(kind) { return host._daemonLifecycle(kind); },
       daemonEnsureResult(lc, writeOwnerLock) { return host._daemonEnsureResult(lc, writeOwnerLock); },
@@ -56,7 +50,7 @@ function depsOf(host) {
 module.exports = {
   methods: {
     /** 统一受管进程生命周期实例（懒加载单例；lan/router 共用 DaemonLifecycle 核心）。
-     *  身份文件（owner 连续：守卫重启=接管既有 daemon）+ spawn latch + 换代停旧/等死/等端口释放 全在核心内。 */
+     *  身份文件（owner 连续：守卫重启=接管既有 daemon）、spawn latch、换代停旧/等死/等端口释放都在核心内。 */
     _daemonLifecycle(kind) {
       const d = depsOf(this);
       if (!d.configPath()) return null; // 非守卫实例（测试）绝不管理独立 daemon
@@ -65,10 +59,9 @@ module.exports = {
       if (lc[kind]) return lc[kind];
       const cfgPath = d.configPath();
       const isLan = kind === 'lan';
-      // 路径解析必须用单一真源：不能靠 __dirname 相对路径拼 'src/domains/...'
-      //   （层级调整后会指向不存在的位置，使 _daemonLifecycle 恒为 null，守卫无法自起 daemon）。
-      //   app/daemons/scripts.js 提供域到脚本映射；platform/util/srcpath 只做通用 resolve（存在性验证），
-      //   域名词不渗入 platform。
+      // 脚本路径必须单一真源：不能靠 __dirname 相对路径拼 'src/domains/...'（层级调整后会指向不存在的
+      //   位置，使 _daemonLifecycle 恒为 null，守卫无法自起 daemon）。域到脚本的映射归 app/daemons/
+      //   scripts.js，platform/util/srcpath 只做通用 resolve（存在性验证），域名词不渗入 platform。
       const script = scripts.daemonScript(isLan ? 'lan' : 'router');
       if (!script) return null;
       const dir = path.dirname(d.config().stateFile);
@@ -121,17 +114,16 @@ module.exports = {
         const tokens = {};
         for (const i of instances) {
           try {
-            // 空值也要显式写入（'' = 失效信号）。旧实现 if (t) 只写非空，令牌清空后
-            // daemon 侧 snapshot 里该 id 消失 -> 不触发 applyToken -> relay 持旧 cookie 且 cookieReady 假真。
+            // 空值也要显式写入（'' = 失效信号）：只写非空会让令牌清空后该 id 从 daemon snapshot
+            //   消失 -> 不触发 applyToken -> relay 持旧 cookie 且 cookieReady 假真。
             const t = d.tokenService() && d.tokenService().get(i.id);
             tokens[i.id] = String(t || '');
           } catch {}
         }
-        // 哈希必须用稳定内容（无易变时间戳），否则 30s 监督 tick 每次重写 lan-state，
-        // lan-daemon 每轮视为变化并重复 applyToken/重换 cookie。
-        // 端口权威：同步实例不含 wanPort，relay 端口唯一权威是端口注册表（ports-lan.json，
-        // daemon claimSlot byOwner 复用）；曾含 wanPort 导致守卫把历史写死值传播给 daemon，
-        // 与注册表分裂成 ghost 双族。仅当内容真变化才落盘。
+        // 哈希必须用稳定内容（无易变时间戳），否则 30s 监督 tick 每次重写 lan-state，lan-daemon 每轮
+        // 视为变化并重复 applyToken/重换 cookie。仅当内容真变化才落盘。
+        // 端口权威：同步实例不含 wanPort，relay 端口唯一权威是端口注册表（ports-lan.json，daemon
+        // claimSlot byOwner 复用）；曾含 wanPort 使守卫把历史写死值传播给 daemon，与注册表分裂成双族。
         const body = JSON.stringify({ instances: instances.map((i) => ({
           id: i.id, name: i.name, port: i.port,
           remoteMode: i.remoteMode === 'lan' || i.remoteMode === 'wan' ? i.remoteMode : 'off',
@@ -155,9 +147,9 @@ module.exports = {
         if (desiredRunning !== false && active && !managed) return { active: false, mode: 'external' }; // 异主不接管
         if (desiredRunning === false) {
           if (active && managed) {
-            // 与 router 分支同闸——managed 是静态授权（写过管理锁），
-            //   不等于「ctl 口占用者就是我」。kill 前先 classify() 做动态归属判定，
-            //   external（外来同名 daemon）=> 拒绝停用，不碰进程/锁/身份（防误杀）。
+            // 与 router 分支同闸：managed 是静态授权（写过管理锁），不等于「ctl 口占用者就是我」；
+            //   kill 前先 classify() 做动态归属判定，external（外来同名 daemon）=> 拒绝停用，
+            //   不碰进程/锁/身份（防误杀）。
             const lcC = d.daemonLifecycle('lan');
             const cc = (lcC && typeof lcC.classify === 'function') ? lcC.classify() : null;
             if (cc && cc.mode === 'external') {
@@ -175,8 +167,7 @@ module.exports = {
           }
           return { active: false, mode: 'none' };
         }
-        // 统一进程生命周期：spawn 一次性 + 换代停旧/等死/等端口释放，
-        // 身份文件 owner 连续（守卫重启=接管），全部收敛在 DaemonLifecycle，此处只做契约翻译。
+        // 拉起/换代/owner 连续全在 DaemonLifecycle 内，此处只做契约翻译。
         const lc = d.daemonLifecycle('lan');
         if (!lc) return { active: false, mode: 'none', error: 'lan-daemon 脚本缺失' };
         return d.daemonEnsureResult(lc, () => d.daemons().writeLanLock());
@@ -207,13 +198,10 @@ module.exports = {
         if (desiredRunning === false) {
           // 停止语义：仅停「本守卫管理」的 daemon；异主 daemon 不碰；否则由调用方停内嵌 router
           if (daemonActive && managed) {
-            // 归属校验（D10）：managed 是「本 stateDir 写过管理锁」的**静态授权**，不等于
-            //   「ctl 端口占用者就是我」（锁内 pid 从不比对）。若按端口 pid 直接 SIGTERM，
-            //   「陈旧锁 + 外来同名 daemon 占同 ctl 口」会误杀外来进程。故 kill 前先用
-            //   DaemonLifecycle.classify() 做**动态归属**判定（与 supervise.js 同源判据）。
-            //   external（占用者非本守卫代际）=> 拒绝停用且不碰进程/锁/身份。
-            //   其余保持既有行为：running/reclaiming 是本守卫或同 cmdMark 残留；barrier 是
-            //   换代窗口内刚拉起的本守卫 daemon（stop 请求下本就该停）；absent 无 pid 可杀。
+            // managed 锁只是静态授权，不等于「ctl 端口占用者就是我」（锁内 pid 从不比对）：按端口 pid
+            //   直接 SIGTERM 会误杀外来同名 daemon，故 kill 前经 DaemonLifecycle.classify() 判动态归属
+            //   （与 supervise.js 同源）：external 拒绝停用且不碰进程/锁/身份；running/reclaiming 属本守卫
+            //   或同 cmdMark 残留；barrier 为换代窗口内刚拉起的本守卫 daemon；absent 无 pid 可杀。
             const lcS = d.daemonLifecycle('router');
             const c = (lcS && typeof lcS.classify === 'function') ? lcS.classify() : null;
             if (c && c.mode === 'external') {
@@ -235,11 +223,10 @@ module.exports = {
         if (!d.configPath()) {
           return { active: false, mode: 'embedded', reason: 'non-guard' };
         }
-        // 统一进程生命周期（与 lan 对称）：见 DaemonLifecycle。
         const lc = d.daemonLifecycle('router');
         if (!lc) return { active: false, mode: 'embedded' };
         const res = d.daemonEnsureResult(lc, () => d.daemons().writeRouterDaemonLock());
-        // 本路径也可能返回 daemon 模式（拉起/接管成功），同样关闭守卫写权（见函数顶部说明）。
+        // 本路径也可能返回 daemon 模式（拉起/接管成功），同样关闭守卫写权（见 _disableRouterPersist）。
         if (res && res.mode === 'daemon') d.disableRouterPersist();
         return res;
       } catch (e) {

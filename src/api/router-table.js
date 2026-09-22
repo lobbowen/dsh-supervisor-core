@@ -15,7 +15,7 @@ const API_DOMAINS = [
   require('./domains/dist'),
   require('./domains/instances'),
   require('./domains/relay'),
-  require('./domains/shell'),   // 桌面壳更新安全网（/shell/*）——内核仅做安全网，非更新源
+  require('./domains/shell'),   // 桌面壳更新安全网（/shell/*）
 ];
 
 module.exports = { API_DOMAINS };

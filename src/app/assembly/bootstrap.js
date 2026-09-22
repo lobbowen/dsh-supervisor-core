@@ -2,8 +2,7 @@
 
 const execPath = require('../../platform/os/exec-path');
 
-// app/assembly/bootstrap.js —— 启动序列。
-// 职责：markStarted、注册受管对象、首拍收敛、心跳与壳看护定时器。
+// app/assembly/bootstrap.js —— 守卫启动序列（生命周期标记 / 首拍 / 心跳 / 各类看护定时器）。
 
 const path = require('node:path');
 const fs = require('node:fs');
@@ -13,10 +12,8 @@ const pidlook = require('../../platform/os/pidlookup');
 const platform = require('../../platform/os/index');
 
 function _bootstrap(host) {
-    // HTTP 服务启动由 root 的 startApi() 负责（api 层在依赖序上位于 app 之上，
-    //   app 不得 require api，契约 DS-3）。本函数只做启动序列：
-    //   守卫生命周期标记 -> 首拍收敛 -> 心跳/看护定时器 -> 各域装配。
-    // 生命周期标记缺失会使 lifecycle.isReady() 恒 false（/readyz 失败），状态摘要无 startedAt。
+    // HTTP 服务由 root 注入的 startApi() 启动：app 不得 require api（契约 DS-3）。
+    // markStarted 缺失会使 lifecycle.isReady() 恒 false（/readyz 失败），状态摘要无 startedAt。
     try {
       host.events.append('guard_started', {
         pid: process.pid,
@@ -27,23 +24,18 @@ function _bootstrap(host) {
     } catch {}
     try { host.lifecycle.markStarted(); } catch {}
     host.logger.info('guard started v' + host.guardVersion + ' pid=' + process.pid);
-    // 生命周期注册已在 app/assembly/compose.js 的构造期完成。
+    // 生命周期注册已在组装期完成，此处不重复。
     host.tick(); // 首拍立即收敛
-    // main(dsh) 收敛驱动源：唯一心跳（registry heartbeat -> dsh supervise -> _dshConverge）
-    // 是唯一周期驱动，tick 定时器不再创建；仅 registry 不可用（极罕见）时保留 tick 定时器兜底。
+    // 唯一心跳（registry heartbeat -> dsh supervise -> _dshConverge）是唯一周期驱动，
+    //   故不建 tick 定时器；仅 registry 不可用（极罕见）时保留兜底。
     host._timer = host.managedObjects ? null : setInterval(() => host.tick(), host.config.probeIntervalMs);
-    // 唯一心跳：daemon 监督 + main 收敛 + 沙箱监督的唯一周期驱动。
-    // _heartbeatBusy 防慢拍重叠（probe 超时/长 I/O 时心跳不并发，防 daemon 双监督/main 双收敛）。
-    // 兜底释放是必须的：若 heartbeat 返回的 promise 永不 settle，.finally 不执行则
-    // _heartbeatBusy 永久 true，心跳永停；而心跳是唯一周期驱动，停摆后 main 永不 spawn/adopt、
-    // 沙箱永不退避重试、daemon 失联永不被拉起，/status 却仍显示最后一次写入的 phase。
-    // 故独立兜底定时器在远大于任何正常拍的阈值后强制释放 busy（并记 warn），
-    // 并暴露 _lastHeartbeatAt / _heartbeatStalls，使心跳停摆可观测而非隐形。
+    // _heartbeatBusy 防慢拍重叠（并发会造成 daemon 双监督 / main 双收敛）。
+    // 兜底释放必须有：心跳的 promise 若不 settle，busy 恒 true 而心跳永停（main 不 spawn/adopt、沙箱不退避重试、daemon 失联不拉起），且 /status 仍显示最后一次写入的 phase。
+    //   故独立定时器在远大于正常拍的阈值后强制释放并记 warn，同时暴露 _lastHeartbeatAt / _heartbeatStalls 使停摆可观测。
     host._lastHeartbeatAt = Date.now();
     host._heartbeatStalls = 0;
-    // 心跳代际（自增 beat id）：stall 兜底可放行下一拍，而上一拍的 promise 仍在 await；
-    // 若旧拍迟到结算时无条件清 busy，就会清掉新拍的标记 -> 第三拍与新拍并发（两拍重叠根因）。
-    // 故 guard 与 .finally 都只在本拍仍是当前代际时才复位 busy。
+    // 心跳代际（自增 beat id）：stall 兜底放行下一拍后旧拍仍在 await，
+    //   旧拍迟到结算若无条件清 busy 就会清掉新拍标记（两拍重叠根因）。
     host._heartbeatBeat = host._heartbeatBeat || 0;
     // 拍宽必须在 setInterval 之前求值：它同时用作间隔与超时阈值。
     const heartbeatIv = host.config.probeIntervalMs || 5000;
@@ -53,10 +45,10 @@ function _bootstrap(host) {
       const iv = heartbeatIv;
       const beat = ++host._heartbeatBeat; // 本拍代际
       host._lastHeartbeatAt = Date.now();
-      // 兜底释放阈值必须大于「最坏单拍上界」：单对象超时 = iv x ADAPTER_TIMEOUT_TICKS(6)，
-      //   循环串行，故 N 个对象全部卡死的最坏整拍 = N x 6 x iv。阈值低于它会在正常最长拍
-      //   中途误释放 busy，放行第二拍而第一拍仍在 await —— 两拍并发监督/收敛。
-      //   取最坏上界 + 一拍余量，并保底 max(30000, iv x 12)。unref：不拖住进程退出。
+      // 兜底释放阈值必须大于最坏单拍上界：单对象超时 = iv x ADAPTER_TIMEOUT_TICKS(6)，
+      //   遍历串行，N 个对象全卡死的最坏整拍 = N x 6 x iv；低于它会在正常最长拍中途误释放，
+      //   放行第二拍而第一拍仍在 await。取最坏上界 + 一拍余量，保底 max(30000, iv x 12)。
+      //   guard.unref：不拖住进程退出。
       const objCount = (host.managedObjects && typeof host.managedObjects.count === 'function')
         ? host.managedObjects.count() : 1;
       const stallMs = Math.max(30000, iv * 12, objCount * 6 * iv + iv);
@@ -74,7 +66,6 @@ function _bootstrap(host) {
         .catch(() => {})
         .finally(() => {
           clearTimeout(guard);
-          // 归属判断：仅当代际仍属本拍时才复位，迟到的旧拍不得清掉新拍的标记。
           if (beat === host._heartbeatBeat) host._heartbeatBusy = false;
         });
     }, heartbeatIv);
@@ -88,41 +79,37 @@ function _bootstrap(host) {
       host.lan.reconcile().catch(() => {});
       host.lan.syncFrpc();
     }
-    // 沙箱实例监督：并入唯一心跳 sandbox-instance adapter（heartbeat 逐实例
-    // supervise -> InstanceManager.supervise）；registry 不可用（极罕见）时兜底自持定时器。
+    // 沙箱实例监督并入唯一心跳的 sandbox-instance adapter（逐实例 supervise ->
+    //   InstanceManager.supervise）；registry 不可用时兜底自持定时器。
     if (!host.managedObjects) host.instances.startTimer(host.config.probeIntervalMs || 5000);
-    // 注意：守卫启动只是守卫自身的生命周期，绝不在启动时去注册/拉起/切换任何实例（含 main）。
-    // main 是否纳管/拉起，由各实例自己的［进程守护 guardian］开关 + 实例自身生命周期决定，不因守卫启动而改变。
-    // 为已开启远程控制的实例补建代理（幂等；L3b 下由 lan-daemon reconcile 收敛）
+    // 守卫启动只是守卫自身的生命周期：绝不在启动时注册/拉起/切换任何实例（含 main）。
+    //   main 是否纳管由各实例自己的［进程守护 guardian］开关 + 自身生命周期决定。
     if (!host.lanDaemonEnabled()) {
       for (const inst of host.instances.all()) { if (inst.remoteMode === 'lan' || inst.remoteMode === 'wan') host.lan.syncProxy(inst).catch(() => {}); }
     }
     if (host.config.routerAutostart === true) {
-      // 统一生命周期视图同步：router 期望运行 -> 注册项纳入监测
       const rlc = host.lifecycleManager ? host.lifecycleManager.get('router') : null;
       if (rlc) { rlc.wantRunning(); rlc._monitoring = true; rlc._setPhase && rlc._setPhase('starting'); }
-      // 独立 router-daemon 优先：daemon 在跑则监督它（不再内嵌启动双占 43011）；
-      // daemon 未跑则拉起独立 daemon（detached）；daemon 不可用（脚本缺失）退回内嵌。
+      // 独立 router-daemon 优先：在跑则监督它（不再内嵌启动，避免双占 43011）；未跑则拉起
+      //   独立 daemon（detached）；daemon 不可用（脚本缺失）才退回内嵌。
       // 接管既有 daemon（守卫重启/手动拉起）时先落管理锁（本守卫目录），监督/启停权归本守卫。
       if (host._routerDaemonActive()) host._writeRouterDaemonLock();
       const rt = host._ensureRouterRuntime(true);
       if (rt.mode === 'daemon') {
-        // 状态文件写权归 daemon（防双写覆盖：守卫只读，providers.json 由 daemon 独占持久化）
-        // 该纪律已在 _ensureRouterRuntime 内部对全部三条 daemon 路径统一处置，本行是幂等兜底。
+        // providers.json 等状态写权归 daemon（守卫只读，防双写覆盖）；
+        //   该纪律已在 _ensureRouterRuntime 内统一处置，本行是幂等兜底。
         host._disableRouterPersist();
         if (rt.spawned) {
-          // 刚拉起：等待 daemon 就绪（短轮询 ctl 端口）
+          // 刚拉起：3s 后单次探测 ctl 端口判就绪（非轮询循环）
           setTimeout(() => {
             const up = pidlook.findListeningPid(host._routerCtlPort());
             if (rlc) { if (up) { rlc._setPhase('running'); rlc.startedAt = rlc.startedAt || new Date().toISOString(); } else { rlc._setPhase('starting'); } /* healthy 由 _supervise mirror 观测置位 */ }
           }, 3000);
         } else if (rt.active) {
-          // daemon 已在跑：监督模式
           if (rlc) { rlc._setPhase('running'); rlc.startedAt = rlc.startedAt || new Date().toISOString(); } /* healthy 由 _supervise mirror 观测置位 */
         }
-        // 已由独立 daemon 承担，不执行内嵌启动；继续执行后续启动序列（更新检查/壳看护）。
       }
-      // daemon 不可用 -> 内嵌 router（回退路径，保持原行为）
+      // daemon 不可用 -> 内嵌 router 回退路径
       if (rt.mode !== 'daemon') host.router.start().then((r) => {
         if (rlc) { if (r && r.ok !== false) { rlc._setPhase('running'); rlc.startedAt = rlc.startedAt || new Date().toISOString(); } else { rlc._setPhase('stopped'); rlc.error = (r && r.error) || 'start 失败'; } /* healthy 由 _supervise mirror 观测置位 */ }
         if (r && r.ok === false) host.logger.warn('中转服务启动失败：' + (r.error || '未知错误'));
@@ -139,9 +126,8 @@ function _bootstrap(host) {
         host.nativeManager.checkUpdate();
       }, host.config.updateCheckIntervalMs || 3600000);
     }
-    // 「失败隔离」在此调用点同样执行：本行是启动序列的最后一个调用，
-    // 看护是增强不是依赖，任何异常都不得影响守卫主循环。
-    // 包 try/catch 只记 warn（异常冒泡会让调用方拿不到「已启动」）。
+    // 失败隔离在此调用点同样执行：任何异常都不得影响守卫主循环 —— 看护是增强，不是依赖。
+    //   异常冒泡会让调用方拿不到「已启动」，故包 try/catch 只记 warn。
     try {
       host._startShellWatchdog();
     } catch (e) {
@@ -163,14 +149,12 @@ function _startShellWatchdog(host) {
         logger: host.logger,
         events: host.events,
         config: host.config,
-        // 门**下沉到看护域**：tick() 的一切调用者都受同一门约束。
-        //   合取式收敛为单源谓词 host._shellExitIntended()
-        //   （通用退出 或 持久 _shellHalted）。壳看护是**桌面壳域**自愈，须含 shellHalted
-        //   （9-18：退出管家后守卫重启不得把壳拉回）；主 DSH 收敛用不含 shellHalted 的 _exitIntended。
+        // 退出门下沉到看护域：tick() 的一切调用者受同一门约束，合取式收敛为单源谓词
+        //   host._shellExitIntended()（通用退出 或 持久 _shellHalted）。壳看护属桌面壳域，
+        //   须含 shellHalted（退出管家后守卫重启不得把壳拉回）；主 DSH 收敛用 _exitIntended。
         halted: () => host._shellExitIntended(),
         // 壳已在线 = 用户重新打开了壳 -> 清除持久退出标记（否则自愈被永久抑制）。
-        //    只在**非退出中**才清：退出握手期间壳还会存活数百 ms，若此时误清，
-        //   持久标记被写成 false，守卫重启后看护又把壳拉回（本修的核心场景）。
+        //   只在非退出中清：退出握手期间壳还会存活数百 ms，此时误清会让守卫重启后又把壳拉回。
         onShellAlive: () => {
           if (!host._shellHalted) return;
           if (host._stopping) return;
@@ -180,7 +164,7 @@ function _startShellWatchdog(host) {
         },
       });
       host._shellWatchdogTimer = setInterval(() => {
-        // 本拍不再在闭包内短路：否则「壳已在线 -> 清除持久退出标记」永不执行。
+        // 不在本闭包内短路退出门：否则「壳已在线 -> 清持久退出标记」永不执行；
         //   退出门由看护域统一裁决（见上 halted/onShellAlive）。
         Promise.resolve(host.shellWatchdog.tick()).catch(() => {});
       }, host.shellWatchdog.intervalMs);
@@ -195,8 +179,7 @@ function _startShellWatchdog(host) {
 
 function _registerFixedPorts(host) {
     // 端口来源以配置为准（healthUrl / command --port，normalize 已统一）。
-    // 注意：不做 pgrep 启发式猜端口——同一 bin 的其它实例/残留进程会劫持监管目标
-    // （实测：残留 mock 的 "--port 3901" 让守卫从 3911 被导到 3901，接管错误对象）。
+    //   不做 pgrep 启发式猜端口：同一 bin 的其它实例/残留进程会劫持监管目标。
     ports.register('dsh-main', host.config.targetPort);
     ports.register('supervisor-api', host.config.apiPort);
 }

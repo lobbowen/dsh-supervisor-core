@@ -4,7 +4,7 @@
 // 包名归属推断、目标补丁路径推导、CLI argv 组装，全部为具名纯函数。
 
 const { semverCompare } = require('../../shared/version');
-// 纯谓词已下沉 model.js：此处仅再导出，保持既有导入面不变。
+// 纯谓词的单源在 model.js，此处再导出以维持既有导入面。
 const { isProtectedName, isOwnRow, isOwnDisabled, ownerPackage, targetHomePatchPath } = require('./model');
 
 /** 禁止以 - 开头的非法插件参数（top-40 截断用于文案）。 */

@@ -1,10 +1,9 @@
 'use strict';
 
 // 插件域补丁层写 / 串行队列 / 残留 scrub（有状态写服务）。
-// 插件行「只增/只删 disabled 行」的读改写；卸载残留 scrub；启用与 scrub 共用同一条
-// 串行队列，防并发 read->write 丢失更新；写盘用 tmp+rename+0600 原子写。
-// 队列纪律：单次异常不得永久毒化队列；续链吞 rejection，返回给调用方的 run 保留
-// rejection 并如实记日志（文案不变）。
+// 插件行「只增/只删 disabled 行」的读改写；卸载残留 scrub；启用与 scrub 共用同一条串行队列，
+// 防并发 read->write 丢失更新；写盘用 tmp+rename+0600 原子写。
+// 队列纪律：单次异常不得永久毒化队列；续链吞 rejection，返回给调用方的 run 保留 rejection 并如实记日志。
 
 const fs = require('node:fs');
 const path = require('node:path');
@@ -15,10 +14,9 @@ const { isProtectedName, isOwnRow, isOwnDisabled, targetHomePatchPath } = requir
 function createLayers({ overlayFile, logger }) {
   let queue = Promise.resolve();
 
-  /** 补丁层写唯一入队点：续链吞 rejection（仅续链），返回的 run 保留 rejection。 */
+  /** 补丁层写唯一入队点：链尾吞 rejection 仅用于续链，返回给调用方的 run 保留 rejection。 */
   const enqueue = (tag, fn) => {
     const run = queue.then(fn);
-    // 链尾吞 rejection 仅用于续链，不影响返回给调用方的 run。
     queue = run.catch(() => {});
     return run.catch((e) => {
       const msg = (e && e.message) || String(e);

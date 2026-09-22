@@ -1,10 +1,9 @@
 'use strict';
 
-// 平台矩阵：跨平台知识的唯一合法位置。
-// process.platform / process.arch 只允许出现在 src/platform/**；业务域必须经本模块或
-// 平台层能力取平台事实，不得自建 os/arch 映射表。
-// SUPPORTED 与 package.json#npmPublish.packages 必须逐项一致，由两道门禁守住：
-// platform-matrix-single-source-test 与 cross-platform-architecture-gate-test。
+// 平台矩阵：跨平台知识的唯一合法位置。process.platform / process.arch 只允许出现在
+// src/platform/**，业务域必须经本模块或平台层能力取平台事实，不得自建 os/arch 映射表。
+// SUPPORTED 与 package.json#npmPublish.packages 逐项一致，由 platform-matrix-single-source-test
+// 与 cross-platform-architecture-gate-test 两道门禁守住。
 
 /** 受支持平台组合（顺序即发布顺序）。platform/arch 为 Node 取值；osTag 为 npm 包名 os 段；
  *  npmTag 为子包尾段 <osTag>-<arch>。 */
@@ -15,7 +14,7 @@ const SUPPORTED = [
   { platform: 'win32', arch: 'x64', osTag: 'win', npmTag: 'win-x64' },
 ];
 
-/** process.platform 到 npm/产物 os 段。 */
+/** npm/产物 os 段映射表。 */
 const OS_TAG = { linux: 'linux', darwin: 'darwin', win32: 'win' };
 /** process.platform 到 FRP 官方 os 段（第三方命名，无法统一：frp 用 windows 而非 win）。 */
 const FRP_OS = { linux: 'linux', darwin: 'darwin', win32: 'windows' };

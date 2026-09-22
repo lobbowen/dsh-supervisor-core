@@ -1,11 +1,9 @@
 'use strict';
 
 // app/main/controller.js —— 主收敛执行器（_dshConverge）。
-// 导出形态 { methods }；装配：app/assembly/facets.js 装到 host 实例；方法内部以 this 协作。
-//
-// 阶段六 B-2 原地去 this：实现体不再经 this 的隐式方法调用取事实，改经按 host 缓存的**惰性 deps**。
-// 方法名/{ methods }/逐字体保留（令牌契约门禁读 _dshConverge 体、令牌回收门禁读 phase switch），
-// 装配路径不变，AT 棘轮计数归零。
+// 导出 { methods }，由 app/assembly/facets.js 装到 host；方法名与 { methods } 形态不可改：
+// 令牌契约门禁读 _dshConverge 体、phase 迁移门禁读其 phase switch，均按源码形态匹配。
+// 事实经 depsOf(host) 的按 host 惰性缓存取得，方法体保持零 this 调用。
 const pidlook = require('../../platform/os/pidlookup');
 const monitor = require('../../platform/service/monitor');
 
@@ -39,7 +37,7 @@ function depsOf(host) {
       manualRestart() { return host.manualRestart; }, writeManualRestart(v) { host.manualRestart = v; },
       writeCrashHalted(v) { host._crashHalted = v; },
       sessionState() { return host._sessionState; },
-      // 字段 helper 经 host 上的既有安装转发（等价于原经 this 的调用）。
+      // 字段 helper 经 host 既有安装转发。
       mChild() { return host._mChild(); },
       mAdoptPid() { return host._mAdoptPid(); },
       mObservedOnly() { return host._mObservedOnly(); },
@@ -64,13 +62,12 @@ function depsOf(host) {
 
 module.exports = {
   methods: {
-  // 主循环收敛段（唯一心跳驱动；外部操作仍可即时触发）。单一状态机：
-  // STOPPED/STARTING/RUNNING/RESTARTING/BACKOFF。systemd 托管已废弃，main 由守卫 spawn/观测统一管理。
+  // 唯一心跳驱动的收敛段（外部操作仍可即时触发）；单一状态机 STOPPED/STARTING/RUNNING/RESTARTING/BACKOFF。
+  // main 由守卫统一 spawn/观测管理（不经 systemd 托管）。
   async _dshConverge() {
     const d = depsOf(this);
     if (d.readTicking() || d.stopping()) return;
-    // INV-S1/E-3：守卫关停中或会话 halting（单源谓词 _exitIntended = stopping 或 halting）
-    // 则抑制一切自动拉起，不再驱动 main 收敛。（_shellHalted 属桌面壳域，不在此——见 collaborators。）
+    // INV-S1：守卫关停中或会话 halting（_exitIntended 单源谓词 = stopping 或 halting）时抑制一切自动拉起。
     if (d.exitIntended()) return;
     d.writeTicking(true);
     // 影子拍：收敛窗口打开（拍内实际执行动作记账，供影子对比 actual）
@@ -78,9 +75,8 @@ module.exports = {
     d.writeMainTickActs([]);
     let t0 = null; // 影子起点快照（try 内探测后赋值；finally 一定可见）
     try {
-      // 统一健康探测（domain/monitor）：L1 端口在线（up）+ L2 HTTP 健康（httpOk）。
-      // up 维持状态机的「在线/离线」收敛语义（desired/升级 hold/接管均以端口为准，不破坏原语义）；
-      // httpOk 是新增的健康维度：端口在但 HTTP 挂（事件循环卡死/假死）时，连续 failThreshold 次判故障。
+      // 统一健康探测（platform/service/monitor）：up = 端口在线，驱动状态机的在线/离线收敛（desired/升级 hold/接管均以端口为准）；
+      // httpOk = HTTP 健康维度，端口在但 HTTP 挂（事件循环卡死/假死）时连续 failThreshold 次判故障。
       const probeRes = await monitor.probe(d.config().targetHost, d.config().targetPort, {
         httpProbeEnabled: d.config().httpProbeEnabled !== false,
         healthUrl: d.config().healthUrl,
@@ -94,7 +90,7 @@ module.exports = {
       d.mSetLastProbeHttpOk(healthOk);
       // 拍起点快照（探测后、收敛前，与决策同输入同源）
       t0 = d.main().stateSnapshot();
-      // dsh 健康面由 _syncDshLifecycleView 从目录 main entry 合成（不经观测镜像喂入）。
+      // dsh 生命周期视图由 finally 的 control.syncDshView 从目录 main entry 合成（不经观测镜像喂入）。
       const host = d.config().targetHost;
       const port = d.config().targetPort;
       // spawn 托管：目标在线 = 自有 child 或接管 pid 存活。
@@ -188,12 +184,9 @@ module.exports = {
             // 端口被不健康进程占用：不硬抢，只告警
             d.daemons().warnOccupied();
           } else if (d.session().shouldRun() && !d.exitIntended()) {
-            // 拉起条件（意图单源，契约）：是否应运行 = (desired == running) && 会话非 halting && 非崩溃停靠；
-            // 且守卫/会话未处于退出中（E-3 单源谓词 _exitIntended = stopping 或 session halting）。
-            //  _shellHalted 不参与主 DSH 恢复（它是桌面壳域判据，见 collaborators）——
-            //   守卫重启后 desired=running 即恢复，否则 headless 无壳清除路径会死锁。
-            // desired 是持久用户意图（重启后据此恢复），只要 desired=running 就无条件拉起，
-            // 不要求 guardian 或内存意图解锁。guardian 只约束崩溃后是否自动重启（见 RUNNING/exit 分支）。
+            // 拉起条件（意图单源）：desired=running 且会话非 halting 且非崩溃停靠即无条件拉起（重启后据此恢复），
+            // 不要求 guardian/内存意图解锁；guardian 只约束崩溃后是否自动重启。
+            // _shellHalted 属桌面壳域、不并入此处：否则 headless 无壳清除路径会死锁。
             d.intents().consume('start'); d.intents().consume('restart'); d.intents().consume('upgrade-resume'); // 意图一次性消费（加速器，非门槛）
             await d.main().startProcess();
           } else {
@@ -208,11 +201,9 @@ module.exports = {
           break;
         }
         case 'RUNNING': {
-          // RUNNING 分支绝不读令牌：令牌恒存在（"拿不到"只是捕捉链路 bug），且令牌状态与
-          // 进程健康正交（SSOT TK-1/TK-2）。
-          // spawn：只按进程存活判断，进程死了才重启，不因端口探测失败而误判
-          // 守护语义：崩溃是否自动接管拉起看守护开关 guardian——开=自动拉起（退避自愈）；
-          // 关=回到停止态（等用户手动启动）。
+          // RUNNING 绝不读令牌：令牌恒存在（"拿不到"只是捕捉链路 bug），令牌与进程健康正交（SSOT TK-1/TK-2）。
+          // 只按进程存活判断，进程死了才重启，不因端口探测失败误判。
+          // 守护语义：guardian 开=崩溃自动拉起（退避自愈），关=回到停止态等用户手动启动。
           const guarded = d.state().guardian();
           if (d.mAdoptPid() !== null && adoptedAlive === false) {
             d.events().append('dsh_exited', { code: null, signal: null, phase: d.state().phase(), adopted: true });
@@ -223,15 +214,9 @@ module.exports = {
             if (guarded) d.main().beginRestart('child_exit', { countCrash: true }); // exit 事件兜底
             else { d.writeCrashHalted(true); d.events().append('guardian_off_exit', { reason: 'child_exit 未守护，保持停止' }); d.state().setPhase('STOPPED'); }
           } else {
-            // 假死识别：进程在但 HTTP 挂时连续失败判故障。health-gate 只返回决策，执行在此
-            //（health-gate 不反向调 _beginRestart；依赖单向 controller -> health-gate）。
-            //
-            // 契约（D11 声明化）：**假死自愈不受 guardian 约束** —— 上面两个死亡分支
-            //   （adopted_exit / child_exit）才看 guarded，本分支故意不看。理由：假死意味着进程
-            //   **仍活着且占着端口**；若在此前置 guarded 判断，不重启就落回 STOPPED，而 STOPPED
-            //   分支的 portUp 会走 adopt() 重新接管 -> 下一拍又被判假死 -> adopt 与假死判定
-            //   **无限空转**（每轮还伴随用户可见的相位抖动）。要改此语义必须先引入稳定态，
-            //   不能只加 guarded 判断。故此处保持「假死必自愈」，为有意设计而非遗漏。
+            // 假死识别：进程在但 HTTP 连续不健康时判故障。health-gate 只返回决策、执行在此（依赖单向 controller -> health-gate）。
+            // 假死自愈不看 guarded（上面 adopted_exit / child_exit 才看）：进程仍活着且占着端口，
+            // 若此处不重启会落回 STOPPED -> portUp 走 adopt 重新接管 -> 下一拍又被判假死，无限空转。故"假死必自愈"为有意设计。
             const healthDecision = d.main().applyHealthCheck(healthOk);
             if (healthDecision && healthDecision.restart) {
               d.main().beginRestart(healthDecision.reason || 'http_unhealthy', { countCrash: healthDecision.countCrash === true });
@@ -265,7 +250,7 @@ module.exports = {
           break;
         }
       }
-      // 升级后健康验证在 NativeManager.upgrade（waitPortHealthy）内联，无 onTick 死亡路径。
+      // 升级后的健康验证在实例升级路径（waitPortHealthy）内联完成，不经本收敛循环。
       // 远程代理自动对账：实例重启/恢复后自动重接 relay；reconcile 由 lan-daemon 每 2s 执行，
       // 守卫只写状态，不本地建 relay。
       if (!d.daemons().enabled()) { try { d.lan().reconcile().catch(()=>{}); } catch {} }

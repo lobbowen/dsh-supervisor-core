@@ -27,7 +27,7 @@ class Supervisor {
   get lan() {
     if (this.lanDaemonEnabled()) return null;
     if (!this._lan) {
-      // EXEC3/DF-8 例外：**有意的惰性 require**（daemon 模式结构性排除；且 relay 域经 app 层装配），
+      // 有意的惰性 require（DF-8 例外）：daemon 模式结构性排除 relay，relay 域经 app 层装配；
       //   保留在 getter 内，不上提顶层。
       const LanManager = require('./domains/relay').LanManager;
       this._lan = new LanManager({

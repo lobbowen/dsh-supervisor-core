@@ -1,11 +1,9 @@
 'use strict';
 
-// 平台化「图形会话可用性」判定。
-// 用途：守卫看护桌面壳前必须先确认有图形会话；否则无会话时拉起 GUI 必失败，看护周期性
-// 重试会造成重启风暴并掩盖真正问题。
-// 平台差异：Linux 需真判定（DISPLAY/WAYLAND_DISPLAY 可能未 import，故补 X11/Wayland socket
-// 实测）；darwin/win32 恒为真（守卫由图形会话内的 LaunchAgent / schtasks ONLOGON 载入，
-// 注销即随会话结束）。
+// 图形会话可用性判定：守卫看护桌面壳前必须先确认有图形会话 —— 无会话时拉起 GUI 必失败，
+// 看护的周期重试会酿成重启风暴并掩盖真因。
+// Linux 要真判定（DISPLAY/WAYLAND_DISPLAY 在 systemd --user 语境可能未 import，故补 X11/Wayland socket 实测）；
+// darwin/win32 恒为真：守卫由图形会话内的 LaunchAgent / schtasks ONLOGON 载入，注销即随会话结束。
 
 const fs = require('node:fs');
 const PLATFORM = process.platform;
@@ -27,10 +25,8 @@ function hasWaylandSocket() {
 function sessionAvailable() {
   if (PLATFORM === 'linux') {
     if (process.env.DISPLAY || process.env.WAYLAND_DISPLAY) return true;
-    // 环境变量在 systemd --user 语境可能未被 import —— 退回实测 socket。
-    return hasX11Socket() || hasWaylandSocket();
+    return hasX11Socket() || hasWaylandSocket(); // 环境变量未 import 时的实测兜底
   }
-  // darwin / win32：守卫本身只在图形会话内存活（见文件头说明）。
   return PLATFORM === 'darwin' || PLATFORM === 'win32';
 }
 

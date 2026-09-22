@@ -55,9 +55,8 @@ function macFind(port) {
 }
 
 function winFind(port) {
-  // netstat -ano 解析 LISTENING 行。曾改 PowerShell Get-NetTCPConnection 优先以解 netstat 可见
-  // 滞后，但 PowerShell 输出的不确定性使守卫端口占用判定在 win runner 偶发失效，故回退 netstat；
-  // relay 建连的可见滞后问题已由 targetReachable（TCP 直连）根治。
+  // 数据源固定 netstat -ano 解析 LISTENING 行：PowerShell Get-NetTCPConnection 输出不确定，
+  // 会让守卫端口占用判定在 win runner 偶发失效；relay 建连的可见滞后由 targetReachable（TCP 直连）解决。
   try {
     const out = ex.runOut('netstat', ['-ano'], { timeoutMs: 3000 });
     if (!out) return null;
@@ -72,8 +71,7 @@ function linuxFindSs(port) {
   // systemd user 环境 PATH 可能不含 /usr/sbin（ss 默认位置）——候选路径逐个试
   const candidates = ['ss', '/usr/sbin/ss', '/usr/bin/ss', '/bin/ss'];
   for (const ssBin of candidates) {
-    // 绝对路径候选先判可执行位——无权限的文件
-    //   spawn 只会同步抛 EACCES 白耗一轮；裸名留给 execFile 的 PATH 解析（自行兜底）。
+    // 绝对路径候选先判可执行位：无权限文件 spawn 只会同步抛 EACCES 白耗一轮；裸名留给 execFile 的 PATH 解析。
     if (ssBin.includes('/') && !isExecutableFile(ssBin)) continue;
     try {
       const out = ex.runOut(ssBin, ['-tlnHp', 'sport = :' + port], { timeoutMs: 3000 });
@@ -90,8 +88,7 @@ function isAlive(pid) {
   catch (e) { return !!e && e.code === 'EPERM'; }
 }
 
-/** zombie（已退出未回收）判定：kill(pid,0) 对 zombie 仍为 true，端口/stdio 却已释放，
- *  停服等待必须能区分二者（反代关停台账此前在域内自读 /proc，现收口平台层）。
+/** zombie（已退出未回收）判定：kill(pid,0) 对 zombie 仍为 true，端口/stdio 却已释放，停服等待须能区分。
  *  linux 读 /proc/<pid>/stat 状态位；macOS 无 /proc 走 ps state 列；win32 无 zombie 形态恒 false。 */
 function isZombie(pid) {
   if (!Number.isInteger(pid) || pid <= 0 || isWindows) return false;
@@ -108,8 +105,8 @@ function isZombie(pid) {
   } catch { return false; }
 }
 
-/** 读取进程命令行（三平台：Linux /proc、macOS ps、Windows wmic）。原实现非 Linux 返回 null，
- *  使 supervisor._isManagedProcess 在 win/mac 恒 false、接管既有实例的 cmdline 校验静默失效。 */
+/** 读取进程命令行（三平台：Linux /proc、macOS ps、Windows wmic -> PowerShell CIM 回退）。
+ *  三平台都必须给出：supervisor._isManagedProcess 接管既有实例的 cmdline 校验依赖它，非 Linux 返回 null 即静默失效。 */
 function readCmdline(pid) {
   if (isLinux) {
     try {
@@ -126,9 +123,8 @@ function readCmdline(pid) {
   }
   if (isWindows) {
     const out = ex.runOut('wmic', ['process', 'where', 'ProcessId=' + pid, 'get', 'CommandLine', '/value'], { timeoutMs: 5000 });
-    // wmic 取不到命令行时必须继续走下方回退。原实现在正则不命中时直接 return null，
-    // 使回退永远不可达，isDshCmdline 恒 false，Windows 上既不能接管手动启动的 DSH 也不报错。
-    // 修法：仅在确实解析出非空命令行时返回，否则继续 PowerShell CIM 回退（缺失/无输出/解析不中同此）。
+    // wmic 解析不中/空输出时不得提前 return，必须继续 PowerShell CIM 回退（否则回退永不可达，
+    // isDshCmdline 恒 false，Windows 上既不能接管手动启动的 DSH 也不报错）。
     const viaWmic = parseWmicCommandLine(out);
     if (viaWmic) return viaWmic;
     {

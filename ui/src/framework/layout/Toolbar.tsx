@@ -3,14 +3,8 @@ import { cn } from "../utils";
 import { Progress } from "../ui/progress";
 
 /**
- * ============================================================================
- * DSH 通用 UI 框架 — Toolbar（响应式页面工具栏）
- * ============================================================================
- * 统一三列 grid：[左槽] [标题区] [右槽]，断点只切换列内容：
- *  - >=641px：左槽隐藏（menuButton 仅在 <=640 渲染），标题 = 大标题 + 副标题。
- *  - <=640px：左槽 = menuButton（汉堡），标题 = 紧凑页名，副标题/进度隐藏。
- * 同一组件按断点自适应 —— 无并列头部行。
- * ============================================================================
+ * Toolbar：响应式页面工具栏，统一三列 grid [左槽][标题区][右槽]，断点只切换列内容：
+ * >=641px 左槽隐藏、副标题/进度显示；<=640px 左槽=menuButton（汉堡）、副标题/进度隐藏。无并列头部行。
  */
 
 export type ToolbarProps = {
@@ -42,12 +36,10 @@ export function Toolbar({
         className,
       )}
     >
-      {/* 左槽：仅 <=640px 显示菜单按钮 */}
       {menuButton ? (
         <div className="hidden max-[640px]:block">{menuButton}</div>
       ) : null}
 
-      {/* 标题区 */}
       <div className="min-w-0">
         <h1 className="truncate text-2xl font-bold leading-tight tracking-normal text-foreground max-[640px]:text-base max-[640px]:font-semibold">
           {title}
@@ -59,7 +51,6 @@ export function Toolbar({
         ) : null}
       </div>
 
-      {/* 右槽：动作区（进度并入其前，>=641 显示） */}
       <div className="flex items-center justify-end gap-4 max-[640px]:gap-2 max-[640px]:[&_button]:h-7 max-[640px]:[&_button]:px-2.5 max-[640px]:[&_button]:text-xs">
         {busy ? (
           <div className="hidden w-[190px] max-[640px]:hidden">

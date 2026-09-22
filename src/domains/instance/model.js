@@ -1,29 +1,17 @@
 'use strict';
 
-// 领域模型：实例记录形状与迁移、视图行组装、任务状态词表。纯函数，零 IO、零隐式 this。
-// 视图行的 IO 结果（已安装版本/最新版本/作业视图/探测结果）由调用方解析后传入。
-
+// 领域模型：实例记录形状与迁移、视图行组装、任务状态词表。纯函数，零 IO、零隐式 this；
+// 视图行的 IO 结果（版本/作业/探测）由调用方解析后传入。
 const { semverCompare } = require('../../shared/version');
-
-/** 任务状态映射到前端契约（前端轮询判定 done/failed；TaskRegistry 状态为 succeeded/skipped/canceled）。
- *   有意平行（P4-A-2 #30）：本函数与 domains/plugin/model.js 的 `taskStateToJobState`、
- *   domains/router/ops/apps-registry.js 的 `proxyUpdateStatus` 内联同映射是三份平行实现；
- *   三者映射分支完全一致（succeeded/skipped->done，failed/canceled->failed，余->running）。
- *   差异只在宿主投影：plugin 侧产出作业视图的 state 字段；apps-registry 侧内联，且紧邻另算
- *   errors = t.state === 'failed' ? 1: 0（故 canceled 映射成 failed 而 errors 为 0）。
- *   有意平行而非抽公共函数：三处分属 instance/plugin/router 三域，抽取须三处同批改动；本批只加注释、不改行为。
- *   定位请按**符号名**（三处行号随注释增删漂移，写死行号会变成下一条失效引用）。 */
+/** 任务状态 -> 前端契约词表。与 plugin/model.taskStateToJobState、router/ops/apps-registry 的
+ *  proxyUpdateStatus 是有意平行（映射分支完全一致）：三处属三个域，抽取须三处同批改动，故不抽公共函数。 */
 function taskStateToView(s) {
   return (s === 'succeeded' || s === 'skipped') ? 'done' : (s === 'failed' || s === 'canceled') ? 'failed' : 'running';
 }
 
-/** 磁盘文档实例记录映射到运行时记录（纯迁移，不落盘）。
- *  - 令牌收敛：历史遗留的 dshToken 列一律剔除（内存即刻断行，下次 save 落盘即清）；
- *  - 远程控制三态化：legacy 布尔对（remoteEnabled/frpEnabled）推导为 remoteMode，
- *    frp 手填口（frpRemotePort）与 wanPort 镜像字段一并剔除（端口权威在 relay 槽位注册表）；
- *  - guardian 缺省为关；
- *  - 重启后 FAILED 一律重置为「停止」（失败是一次性状态）。
- *  说明：令牌**源登记**（tokens.attach）是 IO，留在 store.load()，不进本函数。 */
+/** 磁盘文档实例记录 -> 运行时记录（纯迁移，不落盘）：dshToken/remoteEnabled/frpEnabled/frpRemotePort/wanPort 一律剔除，
+ *  legacy 布尔对推导 remoteMode 三态（端口权威在 relay 槽位注册表）；guardian 缺省关；重启后 FAILED 一律重置 STOPPED（失败是一次性状态）。
+ *  令牌源登记（tokens.attach）是 IO，留在 store.load()，不进本函数。 */
 function normalizeInstance(inst) {
   if (Object.prototype.hasOwnProperty.call(inst, 'dshToken')) delete inst.dshToken;
   if (inst.remoteMode !== 'lan' && inst.remoteMode !== 'wan') {
@@ -33,8 +21,7 @@ function normalizeInstance(inst) {
   delete inst.frpEnabled;
   delete inst.frpRemotePort;
   delete inst.wanPort;
-  // 用户填额链已废止：历史盘上记录残留的 memoryMax/cpuQuota 一律剔除，
-  // 否则「删了入口但旧值仍被读」会造成静默的配额漂移（视图行同批不再暴露这两字段）。
+  // 用户填额链已废止：历史记录残留的 memoryMax/cpuQuota 一律剔除，防「删了入口但旧值仍被读」的静默配额漂移。
   if (inst.sandbox) { delete inst.sandbox.memoryMax; delete inst.sandbox.cpuQuota; }
   if (inst.guardian === undefined) inst.guardian = false;
   if (inst.state && inst.state.phase === 'FAILED') {
@@ -45,14 +32,13 @@ function normalizeInstance(inst) {
   return inst;
 }
 
-/** 新增实例记录（payload 规范化）。端口合法性/占用探测等编排在 ops.js。 */
+/** 新增实例记录（payload 规范化）；端口合法性/占用探测等编排在 ops.js。 */
 function createRecord(payload, id) {
   const port = parseInt(payload.port, 10);
   return {
     id,
     name: String(payload.name || ('实例:' + port)).slice(0, 40),
     port,
-    // 新增实例：默认沙箱域（绝对隔离、与原生/彼此互不干扰）
     domain: 'sandbox',
     kind: 'sandbox',
     autoRegistered: false,
@@ -66,7 +52,7 @@ function createRecord(payload, id) {
       privateTmp: true,
       // node/dsh 位于 /home（nvm），ProtectHome=yes 会使其 exec 失败(203/EXEC)；默认关闭，可用 payload.protectHome 覆盖
       protectHome: payload.protectHome === undefined ? false : !!payload.protectHome,
-      // 资源配额不接收户输入：启动时由 governor 按机器预算与活跃实例数推导（见 ARCHITECTURE-PLAN-instance-sandbox-governor）。
+      // 资源配额不接收户输入：启动时由 governor 按机器预算与活跃实例数推导。
     },
     state: { phase: 'STOPPED', restartCount: 0, backoffLevel: 0, lastProbeOk: null },
     createdAt: new Date().toISOString(),

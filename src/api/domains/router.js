@@ -14,13 +14,12 @@ function handle(ctx) {
       return send(200, sup.routerDomainSummary());
     }
     if (req.method === 'GET' && pathname === '/router/ports') {
-      // 资源端口视图：router 段由 daemon 自供（ctl），守卫仅转发；降级走内嵌副本同方法。
-      // 查询失败须如实报 500：原为 200 携带 error（客户端只改状态码，仍带原有字段，未删字段）。
+      // 资源端口视图：router 段由 daemon 自供（ctl），守卫仅转发；降级走内嵌副本同方法。查询失败如实报 500，不得 200 携带 error。
       return Promise.resolve(sup.routerApi().portsView()).then((r) => send(200, r)).catch((e) => send(500, { ok: false, records: [], error: (e && e.message) || String(e) }));
     }
     if (req.method === 'GET' && pathname === '/router/status') {
       // daemon 监督模式：实时状态来自 daemon（异步）；否则本地视图（同步）。失败同上报 500。
-      // e 为 null 时旧写法 e.message 会二次抛错，故统一 (e && e.message) || String(e)。
+      // catch 里统一 (e && e.message) || String(e)：e 可能为 null，直接取 .message 会二次抛错。
       return Promise.resolve(sup.routerStatusView()).then((r) => send(200, r)).catch((e) => send(500, { ok: false, running: false, error: (e && e.message) || String(e) }));
     }
     if (req.method === 'POST' && pathname.startsWith('/router/')) {
@@ -130,8 +129,7 @@ function handle(ctx) {
       });
       return;
     }
-    // /router/providers/account/confirm 已删除：review 状态与 confirmAccount 一并移除
-    //（无写入方的状态不留存）。账号入库即终态，无需"入池确认"。
+    // 无账号确认端点：账号入库即终态，不留无写入方的 review 状态。
 
     if (req.method === 'POST' && pathname === '/router/providers/account/discard') {
       if (!originAllowed(req, sup.config.apiPort)) { req.resume(); return send(403, {}); }
@@ -155,7 +153,7 @@ function handle(ctx) {
       collectBody(req, res, 4096, (body) => { try { const j = body ? JSON.parse(body) : {}; if (!j.id) return send(400, { ok: false, error: 'need id' }); return Promise.resolve(sup.routerApi().deactivateProvider(j.id)).then((r) => send(r && r.ok === false ? 400 : 200, r)).catch((e) => send(500, { ok: false, error: e.message })); } catch { return send(400, { ok: false }); } });
       return;
     }
-  // 域内未匹配(方法/子路径)：全局兜底语义(与单文件时代一致)
+  // 域内未匹配(方法/子路径)：全局兜底语义
   if (req.method === 'GET' || req.method === 'POST') return send(404, { error: 'not found', path: pathname });
   return send(405, { error: 'method not allowed' });
 }

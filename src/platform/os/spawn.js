@@ -1,13 +1,9 @@
 'use strict';
 
-// 异步子进程统一封装（NO-CONSOLE-WINDOW-STANDARD ，契约冻结）。
-// 为什么需要：同步执行器 platform/util/exec.js 早已 windowsHide:true 且有门禁，而异步
-// child_process.spawn 此前无约束；Windows 上 detached:true 会给子进程新建控制台窗口，
-// windowsHide:true 正是用来隐藏它，故所有 detached 子进程必须同时带 windowsHide。
-// 取舍：三个入口都把 windowsHide:true 作为固定项（调用方无法覆盖），避免回到逐处补字段的老路；
-// 同时不改变既有 detached/stdio 语义（窗口可见性与生命周期设计正交）。
-// 入口分工：detached = 独立进程组 + stdio 默认 ignore；piped = 可选独立进程组 + 管道；
-// detachedIgnored = detached + stdio ignore（浏览器/OS 打开等完全脱离本进程的场景）。
+// 异步子进程统一封装（NO-CONSOLE-WINDOW-STANDARD，契约冻结）：src 内的异步 spawn 只走本文件。
+// windowsHide:true 在三个入口写死、调用方不可覆盖：Windows 上 detached:true 会给子进程新建控制台
+// 窗口，能隐藏它的只有 windowsHide。逐处补字段正是漏隐藏的成因，故不开放覆盖。
+// 窗口可见性与生命周期正交：detached/stdio 语义由各入口自身定义，不随隐藏策略变化（分工见各函数）。
 
 const { spawn } = require('node:child_process');
 
@@ -36,8 +32,7 @@ function piped(cmd, args, opts) {
   }));
 }
 
-/** 浏览器 / OS 打开（完全脱离本进程，且不读任何输出）：等价于 detached + stdio ignore，
- *  单独成入口是为语义自解释，同样固定 windowsHide:true。 */
+/** 浏览器 / OS 打开等「完全脱离本进程且不读输出」的场景：等价于 detached + stdio ignore。 */
 function detachedIgnored(cmd, args, opts) {
   const o = opts || {};
   return spawn(cmd, args, Object.assign({}, o, {

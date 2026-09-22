@@ -1,22 +1,16 @@
 'use strict';
 
 // lan-daemon / router-daemon 管理锁（身份文件）。
-// 导出形态 { methods }，方法经 this 协作。
-//
-// 阶段六 B-1 原地去 this：实现体不再经 this 的隐式方法调用取事实，改经按 host 缓存的
-// **惰性 deps**（WeakMap；getter 每次读 host 实时值）。方法仍以 { methods } 导出、名字与体
-// 逐字保留：装配路径 installMethods(host, mod.methods) 不变，AT 棘轮的直接方法调用计数归零。
+// 导出形态 { methods }，方法名与体逐字保留；实现体经按 host 缓存的惰性 deps（WeakMap）取事实，
 // 唯一的 this 出现在 depsOf(this)（作为 WeakMap 键）。
 
 const fs = require('node:fs');
 const path = require('node:path');
 
-// 管理锁必须与守卫单实例锁（bin/dsh-supervisor 的
-// acquireLock/releaseLock）同一范式，原先三处都不成立：
-//   - writeFileSync 直接覆盖 —— 两个守卫并存时后写者静默抢锁，前者的 managed 判据被骗过；
-//   - pid 从不回读 —— 崩溃/机器重启后锁恒在，managed 恒真（对已死持有者持续授权）；
-//   - unlinkSync 无条件删 —— 可删掉**别的守卫**刚重建的锁。
-// 现：'wx' 原子创建 + 持有者存活检测（ESRCH 清残留 / EPERM 视为存活）+ 释放只删自己的锁。
+// 管理锁与守卫单实例锁（bin/dsh-supervisor 的 acquireLock/releaseLock）同一范式：'wx' 原子创建 +
+// 持有者存活检测（ESRCH 清残留 / EPERM 视为存活）+ 释放只删自己的锁。裸覆盖写会让两个守卫并存时
+// 后写者静默抢锁；pid 不回读则崩溃后锁恒在（对已死持有者持续授权）；无条件 unlink 会删掉别的守卫
+// 刚重建的锁。
 
 /** 锁内容 = 持有者 pid；不可解析（旧格式/半写）返回 null。 */
 function lockPid(p) {
@@ -70,7 +64,7 @@ function depsOf(host) {
   if (!d) {
     d = {
       config() { return host.config; },
-      // 同模块兄弟方法经 host 上的既有安装转发（等价于原经 this 的调用）。
+      // 同模块兄弟方法经 host 上的既有安装转发。
       lanLockPath() { return host._lanLockPath(); },
       routerDaemonLockPath() { return host._routerDaemonLockPath(); },
     };
@@ -80,7 +74,7 @@ function depsOf(host) {
 }
 
 module.exports = {
-  // D-12 测试缝：锁的取/放/读主是纯 fs + kill(0) 语义，直接导出给回归用（不改行为）。
+  // 测试缝：锁的取/放/读主是纯 fs + kill(0) 语义，直接导出给回归用。
   _lockPrimitives: { acquireLock, releaseLock, lockPid, pidAlive },
   methods: {
     _lanLockPath() { const d = depsOf(this); try { return path.join(path.dirname(d.config().stateFile), 'lan-daemon.lock'); } catch { return null; } },

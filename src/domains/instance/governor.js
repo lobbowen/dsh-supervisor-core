@@ -1,9 +1,7 @@
 'use strict';
 
-// 资源预算策略（控制面，ARCHITECTURE-PLAN-instance-sandbox-governor W1/W2）：
-// 用户填额废止后，systemd 属性值由「机器预算按活跃实例数等分 + 空闲余量突发」推导。
-// decide/allocation/admission 是纯函数（入参 = 机器事实 + 花名册观测），
-// machineFacts/currentAllocation/budgetSnapshot 是本模块仅有的 IO 触点。
+// 资源预算策略（W1/W2）：用户填额废止后，systemd 属性值由「机器预算按活跃实例数等分 + 空闲余量突发」推导。
+// decide/allocation/admission 为纯函数（入参 = 机器事实 + 花名册观测）；machineFacts/currentAllocation/budgetSnapshot 是本模块仅有的 IO 触点。
 
 const os = require('node:os');
 
@@ -13,20 +11,19 @@ const HEADROOM = 0.7;
 const MEM_FLOOR_MB = 512;
 // CPUQuota 是硬顶，低于 100% 连单核都推不满；多实例超卖 CPU 可接受（抢占语义），内存不可。
 const CPU_FLOOR_PERCENT = 100;
-// 突发触发线：实测用量达到预留额的 0.9 才算有真实需求，进入余量争夺队列。
+// 实测用量达预留额 0.9 才算有真实需求，进入余量争夺队列。
 const BURST_TRIGGER_RATIO = 0.9;
-// 突发上限：单实例最多加一份预留额（memMax 不超过预留的 2 倍），防一个实例吞掉全部余量。
+// 单实例最多加一份预留额（memMax 不超过预留 2 倍），防一个实例吞掉全部余量。
 const BURST_MAX_MULT = 1;
-// memHigh = 0.9 倍 memMax：回收侧先节流、后 OOM（systemd MemoryHigh 是真内核节流语义）。
-const MEM_HIGH_RATIO = 0.9;
-// 迟滞：偏离上一生效值 10% 以内不下发；单拍步长不超过上一值的 25%（防振荡、防对 systemd 写放大）。
+const MEM_HIGH_RATIO = 0.9; // 先节流后 OOM：MemoryHigh 是真内核节流语义
+// 偏离上一生效值 10% 以内不下发、单拍步长不超 25%：防振荡、防对 systemd 写放大。
 const DEADBAND = 0.10;
 const MAX_STEP = 0.25;
 // 连续违规拍数（一拍 = 5s supervise 拍）：内存逼近 OOM 判得快；CPU 可抢占、只是慢化他人，判得慢。
 const MEM_VIOLATION_TICKS = 3;
 const CPU_VIOLATION_TICKS = 5;
 
-/** 机器事实（唯一默认 IO 读取点）：测试经 opts.machineFacts 注入假值，行为裁决不依赖真机。 */
+/** 机器事实（唯一默认 IO 读取点）；测试经 opts.machineFacts 注入假值，行为裁决不依赖真机。 */
 function machineFacts() {
   return { totalMemBytes: os.totalmem(), cpuCount: os.cpus().length };
 }
@@ -50,9 +47,8 @@ function activeCount(instances, selfId) {
 function parseMb(v) { const n = parseInt(v, 10); return Number.isFinite(n) && n > 0 ? n : null; }
 function parsePct(v) { const n = parseInt(v, 10); return Number.isFinite(n) && n > 0 ? n : null; }
 
-/** 等权分配（纯）：总预算按活跃实例数平摊，向下取整，触底走下限。
- *  返回 systemd 属性值形态（'NNNM' / 'NNN%'）；启动时刻的保底分配用它，
- *  运行期的突发/迟滞调整走 decide()。 */
+/** 等权分配（纯）：总预算按活跃实例数平摊、向下取整、触底走下限，返回 systemd 属性值形态（'NNNM'/'NNN%'）。
+ *  启动时刻的保底分配用它，运行期的突发/迟滞调整走 decide()。 */
 function allocation(totalMemBytes, cpuCount, n) {
   const k = Math.max(1, n);
   const memMb = Math.max(MEM_FLOOR_MB, Math.round((totalMemBytes * HEADROOM) / k / (1024 * 1024)));
@@ -64,8 +60,7 @@ function allocation(totalMemBytes, cpuCount, n) {
   };
 }
 
-/** 本实例当前应得保底配额（机器事实 + 活数组拓扑；调用点在 lifecycle 启动路径）。
- *  facts 为显式注入位（与 machineFactsNow 同一缝），缺省读本机。 */
+/** 本实例当前应得保底配额（机器事实 + 活数组拓扑；调用点在 lifecycle 启动路径）；facts 为显式注入位，缺省读本机。 */
 function currentAllocation(instances, selfId, facts) {
   const f = facts || machineFacts();
   return allocation(f.totalMemBytes, f.cpuCount, activeCount(instances, selfId));
@@ -79,13 +74,9 @@ function hysteresis(target, prev) {
   return { value: v, changed: v !== prev };
 }
 
-/** 每拍决策（纯函数；W2 两段制的本体）。
- *  roster 条目 = { id, usageMb, cpuPct, since, prevAlloc, prevTicks }：
- *   - usageMb/cpuPct 为 null = 无观测证据：不参与突发、违规计数清零（无证据绝不判违规）；
- *   - prevAlloc 为 state.allocation 字符串形态（跨守卫重启保持迟滞基准）；
- *   - prevTicks 为上一拍连续违规计数 { mem, cpu }。
- *  返回 { entries:[{ id, alloc, memoryMaxMb, cpuQuotaPct, changed, ticks, violation }] }；
- *  violation 触发即清零计数（处置动作在调用方，事件先于动作）。 */
+/** 每拍决策（纯函数，W2 两段制的本体）。roster 条目 = { id, usageMb, cpuPct, since, prevAlloc, prevTicks }：
+ *  usageMb/cpuPct 为 null = 无观测证据：不参与突发、违规计数清零（无证据绝不判违规）；
+ *  prevAlloc 取 state.allocation 字符串形态（跨守卫重启保持迟滞基准）。violation 触发即清零计数：处置动作在调用方，事件先于动作。 */
 function decide(opt) {
   const roster = (opt && opt.roster) || [];
   const totalMemMb = (opt.totalMemBytes || 0) / (1024 * 1024);
@@ -146,8 +137,7 @@ function decide(opt) {
 }
 
 /** 准入查询（纯）：即将活跃数（含本实例）摊薄后的预留跌破单实例下限即拒绝——
- *  限额废止后系统里没有「用户填的额度」可以超卖，唯一不可退让的是下限；
- *  绝不静默放行（等分超卖只会让全体一起慢，显式拒绝让用户立刻知道该停谁）。 */
+ *  限额废止后没有「用户填的额度」可超卖，下限是唯一不可退让线；绝不静默放行。 */
 function admission(instances, selfId, totalMemBytes) {
   const n = activeCount(instances, selfId);
   const budgetMb = (totalMemBytes || 0) * HEADROOM / (1024 * 1024);

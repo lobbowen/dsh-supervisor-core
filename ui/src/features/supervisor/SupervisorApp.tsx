@@ -1,13 +1,5 @@
-/**
- * Supervisor App（dsh-supervisor 控制面板宿主）
- * ============================================================================
- * 以 supervisor HTTP API（同源:3100）为后端的 7 域管理面板，完全按新 UI 标准：
- *   AppShell(web) -> AppLayout(sidebar) -> Toolbar(页标题) -> ContentArea(页) -> StatusBar
- * 数据：supervisorStore 统一 2s 轮询快照；页面只读消费 + 动作经 supervisorApi。
- * 说明：这是 dsh-supervisor 的"管家面板"；skiff 清理工具 App 是另一个独立宿主，
- *       两者各自挂载（main.tsx 按宿主/路由选择）。
- * ============================================================================
- */
+/** Supervisor App（dsh-supervisor 控制面板宿主）：以同源 supervisor HTTP API 为后端的 7 域面板。
+ *  数据：supervisorStore 统一轮询快照，页面只读消费、动作经 supervisorApi；skiff 清理工具 App 是另一独立宿主，两者各自挂载（main.tsx 按宿主/路由选择）。 */
 import { Component, lazy, Suspense, useEffect, useMemo, useState } from "react";
 import type { ReactNode } from "react";
 import {
@@ -21,7 +13,7 @@ import { toast } from "sonner";
 import { supervisorStore, useSupervisorData } from "../../services/supervisor";
 import { SUPERVISOR_NAV, type SupervisorViewKey } from "./nav";
 
-// P1 修复：7 个功能页面按需分包（React.lazy），首包不再包含全部页面体积。
+// 功能页面按需分包（React.lazy），首包不含全部页面体积；
 // 具名导出经 .then(m => ({ default: m.X })) 适配 lazy 的 default 契约。
 const OverviewPage = lazy(() => import("./OverviewPage").then((m) => ({ default: m.OverviewPage })));
 const InstancesPage = lazy(() => import("./InstancesPage").then((m) => ({ default: m.InstancesPage })));
@@ -50,8 +42,8 @@ export function SupervisorApp() {
   const authFailed = snap.authFailed; // 401 鉴权被拒 != 离线，呈现可操作错误
   const status = snap.status;
 
-  // 轮询生命周期与宿主绑定（R3 修复）：start 只在装配层调用一次，卸载即 stop；
-  // 兼容 React 19 StrictMode 开发双挂载（start->stop->start 幂等）。
+  // 轮询生命周期与宿主绑定：start 只在装配层调用一次，卸载即 stop；
+  // start->stop->start 幂等，兼容 React 19 StrictMode 开发双挂载。
   useEffect(() => {
     supervisorStore.start();
     return () => supervisorStore.stop();
@@ -73,7 +65,7 @@ export function SupervisorApp() {
   const running = Boolean(status?.dshPid);
 
   // 共用壳架构：窗口栏唯一由壳框架 shell.html 提供；
-  // 面板无论浏览器:3100 还是壳内 iframe 都统一 web 铺满纯内容（不再自绘窗口栏）。
+  // 面板无论浏览器还是壳内 iframe 都统一 web 铺满纯内容，不自绘窗口栏。
   return (
     <AppShell mode="classic">
       <AppLayout
@@ -142,21 +134,17 @@ export function SupervisorApp() {
               </>
             }
             right={
-              // 安装标识（UUID）显示在**运行状态之前**（用户确认的落点）：
-              //   灰度名单按它匹配（RELEASE-CHANNEL-CONTRACT），用户需要能直接读到并报给我们。
-              //   故**完整显示、不截断**，并支持点击复制，省去手工选中一段长 UUID。
-              //  外层 StatusBar 的 right 容器是 overflow-hidden + text-ellipsis（通用框架行为，
-              //   所有页面共用，不应为一个页面改它）。故这里让 **UUID 自身 shrink-0 不可压缩**，
-              //   否则中等窗口宽度下它会被截断成 "550e8400-e29b-41d4-a716-…"（用户要求完整显示）。
-              //   代价：极窄窗口下是**运行状态文字**被压缩（它是可读摘要，且缩窄时整体转为纵向布局）。
+              // 安装标识（UUID）：灰度名单按它匹配（RELEASE-CHANNEL-CONTRACT），需完整可读、可复制上报。
+              // StatusBar right 容器 overflow-hidden 且各页共用，故让 UUID 自身 shrink-0 不被截断；
+              // 极窄窗口下被压缩的是运行状态文字（可读摘要，缩窄时整体转纵向布局）。
               <span className="inline-flex min-w-0 items-center gap-2">
                 {status?.installId ? (
                   <button
                     type="button"
                     onClick={() => {
                       const id = String(status.installId);
-                      // 127.0.0.1 在浏览器规范中属 secure context，clipboard 通常可用；
-                      // 但面板也可能经局域网别名/非常规来源打开，故保留回退路径。
+                      // 127.0.0.1 属 secure context，clipboard 通常可用；
+                      // 面板也可能经局域网别名/非常规来源打开，故保留回退路径。
                       const fallback = () => {
                         try {
                           const ta = document.createElement("textarea");
@@ -185,8 +173,8 @@ export function SupervisorApp() {
                   </button>
                 ) : null}
                 {
-                  // 会话生命周期优先（契约 ，INV-S4）：stopping/stopped 时明确表达「退出中/已退出」——
-                  // 这是整个服务链的运行相位，比单看 main phase 更准确（退出中 main 可能已 STOPPED）。
+                  // 会话生命周期优先（INV-S4）：stopping/stopped 是整个服务链的运行相位，
+                  // 比单看 main phase 准确（退出中 main 可能已 STOPPED），须明确呈现「退出中/已退出」。
                   sessionState === "stopping" ? (
                 <span className="inline-flex items-center gap-1.5 text-xs leading-tight text-muted-foreground">
                   <span className="size-1.5 rounded-full bg-amber-500 animate-pulse" />
@@ -228,7 +216,6 @@ export function SupervisorApp() {
   );
 }
 
-/** 分包页面加载占位：与全局 2s 快照无关的轻量骨架，避免整页空白闪烁 */
 function PageFallback() {
   return (
     <div className="grid min-h-[320px] place-items-center" aria-busy="true" role="status">
@@ -240,7 +227,7 @@ function PageFallback() {
   );
 }
 
-/** 页面级错误边界：lazy chunk 加载失败 / 页面运行时异常时兜底，不白屏（P1 配套） */
+/** 页面级错误边界：lazy chunk 加载失败 / 页面运行时异常时兜底，不白屏 */
 class PageErrorBoundary extends Component<
   { children: ReactNode },
   { error: Error | null }

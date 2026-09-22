@@ -1,9 +1,7 @@
 'use strict';
 
-// 平台化桌面通知：三端同一 notify(title, body) 最佳努力接口（失败静默）。
-// - Linux：notify-send（现有行为）；
-// - macOS：osascript display notification；
-// - Windows：PowerShell System.Windows.Forms.NotifyIcon 气泡（无需第三方模块）。
+// 平台化桌面通知：三端同一 notify(title, body) 最佳努力接口（失败静默，仅可选 onError 回调可感知）。
+// Linux notify-send；macOS osascript display notification；Windows PowerShell NotifyIcon 气泡（无需第三方模块）。
 
 // SSOT：异步 spawn 统一封装（固定 windowsHide:true）。
 const spawnOS = require('./spawn');
@@ -13,10 +11,9 @@ function appleScriptString(s) {
   return JSON.stringify(String(s));
 }
 
-/** PowerShell **单引号**字符串字面量：' 双写即唯一转义规则；$ 与反引号在单引号串内是字面字符。
- *  旧实现用双引号串且只双写 "，漏 $ —— body 有 err.message 通路，
- *  `$(...)` 会被 PowerShell 子表达式插值**执行**，是命令注入面。双引号串同时转义 ` 与 $ 太易漏，
- *  故整体改单引号语义（与 AppleScript/JSON 的反斜杠规则不同，必须分开实现）。 */
+/** PowerShell 单引号字符串字面量：' 双写即唯一转义规则；$ 与反引号在单引号串内是字面字符。
+ *  不得用双引号串：body 有 err.message 通路，$(...) 会被 PowerShell 子表达式插值执行，是命令注入面。
+ *  AppleScript/JSON 用反斜杠转义，规则不同，必须分开实现。 */
 function powerShellString(s) {
   return "'" + String(s).replace(/'/g, "''") + "'";
 }

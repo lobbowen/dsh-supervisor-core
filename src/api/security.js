@@ -1,31 +1,20 @@
 'use strict';
 
-// api/security —— HTTP 层安全判定：Host/Origin 深化校验与访问密钥比较的唯一归属处。
-//
-// 分层职责（三层，职责单一）：
-//   1. 身份层（../platform/security/identity.js，socket 事实）：回环/私有网段判定，
-//      token 下发、access-key 豁免只消费该层；公网来源连不上（远端地址非 RFC1918/回环）。
-//   2. CSRF 深化层（originAllowed）：带 Origin 的写请求须与本服务同源，防"用户浏览器
-//      里的恶意网页"驱动 API；身份层不覆盖该威胁（浏览器发起的请求源 IP 是合法的）。
-//   3. 访问密钥层（apiAccessKey，可选）：非回环请求须携带 Bearer/?access_key=。
-//   不返回 CORS 头（面板同源托管 + 壳源白名单），其他网站浏览器读不到响应。
+// api/security —— HTTP 层安全判定唯一归属处：Host/Origin 深化校验（CSRF 层）与访问密钥比较。
+// 分层：身份层（platform/security/identity.js，socket 事实）判回环/私有网段；本文件防浏览器恶意网页驱动 API；
+// 第三层 apiAccessKey 由调用方接（非回环须 Bearer/?access_key=）。不返回 CORS 头（面板同源托管 + 壳源白名单）。
 
 const crypto = require('node:crypto');
 
-// 安全信任根：访问者身份 = socket 层事实（req.socket.remoteAddress），唯一判定实现见
-// ./identity.js。请求头（Host/Origin）只做浏览器语义的深化校验，绝不参与身份/鉴权判定。
-// `isPrivateIpv4` 与 identity 同一份 RFC1918 判定（Host/Origin 闸复用，不重写）。
-// 本文件仍经 ./identity shim 取用（兼容门面，移除条件见其头注）。
+// 安全信任根：访问者身份 = socket 层事实（req.socket.remoteAddress），唯一判定实现见 ./identity.js；
+// Host/Origin 请求头只做浏览器语义的深化校验，绝不参与身份/鉴权判定。
+// isPrivateIpv4 经 identity shim 转述（同一份 RFC1918 判定，Host/Origin 闸复用，不重写第二份）。
 const { isPrivateIpv4 } = require('./identity');
 
-// CSRF 深化校验（第二层）：请求须与本服务同源且同主机。信任集合 = 回环 并 RFC1918 私有网段。
-//   - Host 头（若有）必须是本机或局域网名，防 DNS-rebinding
-//     （攻击者把 evil.com 解析到 127.0.0.1，浏览器会带 `Host: evil.com`，被拒）。
-//   - Origin（只影响带 Origin 的请求）：壳内 webview（tauri://localhost）合法（面板就在壳里）；
-//     其余必须是本机/局域网名 + 本服务端口。
-// CORS 只挡读取，不挡 CSRF 的副作用：旧实现只比较端口，恶意页可从 `http://任意域:36360`
-// 发起请求（端口匹配即放行，且 socket 层看到的是回环、连 apiAccessKey 都被豁免）。
-// 注意：若 Host/Origin 闸只查回环，开启局域网访问后写操作会全 403（详见 isLocalOrLanHost）。
+// CSRF 深化校验：Host 必须存在且主机属回环/RFC1918 私有网段信任集；带 Origin 时还须主机一致、端口同源。
+//   Host 闸防 DNS-rebinding（evil.com 解析到 127.0.0.1 时浏览器带 Host: evil.com，被拒）。
+//   CORS 只挡读取不挡 CSRF 副作用，故必须独立做 Origin 闸；若只查回环，开启局域网访问后
+//   写操作会全 403（见 isLocalOrLanHost）。
 const LOOPBACK_HOSTS = new Set(['localhost', '127.0.0.1', '[::1]', '::1']);
 
 /** 是否为本机回环主机名（含 IPv6 方括号形态）。 */
@@ -34,35 +23,20 @@ function isLoopbackHost(h) {
   return LOOPBACK_HOSTS.has(String(h).toLowerCase());
 }
 
-/**
- * 是否为「本机或局域网」主机名 —— Host/Origin 闸的信任集合。
- *
- * 为什么必须有它：开启「局域网访问」（apiHost=0.0.0.0）后，局域网浏览器带的
- *   `Host: 192.168.x.x:36360` 若只按回环判定会被一律拒绝：面板 GET 能打开
- *   （静态资源不走 originAllowed），但所有写操作静默 403，与「只允许本机与 RFC1918」
- *   的声明完全相反。
- *
- * 修法：复用 identity.js 的 RFC1918 判定（`isPrivateIpv4`），不在此重写第二份。
- *
- * 安全影响：不放宽对公网的拒绝，私有网段之外的 Host（如 evil.com）仍被拒；
- *   DNS-rebinding 防护语义不变（依赖「Host 不是本机/局域网名」）。
- *   局域网来源仍须通过第三层（apiAccessKey，非回环请求强制），写请求仍须 Origin 同源。
- */
+/** 「本机或局域网」主机名 —— Host/Origin 闸信任集（回环名 + RFC1918 私有 IPv4，复用 identity.isPrivateIpv4）。
+ *  开启局域网访问（apiHost=0.0.0.0）后浏览器带 `Host: 192.168.x.x:36360`，若只按回环判定写操作会全 403。
+ *  不放宽对公网的拒绝：非私有网段主机（如 evil.com）仍被拒，DNS-rebinding 防护语义不变。 */
 function isLocalOrLanHost(h) {
   if (!h) return false;
   const s = String(h).toLowerCase();
   if (LOOPBACK_HOSTS.has(s)) return true;
   const bare = s.startsWith('[') && s.endsWith(']') ? s.slice(1, -1) : s;
   if (bare === '::1') return true;
-  // RFC1918 私有 IPv4（与 identity.isPrivateIpv4 同一份判定）
   return isPrivateIpv4(bare);
 }
 
-/** 壳（Tauri webview）的来源：唯一被接受的非回环来源 —— **CORS 与 CSRF 共用的单一事实源**
- *  （C-7：旧实现 transport/server.js 自带一份更宽的字面量判定（含 `*.tauri.localhost`
- *  通配 + https），出现「读得到、写不进 + 通配面额外暴露」的集合分裂。现两路都只认：
- *  `tauri://localhost`（POSIX asset 协议）与 `http(s)://tauri.localhost`（Windows asset 主机），
- *  不再接受任何子域通配。 */
+/** 壳（Tauri webview）的来源：唯一被接受的非回环来源，CORS 与 CSRF 共用的单一事实源。
+ *  接受集：tauri: 协议下 localhost 与 *.tauri.localhost；http(s) 下仅 tauri.localhost 本体，不含子域。 */
 function isShellOrigin(protocol, hostname) {
   const h = String(hostname || '').toLowerCase();
   if (protocol === 'tauri:') return h === 'localhost' || /(^|\.)tauri\.localhost$/.test(h);
@@ -77,11 +51,9 @@ function normalizeHostname(h) {
 }
 
 function originAllowed(req, apiPort) {
-  // 闸 1：Host 头（防 DNS-rebinding）—— C4：fail-closed。
-  //   浏览器会把 URL 里的域名放进 Host；若它不是回环名，
-  //   说明请求来自「被解析到 127.0.0.1 的外部域名」，拒绝。
-  //   旧实现 `if (host)` 让缺 Host 的请求整块跳过（与闸 2 的「无 Origin 放行」组合后
-  //   两闸同时归零）。HTTP/1.1 起 Host 必发；缺失即非规范客户端，直接拒。
+  // 闸 1：Host 头，fail-closed（防 DNS-rebinding）。HTTP/1.1 起 Host 必发，缺失即非规范
+  //   客户端直接拒（若缺 Host 放行，与闸 2「无 Origin 放行」组合后两闸同时归零）。
+  //   浏览器会把 URL 里的域名放进 Host：非本机/局域网名说明请求来自「被解析到 127.0.0.1 的外部域名」。
   const host = req.headers.host;
   if (!host) return false;
   let hostname = '';
@@ -92,11 +64,8 @@ function originAllowed(req, apiPort) {
     if (!isLocalOrLanHost(hostname)) return false;
   }
 
-  // 闸 2：Origin（哪些页面能驱动本 API）
-  //   C-2 裁决：现代浏览器对 **POST（含 form 提交）一律发 Origin**，
-  //   缺 Origin 只可能来自非浏览器客户端——「无 Origin 写请求」不构成浏览器 CSRF 面。
-  //   组合归零风险已由闸 1 fail-closed（缺 Host 即拒）封堵；本行语义保持并测试钉死
-  //   （defects-batch-f K6-b / lan-access-boundary E-a,E-b / core-test）。
+  // 闸 2：Origin（哪些页面能驱动本 API）。现代浏览器对 POST（含 form 提交）一律发 Origin，
+  //   缺 Origin 只可能来自非浏览器客户端，不构成浏览器 CSRF 面；该语义由测试钉死。
   const o = req.headers.origin;
   if (!o) return true; // curl / CLI / 同源 GET 无 Origin
   try {
@@ -104,10 +73,8 @@ function originAllowed(req, apiPort) {
     if (isShellOrigin(u.protocol, u.hostname)) return true;
     // Origin 同样接受私有网段（局域网设备的浏览器就是合法面板来源）。
     if (!isLocalOrLanHost(u.hostname)) return false;
-    // 主机一致性（防 LAN CSRF）：Origin 主机必须与请求实际到达的 Host 相同。
-    // 旧实现只比较端口 -> 局域网内任意主机上端口相同的恶意页面
-    // （如 http://192.168.1.5:36360）可驱动本 API；socket 层看到的是合法私网来源，
-    // 身份层与访问密钥层都不拦。壳来源（tauri://）已在上方放行，不受此比较影响。
+    // 主机一致性（防 LAN CSRF）：Origin 主机必须与请求实际到达的 Host 相同；只比端口会让
+    //   局域网内任意主机上端口相同的恶意页面驱动本 API（socket 层是合法私网来源，身份/密钥层不拦）。
     if (host && normalizeHostname(u.hostname) !== normalizeHostname(hostname)) return false;
     const port = u.port === '' ? (u.protocol === 'https:' ? '443' : '80') : u.port;
     return port === String(apiPort);
@@ -123,9 +90,8 @@ function safeKeyEqual(a, b) {
   return crypto.timingSafeEqual(ha, hb);
 }
 
-/** 请求是否携带正确的出回环访问密钥（apiAccessKey，F2 定案）：
- *  Authorization: Bearer <key> 或 ?access_key=<key> 二选一（常数时间比较）。
- *  无密钥配置时恒放行（本函数不调用：调用侧仅在配置了 key 且非回环请求时才走门卫）。 */
+/** 请求是否携带正确的出回环访问密钥：Authorization: Bearer <key> 或 ?access_key=<key>
+ *  二选一（常数时间比较）。调用方仅在配置了 apiAccessKey 且非回环请求时经此门卫。 */
 function requestHasAccessKey(req, key) {
   if (!key) return true;
   const ah = req.headers.authorization;

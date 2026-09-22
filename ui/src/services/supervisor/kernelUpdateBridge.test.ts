@@ -1,13 +1,5 @@
-/**
- * 面板 -> 壳 内核更新桥的行为测试（B4b）。
- *
- * 为什么锁行为而不只靠源码形态门禁：这里三条判据的失败模式全是**静默**的 ——
- *   来源不校验，任何能向本 iframe 派 message 的上下文都能报「更新成功」；
- *   进度帧被丢弃，界面在壳逐源安装的十几分钟里一个字都不动；
- *   等待上界写死，壳还在正常安装时面板就判「桌面壳无响应」，用户重试即并发写同一个 npm 全局包。
- *   形态门禁（test/kernel-update-single-writer-test.js SW-9）只能证明代码里有这些字样，
- *   证不了它们真的生效，故两边都要有。
- */
+// 面板 -> 壳 内核更新桥的行为测试。三条判据的失败模式都是静默的（伪造成功、进度丢失、超时误报后重试即并发写同一个 npm 全局包）；
+// 形态门禁（test/kernel-update-single-writer-test.js SW-9）只证明代码里有字样、证不了真生效，故两边都要锁。
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   BRIDGE_PROTOCOL_VERSION,
@@ -17,7 +9,7 @@ import {
   type KernelUpdateResult,
 } from "./kernelUpdateBridge";
 
-// 线格式在测试里**重写字面量**（不复用模块常量）：桥两侧各自持常量，跨仓一致性由门禁钉，
+// 线格式在测试里重写字面量（不复用模块常量）：桥两侧各自持常量，跨仓一致性由门禁钉，
 //   测试若复用同一常量就等于「用实现验证实现」，改错常量时两边一起错。
 const REQUEST = "dsh:kernel-update-request";
 const RESULT = "dsh:kernel-update-result";

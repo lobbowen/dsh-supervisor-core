@@ -20,7 +20,7 @@ import { cn } from "../../framework/utils";
 type Tab = "market" | "installed";
 const PAGE = 24;
 
-/** 批量 job 轮询汇总（A2 断点修复）：全部到终态后给出统一成败提示；无 jobId 时静默跳过。 */
+/** 批量 job 轮询汇总：全部到终态后给出统一成败提示；无 jobId 时静默跳过。 */
 async function pollJobsSummary(jobIds: string[], verb: string, total: number) {
   if (!jobIds.length) return;
   const t = toast.loading("正在" + verb + " " + total + " 个插件…（0/" + jobIds.length + "）");
@@ -79,7 +79,7 @@ function MarketRefresh() {
 function MarketTab() {
   const [index, setIndex] = useState<{ plugins: MarketPlugin[]; indexedAt?: string; sources?: Record<string, number> } | null>(null);
   const [kw, setKw] = useState("");
-  // Radix Select 值域 —— "all" 哨兵 = 全部（裸 <select> 的 "" 语义迁移）
+  // Radix Select 不允许空值："all" 哨兵 = 全部
   const [cat, setCat] = useState("all");
   const [src, setSrc] = useState("all");
   const [loaded, setLoaded] = useState(0);
@@ -123,7 +123,7 @@ function MarketTab() {
       const r = await supervisorApi.pluginInstall(installTarget.name, target);
       if (r.ok === false) { toast.error(r.error || "安装失败"); return; }
       setInstallTarget(null);
-      // A2 断点修复：后端返回 jobId 后**轮询到终态**（原先只提示「已提交」即止，无进度/成败反馈）
+      // 安装为 job 模型：轮询到终态给出进度与成败，不停在「已提交」
       if (r.jobId) {
         const t = toast.loading("正在安装 " + installTarget.name + "…");
         const res = await pollJob(() => supervisorApi.pluginInstallStatus(r.jobId as string));
@@ -199,7 +199,6 @@ function MarketTab() {
         </>
       )}
 
-      {/* 安装目标选择 */}
       <Dialog open={!!installTarget} onOpenChange={(o) => !o && setInstallTarget(null)}>
         <DialogContent className="max-w-[400px]">
           <DialogHeader><DialogTitle>安装插件 — {installTarget?.name}</DialogTitle></DialogHeader>
@@ -227,9 +226,8 @@ const srcLabel = (s: string) => ({ npm: "npm", github: "GitHub", community: "社
 const srcTone = (s: string): "ok" | "err" | "warn" | "boot" | "off" => s === "official" ? "boot" : s === "npm" ? "ok" : s === "github" ? "warn" : "off";
 
 /**
- * 已安装插件 —— 表格布局（对齐应用清理页：勾选 + 版本/大小/来源列）
- * 交互：逐行勾选；标题栏出现「更新所选(n)/卸载所选(n)」批量操作；
- *       「检查更新」检测后，有更新的行在版本列显示「可更新」徽标。
+ * 已安装插件：表格（勾选 + 版本/大小/来源列）。
+ * 批量操作在标题栏（更新/停用/启动/卸载所选）；「检查更新」后有更新的行显示「可更新」徽标。
  */
 function InstalledTab() {
   const [data, setData] = useState<{ inventoryReachable?: boolean; targets?: Array<{ id: string; name: string }>; thirdParty?: InstalledPlugin[] } | null>(null);
@@ -255,8 +253,8 @@ function InstalledTab() {
   const toggleAll = () => setSelected(allChecked ? new Set() : new Set(shown.map((p) => p.name)));
   const selRows = shown.filter((p) => selected.has(p.name));
   const hasUpdatableSel = selRows.some((p) => updatable.has(p.name));
-  const stopSel = selRows.filter((p) => p.enabled);    // 可停止（当前启用）
-  const startSel = selRows.filter((p) => !p.enabled); // 可启动（当前停用）
+  const stopSel = selRows.filter((p) => p.enabled);
+  const startSel = selRows.filter((p) => !p.enabled);
 
   async function checkUpdates() {
     setChecking(true);
@@ -278,10 +276,10 @@ function InstalledTab() {
     const names = selRows.filter((p) => updatable.has(p.name)).map((p) => p.name);
     if (!names.length) { toast.info("所选插件均无可用更新"); return; }
     setSelected(new Set());
-    // 更新后这些插件不再是待更新项 -> 从 updatable 移除（按钮回归「检查更新」态）
+    // 所选已提交更新：从 updatable 移除，按钮回归「检查更新」态
     setUpdatable((prev) => { const n = new Map(prev); for (const x of names) n.delete(x); return n; });
     await run("upd-sel", async () => {
-      // A2 断点修复：收集 jobId 后**统一轮询到终态**（原先只提示「已提交」）
+      // 收集 jobId 统一轮询到终态再汇总反馈
       const jobIds: string[] = [];
       for (const n of names) {
         try { const r = await supervisorApi.pluginUpdate(n); if (r.jobId) jobIds.push(r.jobId); } catch { /* 单点失败跳过 */ }
@@ -301,7 +299,6 @@ function InstalledTab() {
       await pollJobsSummary(jobIds, "卸载", names.length);
     }, { success: "已提交 " + names.length + " 个插件的卸载任务", refresh: false, onDone: () => void load() });
   }
-  /** 批量停止（停用当前启用的所选插件） */
   async function stopSelected() {
     const names = stopSel.map((p) => p.name);
     setSelected(new Set());
@@ -309,7 +306,6 @@ function InstalledTab() {
       for (const n of names) { try { await supervisorApi.pluginDisable(n); } catch { /* 单点失败跳过 */ } }
     }, { success: "已停止 " + names.length + " 个插件", refresh: false, onDone: () => void load() });
   }
-  /** 批量启动（启用当前停用的所选插件） */
   async function startSelected() {
     const names = startSel.map((p) => p.name);
     setSelected(new Set());
@@ -322,13 +318,12 @@ function InstalledTab() {
 
   return (
     <Card className="overflow-hidden">
-      {/* 标题栏（标题 + 右侧批量操作，对齐应用清理 PanelTitle） */}
       <CardTitle
         title={"已安装插件" + (data ? "（" + shown.length + "）" : "")}
         subtitle={filter === "all" ? "全部实例" : "实例：" + ((data?.targets ?? []).find((t) => t.id === filter)?.name ?? filter)}
         actions={
           <>
-            {/* 检测/更新合一（最前）：常态「检查更新」；勾选可更新项后演化「更新所选(n)」 */}
+            {/* 常态「检查更新」，勾选可更新项后变「更新(n)」 */}
             {hasUpdatableSel ? (
               <Button disabled={busy === "upd-sel"} onClick={() => void updateSelected()} size="sm">
                 <RefreshCw className="size-3.5" />更新（{selRows.filter((p) => updatable.has(p.name)).length}）
@@ -360,7 +355,6 @@ function InstalledTab() {
         }
       />
 
-      {/* 目标筛选工具行 */}
       <div className="flex flex-wrap items-center gap-1.5 border-b border-border/60 px-5 py-2.5">
         <Button className={cn(filter === "all" ? "bg-primary/10 text-primary hover:bg-primary/15" : "text-muted-foreground hover:bg-muted hover:text-foreground")} onClick={() => setFilter("all")} size="sm" variant="ghost">全部实例</Button>
         {(data?.targets ?? []).map((t) => (
@@ -372,7 +366,6 @@ function InstalledTab() {
         : !shown.length ? <div className="grid place-items-center rounded-lg border-0 py-16 text-center"><Package className="mx-auto mb-3 size-8 text-muted-foreground" /><p className="text-sm text-muted-foreground">当前实例均未安装第三方插件</p></div>
         : (
           <>
-            {/* 表头 + 行：窄容器下整体横向滚动（列宽保底不挤压） */}
             <div className="overflow-x-auto">
             <div className={cn(gridCols, "min-w-[720px] border-b border-border/70 bg-muted px-5 py-2 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground")}>
               <span>来源</span>
@@ -381,7 +374,6 @@ function InstalledTab() {
               <span className="text-right">大小</span>
               <span className="flex justify-end"><Checkbox aria-label="全选" checked={allChecked} onChange={toggleAll} /></span>
             </div>
-            {/* 行：整行可点选中（对齐应用清理：行内无独立按钮；操作统一在标题栏） */}
             <div className="max-h-[560px] overflow-auto">
               {shown.map((p) => {
                 const checked = selected.has(p.name);

@@ -1,24 +1,9 @@
 import type { ReactNode } from "react";
 import { cn } from "../utils";
 
-/**
- * ============================================================================
- * DSH 通用 UI 框架 — AppLayout（响应式主布局）
- * ============================================================================
- * 侧边栏 + 主内容区。
- *
- * 响应式行为（现代自适应，不做上下堆叠）：
- *  - >=641px：侧边栏为常驻左列，主内容占剩余轨道。
- *  - <=640px：侧边栏变为 fixed 左侧抽屉（CSS 控制 transform 滑入/出），
- *    由 sidebarOpen 驱动；抽屉打开时渲染遮罩，点遮罩关闭。
- *    内容区始终独占主轨（grid 单列）。
- *
- * 用法：
- *   <AppLayout sidebarOpen={open} onCloseSidebar={close} sidebar={<AppSidebar/>}>
- *     <ContentArea>...</ContentArea>
- *   </AppLayout>
- * ============================================================================
- */
+/** AppLayout：响应式主布局（侧边栏 + 主内容区）。
+ *  >=641px 侧边栏常驻左列；<=640px 变 fixed 左抽屉，滑入/出与遮罩显隐由 theme/shell.css 按
+ *  data-sidebar-open / data-mode 控制——类名与 data-* 属性须与 shell.css 选择器保持同步。 */
 
 export type AppLayoutProps = {
   children: ReactNode;
@@ -52,7 +37,7 @@ export function AppLayout({
     >
       {sidebar}
       {children}
-      {/* 手机抽屉遮罩：宽屏 display:none，不产生副作用 */}
+      {/* 手机抽屉遮罩：宽屏 display:none，无副作用 */}
       {sidebar && onCloseSidebar ? (
         <div
           aria-hidden="true"

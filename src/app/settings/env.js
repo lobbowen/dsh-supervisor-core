@@ -20,8 +20,8 @@ function envCatalogSummary(that) {
 module.exports = {
   methods: {
     envStatus() {
-      // 契约唯一读取口 = platform/contract/runtime。旧实现在此手写
-      //   path.dirname(stateFile) + 'runtime.json'：与契约真实落点（<产品状态根>/supervisor）
+      // runtime 契约唯一读取口 = platform/contract/runtime；不得在此手写
+      //   dirname(stateFile) + 'runtime.json'：与契约真实落点（<产品状态根>/supervisor）
       //   不必然同源，状态根一挪就静默读空。
       const c = runtimeContract.read() || {};
       const cat = new EnvCatalog(this.config).probe();

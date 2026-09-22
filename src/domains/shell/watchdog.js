@@ -1,25 +1,12 @@
 'use strict';
 
-// 桌面壳看护：由守卫承担壳自愈。壳无法监督自己（其监督者会随它一起死），而守卫是
-// 抗重启的那个（systemd Restart=always / launchd KeepAlive / schtasks Watchdog），
-// 三平台一套机制。
-// 设计要点：
-// 1. 只在壳确实缺失时动作（以进程实际存在为准，不以文件/心跳推断）；
-// 2. 宽限期：连续缺失达阈值才拉起，避让壳自更新/自重启的瞬时空窗；
-// 3. 预期缺席（restarting / shell-update-* / 未确认更新账本）用更长宽限；
-// 4. 无图形会话则跳过（Linux 注销后经 linger 仍在运行，拉起 GUI 必失败成风暴）；
-// 5. 窗口内有界重试，防无限风暴；6. decide() 是纯函数，可脱离进程/时钟/fs 单测；
-// 7. **会话退出中/已退出（INV-S1）恒不动作**——退出的语义就是「不再拉起」（
-//    原实现只判壳缺失、不看会话态，导致「退出管家」后守卫多活一拍即把壳拉回）。
-// 纯决策（DEFAULTS/decide/isShellProcess/isUpdatePhase）在 core.js；本文件只保留有状态看护。
+// 桌面壳看护：由守卫承担壳自愈（壳无法监督自己，守卫是抗重启的那个：systemd Restart=always / launchd KeepAlive / schtasks Watchdog，三平台一套机制）。
+// 约束：以进程实际存在为准（不以文件/心跳推断）；连续缺失达宽限期才拉起，预期缺席（restarting / shell-update-* / 未确认更新账本）用更长宽限；
+// 无图形会话跳过（注销后 linger 仍在，拉起 GUI 必失败成风暴）、窗口内有界重试、会话退出中/已退出（INV-S1）恒不动作。纯决策（DEFAULTS/decide/isShellProcess/isUpdatePhase）在 core.js，本文件只留有状态看护。
 const { DEFAULTS, decide, isShellProcess, isUpdatePhase } = require('./core');
 
-/**
- * 创建壳看护实例。
- * deps: { shell(identity/readJournal/restartShell), pidlookup(pgrepList),
- *         desktop(sessionAvailable/describe), logger, events, config, now(注入时钟),
- *         halted(退出中/已退出谓词), onShellAlive(观测到壳在线回调) }
- */
+/** 创建壳看护实例。deps 全部注入（shell/pidlookup/desktop/logger/events/config/now/halted/
+ *  onShellAlive），便于脱离进程/时钟/fs 单测。 */
 function createShellWatchdog(deps) {
   const o = deps || {};
   const shell = o.shell;
@@ -52,12 +39,9 @@ function createShellWatchdog(deps) {
   }
 
   /** 相位跟踪（由 tick 每拍调用；expectedAbsence 是只读快照，不能带副作用）。
-   *  phase 只由壳写入，唯一复位点是壳成功启动；壳更新中途崩溃且不再起来会让 phase
-   *  永久停在 shell-update-* 或 restarting，使宽限永远走 5min、自愈被拖慢。
-   *  故进入更新相位即计时，超过 phaseMaxAgeMs（默认 10 分钟）视为陈旧，不再延长宽限；
-   *  离开该相位即复位。用看护自己的时钟而非 identity 文件 mtime：identity 在测试里是
-   *  注入桩，且壳的 set_phase() 只写 phase、不写 lastSeenAt。
-   */
+   *  phase 只由壳写入，壳更新中途崩溃会让相位永久停在 shell-update-* 或 restarting、宽限永远走
+   *  5min，故进入即计时，超过 phaseMaxAgeMs 判陈旧、不再延长宽限。计时用看护自己的时钟：
+   *  identity 在测试里是注入桩，且壳 set_phase() 只写 phase、不写 lastSeenAt，不能用文件 mtime。 */
   function updatePhaseTracking(t) {
     let phase = "";
     try { const id = shell.identity(); phase = String((id && id.phase) || ""); } catch {}
@@ -73,12 +57,9 @@ function createShellWatchdog(deps) {
   }
 
   /** 更新账本时效跟踪（由 tick 每拍调用，与 updatePhaseTracking 对称）。
-   *  账本只由壳侧上报（journal.js markPending）写入，`startedAt` 是**唯一**时间戳（ISO 串）；
-   *  `lastAttemptAt` 只在默认形状里声明、全仓无写入点，不可依赖。
-   *  壳 pending 后一直不回来确认时 j.to 会永久留着，只看 j.to 会让宽限永远走 updateGraceMs
-   *  （自愈被拖慢），故超过 phaseMaxAgeMs 即判陈旧、不再据此延长宽限（并 warn 一次）。
-   *   无法解析 `startedAt` 时按「未陈旧」处理：既有测试（watchdog-phase-freshness N-d）
-   *    用无 startedAt 的账本桩锁定「未确认账本 -> 预期缺席」语义，不得改变该行为。 */
+   *  账本只由壳侧上报（markPending）写入，startedAt 是唯一可靠时间戳（lastAttemptAt 全仓无写入点）。
+   *  未确认账本超 phaseMaxAgeMs 判陈旧、不再延长宽限。startedAt 无法解析时按「未陈旧」处理：
+   *  既有测试用无 startedAt 的账本桩锁定「未确认账本 -> 预期缺席」语义，不得改变该行为。 */
   function updateJournalTracking(t) {
     let j = null;
     try { j = shell.readJournal && shell.readJournal(); } catch {}
@@ -93,8 +74,8 @@ function createShellWatchdog(deps) {
     }
   }
 
-  /** 壳是否处于预期缺席：更新/重启相位（且未陈旧）或有**未过时效**的未确认更新账本。
-   *  只读快照：账本时效由 updateJournalTracking 每拍算好，本函数不得产生副作用。 */
+  /** 壳是否处于预期缺席：更新/重启相位（且未陈旧）或未确认更新账本（未过时效）。
+   *  只读快照：陈旧位由 updateJournalTracking 每拍算好，本函数不得产生副作用。 */
   function expectedAbsence() {
     let phase = '';
     try { const id = shell.identity(); phase = String((id && id.phase) || ''); } catch {}
@@ -102,7 +83,7 @@ function createShellWatchdog(deps) {
     if (inUpdate && !phaseStale) return true;
     try {
       const j = shell.readJournal && shell.readJournal();
-      // journalStale 由每拍更新；陈旧账本不再算「预期缺席」，让看护按正常宽限介入。
+      // 陈旧账本不算「预期缺席」，让看护按正常宽限介入（陈旧位每拍由 updateJournalTracking 更新）。
       if (j && j.to && !j.confirmed) return !journalStale;
     } catch {}
     return false;
@@ -121,10 +102,9 @@ function createShellWatchdog(deps) {
       const t = now();
       const procs = shellProcs();
       const alive = procs.length;
-      //  （严重缺陷：退出管家后自动重启）——门**下沉到看护域**：
-      //   任何 tick 调用者（bootstrap 定时器/诊断/未来接线）都受同一门约束。
-      //   1) 壳已在线 -> 先清除持久退出标记（用户重新打开了壳，自愈恢复）；
-      //   2) 退出中/已退出（INV-S1）-> 恒不动作。
+      // 会话门下沉到看护域：任何 tick 调用者（bootstrap 定时器/诊断）都受同一门约束。
+      // 1) 壳已在线 -> 先清除持久退出标记（用户重新打开了壳，自愈恢复）；
+      // 2) 退出中/已退出（INV-S1）-> 恒不动作。
       if (alive > 0 && typeof o.onShellAlive === 'function') { try { o.onShellAlive(); } catch {} }
       if (typeof o.halted === 'function' && o.halted()) {
         lastSkipReason = '会话退出中/用户已退出（不拉起）';
@@ -167,7 +147,7 @@ function createShellWatchdog(deps) {
       restarts.push(t);   // 记账在尝试前：失败同样计入上限，防失败风暴
       const r = await shell.restartShell({
         exePath: exe, procPattern,
-        // 在飞复判（K4）：杀旧壳与 spawn 之间有 ~8s 窗口，退出请求可能在窗口内到达。
+        // 在飞复判：杀旧壳与 spawn 之间有 ~8s 窗口，退出请求可能在窗口内到达。
         shouldAbort: (typeof o.halted === 'function') ? () => o.halted() : undefined,
       });
       if (r && r.ok) {

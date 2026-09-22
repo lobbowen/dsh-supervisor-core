@@ -1,12 +1,8 @@
 'use strict';
 
 // app/assembly/collaborators.js —— 具名协作方装配（真 ctor 注入）。
-//
-// state / session / control 由工厂（createStateStore / createSession / createControlPlane）
-// 构造并自己持有实现，可只 require 对应模块 + 假 deps 直接断言；host 只保留兼容外壳
-// （旧方法名 _mPhase/_mSetPhase 等转发到 host.state/session），公共面（api/测试）不变。
-// ctl / daemons / main / views / audit / ui 仍以 { methods } 形式装到 host；
-// 本文件的 THIN_SPEC 把它们收敛为具名协作方（转发到 host 上的既有实现）。
+// state/session/control 由工厂构造并自持实现，host 只保留旧方法名兼容外壳，公共面（api/测试）不变；
+// ctl/daemons/main/views/audit/ui 由 THIN_SPEC 声明为薄委托，转发到 host 上的既有实现。
 
 const { createStateStore } = require('../state/collaborator');
 const { createSession } = require('../session/machine');
@@ -76,7 +72,7 @@ function installFieldHelpers(host, state) {
   }
 }
 
-/** 安装 State 协作方 + 旧方法名兼容外壳。 */
+/** 安装 State 协作方，并把旧方法名转发到它上面。 */
 function installState(host) {
   const state = createStateStore({
     getConfig: () => host.config, getConfigPath: () => host.configPath,
@@ -140,14 +136,10 @@ function installSession(host) {
   host.sessionState = () => session.state();
   host._setSessionState = (s) => { session.setState(s); };
   host._sessionHalting = () => session.halting();
-  // 意图轴单源谓词——「守卫/会话正在退出」的唯一判据。
-  //   两原子：_stopping（守卫自身关停）或 session halting（stopping/stopped）。
-  //   一切自愈/拉起/收敛/补做入口一律经本谓词门禁，禁止再在调用点各自拼合子集
-  //   （谓词漂移会让门禁失效）。
-  //   _shellHalted 不在此谓词内：它是**桌面壳域**的持久退出意图（跨守卫重启），
-  //     只否决「壳看护」自愈；主 DSH 的恢复权威是 desired（守卫重启后
-  //     desired=running 即恢复），若把 _shellHalted 混入本谓词会破坏恢复语义，且
-  //     headless（无壳看护、_shellHalted 无清除路径）下形成永久死锁。壳域判据见 _shellExitIntended。
+  // 意图轴单源谓词：「守卫/会话正在退出」= _stopping（守卫关停）或 session halting。
+  //   一切自愈/拉起/收敛/补做入口都经本谓词门禁，禁止在调用点各自拼合子集（谓词漂移即门禁失效）。
+  //   _shellHalted 不在此列：它是桌面壳域的持久退出意图（跨守卫重启），只否决壳看护；
+  //   主 DSH 的恢复权威是 desired，混入会破坏恢复语义并在 headless 下永久死锁（见 _shellExitIntended）。
   host._exitIntended = () => !!(host._stopping || session.halting());
   // 桌面壳域退出判据：通用退出 或 持久 _shellHalted。仅供壳看护（bootstrap）使用。
   host._shellExitIntended = () => !!(host._exitIntended() || host._shellHalted);
@@ -192,10 +184,10 @@ function installThin(host) {
   }
 }
 
-/** 安装 audit 协作方（真 ctor 工厂）：覆盖 installThin 刚装上的转发器，
- *  使 host.audit.orphan() 直达工厂（control/scheduler.js 的唯一消费点），
- *  而不再经 host._orphanAudit()。THIN_SPEC.audit 仍保留为接口声明与装配期校验出处。
- *  deps 全为惰性取值（装配期 host 尚未就绪）；抑制状态经 get/set 钩子与 host 字段同源。 */
+/** 安装 audit 协作方（真 ctor 工厂）：覆盖 installThin 的转发器，使 host.audit.orphan()
+ *  直达工厂（唯一消费点 control/scheduler.js），不经 host._orphanAudit 转发；
+ *  THIN_SPEC.audit 仍作接口声明与装配期校验出处。deps 全为惰性取值（装配期 host 未就绪），
+ *  节流簿记字段经 get/set 钩子与 host 字段同源。 */
 function installAuditFactory(host) {
   host.audit = createOrphanScan({
     getConfig: () => host.config,
@@ -213,12 +205,9 @@ function installAuditFactory(host) {
   });
 }
 
-/** 安装 ctl 协作方（真 ctor 工厂）：公开键 = THIN_SPEC.ctl（call/lanCall/lanPort/routerPort/routerFacade），
- *  覆盖 installThin 的转发器，使 host.ctl.* 与 host._* 走同一实现。
- *  getLanCtlCall 等宿主 getter 必须传 host 上的**实时**方法（每次调用重新取 + bind），
- *  因为测试会覆写 host._lanCtlCall 来验证「门面路径剔除令牌」
- *  （token-boundary 测试经 facade/lan 门面的 this.ctl.lanCall 生效）——
- *  若在此固化实现，覆写面会失效。 */
+/** 安装 ctl 协作方（真 ctor 工厂）：公开键 = THIN_SPEC.ctl，覆盖 installThin 的转发器，
+ *  使 host.ctl.* 与 host._* 走同一实现。宿主 getter 必须每次重取 + bind（不得固化实现）：
+ *  测试会覆写 host._lanCtlCall 验证门面路径剔除令牌，固化后覆写面即失效。 */
 function installCtlFactory(host) {
   host.ctl = createCtl({
     getConfig: () => host.config,

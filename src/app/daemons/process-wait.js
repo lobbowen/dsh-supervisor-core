@@ -1,7 +1,7 @@
 'use strict';
 
 // app/daemons/process-wait.js —— 受管 daemon 的等待原语（IO：轮询 / 端口 bind 探测）。
-// 从 process.js 拆出：本模块无 this、无状态，全部为具名 async 函数，依赖显式入参。
+// 无 this、无状态，全部为具名 async 函数，依赖显式入参。
 
 const net = require('node:net');
 const pidlook = require('../../platform/os/pidlookup');

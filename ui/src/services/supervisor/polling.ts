@@ -1,13 +1,5 @@
-/**
- * ============================================================================
- * supervisor 运行态轮询中心（对齐老 UI unifiedTick 语义：单源快照 -> 视图只读）
- * ============================================================================
- * - start() 并行拉运行态 + 增量事件（after=seq），写入快照并发给订阅者；一轮结束后
- *   自排下一轮：链路健康时 2s，连续失败按 2s->4s->8s…退避（封顶 30s，UI 条 6）
- * - 任意写操作后可 refresh()（立即同步一次）
- * - 纯 JS 事件订阅（set 通知），页面用 useSyncExternalStore 或 useEffect 消费
- * ============================================================================
- */
+/** supervisor 运行态轮询中心（单源快照 -> 视图只读）：start() 每轮并行拉运行态 + 增量事件（after=seq），写完自排下一轮，
+ *  健康 2s，连续失败 2s->4s->8s 退避封顶 30s（UI 条 6）；写操作后可 refresh() 立即同步一次；纯 JS set 订阅，页面用 useSyncExternalStore 消费。 */
 import { supervisorApi } from "./client";
 import type {
   EventsPage, FrpStatus, InstancesResponse, LanAccessResponse,
@@ -21,13 +13,12 @@ export interface SupervisorSnapshot {
   frp: FrpStatus | null;
   router: RouterStatus | null;
   providers: ProvidersResponse | null;
-  /** 端口注册表快照（R4 修复：从 PortPanel 独立 5s 轮询收敛进统一心跳） */
+  /** 端口注册表快照（已收敛进统一心跳，无独立轮询） */
   ports: PortsResponse | null;
   events: EventsPage["events"];
   eventsSeq: number;
   online: boolean;
-  /** B8：全部读取都因 401（访问密钥缺失/过期）失败——「鉴权被拒」而非「管家离线」，
-   *  必须呈现为可操作错误，否则用户对着假离线指示无从下手。 */
+  /** 全部读取都因 401（访问密钥缺失/过期）失败：是「鉴权被拒」而非「管家离线」，须呈现为可操作错误。 */
   authFailed: boolean;
 }
 
@@ -45,15 +36,13 @@ let snap = empty();
 let started = false;
 let timer: ReturnType<typeof setTimeout> | null = null;
 let busy = false;
-/** 事件增量拉取的 in-flight 守卫：refreshEvents 与 syncAll 相互独立，
- *  防止慢网下并发 refresh()/心跳交叠导致同批事件双插（R1 修复）。 */
+/** 事件增量拉取的 in-flight 守卫：refreshEvents 与 syncAll 相互独立，防慢网下并发交叠致同批事件双插。 */
 let eventsBusy = false;
 
 /** 心跳基准/上限间隔（UI 条 6 退避） */
 const BASE_TICK_MS = 2000;
 const MAX_TICK_MS = 30_000;
-/** 连续 syncAll 失败次数：成功后清零，是退避的唯一依据（UI 条 6）。
- *  此前用固定 setInterval(2s)，守卫离线时仍每 2s 打满 7 个请求（且慢网下轮次交叠）。 */
+/** 连续 syncAll 失败次数：成功后清零，是退避的唯一依据（UI 条 6）。 */
 let failStreak = 0;
 
 /** 下一轮心跳间隔：第 2 次连续失败起翻倍，封顶 MAX_TICK_MS。 */
@@ -62,10 +51,8 @@ function tickDelayMs(): number {
   return Math.min(MAX_TICK_MS, BASE_TICK_MS * 2 ** (failStreak - 1));
 }
 
-/** 事件游标归一化（UI 条 6）：后端异常时 r.seq 可能是 null/字符串/NaN。
- *  NaN 一旦写进 eventsSeq 就永久污染——Math.max(NaN, x) 恒为 NaN，
- *  下一轮拼出 `?after=NaN` 再也拉不到事件，且界面表现为「事件流静默停摆」。
- *  故写入前统一过滤，非法值退回当前游标（不猜测、不回退到 0 造成重放）。 */
+/** 事件游标归一化（UI 条 6）：后端异常时 r.seq 可能为 null/字符串/NaN。NaN 写进 eventsSeq 会永久污染
+ *  （Math.max(NaN,x) 恒为 NaN，下轮 after=NaN 再也拉不到事件），故非法值退回当前游标，不回退 0 造成重放。 */
 function safeSeq(v: unknown, fallback: number): number {
   const n = typeof v === "number" ? v : Number(v);
   return Number.isFinite(n) ? n : fallback;
@@ -77,9 +64,7 @@ function setPartial(p: Partial<SupervisorSnapshot>) { snap = { ...snap, ...p }; 
 /** 心跳链世代号：stop() 后在途的那一轮不得再排下一轮（否则 start() 会同时跑两条链）。 */
 let epoch = 0;
 
-/** 统一心跳：一轮跑完再按退避间隔排下一轮（UI 条 6）。
- *  并行语义与原 setInterval 实现一致；改为自排 setTimeout 是为了能在每轮结束后
- *  依据失败次数调整间隔，同时避免慢网下轮次堆叠。 */
+/** 统一心跳：一轮跑完再按退避间隔自排下一轮（UI 条 6），以便按失败次数调整间隔并避免慢网下轮次堆叠。 */
 async function heartbeat() {
   const mine = epoch;
   await Promise.all([refreshEvents(), syncAll()]);
@@ -110,8 +95,7 @@ async function syncAll() {
     // 退避只看「运行态是否读到」——status 读到即认为链路健康，个别域读失败
     // 由快照的 null 字段如实呈现，不该拖慢整条心跳。
     failStreak = online ? 0 : failStreak + 1;
-    // R4 修复：心跳不再附带 /tasks —— snap.tasks 无消费者（TasksPage 自管本地 state + 手动刷新），
-    // 每 2s 白拉一次低频任务列表属于无效网络开销。
+    // 心跳不附带 /tasks：snap.tasks 无消费者（TasksPage 自管本地 state + 手动刷新），避免每拍白拉低频任务列表。
     setPartial({ status, instances, lan, frp, router, providers, ports, online, authFailed: !online && authHit });
   } catch {
     failStreak += 1;
@@ -127,7 +111,7 @@ async function refreshEvents() {
   try {
     const r = await supervisorApi.events(snap.eventsSeq, 60);
     if (r.events && r.events.length) {
-      // 后端增量升序 -> 新批次在前（老 UI 语义：数组头 = 最新）。
+      // 后端增量升序 -> 反转后新批次在前（数组头 = 最新）。
       // 按 seq 去重兜底：即使 in-flight 曾交叠/后端游标回退，也不让同 seq 双插。
       const seen = new Set<number>();
       const merged: EventsPage["events"] = [];

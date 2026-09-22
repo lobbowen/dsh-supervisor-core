@@ -1,13 +1,8 @@
 'use strict';
 
-// API 契约面（单一事实源）：显式声明每个路由的分类与消费者；test/api-surface-test.js
-// 断言源码里出现的每个路由都在此处登记（双向一致），新增路由不登记即测试失败。
-//
-// 分类语义：
-//   public      一方客户端消费（前端 UI / CLI / 桌面壳）
-//   operational 运维/监控/审计面（外部工具消费，一方 UI 不调用，即可观测接口）
-//   internal    守卫自身内部消费（不对外承诺稳定性）
-//   deprecated  兼容保留（必须写明移除条件/替代，避免静默删除破坏旧客户端）
+// API 契约面（单一事实源）：显式声明每个路由的分类与消费者；test/api-surface-test.js 断言源码路由与本表双向一致（新增路由不登记即测试失败）。
+// 分类语义：public=一方客户端消费（前端 UI/CLI/桌面壳）；operational=运维/监控/审计外部工具消费（一方 UI 不调用，可观测接口）；internal=守卫内部消费（不承诺稳定性）；
+// deprecated=兼容保留（必须写明移除条件/替代，避免静默删除破坏旧客户端）。
 
 const CATEGORIES = ['public', 'operational', 'internal', 'deprecated'];
 
@@ -54,8 +49,8 @@ const SURFACE = [
 
   // 沙箱实例（instances.js）
   { path: '/instances',           methods: ['GET'],  domain: 'instances', category: 'public', consumers: ['UI(InstancesPage)'], note: '实例列表（+ POST /instances/{action}）' },
-  // /open 是 open-web 的**落地跳转**：由系统浏览器直接访问（非 UI fetch），凭一次性码换取
-  // dsh-auth cookie 后 303 到 DSH 页面 —— 消费者即本机浏览器（open-web 签发码）。
+  // /open 是 open-web 的落地跳转：由系统浏览器直接访问（非 UI fetch），
+  // 凭一次性码换取 dsh-auth cookie 后 303 到 DSH 页面。
   { path: '/open',                methods: ['GET'],  domain: 'instances', category: 'public', consumers: ['UI(open-web → 本机系统浏览器一次性码跳转)'], note: '一次性码换取 dsh-auth cookie 并回跳实例 DSH 页面（令牌不进 URL/argv，TK-G6）' },
 
   // 插件（plugins.js）
@@ -94,21 +89,18 @@ const SURFACE = [
   // 「测试」按钮必须经本端点由服务端探测（复用内核选源的同一探测规格）。
   { path: '/dist/registry/probe',   methods: ['POST'], domain: 'dist', category: 'public', consumers: ['UI(RegistryCard 测试按钮)'], note: '同源单源探活（服务端，不受页面 CSP 限制）' },
 
-  // 远程控制（relay.js：/lan-access 只读列表 + /remote/* 意图面）
-  //  写动作按 act 切片分派（pathname.startsWith('/remote/')，同 /instances/{action} 形态），
-  //   故四个 POST 子动作归 /remote/ 前缀行登记，不列精确路由（api-surface 双向一致：
-  //   精确行必须在源码以 pathname === 字面出现，act 切片形态列精确行即幽灵条目）。
+  // 远程控制（relay.js：/lan-access 只读列表 + /remote/* 意图面）。
+  // 写动作按 act 切片分派（pathname.startsWith('/remote/')），四个 POST 子动作归 /remote/ 前缀行登记；
+  // 精确行必须在源码以 pathname === 字面出现，act 切片形态列精确行即幽灵条目。
   { path: '/lan-access',       methods: ['GET'],  domain: 'relay', category: 'public', consumers: ['UI(LanPage)'], note: '远程代理列表（脱敏；remote 视图为访问 URL/就绪判定的单一来源）' },
   { path: '/remote/frp',       methods: ['GET'],  domain: 'relay', category: 'public', consumers: ['UI(LanPage)'], note: 'frpc 状态（设置 + 运行态 + wan 暴露清单）' },
 
   // 任务（tasks.js）
   { path: '/tasks', methods: ['GET'], domain: 'tasks', category: 'public', consumers: ['UI(TasksPage)'], note: '统一任务列表（+ /tasks/{id}）' },
 
-  // 桌面壳更新安全网（shell.js）
-  // 内核不是壳的更新源（壳直连 npm CDN 自更新），本域只做观察/审计；
+  // 桌面壳更新安全网（shell.js）：内核不是壳的更新源（壳直连 npm CDN 自更新），本域只做观察/审计；
   // 壳不受监督（崩溃无人拉起），内核是唯一能救它的角色。
-  // 更新策略：壳与内核同一套升级逻辑，有新版必须强制更新，不得跳过、不得隐式回退；
-  // 紧急回退由发布通道契约的 `rollback` dist-tag 显式触发（RELEASE-CHANNEL-CONTRACT.md）。
+  // 更新策略：有新版必须强制更新，不得跳过、不得隐式回退；紧急回退仅由发布通道的 `rollback` dist-tag 显式触发。
   { path: '/shell/status',         methods: ['GET'],  domain: 'shell', category: 'public',      consumers: ['UI(壳状态卡)', 'CLI'], note: '壳身份 + 更新账本 + 判定结论' },
   { path: '/shell/health',         methods: ['POST'], domain: 'shell', category: 'operational', consumers: ['运维：排障时手工上报壳阶段（壳未接线；原声明为壳，实测零调用）'], note: '诊断用途：phase=ready 即更新确认信号，供排障手工驱动安全网；当前 evaluate() 因缺输入恒 idle' },
   { path: '/shell/update-pending', methods: ['POST'], domain: 'shell', category: 'operational', consumers: ['运维：排障时手工建立更新账本（壳未接线；原声明为壳，实测零调用）'], note: '诊断用途：建立更新账本（待重启确认），供排障手工驱动内核侧安全网' },

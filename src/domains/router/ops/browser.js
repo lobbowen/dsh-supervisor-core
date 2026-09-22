@@ -10,7 +10,7 @@ const os = require('node:os');
 const path = require('node:path');
 const crypto = require('node:crypto');
 
-/** 图形会话环境注入（systemd user 常驻守卫拉起浏览器失败修复）：缺图形变量时从用户会话探测。 */
+/** 图形会话环境注入：缺图形变量时（systemd user 常驻拉起等场景）从用户会话探测补齐。 */
 function graphicalEnv() {
   const out = {};
   try {
@@ -44,9 +44,8 @@ function graphicalEnv() {
   return out;
 }
 
-/** 调起系统默认浏览器做 OAuth 一键登录；引擎支持时叠加无痕 + 随机 profile + 语言/时区/窗口尺寸
- *  随机化（策略在此，引擎方言在平台层）。Safari 等无隔离引擎由平台层降级为非隔离打开，
- *  换账号场景靠登录超时/重新发起与 UI 上的 authUrl 手动兜底。
+/** 调起系统默认浏览器做 OAuth 一键登录；引擎支持时叠加无痕 + 随机 profile + 语言/时区/窗口尺寸随机化
+ *  （策略在此，引擎方言在平台层）。Safari 等无隔离引擎由平台层降级为非隔离打开，换账号靠登录超时/重新发起与 UI 上的 authUrl 手动兜底。
  *  @param {function} [onExit] 浏览器进程退出回调（隔离形态下用户关闭 -> 取消登录）。
  *  @returns {string|null} 临时 profile 路径（供登录后清理）；失败 null。 */
 function openInBrowser(url, onExit) {

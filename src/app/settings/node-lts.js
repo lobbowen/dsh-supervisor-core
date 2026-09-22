@@ -7,7 +7,7 @@ const path = require('node:path');
 
 module.exports = {
   methods: {
-    /** 6h 缓存 + 失败降级：不做远端查询（避免守卫启动依赖网络），本地判定 + 可刷新缓存；
+    /** Node LTS 状态：本地判定 + 6h 可刷新缓存，不做远端查询（避免守卫启动依赖网络）。
      *  失败返回 { ok:false, error } 由前端降级展示，绝不抛异常。 */
     async nodeLtsStatus() {
       try {

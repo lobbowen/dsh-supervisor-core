@@ -1,8 +1,8 @@
 'use strict';
 
-// S2 失败反应纯策略。
-// 纯：零 require / 零 this / 零 IO。retry 时长解析与 providers/base 的
-// headerRetryMs/bodyResetMs 逐字对齐（纯策略不得反向依赖有状态 provider 文件）。
+// S2 失败反应纯策略：零 require / 零 this / 零 IO。
+// headerRetryMs/bodyResetMs 与 providers/policies/quota.js 的同名解析有意平行（纯策略不得
+// 反向依赖 provider 文件；quota 版 ISO 走 normalizeResetTs 多兼容 epoch 数字）——改词表时两处一并核对。
 
 /** Retry-After / x-ratelimit-reset-ms -> 剩余 ms（0=未知）。 */
 function headerRetryMs(headers) {
@@ -39,7 +39,7 @@ function bodyResetMs(text) {
 
 /** S2：失败信号 -> 处置动作（唯一纯判定）。ctx = { status, headers, body, key }。
  *  credits|window -> retry（needEffect）；banned -> passthrough（needEffect）；
- *  transient -> retry+transient（**不施加 effect**）；none/unknown -> passthrough（绝不误切，INV-1）。 */
+ *  transient -> retry+transient（不施加 effect）；none/unknown -> passthrough（绝不误切，INV-1）。 */
 function decideFailure(signal, ctx) {
   const c = ctx || {};
   const key = c.key || '?';

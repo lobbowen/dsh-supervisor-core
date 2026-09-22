@@ -20,8 +20,8 @@ function platformTag() {
   return matrix.npmTag();
 }
 
-/** 距上次载入超过 CONTRACT_TTL_MS 则重载壳投放的镜像契约。用 TTL 而非 fs.watch：契约读取
- *  在多个函数入口被调用，TTL 实现简单、无句柄泄漏、跨平台一致，60s 对低频的镜像选择足够新。 */
+/** 距上次载入超过 CONTRACT_TTL_MS 则重载壳投放的镜像契约。不用 fs.watch：无句柄泄漏、
+ *  跨平台一致，60s 新鲜度对低频的镜像选择足够。 */
 function reloadContractIfStale(state) {
   const now = Date.now();
   if (state._contractLoadedAt && (now - state._contractLoadedAt) < CONTRACT_TTL_MS) return;
@@ -29,8 +29,10 @@ function reloadContractIfStale(state) {
   state._contractLoadedAt = now;
 }
 
-/** 载入镜像配置与壳投放的契约。优先级（高到低）：1) 用户手动固定 mode=manual；2) 契约 catalog；
- *  3) 构造参数；4) 最小兜底。契约不可用时不阻断：记录 reason 供诊断，选择路径自动回退（不变量 C2）。 */
+/** 载入镜像配置与壳投放的契约。候选列表优先级（高到低）：1) 契约 catalog；2) registryFile
+ *  旧字段 origins；3) defaultRegistries（构造参数，缺省即最小兜底）。mode=manual 在选源时
+ *  另置顶锁定 manualOrigin。契约不可用时不阻断：记录 reason 供诊断，选择路径自动回退
+ *  （不变量 C2）。 */
 function loadRegistryConfig(state) {
   // 1) 先读契约（即使下面是 manual，也要拿到 probe 规格用于复测）
   state.contract = registryContract.read(state.registryFile);
@@ -89,13 +91,10 @@ function writeRegistryDoc(state) {
   writeAtomic(f, JSON.stringify(doc, null, 2) + '\n', { mode: 0o600 });
 }
 
-/** 探测单个 registry 的可达性 + 延迟。探测 URL 由契约决定（与壳同规格）。
- *  package-metadata 探测要按平台展开 `{platform}` 标签，
- *  而 platformTag() 对不可用宿主（freebsd 等）会同步抛 —— 旧实现让抛错穿透
- *  selectRegistry 的 Promise.all，违不变量 C2「契约不可用绝不阻断选源」；
- *  可产标但不在发布矩阵（linux-arm64/win32-arm64）时契约探测的包根本不存在 -> 恒 404
- *  全员不可达。两面同修：探不到可信标签就退化为 ping 规格（tag=null 交 resolveProbe 守卫）。
- *  注意：platformTag() 本体一字不动 —— 其抛错文案是被 arch-validation/P-6 钉死的对外契约。 */
+/** 探测单个 registry 的可达性 + 延迟（探测 URL 由契约决定，与壳同规格）。
+ *  宿主不可产标 / 平台可产标但不在发布矩阵时，退化为 ping 规格（tag=null 交 resolveProbe
+ *  守卫）：抛错穿透选源 Promise.all 违不变量 C2「契约不可用绝不阻断」，而探测恒 404 的
+ *  包元数据会把全员判为不可达。platformTag() 本体一字不动：其抛错文案被 arch-validation 钉死。 */
 async function probeRegistry(state, origin) {
   const spec = (state.contract && state.contract.ok && state.contract.probe) || null;
   let tag = null;
@@ -105,14 +104,10 @@ async function probeRegistry(state, origin) {
   const target = policies.resolveProbe(origin, spec, tag);
   const start = Date.now();
   try {
-    // redirect:'manual' + 显式「非 2xx 即失败」—— 本函数是 SSRF 闭环的另一半：
-    //   fetch 默认 follow，攻击者控制的公网源可 302 到内网地址，从而绕过 api 层的 host 策略
-    //   （白名单 / RFC1918 / 云元数据地址 / IPv6 / 单标签主机名）。
-    //   在 platform 层再实现一遍跳转目标校验会复制该策略、且会让 platform 反向依赖 api（违反分层），
-    //   故取「不跟随重定向」这个更简单的安全默认。
-    //   显式按状态码判定而非沿用 res.ok：把「3xx 即失败」写成意图（不同实现对 opaqueredirect
-    //   可能给 status=0，一并覆盖），避免后来者误读为巧合。
-    //   取舍：依赖 http->https 之类跳转的 registry 源从此报不可达 —— 攻击面 > 便利，可接受默认。
+    // redirect:'manual' + 「非 2xx 即失败」是 SSRF 闭环的另一半：fetch 默认 follow，攻击者控制的公网源
+    // 可 302 到内网，绕过 api 层的 host 策略（白名单/RFC1918/云元数据/IPv6/单标签主机名）；不在 platform
+    // 层复刻跳转目标校验（会复制策略且让 platform 反向依赖 api）。按状态码而非 res.ok 判定，是把「3xx
+    // 即失败」写成意图（opaqueredirect 可能给 status=0）。取舍：依赖 http->https 跳转的源报不可达，攻击面 > 便利。
     const res = await fetch(target.url, { signal: AbortSignal.timeout(target.timeoutMs), redirect: 'manual' });
     const ok = res.status >= 200 && res.status < 300;
     return { ok, latencyMs: Date.now() - start, probe: target.kind };
@@ -217,13 +212,10 @@ async function registryInfo(state) {
   };
 }
 
-/** 保存全局镜像源配置（mode/手动源/候选），并立即重测。
- *  C-8写入口闸：manualOrigin 与每条候选 origins 都要过 policies.registryOriginViolation
- *  （与探测端点同规的 SSRF 闸）——过不了的字面量一律不落盘，逐条原因经 error/errors 字段回传
- *  （不静默丢弃）。auto 模式下不预校验 manualOrigin（它此刻不参与选源），改为在 manual 分支闸。
- *  早退零改动（C-8 补严）：rc 是 registryConfig 的**副本**，只有全部校验通过才回写 state ——
- *  直接在原对象上先落 mode 再校验，会让「切 manual + 私网源」被拒后内存里仍留着 mode=manual
- *  （磁盘却没写），UI 与实然分叉，且下一次自动重测按 manual 走旧手动源。 */
+/** 保存全局镜像源配置（mode/手动源/候选）并立即重测。C-8 写入口闸：manualOrigin 与每条 origins 都过
+ *  policies.registryOriginViolation（与探测端点同规的 SSRF 闸），过不了的字面量不落盘，拒因经 error/errors 回传；
+ *  auto 模式不预校验 manualOrigin（此刻不参与选源）。rc 是 registryConfig 的副本、全部校验通过才回写 state：
+ *  若在原对象上先落 mode 再校验，被拒的「切 manual + 私网源」会造成内存/磁盘分叉且下次重测走旧手动源。 */
 async function setRegistryConfig(state, cfg) {
   const rc = { ...(state.registryConfig || {}) };
   let rejected = [];
@@ -244,8 +236,8 @@ async function setRegistryConfig(state, cfg) {
     }
     if (Array.isArray(cfg.origins)) {
       const raw = cfg.origins.map((x) => String(x).trim());
-      // 非法项不得静默丢弃：用户改了自己的镜像源却不知道哪条被丢。收集后在下方经日志与返回值暴露。
-      // 拒因含两类（格式非法 / SSRF 主机字面量违规），逐条记入 reasons 统一回传。
+      // 非法项不得静默丢弃（用户改镜像源却不知道哪条被拒）：拒因含格式非法与 SSRF
+      // 主机字面量违规两类，统一收集后经日志与返回值暴露。
       const reasons = new Map();
       const list = raw.filter((x) => {
         if (!x) return false;

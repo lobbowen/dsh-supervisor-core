@@ -1,12 +1,7 @@
 'use strict';
 
-//
-// app/control/specs.js —— 受管对象申报工厂（真 ctor 注入）。
-//
-// 级 2：createSpecs(deps) 自己持有申报/注册实现。
-//   const specs = createSpecs({ getState, getManagedObjects, getInstances, getConfig, getCtl, getDaemons, getLogger });
-// 可只 require 本模块 + 假 deps 直测（DF-6）。
-//
+// app/control/specs.js —— 受管对象申报工厂（真 ctor 注入）：createSpecs(deps) 自己持有
+// 申报/注册实现，只 require 本模块 + 假 deps 即可直测。
 
 const os = require('node:os');
 const path = require('node:path');
@@ -58,15 +53,9 @@ function createSpecs(deps) {
     };
   }
 
-  /** 申报或更新（存在->update 应然；否则 register）。
-   *  @param opts { keepDesired?:boolean } —— D-8：**观测推导**路径
-   *  （心跳同步、启动对齐）**不得**把由实然推出的 desired 写回目录（铁律 1：实然绝不写回应然）。沙箱实例一旦崩溃进入
-   *  BACKOFF/FAILED，`sandboxSpec` 由 phase 推导出的 desired 就是 'stopped'，每拍 upsert 会
-   *  把用户意图静默抹掉。置本旗标后**只**同步
-   *  name/guardian/ownership，desired 保持目录既有值——改意图的唯一入口是 entry 的
-   *  start()/stop() 与动作路径（observers 的 onInstanceStart/Stop）。
-   *   仅对 update 分支生效：register 分支必须带 desired（否则 createEntry 缺省成 running，
-   *  会把一个已停止的实例登记成「用户想要它在跑」）。 */
+  /** 申报或更新（存在->update 应然；否则 register）。keepDesired 供观测推导路径（心跳同步/启动对齐）：
+   *  由实然推出的 desired 不得写回目录（契约 M-1）——崩溃进 BACKOFF 的实例会被每拍 upsert 把用户的
+   *  running 意图静默抹掉且无人恢复；意图唯一写口是 start()/stop() 与动作路径。旗标只作用 update 分支。 */
   function upsert(spec, opts) {
     const m = reg();
     if (!m || !spec) return;
@@ -100,12 +89,12 @@ function createSpecs(deps) {
       const sandboxes = (_m && typeof _m.all === 'function' && _m.all()) || [];
       for (const inst of sandboxes) {
         if (inst.id === 'main' || inst.domain === 'native') continue;
-        // 启动对齐同样**不得**回写 desired。`load()` 后的 inst.state.phase 是崩溃/停机
-        //   时的实然快照（BACKOFF/FAILED/STOPPED 一律推导成 stopped），照本拍写入会在
-        //   「守卫重启时实例正好在退避」这一窗口把用户的运行意图抹掉，且抹掉后无人恢复。
+        // 启动对齐同样不得回写 desired：load() 后的 state.phase 是实然快照
+        // （BACKOFF/FAILED/STOPPED 一律推导成 stopped），守卫重启恰逢实例退避时
+        // 会把用户运行意图抹掉。
         upsert(sandboxSpec(inst), { keepDesired: true });
       }
-      // 域 B 基础设施（router/lan daemon）不写 guardian（GUARD-DOMAIN-MODEL）。
+      // 域 B 基础设施（router/lan daemon）不写 guardian（契约 G-1）；desired 由配置业务条件驱动。
       const c = ctl();
       upsert({
         kind: 'router-daemon', id: 'router-daemon', name: '智能路由 daemon',

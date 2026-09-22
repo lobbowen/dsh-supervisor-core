@@ -1,11 +1,8 @@
 'use strict';
 
 // 在途计数 + 错误计数（纯状态：无 IO、无 this，可独立单测）。
-// 真缺陷修复（行为变更）：旧实现有两条结束路径且 effect 不一致——流式成功只补
-// _retryPendingStop，错误/中断两件事都做，导致 2xx 流式成功路径永不补做「在途期间被延后的
-// 实例重启」。本模块提供单一 end()：归零时返回显式 effects 描述，调用方
-// （handlers/forward.js#endInflight）对**所有**结束路径执行同一组 effects；
-// begin/end 的配对由 forward.js 的 attempt-end 幂等收口保证（异常路径也不泄漏计数）。
+// 单一 end()：归零时返回显式 effects 描述，调用方（handlers/forward.js#endInflight）对所有结束路径执行同一组 effects；
+// begin/end 配对由 forward.js 的 attempt-end 幂等收口保证（异常路径也不泄漏计数）。
 
 function createInflight() {
   let begun = 0;
@@ -20,13 +17,10 @@ function createInflight() {
       return acc.inflight;
     },
 
-    /**
-     * 唯一在途递减入口。
-     * @param {object} acc 账号（在途计数挂在账号对象上）
-     * @param {{prov?:object, inst?:object, lifecycle?:boolean}} [ctx]
-     * @returns {{ zero:boolean, effects:Array<{kind:string,acc:object,prov:object,inst:object}> }}
-     *   effects 仅为**描述**，由调用方执行——两条结束路径共用此结果。
-     */
+    /** 唯一在途递减入口。@param {object} acc 账号（在途计数挂在账号对象上）
+     *  @param {{prov?:object, inst?:object, lifecycle?:boolean}} [ctx]
+     *  @returns {{ zero:boolean, effects:Array<{kind:string,acc:object,prov:object,inst:object}> }}
+     *    effects 仅为描述，由调用方在所有结束路径统一执行。 */
     end(acc, ctx) {
       if (!acc) return { zero: false, effects: [] };
       ended += 1;

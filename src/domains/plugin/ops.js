@@ -1,7 +1,7 @@
 'use strict';
 
-// 插件域安装/卸载编排 + 已装清单入口（IO 编排）。
-// 逐目标串行推进作业：解析 -> 加锁 -> CLI -> 清理 bundles -> scrub -> 生效；
+// 插件域安装/卸载编排 + 已装清单入口（IO 编排）。逐目标串行推进作业：解析 -> 作用域加锁 -> CLI；
+// 卸载额外做 bundles 清理 -> scrub -> 重启生效；安装不自动重启。
 // listInstalled 解析 targets 后转交 store（不反向依赖）。ctx 经参数显式传入。
 
 const { isProtectedName } = require('./policies');
@@ -11,7 +11,7 @@ const store = require('./store');
 async function install(ctx, spec, opts) {
   if (!spec) return { ok: false, error: 'missing spec' };
   const r = ctx.resolveTargets(opts && opts.target);
-  if (!r.ok) return r; // 目标无效：直接报错（不再静默降级原生）
+  if (!r.ok) return r; // 目标无效直接报错，不降级到原生
   const job = ctx.jobs.createJob('install', spec, (opts && opts.target) || 'native', r.targets);
   if (ctx.events) ctx.events.append('plugin_install_started', { spec, jobId: job.id, target: job.target });
   let idx = 0;
@@ -91,8 +91,7 @@ async function uninstall(ctx, name, targetStr) {
         jt.log.push('bundles 清理失败: ' + e.message);
         if (res.ok) res = { ok: false, error: 'bundles 清理失败: ' + e.message };
       }
-      // 判定成功：pnpm remove 成功，或 bundles 已清理且 pnpm 报依赖已不存在
-      //（说明此前已移除，插件实际已不装）。
+      // 判定成功：pnpm remove 成功，或 bundles 已清理且 pnpm 报依赖不存在（依赖不在即插件已不装）。
       if (!res.ok && bundlesCleaned && /no such dependency|no dependencies of any kind|CANNOT_REMOVE_MISSING|already removed|not a dependency/i.test(String(res.error || ''))) {
         res = { ok: true, error: null };
         jt.log.push('依赖已清空，bundles 已移除（卸载完成）');
@@ -101,7 +100,7 @@ async function uninstall(ctx, name, targetStr) {
       jt.error = res.ok ? null : (res.error || '');
       jt.log.push(res.ok ? '完成' : ('失败: ' + (res.error || '')));
       if (ctx.events) ctx.events.append(res.ok ? 'plugin_uninstall_ok' : 'plugin_uninstall_failed', { name, target: target.name, jobId: job.id, error: res.error });
-      // 跨层残留清理/检测（P1）：home 补丁层 + 原生 overlay 清理；profile 补丁层检测报告。
+      // 跨层残留清理/检测：home 补丁层 + 原生 overlay 清理；profile 补丁层只检测报告。
       {
         const scrub = await ctx._scrubPluginLayers(target, name, (m) => jt.log.push(m));
         jt.scrub = scrub;

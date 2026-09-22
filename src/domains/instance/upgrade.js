@@ -1,6 +1,5 @@
 'use strict';
-// 沙箱 DSH 安装/检测/升级。首次安装与升级走同一条 npm install --prefix 路径（都写实例独立 install
-// 目录、都取全局镜像源、都经 TaskRegistry 作业承载），故归为同一职责：DSH 版本生命周期。
+// 沙箱 DSH 安装/检测/升级：首次安装与升级走同一条 npm install --prefix 路径（同写实例独立 install 目录、同镜像源、都经 TaskRegistry 作业承载）。
 // 协作方（store/lifecycle/dist/tasks）经 deps 显式注入；无隐式 this。
 const { semverCompare } = require('../../shared/version');
 const sandbox = require('./sandbox');
@@ -19,9 +18,8 @@ function createUpgrade(deps) {
   const save = () => store.save();
   const _updCache = {};                 // id -> { latest, checkedAt, error }
   const _updJobs = {};                  // id -> { state, startedAt, finishedAt, step, errors, error }
-  const _updTTL = 6 * 3600 * 1000;      // 缓存 6h（手动「检查更新」随时强制刷新）
-  /** 升级作业收尾清理：完成后保留 60s 供前端轮询，随后删除 _updJobs 与 _updCache，
-   *  否则长寿命守卫下 _updCache 只写不删、内存单调增长。定时器 unref（不拖住进程退出）。 */
+  const _updTTL = 6 * 3600 * 1000;      // 缓存 6h；升级作业收尾时 _scheduleJobCleanup 删缓存，下一次检查即重新查询
+  /** 升级作业收尾清理：完成后保留 60s 供前端轮询，随后删除 _updJobs 与 _updCache（否则长寿命守卫下 _updCache 只写不删、内存单调增长）；定时器 unref 不拖住进程退出。 */
   function _scheduleJobCleanup(id) {
     const t = setTimeout(() => {
       try { if (_updJobs[id] && _updJobs[id].state !== 'running') delete _updJobs[id]; } catch {}
@@ -56,7 +54,7 @@ function createUpgrade(deps) {
     const nj = _updJobs[inst.id];
     return nj ? { state: nj.state, step: nj.step, errors: nj.errors, error: nj.error } : null;
   }
-  /** 检查某沙箱实例是否有更新：npm 查最新版（统一镜像源 + 完整版本检测），缓存 6h。 */
+  /** 检查某沙箱实例是否有更新：npm 查最新版并缓存 6h（缓存新鲜时直接复用，不强制刷新）。 */
   async function checkUpdate(id) {
     const inst = store.instances.find((i) => i.id === id);
     if (!inst) return { ok: false, error: '实例不存在' };
@@ -66,7 +64,7 @@ function createUpgrade(deps) {
     let latest = (cached && cached.latest) || null;
     if (!latest || !cached || (Date.now() - cached.checkedAt) > _updTTL) {
       try {
-        latest = await dist.fetchNpmLatest('@deepseek-ai/dsh'); // 第三方包：latest 优先（条 7）
+        latest = await dist.fetchNpmLatest('@deepseek-ai/dsh');
         _updCache[id] = { latest, checkedAt: Date.now(), error: latest ? null : '查询失败' };
       } catch (e) {
         latest = null;
@@ -153,8 +151,7 @@ function createUpgrade(deps) {
             rbOk = rbRes.ok;
           } catch { rbOk = false; }
         }
-        // 不写 inst.state.version：全仓无读取（版本经 readInstalledVersion/versionInfo 实时读盘）；
-        // state 形状由 model.createRecord 声明，额外字段只会污染 instances.json。
+        // 不写 inst.state.version：全仓无读取（版本经 readInstalledVersion 实时读盘），多余字段只会污染 instances.json。
         if (!rbOk) { nj.error = (nj.error || why) + '；自动回滚失败（npm install 退出非 0），请手动处理'; return false; }
         const rbStart = await lifecycle.start(id, { fromUpgrade: true }).catch(() => ({ ok: false }));
         if (!rbStart || !rbStart.ok) { nj.error = (nj.error || why) + '；回滚后重启也失败'; if (task) tasks.log(task.id, '回滚后重启失败：' + ((rbStart && rbStart.error) || '')); return false; }
@@ -164,15 +161,15 @@ function createUpgrade(deps) {
       if (nj.errors) { nj.state = 'failed'; await rollback(nj.error); }
       else {
         nj.step = 'restarting';
-        // 3) 拉回实例并验证可启动（防止显示成功但实例起不来）。无论升级前是否在跑都验证：
-        //    DSH 可能先监听端口后因插件兼容崩溃，只探测端口会误判成功，必须同时检查 systemd 单元仍 active。
+        // 3) 拉回实例并验证可启动（防显示成功但实例起不来）：DSH 可能先监听端口后因插件兼容崩溃，
+        //    健康验证须端口 + systemd 单元 active 双查；无论升级前是否在跑都验证。
         if (task) { const s = tasks.step(task.id, '重启实例并验证'); tasks.stepState(task.id, tasks.get(task.id).steps.indexOf(s), 'running'); }
         const sr = await lifecycle.start(id, { fromUpgrade: true }).catch(() => ({ ok: false }));
         if (!sr || !sr.ok) { nj.errors++; nj.error = '升级后重启失败: ' + ((sr && sr.error) || ''); nj.state = 'failed'; await rollback(nj.error); }
         else {
           let up = false;
           if (dist) {
-            // 验证窗口 120s（配合 waitPortHealthy 稳定期，防慢启动实例被误判）。
+            // 验证窗口 120s：配合 waitPortHealthy 的稳定期复检，防慢启动实例被误判失败。
             const vh = await dist.waitPortHealthy(portHealthOpts(inst));
             up = vh.ok;
           }

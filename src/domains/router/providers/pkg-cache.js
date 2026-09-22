@@ -1,9 +1,7 @@
 'use strict';
 
-// npm 包缓存定位与预取（IO 叶子）。
-// 所有 require 在模块顶层（DF-8），无内联 require。
-// 缓存根目录是平台事实，经 npx-forms#npxCacheDir 取（CP-1）；本模块只做「缓存 bin 定位
-// 「失效清理」与「未命中时 npx 预下载」，绝不自行拼 ~/.npm/_npx。
+// npm 包缓存定位与预取（IO 叶子）。缓存根目录是平台事实，经 npx-forms#npxCacheDir 单源取得
+// （CP-1）；本模块只做缓存 bin 定位/失效清理/npx 预下载，绝不自行拼 ~/.npm/_npx。
 
 const path = require('node:path');
 const fs = require('node:fs');

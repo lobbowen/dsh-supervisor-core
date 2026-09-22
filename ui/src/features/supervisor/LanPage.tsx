@@ -1,11 +1,5 @@
-/**
- * 远程控制（统一三态：关闭 / 局域网 / 公网）
- * - 每实例一行一个远程控制状态：模式写入唯一经 /remote/set-mode；
- *   就绪判定与访问 URL 零前端推导，直消费后端 remote 单一视图（projectRemoteView）。
- * - 二维码恒跟随真实访问态：仅「就绪」时呈现 accessUrl（局域网=LAN IP，公网=frps 地址，端口同号）。
- * - FRP 公网访问卡只管理 frps 连接配置（地址/端口/令牌 + 安装）；无总闸——
- *   frpc 是否常驻由「是否存在公网模式实例」这一单一条件决定。
- */
+// 远程控制三态页（关闭 / 局域网 / 公网）。模式写入唯一经 /remote/set-mode；就绪与 accessUrl 一律直消费
+// 后端 remote 单一视图，前端零推导。FRP 卡只管 frps 连接配置，无总闸：frpc 常驻与否 = 是否存在公网模式实例。
 import { useEffect, useState } from "react";
 import { ExternalLink, Globe, KeyRound, Landmark, Save, Wrench } from "lucide-react";
 import { toast } from "sonner";
@@ -41,7 +35,7 @@ export function LanPage() {
   const [frpPort, setFrpPort] = useState("7000");
   const [frpToken, setFrpToken] = useState("");
   const [loaded, setLoaded] = useState(false);
-  // 高危「开启/公网」动作统一二次确认 Dialog；令牌录入用脱敏输入框。
+  // 高危「开启/公网」动作统一二次确认 Dialog；令牌录入用脱敏输入框
   const [tokenFor, setTokenFor] = useState<{ id: string; name?: string } | null>(null);
   const [tokenInput, setTokenInput] = useState("");
   const [pendingOn, setPendingOn] = useState<{ title: string; desc: string; act: () => void } | null>(null);
@@ -49,8 +43,7 @@ export function LanPage() {
     if (!frp || loaded) return;
     setFrpAddr(frp.settings.serverAddr || "");
     setFrpPort(String(frp.settings.serverPort || 7000));
-    // /remote/frp 不回显 authToken（仅 authTokenSet 布尔）——不回填、不显示；
-    // 输入框留空 = 提交体省略 authToken 字段 = 服务端保留现值，填入新值 = 轮换。
+    // /remote/frp 不回显 authToken（仅 authTokenSet 布尔）——不回填、不显示；轮换经输入框完成
     setLoaded(true);
   }, [frp, loaded]);
 
@@ -84,7 +77,7 @@ export function LanPage() {
       act: () => void setMode(it, "wan", "已切换到公网访问"),
     });
   }
-  /** 打开「设置访问令牌」对话框（B28：替代 window.prompt——原生对话框明文回显、不可脱敏）。 */
+  /** 打开「设置访问令牌」对话框（password 输入，不明文回显）。 */
   function setToken(it: { id: string; name?: string }) {
     setTokenInput("");
     setTokenFor({ id: it.id, name: it.name });
@@ -106,7 +99,6 @@ export function LanPage() {
   return (
     <div className="grid content-start gap-4">
       <div className="grid items-start gap-4 @min-[900px]:grid-cols-[minmax(0,1fr)_420px]">
-      {/* 实例远程控制列表 */}
       <Card>
         <CardTitle title="远程控制" subtitle="为本地 DSH 实例开启远程访问：局域网直连或经 FRP 公网（需实例运行中）" />
         <div className="grid">
@@ -117,7 +109,6 @@ export function LanPage() {
             const proxy: LanItem | undefined = lanItems.find((p) => p.dshPort === it.port);
             const mode: RemoteMode = it.remoteMode ?? "off";
             const remote = mode === "off" ? null : (proxy?.remote ?? fallbackView(mode));
-            // 二维码/链接恒跟随真实访问态：仅就绪时呈现 accessUrl
             const url = remote?.ready ? remote.accessUrl : null;
             const remotePill = mode === "off"
               ? <Pill tone="off">远程关闭</Pill>
@@ -126,7 +117,6 @@ export function LanPage() {
                 : <span title={(remote?.reasons ?? []).join("；")}><Pill tone="off">远程停止</Pill></span>;
             return (
               <div key={it.id} className="grid grid-cols-[auto_minmax(0,1fr)_auto] items-stretch gap-4 border-b border-border/60 px-5 py-4 last:border-b-0">
-                {/* 二维码（左） */}
                 {url ? (
                   <div className="flex shrink-0 items-center rounded-lg border border-border bg-white p-1.5" title="扫码访问该实例远程地址">
                     <QRCode value={url} size={88} />
@@ -136,7 +126,6 @@ export function LanPage() {
                     {running ? (mode === "off" ? "开启远程后生成二维码" : "远程就绪后生成二维码") : "启动后可用"}
                   </div>
                 )}
-                {/* 中列：标题 + 远程标签 在上；端口/访问地址 贴底 */}
                 <div className="flex min-w-0 flex-col">
                   <div className="pt-2.5 flex flex-wrap items-center gap-2">
                     <DomainBadge domain={it.domain} />
@@ -160,7 +149,6 @@ export function LanPage() {
                     )}
                   </div>
                 </div>
-                {/* 控制列（右，垂直居中）：统一远程开关 + 局域网/公网模式切换 + 访问令牌 */}
                 <div className="flex flex-col items-end justify-center gap-2">
                   <div className={cn("flex items-center gap-2", !running && "pointer-events-none opacity-50")}>
                     <span className="text-xs font-medium text-muted-foreground">远程控制</span>
@@ -173,7 +161,7 @@ export function LanPage() {
                       }}
                     />
                   </div>
-                  {/* 模式切换（开态才出现）：同一 relay 监听同号端口，局域网<->公网仅差一条 frpc 隧道 */}
+                  {/* 局域网与公网共用同一 relay 端口，只差一条 frpc 隧道 */}
                   {mode !== "off" && (
                     <div className={cn("flex items-center gap-1", (!running || busy === it.id) && "pointer-events-none opacity-50")}>
                       <Button
@@ -211,7 +199,7 @@ export function LanPage() {
           })}
         </div>
       </Card>
-      {/* FRP 卡：只管 frps 连接配置，无总闸（frpc 生命周期 = 是否存在公网模式实例） */}
+      {/* 无总闸：frpc 生命周期 = 是否存在公网模式实例 */}
       <Card>
         <CardTitle
           title="公网访问（FRP 内网穿透）"
@@ -221,7 +209,7 @@ export function LanPage() {
         <div className="grid grid-cols-1 gap-3 px-5 py-4">
           <div className="grid gap-1.5"><Label>frps 地址</Label><Input placeholder="如 1.2.3.4" value={frpAddr} onChange={(e) => setFrpAddr(e.target.value)} /></div>
           <div className="grid gap-1.5"><Label>frps 端口</Label><Input inputMode="numeric" placeholder="7000" value={frpPort} onChange={(e) => setFrpPort(e.target.value)} /></div>
-          {/* B7：服务端不回显 token 明文——输入框恒为空；留空提交=省略字段=保留现值 */}
+          {/* 服务端不回显 token 明文；留空提交即省略字段=保留现值 */}
           <div className="grid gap-1.5"><Label>auth token</Label><Input type="password" autoComplete="new-password"
             placeholder={frp?.settings?.authTokenSet ? "已设置 · 留空不修改，输入即轮换" : "frps 的 auth.token"}
             value={frpToken} onChange={(e) => setFrpToken(e.target.value)} /></div>
@@ -241,7 +229,7 @@ export function LanPage() {
       </Card>
       </div>
 
-      {/* B28：高危「开启/公网」统一二次确认（远程开关 / 公网切换共用） */}
+      {/* 高危动作（开启远程 / 切公网）共用二次确认 */}
       <Dialog open={!!pendingOn} onOpenChange={(o) => !o && setPendingOn(null)}>
         <DialogContent className="max-w-[420px]">
           <DialogHeader><DialogTitle>{pendingOn?.title}</DialogTitle></DialogHeader>
@@ -253,7 +241,7 @@ export function LanPage() {
         </DialogContent>
       </Dialog>
 
-      {/* B28：访问令牌录入对话框（替代 window.prompt；password 输入不明文回显） */}
+      {/* 令牌录入用 password 输入，不明文回显 */}
       <Dialog open={!!tokenFor} onOpenChange={(o) => !o && setTokenFor(null)}>
         <DialogContent className="max-w-[420px]">
           <DialogHeader><DialogTitle>设置访问令牌{tokenFor?.name ? " · " + tokenFor.name : ""}</DialogTitle></DialogHeader>

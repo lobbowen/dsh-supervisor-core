@@ -1,7 +1,6 @@
 'use strict';
 
-// State 协作方工厂（真 ctor 注入）：组合存储原语/字段口/IO 工厂，自己持有实现，
-// 可只 require 本模块 + 假 deps 直接断言。
+// State 协作方工厂（真 ctor 注入）：组合存储原语/字段口/IO 工厂，可独立直测。
 // deps 全部为惰性取值函数（装配期 host 尚未就绪），故传 getXxx 而非值。
 
 const { createMainRecord } = require('./main-record');

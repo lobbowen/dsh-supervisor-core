@@ -1,8 +1,8 @@
 'use strict';
 
-// 转发门面（组合 + 导出），不再承载业务逻辑。组合 handlers/parse（纯） + handlers/forward（IO）
-// + store/usage（账本） + model/inflight（纯状态）。createForwardCore(deps) 由门面显式注入依赖，
-// 装配边界唯一，不调用 this.<index方法>。
+// 转发门面（组合 + 导出），不承载业务逻辑：组合 handlers/parse + handlers/forward +
+// store/usage + model/inflight；createForwardCore(deps) 显式注入依赖，装配边界唯一，
+// 不调用 this.<index方法>。
 
 const { keyFingerprint, maskKey } = require('./providers/base');
 const parse = require('./handlers/parse');
@@ -11,7 +11,6 @@ const { createForwarder } = require('./handlers/forward');
 const { UsageLedger } = require('./store/usage');
 const { createInflight } = require('./model/inflight');
 
-/** 显式组合：deps 由调用方注入（推荐新门面使用）。 */
 function createForwardCore(deps) {
   const d = deps || {};
   const usage = new UsageLedger({

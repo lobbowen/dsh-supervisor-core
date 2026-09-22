@@ -1,11 +1,9 @@
 'use strict';
 
-// EventHub：守卫事件汇聚枢纽。各进程事件文件单写者，EventHub 只读聚合后转写守卫
-// 唯一的聚合事件流文件，对外 /events 读它。
-// 聚合流 seq 即 gseq：全局单调、meta 续号、跨守卫重启连续（UI after 游标稳定）；
-// daemon 增量经 ctl eventsTail(afterSeq) 拉取（复用既有 ctl 通道），失败降级跳过。
-// 不变量：聚合流文件只由 EventHub 写；水位只由 EventHub 写；对外 /events 只读聚合流。
-// 职责分层：源注册 sources.js / 纯读派生 core.js / ctl 与尾读 tail.js / 水位 watermark.js。
+// EventHub：守卫事件聚合枢纽 — 各进程事件文件单写者，本类只读聚合后转写唯一聚合事件流，对外 /events 读它。
+// gseq 即聚合流 seq：全局单调、meta 续号、跨守卫重启连续（UI after 游标稳定）；
+// daemon 增量经 ctl eventsTail 拉取（复用既有 ctl 通道），失败降级跳过。
+// 不变量：聚合流文件与水位只由 EventHub 写；职责分层见 sources/core/tail/watermark 各文件。
 
 const path = require('node:path');
 const Events = require('./events');
@@ -16,12 +14,12 @@ const { loadWatermark, saveWatermark } = require('./watermark');
 
 class EventHub {
   // opts: stateDir 守卫状态目录（聚合流/水位落此）；guardEvents 守卫 Events 实例（源之一）；
-  // guardLogFile / dshLogFile / upgradeLogFile 守卫侧运行日志（/logs/tail 用）；
-  // daemonLogs / ctlPorts 按装配短键索引的 daemon 日志与 ctl 端口；logger 可选。
+  // guardLogFile/dshLogFile/upgradeLogFile 守卫侧运行日志（/logs/tail 用）；
+  // daemonLogs/ctlPorts 按装配短键索引；logger 可选。
   constructor(opts) {
     this.stateDir = opts.stateDir;
-    // 聚合流/水位按 aggBase 派生唯一名：同一 stateDir 下多守卫（测试 TMP）不得共写同一
-    // aggregated 文件，否则 hub 自己制造多写者，seq 互踩。
+    // 聚合流/水位按 aggBase 派生唯一名：同一 stateDir 下多守卫（测试 TMP）共写同一
+    // aggregated 文件会让 hub 自己制造多写者、seq 互踩。
     this.aggBase = opts.aggBase || 'state';
     this.guardEvents = opts.guardEvents || null;
     this.guardLogFile = opts.guardLogFile || null;
@@ -53,7 +51,7 @@ class EventHub {
     this._tickSeq = 0;
   }
 
-  // 内部告警出口：可选 logger + 绝不抛（失败路径上的最后一环）。
+  // 内部告警出口：经可选 logger，绝不抛（失败路径上的最后一环）。
   _log(level, msg) {
     try {
       const lg = this.logger;
@@ -89,11 +87,10 @@ class EventHub {
         };
         if (e.producer) rec.producer = e.producer;
         this.writer.appendRaw(rec); // 聚合流 seq/ts 由 appendRaw 注入
-        // 写盘失败（磁盘满/权限）：不推进水位，下轮 sync 补齐（RC5.2 契约）。
         if (this.writer._lastAppendOk === false) { this._log('warn', '[hub] ingest ' + source + ' seq=' + e.seq + ' 写盘失败，水位不推进'); break; }
         lastOkSeq = e.seq;
       } catch (e2) {
-        // appendRaw 内部已兜底不抛，此分支防御性保留：失败源事件不推进水位，sync 重试补齐。
+        // appendRaw 正常不抛，此分支防御性保留：不推进水位，sync 重试补齐。
         this._log('warn', '[hub] ingest ' + source + ' seq=' + e.seq + ' failed: ' + ((e2 && e2.message) || e2));
         break;
       }
@@ -101,7 +98,7 @@ class EventHub {
     return lastOkSeq;
   }
 
-  // 守卫事件推模式：守卫 Events.append 已同步调此，守卫事件零延迟入聚合流。
+  // 推模式：守卫 Events.append 已同步调此，守卫事件零延迟入聚合流。
   pushGuard(rec) {
     if (!rec || typeof rec.seq !== 'number') return;
     // hub 来源标记：防御聚合流文件被误配为守卫事件文件时的递归（RC5.3 纵深防御之一）
@@ -118,11 +115,11 @@ class EventHub {
     try {
       this.writer.appendRaw(out);
       if (this.writer._lastAppendOk === false) {
-        // 写盘失败：水位不动，_syncGuard 在后续拍补转写（事件不丢）。
+        // 写盘失败：水位不动，_syncGuard 后续拍补转写（事件不丢）。
         this._log('warn', '[hub] pushGuard append failed (watermark held): ' + rec.seq);
         return;
       }
-      this.watermark[this._localSource] = Math.max(this.watermark[this._localSource] || 0, rec.seq); // 只在成功后推进
+      this.watermark[this._localSource] = Math.max(this.watermark[this._localSource] || 0, rec.seq);
     } catch (e) {
       this._log('warn', '[hub] pushGuard append failed (watermark held): ' + ((e && e.message) || e));
     }
@@ -170,7 +167,7 @@ class EventHub {
         }
       }
     } catch (e) {
-      // daemon 未运行/未受监督：降级（守卫 /events 仍含守卫事件），非装配错误，保持 debug 防刷。
+      // daemon 未起/未受监督属运行态而非装配错误：debug 级防刷，守卫 /events 仍含守卫事件。
       this.logger && this.logger.debug && this.logger.debug('[hub] ' + which + ' eventsTail 不可用: ' + ((e && e.message) || e));
     }
   }
@@ -194,9 +191,8 @@ class EventHub {
 
   get seq() { return this.writer.seq; }
 
-  // /logs/tail：读各运行日志尾部。
+  // /logs/tail：dsh/upgrade 为预设流；守卫与业务流按注册源装配短键解析。
   tailLog(stream, n) {
-    // 预设流（与域无关的本进程日志）；业务流由注册源按其装配短键暴露。
     const fixed = { dsh: this.dshLogFile, upgrade: this.upgradeLogFile };
     if (stream in fixed) return tailFile(fixed[stream], n);
     const s = this._sources.find((x) => x.name === stream || x.key === stream);

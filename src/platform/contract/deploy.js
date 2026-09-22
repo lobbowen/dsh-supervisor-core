@@ -1,9 +1,8 @@
 'use strict';
 
-// 部署形态判定：自更新的安装目标必须等于运行目标。
-// 标准产品形态不再是 SEA，而是 npm 安装的文本 launcher 加同级 core.cjs；源码开发形态
-// （bin 壳脚本 require 源码目录）无法自更新。本模块是形态与运行目标的唯一判定点，
+// 部署形态判定：自更新的安装目标必须等于运行目标。本模块是形态与运行目标的唯一判定点，
 // 调用方（apply/restart/面板显隐）不得自行猜测。
+// 标准产品形态不再是 SEA，而是 npm 安装的文本 launcher 加同级 core.cjs（源码开发形态无法自更新）。
 
 const fs = require('node:fs');
 const path = require('node:path');

@@ -50,7 +50,7 @@ async function resolveTarget(host, requestedVersion, task) {
   return target;
 }
 
-/** 第一步：先停 DSH（含接管实例），期间守卫暂停自动拉起。 */
+/** 先停 DSH（含接管实例），期间守卫暂停自动拉起。 */
 async function stopForUpgrade(host, task) {
   if (!(host.hooks.isDshActive && host.hooks.isDshActive())) return;
   host.upgradeState = 'restarting';
@@ -63,7 +63,7 @@ async function stopForUpgrade(host, task) {
   if (host.hooks.stopForUpgrade) await host.hooks.stopForUpgrade();
 }
 
-/** 第二步：安装 + 版本校验 + 写 manifest。返回磁盘新版本。 */
+/** 安装 + 版本校验 + 写 manifest。安装后磁盘版本与目标不一致即视为失败（抛错走回滚）。 */
 async function installTarget(host, oldV, target, task) {
   const registry = await host._selectRegistry();
   markStep(host, task, '安装 ' + target);
@@ -110,7 +110,7 @@ function finishVerified(host, oldV, target, task) {
   return { ok: true, result: 'upgraded', from: oldV, to: target };
 }
 
-/** 第三步：拉起新版本并内联健康验证（unit=null）。失败则自动回滚。 */
+/** 拉起新版本并内联健康验证（unit=null）。未通过则自动回滚，绝不未验证即报成功。 */
 async function verifyAndFinalize(host, oldV, target, task) {
   host.upgradeState = 'verifying';
   markStep(host, task, '拉起并验证');
@@ -147,7 +147,7 @@ async function rollbackAfterFailedVerify(host, oldV, task, healthy) {
   return { ok: false, error: host.upgradeError, state: host.upgradeState };
 }
 
-/** 自动回滚：装回升级前版本并重新拉起（仿沙箱逻辑）。返回 { ok, error }。 */
+/** 自动回滚：装回升级前版本并重新拉起。返回 { ok, error }。 */
 async function rollbackNative(host, oldVersion, task) {
   const tlog = (msg) => { log(host, msg); taskLog(host, task, msg); };
   if (!oldVersion) { tlog('无旧版本可回滚'); return { ok: false, error: 'no old version to rollback' }; }
@@ -190,7 +190,7 @@ async function rollbackAfterFailure(host) {
     if (host.events) host.events.append('upgrade_rollback_failed', {});
     if (host.hooks.notify) host.hooks.notify('DSH 升级失败', '回滚也失败，请立即人工检查 npm 全局目录');
     if (taskId && host.tasks) host.tasks.fail(taskId, '回滚也失败：' + host.upgradeError, { meta: { rolledBack: false, rollbackFailed: true } });
-    // hold 释放统一收敛到 handleUpgradeFailure 尾部（本函数不再各自 resume），
+    // hold 释放统一收敛到 handleUpgradeFailure 尾部，本函数不 resume；
     //   否则「回滚失败 -> 调用方提前 return -> 释放点分裂、_activeTaskId 泄漏」。
     return { ok: false };
   }

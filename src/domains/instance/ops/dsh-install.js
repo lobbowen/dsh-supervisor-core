@@ -1,6 +1,5 @@
 'use strict';
-// 沙箱 DSH 安装/检测（域：instance / ops 叶子；从 upgrade.js 抽出）。
-// 首次安装与升级共用同一条 npm install --prefix 路径；本模块负责安装与版本读/查。
+// 沙箱 DSH 安装/检测（ops 叶子）：首次安装与升级共用同一条 npm install --prefix 路径，本模块负责安装与版本读/查。
 // 协作方经 deps 显式注入；无隐式 this。
 const fs = require('node:fs');
 const path = require('node:path');
@@ -84,7 +83,6 @@ function createDshInstall(deps) {
         if (task) { try { tasks.fail(task.id, 'dist 分发服务不可用'); } catch {} }
         return { ok: false, error: 'dist 分发服务不可用' };
       }
-      // 10min 装配看护（作业驱动）：超时先呈现 FAILED(用户可见)，npm 慢网成功后自愈拉回 INSTALLING。
       const watchdog = setTimeout(() => installTimeoutWatchdog(inst, task), 10 * 60 * 1000);
       let res;
       try {
@@ -131,9 +129,8 @@ function createDshInstall(deps) {
   async function latestDshVersion() {
     if (_latestDshVer && Date.now() - _latestDshVerAt < 30000) return _latestDshVer;
     let v = null;
-    // '@deepseek-ai/dsh' 是**第三方包**：语义由契约第三方段落 + release.js 单源决定
-    // （取 registry 全量最高会把他人杂 tag 当候选，不可用）。
     try { if (dist) v = await dist.fetchNpmLatest('@deepseek-ai/dsh'); } catch {}
+    // 不取 registry 全量最高：会把他人杂 tag 当候选；第三方包 latest 优先语义单源在 dist.fetchNpmLatest。
     _latestDshVer = v;
     _latestDshVerAt = Date.now();
     return v;

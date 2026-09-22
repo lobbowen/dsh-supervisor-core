@@ -1,6 +1,5 @@
 /**
- * 控制面板（supervisor overview）— 对齐 DashboardPage 架构标准 + 老 UI 全能力
- * 数据：supervisorStore /status + /events + /instances 快照
+ * 控制面板（supervisor overview）：数据经 supervisorStore /status + /events + /instances 快照。
  */
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -25,8 +24,7 @@ export function OverviewPage() {
   const { snap } = useSupervisorData();
   const { busy, run } = useSupervisorAction();
   const [upgradeOpen, setUpgradeOpen] = useState(false);
-  // 停止运行中的主干 DSH 是高危动作（在飞请求中断）——需二次确认，
-  // 与其他无确认开关同批收敛（LanPage 三开关 / window.prompt 令牌录入）。
+  // 停止运行中的主干 DSH 会中断在飞请求，属高危动作：需二次确认
   const [confirmStopDsh, setConfirmStopDsh] = useState(false);
   // main(原生 DSH) 守护开关
   const [mainGuardian, setMainGuardian] = useState<boolean | null>(null);
@@ -41,21 +39,20 @@ export function OverviewPage() {
   const upg = s?.upgrade;
   const phaseMeta = SUP_PHASE_META[s?.phase ?? ""] ?? { label: s?.phase || "未知", tone: "off" as const };
 
-  // 概念清分：原生主干不是沙箱实例列表成员——openWeb 固定目标 main（服务端仅打开浏览器，无沙箱语义）
+  // 原生主干不是沙箱实例列表成员：openWeb 固定目标 main（服务端仅打开浏览器，无沙箱语义）
   const running = Boolean(s?.dshPid);
   const upgradeRunning = upg?.state === "running";
 
   const events = useMemo(() => snap.events.filter((e) => !NOISE.has(e.type)), [snap.events]);
 
   async function toggleDsh() {
-    //启停统一走 /lifecycle/dsh/start|stop（语义与旧 /start|/stop 等价，单一控制路径）
+    // 启停统一走 /lifecycle/dsh/start|stop（单一控制路径）
     await run("dsh", () => (running ? supervisorApi.lifecycleStop("dsh") : supervisorApi.lifecycleStart("dsh")), { success: running ? "正在停止 DSH…" : "正在启动 DSH…" });
   }
   async function openWeb() {
     await run("web", () => supervisorApi.instanceOpenWeb("main"));
   }
   async function checkUpdate() {
-    // 检测完成后即时反馈：已是最新 / 发现新版（后端返回 updateAvailable + latest）
     await run("chk", async () => {
       const res = await supervisorApi.nativeCheckUpdate();
       if (res?.ok === false) { toast.error(res.error || "检测失败"); return; }
@@ -65,7 +62,7 @@ export function OverviewPage() {
         toast.success("已是最新版本" + (res.installed ? "（" + res.installed + "）" : ""));
       }
     });
-    // run 成功后 useSupervisorAction 已自动 refresh()；后端异步推进由 2s 统一心跳呈现（R6 修复：去除 1500ms 魔法时序）。
+    // run 已自动 refresh；后端异步推进由 2s 统一心跳呈现，不再加固定延时
   }
   async function upgradeDsh() {
     setUpgradeOpen(false);
@@ -81,18 +78,18 @@ export function OverviewPage() {
     await run("uni", () => supervisorApi.nativeUninstall(), { success: "开始卸载…" });
   }
 
-  // main 守护开关：读 A 平面真值(instances.native.guardian = dshMainView 持久化源, 即时准确)——
-  // 不走 /lifecycle/dsh(B 平面由心跳~5s 同步, 打开后立即刷新会读到同步前旧值=开关弹回关, 20复)。
+  // main 守护开关读 A 平面真值（instances.native.guardian = dshMainView 持久化源，即时准确）；
+  // 不走 /lifecycle/dsh——B 平面由心跳约 5s 同步，打开后立即刷新会读到旧值导致开关弹回。
   useEffect(() => {
     if (!installed) return;
     supervisorApi.instances().then((r2) => {
       const g = r2?.native?.guardian;
       if (typeof g === "boolean") setMainGuardian(g);
     }).catch(() => {});
-  }, [installed, s?.dshPid]); // dshPid 变化(启停)后重读, 保证开关与状态同步
+  }, [installed, s?.dshPid]); // dshPid 变化(启停)后重读，保证开关与状态同步
 
   async function toggleMainGuardian() {
-    // 按钮模式（实例页同款「启动守护/停止守护」）：点击翻转，消费后端返回值即时刷新
+    // 点击翻转，消费后端返回值即时刷新（与实例页守护按钮同款形态）
     const v = !(mainGuardian === true);
     await run("gu", () => supervisorApi.nativeSettings({ guardian: v }).then((r2) => {
       const g = r2?.main?.guardian;
@@ -253,7 +250,6 @@ export function OverviewPage() {
         </DialogContent>
       </Dialog>
 
-      {/* B28：停止主干 DSH 二次确认 */}
       <Dialog open={confirmStopDsh} onOpenChange={setConfirmStopDsh}>
         <DialogContent className="max-w-[400px]">
           <DialogHeader><DialogTitle>停止 DSH？</DialogTitle></DialogHeader>
@@ -268,11 +264,8 @@ export function OverviewPage() {
   );
 }
 
-/** 环境检测：声明式消费 /env/status 的 catalog 必填项（Node 与 npm 一律同现），
- *  LTS 线提示仍取 /env/node-lts（那是 LTS 建议，不是工具链清单）。
- *
- *  旧实现只念 node-lts 的 current：环境卡对 npm 完全失明，npm 缺失时照旧只报 Node 版本号，
- *  而仓库里早已有一份把 npm 标成 required 的声明式目录，只是没有任何消费方。 */
+/** 环境检测：声明式消费 /env/status 的 catalog 必填项（Node 与 npm 一律同现）；
+ *  LTS 线提示取 /env/node-lts（那是 LTS 建议，不是工具链清单）。 */
 function EnvDetect() {
   const [node, setNode] = useState<NodeLtsStatus | null>(null);
   const [items, setItems] = useState<Record<string, EnvCatalogItem> | null>(null);
@@ -328,7 +321,7 @@ function EnvDetect() {
   );
 }
 
-/** 事件日志（懒加载）：先渲染 15 条；滚到列表底部哨兵出现 -> 继续 +15，直到全部事件渲染完。 */
+/** 事件日志（懒加载）：先渲染 PAGE 条；滚到底部哨兵出现 -> 每次 +PAGE，直到全部渲染完。 */
 function EventLogPanel({ events }: { events: SupervisorEvent[] }) {
   const PAGE = 12;
   const [visible, setVisible] = useState(PAGE);
@@ -381,7 +374,7 @@ function EventRow({ e }: { e: SupervisorEvent }) {
   );
 }
 
-/** 事件 -> 人性化描述（对齐后端遥测语义；无匹配则空串 —— 标签已表达类型） */
+/** 事件 -> 人性化描述（对齐后端遥测语义；无匹配则空串——标签已表达类型） */
 function eventDetail(e: SupervisorEvent): string {
   const d = e.data;
   if (!d) return "";
@@ -390,7 +383,6 @@ function eventDetail(e: SupervisorEvent): string {
   if (typeof d.message === "string") return d.message;
   if (typeof d.reason === "string") return friendlyFailure(d.reason);
   if (typeof d.desired === "string") return "期望 " + d.desired;
-  // 路由遥测
   if (e.type === "router_usage") return (d.model || "") + (d.model ? " · " : "") + fmt(d.tokens) + " tokens";
   if (e.type === "router_pick") return [(d.provider || ""), (d.key || "")].filter(Boolean).join(" · ");
   if (e.type === "account_ready" || e.type === "account_frozen" || e.type === "account_banned" || e.type === "account_recovered" || e.type === "account_review" || e.type === "account_exhausted") {
@@ -399,7 +391,7 @@ function eventDetail(e: SupervisorEvent): string {
   if (e.type === "provider_quota_refreshed") return (d.provider || "") + " 额度已刷新";
   if (e.type === "proxy_update_available") return [(d.pkg || ""), (d.from || ""), (d.to || "")].filter(Boolean).join(" → ");
   if (e.type === "proxy_instance_started") return "port=" + (d.port ?? "") + (d.pid ? " pid=" + d.pid : "");
-  // 守护/远程开关变更 —— 写清对象(原生/实例名) + 目标状态（远程控制三态：关闭/局域网/公网）
+  // 守护/远程开关变更：写清对象（原生/实例名）+ 目标状态（远程控制三态：关闭/局域网/公网）
   if (e.type === "dsh_guardian_changed" || e.type === "inst_guardian_changed") {
     const who = d.name || (d.id === "main" ? "原生 DSH" : d.id || "实例");
     return who + " · 进程守护" + (d.enabled === true ? " → 开启" : " → 关闭");
@@ -412,7 +404,6 @@ function eventDetail(e: SupervisorEvent): string {
     const who = d.name || (d.id === "main" ? "原生 DSH" : d.id || "实例");
     return who + " · 访问令牌" + (d.tokenSet === true ? " → 已设置" : " → 已清除");
   }
-  // 通用指标字段拼装
   const parts: string[] = [];
   if (d.pid !== undefined) parts.push("pid=" + d.pid);
   if (d.port !== undefined) parts.push("port=" + String(d.port));
@@ -422,7 +413,7 @@ function eventDetail(e: SupervisorEvent): string {
   return parts.join(" · ");
 }
 
-/** 事件类型 -> tone（覆盖：err 类红色、ok 类绿色、warn 黄、boot 蓝） */
+/** 事件类型 -> tone */
 const EVENT_TONE: Record<string, "ok" | "err" | "warn" | "boot" | "off"> = {
   running: "ok", adopted: "ok", spawned: "ok", main_instance_registered: "ok",
   upgrade_installed: "ok", upgrade_done: "ok", api_listening: "ok",

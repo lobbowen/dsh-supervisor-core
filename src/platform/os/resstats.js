@@ -1,8 +1,7 @@
 'use strict';
 
-// 进程树资源采样（观测面，ARCHITECTURE-PLAN-instance-sandbox-governor W2）：
-// sampleAsync(pid) -> { rssBytes, cpuMs } | null，按父子关系聚合整棵树（node 主进程 + 子工作进程）。
-// 平台差异只落在「数据源怎么取」；解析与树聚合是纯函数（文本 fixture 可三平台单测）。
+// 进程树资源采样（观测面，W2）：sampleAsync(pid) -> { rssBytes, cpuMs } | null，按父子关系聚合整棵树
+// （node 主进程 + 子工作进程）。平台差异只落在「数据源怎么取」；解析与树聚合是纯函数（文本 fixture 可三平台单测）。
 // 失败一律 null（= 无观测证据）：控制面纪律是「无证据不判违规」，绝不把采样失败当零占用。
 
 const fs = require('node:fs');

@@ -1,9 +1,8 @@
 'use strict';
 
-// Windows 自启策略（schtasks DSH-Supervisor-GUI）。
-// schtasks ONLOGON 只在登录时启动一次，进程崩溃后不会重启，故由壳建立 watchdog 任务每 5 分钟
-// 检查守卫。守卫任务与 watchdog 的所有者都是桌面壳；本模块只保留「GUI 壳开机自启」这一个语义，
-// 不再创建 watchdog、不再 enable/disable 守卫任务（否则与壳争定义，且形成第二个启动器）。
+// Windows 自启策略（schtasks DSH-Supervisor-GUI）。schtasks ONLOGON 只在登录时启动一次、崩溃不重启，
+// 保活由每 5 分钟检查的 watchdog 任务负责；守卫任务与 watchdog 的所有者都是桌面壳。
+// 本模块只管「GUI 壳开机自启」这一个语义：不创建 watchdog、不 enable/disable 守卫任务，否则与壳争定义、形成第二个启动器。
 
 const ex = require('../../util/exec');
 
@@ -31,8 +30,7 @@ function setAutostart(on, deps) {
       const r = ex.runDetail('schtasks', ['/Create', '/TN', 'DSH-Supervisor-GUI', '/SC', 'ONLOGON', '/RL', 'HIGHEST', '/F', '/TR', '"' + deps.guiCommand() + '"']);
       if (!r.ok) errors.push('schtasks gui: ' + (r.error || '执行失败'));
     } else {
-      // 先查再删：任务本就不存在时 schtasks /Delete 会返回非零，但期望状态已达成，属幂等成功，
-      // 不得报失败；只有真的发起删除且失败才计入 errors（旧实现丢弃结果，恒报 ok:true）。
+      // 先查再删：任务本就不存在时期望状态已达成，属幂等成功，不得报失败；只有真的发起删除且失败才计入 errors。
       if (hasTask('DSH-Supervisor-GUI')) {
         const r = ex.runDetail('schtasks', ['/Delete', '/TN', 'DSH-Supervisor-GUI', '/F']);
         if (!r.ok) errors.push('schtasks gui delete: ' + (r.error || '执行失败'));

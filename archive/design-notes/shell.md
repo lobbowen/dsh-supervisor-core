@@ -1,6 +1,6 @@
 # shell 域 功能设计
 
-> 范围：`src/domains/shell/`（index.js 24 / journal.js 108 / restart.js 129 / watchdog.js 211 / core.js 106，合计 **612 行**，2026-09-21 实测）。结构已落地。
+> 范围：`src/domains/shell/`（index.js 24 / journal.js 108 / restart.js 129 / watchdog.js 211 / core.js 119 / contract.js 34，合计 **625 行**，2026-09-21 实测）。结构已落地。
 > 依据：`design-notes/_MIGRATION-HISTORY.md` §4 + `DIRECTORY-STRUCTURE-DESIGN.md`（跨层 SSOT）+ `design-notes/_MIGRATION-HISTORY.md`（主代理 R1–R7，**覆盖 BRIEF 相应表述**）。
 > 所有「文件:行号」均来自本轮实际 read；行数为**逻辑行**（尾换行不计：watchdog.js 文件无尾换行，282 = split('
 ').length）。
@@ -16,6 +16,8 @@
 ---
 
 ## A. 现状审计
+
+> ⚠ **本 A 节为「迁移立项时的现状审计」（拆分前取证）**。A.1 表内原文件名与行数为**迁移前**值，**不是当前事实**。拆分已按 B/C 节落地——**当前**结构、文件与行数以页首「范围」清单为准（行号可能漂移，定位用「文件 + 符号」）。
 
 ### A.1 文件清单与职责（逐文件：行数 / 当前职责 / 问题）
 

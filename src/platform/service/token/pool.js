@@ -1,11 +1,8 @@
 'use strict';
 
-// 令牌池（DSH-TOKEN-CONTRACT 契约3/4，TK-1/TK-4/TK-8）。
-// 本池是唯一事实源（TK-4）：id 到 { value, gen, source, at, kind }；消费方一律按需 get()，不得自行缓存；gen 为代号，每次值变化加一。
-// 值变化广播 (id, value, record)，清空或注销广播 (id, null, null)，clear/detach 必广播，没有静默删除路径。
-// 用户配置类权威在配置存储，list() 排除，attach 只登记。
-// 落盘（TK-5/TK-6）：恢复文件经 persist.appendByRotation（原子备份、截断、0600、脱敏）；池快照需显式 opts.poolFile，缺省不落盘以免测试互相污染。
-// 源形态到 kind 推断在 infer.js，池快照 IO 在 snapshot.js，本文件不直连 fs。
+// 令牌池（DSH-TOKEN-CONTRACT 契约3/4，TK-1/TK-4/TK-8）：唯一事实源，消费方一律按需 get()/getRecord()，不得自行缓存。
+// 任何值变化、清空或注销必须经广播（clear/detach 无静默删除路径）；用户配置类权威在配置存储，list() 排除、attach 只登记。
+// 落盘（TK-5/TK-6）全部委托 persist/snapshot，本文件不直连 fs；池快照需显式 opts.poolFile，缺省不落盘以免测试互相污染。
 
 const path = require('node:path');
 const persist = require('./persist');
@@ -17,7 +14,6 @@ const { configureKindInference, kindInference, inferKind } = require('./infer');
 
 /** 进入 RUNNING 后的捕获退避时间（ms），覆盖端口先起、URL 后打印的典型窗口。 */
 const CAPTURE_RETRY_MS = [0, 1500, 4000, 8000, 15000, 30000];
-/** 空令牌周期回填的节流（ms）。 */
 const BACKFILL_THROTTLE_MS = 30000;
 /** stdout 行缓冲上限，只保留最近的 URL 候选。 */
 const MAX_PENDING_LINES = 20;
@@ -28,27 +24,25 @@ class TokenPool {
     const o = opts || {};
     this.logger = o.logger || console;
     this.events = o.events || null;
-    this._records = new Map();   // id 到 { value, gen, source, at, kind } 的唯一令牌存储
-    this._sources = new Map();   // id 到 { kind, unit, file, lines: [] } 的来源登记
+    this._records = new Map();
+    this._sources = new Map();
     this._bus = new FollowBus({ logger: this.logger });
-    this._schedules = new Map(); // id 到 { seq, i, timer } 的退避重试调度状态
-    this._seq = 0;               // 调度轮次序号，新轮次使旧轮次作废
-    this._backfillAt = new Map(); // id 到最近回填时间，用于节流
+    this._schedules = new Map(); // id 到 { seq, i, timer }；新轮次 seq 递增使旧轮次作废
+    this._seq = 0;
+    this._backfillAt = new Map();
     this._poolFile = o.poolFile ? path.resolve(o.poolFile) : null;
-    this._loaded = false;         // 池快照是否已尝试载入（只尝试一次）
+    this._loaded = false;
   }
 
   /* 来源登记 */
-  /** 登记或更新目标的令牌来源，同一目标重复 attach 幂等并保留已推送的 stdout 行。
-   *  id 为目标标识（'main' 或实例 id）；src 形如 { kind?, unit?, file? }，kind 缺省时按源形态强推断。
-   *  返回是否完成登记；kind 完全无法判定时返回 false。 */
+  /** 登记或更新目标的令牌来源，重复 attach 幂等并保留已推送的 stdout 行；kind 缺省时按源形态推断（infer.js）。
+   *  kind 必须在 kinds.js 登记（契约1），完全无法判定时返回 false，避免幽灵令牌入池。 */
   attach(id, src) {
     if (!id) return false;
     const s = src || {};
     const prev = this._sources.get(id);
     let kind = s.kind || (prev && prev.kind) || null;
     if (kind && !kinds.isKnownKind(kind)) {
-      // 契约1：新增令牌必须在 kinds.js 登记，拒绝未登记分类，避免幽灵令牌入池。
       this.logger.warn && this.logger.warn('[token] attach(' + id + ') 拒绝：kind 未登记（§1）：' + String(kind));
       return false;
     }
@@ -75,19 +69,17 @@ class TokenPool {
   }
 
   /* 统一捕获（源无关） */
-  /** 主动捕捉一次：按源顺序取“最新一条”URL 行的令牌，有变化则入库并广播。
-   *：stdout/文件档同步返回；journal 档**非阻塞**发射（resolve 后照常 _commit+广播），
-   *  因为同步 journalctl 在守卫生命周期 tick 里会冻结事件循环最长 5s（心跳停摆）。 */
+  /** 主动捕捉一次：按源优先级取“最新一条”URL 行的令牌，有变化则入库并广播。
+   *  stdout/文件档同步返回；journal 档非阻塞发射：同步 journalctl 在生命周期 tick 里会冻结事件循环（见 capture.js）。 */
   capture(id) {
     const src = this._sources.get(id);
     if (!src) return null;
     const hit = capture.captureOnce({ kind: src.kind, unit: src.unit, file: src.file, lines: src.lines }, { logger: this.logger });
     if (hit) {
-      // 任何源拿到令牌后，若有恢复文件则把命中原文行写入（0600、脱敏、轮转）。
       if (src.file) this._persistLine(id, src.file, hit.line);
       return this._commit(id, hit.token, hit.source);
     }
-    // journald（systemd 托管）：最后的回填兜底，异步发射不占调用线程。
+    // journald（systemd 托管）末位兜底：异步发射不占调用线程。
     if (src.unit && kinds.isCaptured(src.kind)) {
       Promise.resolve()
         .then(() => capture.captureJournal(src.unit, { logger: this.logger }))
@@ -106,9 +98,8 @@ class TokenPool {
     if (!id || !line) return null;
     let src = this._sources.get(id);
     if (!src) {
-      // TK-3 旁路封堵：旧实现未 attach 即按形态建隐式源，inferKind 推断失败（返回 null）
-      //   时仍会把源与令牌塞进池——绕开了 attach 那道「kind 未登记即拒」的门（幽灵令牌入池）。
-      //   隐式源只允许走与 attach 完全相同的分类闸：推断不出、或未登记，一律拒绝入池。
+      // TK-3：隐式源必须走与 attach 相同的分类闸——推断不出或 kind 未登记一律拒绝入池，
+      //   否则此旁路绕开登记门禁，造成幽灵令牌入池。
       const k = inferKind(id, {});
       if (!k || !kinds.isKnownKind(k)) return null;
       src = { kind: k, unit: null, file: null, lines: [] };
@@ -133,7 +124,7 @@ class TokenPool {
     this._schedules.set(id, st);
     const tryOnce = () => {
       const cur = this._schedules.get(id);
-      if (!cur || cur.seq !== seq) return; // 轮次作废或已 detach
+      if (!cur || cur.seq !== seq) return;
       this.capture(id);
       st.i += 1;
       if (st.i < CAPTURE_RETRY_MS.length) {
@@ -146,7 +137,7 @@ class TokenPool {
   /** 周期兜底：令牌仍为空时按节流从来源回填（幂等，可每 tick 调用）。 */
   ensureCaptured(id) {
     const rec = this._records.get(id);
-    if (rec && rec.value) return; // 已有令牌无需回填，最新性由轮换时的 scheduleCapture 保证
+    if (rec && rec.value) return; // 最新性由轮换时的 scheduleCapture 保证
     // 守卫重启后内存为空，磁盘可能已有上一代令牌，先载入再判定。
     if (!this._loaded) {
       this._loadPoolFile();
@@ -161,16 +152,16 @@ class TokenPool {
   }
 
   /* 生命周期 */
-  /** 清空某目标的令牌与调度；TK-8：必须广播 null（消费方据此立刻丢弃旧代令牌）。
-   *  stdout 行缓冲同属旧代状态——不清则 ensureCaptured 下一拍从残留行再“捕获”已死令牌，
-   *  以新 gen 追加进恢复文件（回灌死令牌，relay 恒 401）。 */
+  /** 清空某目标的令牌与调度；TK-8：必须广播 null（消费方立刻丢弃旧代令牌）。
+   *  stdout 行缓冲同属旧代状态必须一并清：残留行会被 ensureCaptured 再“捕获”，
+   *  以新 gen 把已死令牌回灌进恢复文件。 */
   clear(id) {
     this._cancelSchedule(id);
     this._backfillAt.delete(id);
     const src = this._sources.get(id);
     if (src && src.lines && src.lines.length) src.lines.length = 0;
     this._records.delete(id);
-    this._persistPool();       // 池快照同步移除该 id（原子替换，不整文件删除）
+    this._persistPool();
     this._bus.emit(id, null, null);
   }
 
@@ -207,7 +198,7 @@ class TokenPool {
       const src = this._sources.get(id) || null;
       const rec = this._records.get(id) || null;
       const kind = (src && src.kind) || (rec && rec.kind) || null;
-      if (kinds.isUserConfigKind(kind)) continue; // 用户配置类不是 DSH 令牌，不进令牌池展示
+      if (kinds.isUserConfigKind(kind)) continue;
       out.push({
         id,
         kind,
@@ -234,7 +225,7 @@ class TokenPool {
     const src = this._sources.get(id);
     const rec = {
       value,
-      gen: (prev ? prev.gen : 0) + 1, // 每次值变化加一，代号解决无版本问题
+      gen: (prev ? prev.gen : 0) + 1,
       source: source || 'unknown',
       at: Date.now(),
       kind: (src && src.kind) || (prev && prev.kind) || null,
@@ -247,7 +238,7 @@ class TokenPool {
     return value;
   }
 
-  /** 把命中令牌的原文行持久化到恢复文件（统一经 persist：脱敏 + 0600 + 超限轮转）。 */
+  /** 把命中令牌的原文行写入恢复文件（统一经 persist：脱敏 + 0600 + 轮转）。 */
   _persistLine(id, file, line) {
     const r = persist.appendByRotation(file, line, { maxBytes: persist.PERSIST_LIMITS.MAX_BYTES });
     if (!r.ok) this.logger.warn && this.logger.warn('[token] persist file(' + id + ') failed: ' + (r.reason || 'unknown'));
@@ -284,8 +275,6 @@ class TokenPool {
       this._records.set(e.id, { value: e.value, gen: e.gen, source: e.source, at: e.at, kind: e.kind });
     }
   }
-
-// 兼容层已移除：TK-4 要求令牌池是唯一事实源，任何指向内部 Map 的旧访问器都会让消费方绕开 get/getRecord，成为各自缓存令牌的温床。
 }
 
 module.exports = {

@@ -5,13 +5,8 @@ import { Select as SelectPrimitive } from "radix-ui"
 import { cn } from "../utils"
 
 /**
- * ============================================================================
- * DSH 通用 UI 框架 — Select（下拉选择，U1 补齐）
- * ============================================================================
- * 基于 radix-ui Select 的令牌化封装（替代页面裸 <select>），对齐 shadcn 语义：
- *   Select / SelectTrigger / SelectContent / SelectItem / SelectValue / SelectGroup / SelectLabel
- * 样式全部走 CSS 变量令牌；键盘可达 + ARIA 由 Radix 保证。
- * ============================================================================
+ * Select：基于 radix-ui Select 的令牌化下拉封装（替代页面裸 <select>），样式全走 CSS 变量令牌；
+ * 键盘可达 + ARIA 由 Radix 保证。
  */
 
 function Select({ ...props }: React.ComponentProps<typeof SelectPrimitive.Select>) {

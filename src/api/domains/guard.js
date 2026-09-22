@@ -11,8 +11,7 @@ function owns(pathname) {
     || pathname === '/ports' || pathname === '/shutdown';
 }
 
-/** 更新日志（DSH）：只展示 DeepSeek Harness 相关内容（来自 NativeManager 版本信息），与管家无关。
- *  该能力在 UI 中位于「概览」页的「版本与升级」区块（非独立页面）。 */
+/** DSH 更新日志：仅 DeepSeek Harness 相关内容（NativeManager 版本信息），与管家无关；UI 位于「概览-版本与升级」区块。 */
 function fetchDshChangelog(res, sup) {
   const v = (sup && sup.nativeManager) ? sup.nativeManager.versionInfo() : {};
   const inst = v.installed || '未安装';
@@ -89,12 +88,12 @@ function handle(ctx) {
         try { const j = body ? JSON.parse(body) : {}; if (typeof j.enabled === 'boolean') enabled = j.enabled; } catch {}
         if (enabled === null) return send(400, { ok: false, error: '需要 {"enabled":true|false}' });
         const r = sup.setLanPanel(enabled);
-        // 未设访问密钥属客户端可修正的前置条件失败 -> 400（原为 500，与 FIX-1 的暴露闸语义矛盾）；内部异常仍 500。
+        // 未设访问密钥属客户端可修正的前置条件失败 -> 400；内部异常仍 500。
         return send(r.ok === false ? (r.code === 'ACCESS_KEY_REQUIRED' ? 400 : 500) : 200, r);
       });
       return;
     }
-    // 出回环访问密钥（F2 定案）：状态查询 / 设置/清除（空 key=清除）。不回显明文。
+    // 出回环访问密钥：状态查询 / 设置/清除（空 key=清除）。不回显明文。
     if (req.method === 'GET' && pathname === '/settings/access-key') {
       return send(200, sup.accessKeyStatus());
     }
@@ -136,9 +135,8 @@ function handle(ctx) {
       return;
     }
 
-    // 内核更新（单写入者 = 壳，见 RELEASE-AND-UPDATE-MECHANISM.md）：
-    //   只保留**只读**状态查询；安装/重启守卫归壳，写端点**已下架**。
-    //   下架用 410 Gone + 稳定错误码（而非 404），让任何旧客户端得到可诊断的迁移结论。
+    // 内核更新单写入者 = 壳：本域只保留只读状态查询；安装/重启守卫归壳，写端点已下架。
+    //   下架用 410 Gone + 稳定错误码（而非 404），让旧客户端得到可诊断的迁移结论。
     if (req.method === 'GET' && pathname === '/self-update/status') {
       if (!originAllowed(req, sup.config.apiPort)) { req.resume(); return send(403, {}); }
       Promise.resolve(sup.guardSelfUpdateStatus()).then((r) => send(r.ok ? 200 : 400, r));
@@ -180,7 +178,7 @@ function handle(ctx) {
     if (req.method === 'GET' && pathname === '/ports') {
       return Promise.resolve(sup.listPorts()).then((r) => send(200, r)).catch((e) => send(500, { error: e && e.message }));
     }
-  // 域内未匹配(方法/子路径)：全局兜底语义(与单文件时代一致)
+  // 域内未匹配(方法/子路径)：全局兜底语义
   if (req.method === 'GET' || req.method === 'POST') return send(404, { error: 'not found', path: pathname });
   return send(405, { error: 'method not allowed' });
 }

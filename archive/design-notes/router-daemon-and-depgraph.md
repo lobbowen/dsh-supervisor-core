@@ -1,6 +1,6 @@
 # router 域 · 进程入口（daemon.js）+ 全域依赖图 功能设计
 
-> 范围：`src/domains/router/daemon.js`（进程入口设计）+ router 域**43 个文件 / 5085 行**的 require 边汇总与 current-vs-target 对照图（2026-09-21 实测）。结构已落地。
+> 范围：`src/domains/router/daemon.js`（进程入口设计）+ router 域**43 个文件 / 5011 行**的 require 边汇总与 current-vs-target 对照图（2026-09-21 实测）。结构已落地。
 > 依据：`design-notes/_MIGRATION-HISTORY.md` §4、`DIRECTORY-STRUCTURE-DESIGN.md`（跨层 SSOT）、**`design-notes/_MIGRATION-HISTORY.md`（R1–R5，已覆盖 BRIEF 相应表述）**。
 > 本文所有「文件:行号」均来自本轮实际 `read`；所有 require 边由**剥注释源码**静态扫描 + Tarjan SCC 实算。
 > **只做设计，未改动任何 `src/` 代码，未 commit。**
@@ -21,6 +21,8 @@
 ---
 
 ## A. 现状审计
+
+> ⚠ **本 A 节为「迁移立项时的现状审计」（拆分前取证）**。A.1 表内原文件名与行数为**迁移前**值，**不是当前事实**。拆分已按 B/C 节落地——**当前**结构、文件与行数以页首「范围」清单为准（行号可能漂移，定位用「文件 + 符号」）。
 
 ### A.1 文件清单与职责
 

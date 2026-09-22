@@ -1,11 +1,7 @@
 'use strict';
 
-// Q7 供应商注册表（CRUD）+ Q12 服务生命周期 + 端口释放；并持有 Q2 域状态容器。
-// 副作用经注入的 endpoint/scheduler/ports 执行（手法 B），本文件不 require 实现。
-//
-// 契约导出：createState(opts), createOps(deps), findProvider(providers, id)。
-// createOps deps = { state, store, logger, events, dist, ports, endpoint, scheduler, usage,
-//                    createDirect, createProxy, apps, presets, save }
+// 供应商注册表（CRUD）+ 服务生命周期 + 端口释放；并持有域状态容器（createState）。
+// 副作用经注入的 endpoint/scheduler/ports 执行，本文件不 require 实现。
 
 /** 域内唯一可变状态的家（纯内存）。 */
 function createState(opts) {
@@ -35,7 +31,6 @@ function createState(opts) {
   };
 }
 
-/** 纯查找。 */
 function findProvider(providers, id) { return (providers || []).find((p) => p.id === id) || null; }
 
 /** 释放某供应商在端口注册表中的全部记录（providerApi:<id> 与各 proxy:<keyId>）。 */
@@ -61,7 +56,6 @@ function createOps(deps) {
   const presets = d.presets || [];
   const save = d.save || (() => {});
 
-  /* ---- Q7 供应商 CRUD ---- */
   function addDirectProvider(opts) {
     const preset = (opts && opts.presetId) ? (presets.find((x) => x.id === opts.presetId) || null) : null;
     const baseUrl = (opts && opts.baseUrl) || (preset ? preset.baseUrl : '') || '';
@@ -100,9 +94,9 @@ function createOps(deps) {
     if (idx < 0) return { ok: false, error: '供应商不存在' };
     const removed = state.providers.splice(idx, 1)[0];
     endpoint.stopProviderServer(id); // 删除即停用：关闭其独立端点
-    // 删除路径必须 force 停实例：不带 force 时，若账号被 selected/activeAccount 指向，proxy.js
-    // 只置 _stopPendingUntilIdle 就返回、不 kill；紧接着 provider 被摘除后该标记不可达，补刀无从
-    // 触发，持用户 API Key 的反代进程永不被回收。故删除语义统一 force=true（与「删除即回收」一致）。
+    // 删除路径必须 force 停实例：不带 force 时，账号被 selected/activeAccount 指向则只置
+    // _stopPendingUntilIdle 就返回；provider 摘除后该标记不可达、补刀无从触发，
+    // 持用户 API Key 的反代进程永不被回收。
     if (removed.supports('instanceLifecycle')) { for (const i of removed.instances || []) { try { removed.stopInstance(i, true); } catch {} } }
     // 端口登记级联释放（「删除对象即释放端口」契约）：否则 owner 永久累积、池最终耗尽。
     try { releaseProviderPorts(removed, ports); } catch (e) { if (logger && logger.warn) logger.warn('release provider ports ' + id + ': ' + (e && e.message)); }
@@ -110,7 +104,6 @@ function createOps(deps) {
     return { ok: true };
   }
 
-  /* ---- Q12 服务生命周期 ---- */
   function start() {
     if (state.running) return Promise.resolve({ ok: true, already: true });
     state.running = true;

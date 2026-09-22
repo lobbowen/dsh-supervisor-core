@@ -1,8 +1,7 @@
 'use strict';
 
-// 插件市场源抓取叶子原语（无预算状态）。
-// safeFetchLatest/safeRepoPkg/rawGet + RAW_MIRRORS；批次循环必须留在 market.js
-// （test/market-budget-test.js M-d 以源码正则锁定预算检查在 slice 之前）。
+// 插件市场源抓取叶子原语（无预算状态）：rawGet / fetchLatest / repoPkg + RAW_MIRRORS。
+// 批次循环必须留在 market.js（test/market-budget-test.js M-d 以源码正则锁定预算检查在 slice 之前）。
 
 const { getJson, getText } = require('./market-net');
 

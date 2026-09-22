@@ -2,11 +2,9 @@
 
 const stateRoot = require('../service/state-root');
 
-// 运行期启动契约读取器（壳写、内核读），与壳 src-tauri/src/runtime_contract.rs 成对。
-// 契约文件：<产品状态根>/supervisor/runtime.json（schema 2）。
-// 内核自身也要执行 npm（自更新/装 DSH/插件），而 GUI 或服务环境 PATH 常缺 nvm/fnm 的 npm；
-// 壳在供给层解析一次并投放，内核消费产物，避免壳能装而内核装不了的分叉。
-// 不变量 C2：契约不可用时返回 null 或退回调用方的 ambient 解析，绝不因此启动失败。
+// 运行期启动契约读取器（壳写、内核读），与壳 src-tauri/src/runtime_contract.rs 成对；契约文件为 <产品状态根>/supervisor/runtime.json（schema 2）。
+// 存在意义：GUI/服务环境 PATH 常缺 nvm/fnm 的 npm，壳在供给层解析一次并投放，内核消费产物。
+// 不变量：契约不可用时返回 null 或退回调用方的 ambient 解析，绝不因此启动失败。
 
 const fs = require('node:fs');
 const path = require('node:path');
@@ -37,7 +35,7 @@ function read() {
     npmPath: j.npmPath || npm.path || null,
     // 外壳可只提供包内 JS（npmPath=node，npmArgs=[npm-cli.js]），消费者必须带上 args。
     npmArgs: Array.isArray(j.npmArgs) ? j.npmArgs : (Array.isArray(npm.args) ? npm.args : []),
-    // npm 版本由壳**真实执行** npm --version 得到；旧壳没有这个键时为 null（未知就是未知）。
+    // npm 版本由壳真实执行 npm --version 得到；旧壳无此键时为 null（未知就是未知）。
     npmVersion: (typeof npm.version === 'string' && npm.version) || null,
     minNode: j.minNode || null,
     writtenBy: j.writtenBy || null,
@@ -49,19 +47,10 @@ function read() {
   };
 }
 
-/**
- * npm 的**启动形态**（唯一解析口）：`{ program, args, version, source }`。
- *
- * 为什么程序与参数必须成对返回：官方分发包只带包内 JS 时，契约里 `program` 就是 node 本体、
- *   `args=[npm-cli.js]`。只取 program 会把「用 node 跑 npm-cli.js」降级成「裸跑 node」，
- *   每次调用都留下一条含糊的失败 —— 半个事实比没有事实更难查。
- * 为什么这里是唯一口：内核曾有四处各自解析（分发安装 / 环境探测 / 原生卸载 / 版本探测），
- *   于是「壳能装、内核装不了」和「面板说就绪、实机跑不通」都能成立。
- * 契约缺席或指向不存在的文件时退回 `os/exec-path.npmBin()`（Windows 走 PATHEXT，绝不说裸 npm）。
- *
- * @param {{platform?:string,env?:object}} [opts] 透传给 exec-path，便于纯函数级跨平台测试
- * @returns {{program:string,args:string[],version:string|null,source:'contract'|'path'}}
- */
+/** npm 启动形态的唯一解析口：{ program, args, version, source }。程序与参数必须成对取用：
+ *  官方分发包只带包内 JS 时契约 program 即 node、args=[npm-cli.js]，只取 program 会降级成裸跑 node；
+ *  契约缺席或指向不存在文件时退回 exec-path.npmBin()（Windows 走 PATHEXT，绝不说裸 npm）。
+ *  @param {{platform?:string,env?:object}} [opts] 透传给 exec-path，便于纯函数级跨平台测试 */
 function npmLauncher(opts) {
   const c = read();
   if (c && c.npmPath) {
@@ -83,6 +72,5 @@ function withPath(env) {
   return e;
 }
 
-// file() 必须导出：测试需要把契约写到 read() 实际读取的那个路径（SSOT 在此，测试不得重推导）。
-// 曾按「仅 read() 内部使用」删除，CI  以 rc.file is not a function 检出（test 消费漏检）。
+// file() 必须导出：测试要把契约写到 read() 实际读取的路径（SSOT 在此，测试不得重推导路径）。
 module.exports = { SUPPORTED_SCHEMA, file, read, npmLauncher, withPath };

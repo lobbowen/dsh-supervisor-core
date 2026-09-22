@@ -1,15 +1,8 @@
 'use strict';
 
-// 捕捉层（DSH-TOKEN-CONTRACT 契约3/4，TK-1/TK-3/TK-7）。
-// 令牌由 DSH 侧生成，我方只能从 DSH 输出中取出，共三种源与固定优先级：stdout 实时行最优先，其次本地恢复文件，最后 journald。
-// 顺序不可颠倒：journal 优先会把陈旧或别的 unit 的旧 token 覆盖掉刚由 stdout 捕获的新 token。
-// journal 必须按“最近一条含回环 URL 的行”查询而非固定最近 N 行，否则长驻实例的 token 行滚出窗口后永远捕获不到。
-// 本层只做一次拉取，退避重试与周期兜底由 pool 的 scheduleCapture 与 ensureCaptured 负责。
-//：journalctl 必须**异步**（ex.runOutAsync）——captureOnce 由守卫生命周期 tick 的
-//   ensureCaptured 调用，同步 execFileSync 在 5s 超时下会把整个事件循环冻住，心跳/定时器全部停摆。
-//   因此 captureOnce 只做零外部进程的 stdout/文件两档（同步），journal 档拆成 captureJournal（Promise），
-//   由 pool.capture 在非阻塞回填路径上发射，命中后照常 _commit+广播（TK-8）。
-// TK-7 用户配置类只登记不捕捉：remote-token/api-access-key/frp-auth 权威在配置存储，本层对非 captured 分类直接 no-op。
+// 捕捉层（DSH-TOKEN-CONTRACT 契约3/4，TK-1/TK-3/TK-7）：令牌由 DSH 侧生成，我方只能从其输出取出；三源固定优先级 stdout 实时行 > 本地恢复文件 > journald，顺序不可颠倒（journal 优先会把旧 token 覆盖掉 stdout 刚捕获的新 token）。
+// journald 查询按「最近一条含回环 URL 的行」而非固定最近 N 行（否则长驻实例的 token 行滚出窗口后永远捕获不到）；journalctl 必须异步（runOutAsync）：captureOnce 由守卫生命周期 tick 调用，同步 execFileSync 在 5s 超时下会冻结整个事件循环，故 journal 档拆为 captureJournal 由 pool.capture 非阻塞发射回填。
+// 退避重试与周期兜底归 pool，本层只拉一次；TK-7：用户配置类（remote-token/api-access-key/frp-auth）只登记不捕捉，对非 captured 分类直接返回 null。
 
 const ex = require('../../util/exec');
 const persist = require('./persist');
@@ -51,7 +44,7 @@ function captureOnce(desc, opts) {
   // TK-7/TK-3：非捕捉分类（用户配置/派生/自签）只登记不捕捉。
   if (!kinds.isCaptured(src.kind)) return null;
 
-  // stdout 实时行优先，spawn 托管下 feedLine 推送的当前进程 token 最权威。
+  // stdout 最优先：spawn 托管下 feedLine 推送的是当前进程的活令牌。
   if (src.lines && src.lines.length) {
     for (let i = src.lines.length - 1; i >= 0; i--) {
       const t = parseDshTokenLine(src.lines[i]);

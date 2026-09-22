@@ -1,13 +1,4 @@
-/**
- * ============================================================================
- * DSH 通用 UI 组件库 — 统一出口（Barrel）
- * ============================================================================
- * 用法：
- *   import { Button, Dialog, Input } from "@/framework/ui";
- *
- * 组件命名遵循 shadcn/ui 风格（Radix + CVA + tailwind-merge）。
- * ============================================================================
- */
+/** UI 组件统一出口：组件命名遵循 shadcn/ui 风格（Radix + CVA + tailwind-merge）。 */
 export { Button, type ButtonProps } from "./button";
 export { Checkbox, type CheckboxProps } from "./checkbox";
 export { Collapsible, CollapsibleTrigger, CollapsibleContent } from "./collapsible";

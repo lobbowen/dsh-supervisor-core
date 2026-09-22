@@ -49,7 +49,7 @@ function handle(ctx) {
         if (action === 'enable' && name) return sup.pluginManager.setBundleEnabled(name, true, target).then((r) => send(r.ok ? 200 : 400, r));
         // 卸载：按目标（native / all / 指定实例 id）检测并卸载——不同实例各自检测
         if (action === 'uninstall' && name) return sup.pluginManager.uninstall(name, target).then((r) => send(r.ok ? 200 : 400, r));
-        // 安装：目标无效直接 400（resolveTargets 报错，不再静默降级）
+        // 安装：目标无效直接 400（resolveTargets 报错，不静默降级）
         if (action === 'install' && spec) return sup.pluginManager.install(spec, { target }).then((r) => send(r.ok ? 200 : 400, r));
         // 更新：官方 pnpm update（bundle 层变更 => 自动重启运行中目标）
         if (action === 'update' && name) return sup.pluginManager.update(name, target).then((r) => send(r.ok ? 200 : 400, r));
@@ -57,7 +57,7 @@ function handle(ctx) {
       });
       return;
     }
-  // 域内未匹配(方法/子路径)：全局兜底语义(与单文件时代一致)
+  // 域内未匹配(方法/子路径)：全局兜底语义
   if (req.method === 'GET' || req.method === 'POST') return send(404, { error: 'not found', path: pathname });
   return send(405, { error: 'method not allowed' });
 }

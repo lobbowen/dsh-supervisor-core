@@ -1,12 +1,8 @@
 'use strict';
 
-// 镜像契约读取器（壳写、内核读）。契约文件：<产品状态根>/supervisor/registry.json。
-// 所有权在壳：用户装壳时机器上尚无内核，壳必须先完成镜像选择（目录与探测方法归壳），
-// 内核只消费产物，不持有硬编码副本。
-// schema 1 仅 mode/origins/manualOrigin；schema 2 增加 catalog/selected/probe。
-// probe 随契约投放是为了让两侧选源一致：内核照壳的探测规格执行，否则同一镜像两侧测得的
-// 延迟可差数倍，会出现面板显示一个源、实际用另一个。
-// 不变量 C2：契约缺失/损坏时返回 { ok:false, reason }，调用方回退最小兜底，绝不启动失败。
+// 镜像契约读取器（壳写、内核读）：契约文件 <产品状态根>/supervisor/registry.json；所有权在壳，内核只消费产物、不持有硬编码副本。
+// schema 1 仅 mode/origins/manualOrigin；schema 2 增加 catalog/selected/probe，probe 随契约投放保证两侧选源一致（否则延迟测量可差数倍）。
+// 不变量：契约缺失/损坏时返回 { ok:false, reason }，调用方回退最小兜底，绝不启动失败。
 
 const fs = require('node:fs');
 
@@ -56,7 +52,7 @@ function read(file) {
   const manualOrigin = normOrigin(doc.manualOrigin);
   const schema = Number.isInteger(doc.schema) ? doc.schema : 1;
 
-  // 契约比本内核新时明确拒绝，不猜格式（不变量 C3）。
+  // 契约比本内核新时明确拒绝，不猜格式。
   if (schema > SUPPORTED_SCHEMA) {
     return Object.assign({}, empty, { reason: REASON.SCHEMA_NEWER, schema, mode, manualOrigin });
   }

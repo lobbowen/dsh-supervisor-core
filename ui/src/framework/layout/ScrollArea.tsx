@@ -2,14 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { cn } from "../utils";
 
-/**
- * ============================================================================
- * DSH 通用 UI 框架 — ScrollArea（自动隐藏滚动条）
- * ============================================================================
- * 隐藏原生滚动条，滚动时在右侧显示一条细指示条；
- * 未溢出 / 静止时不显示。macOS / Windows / Linux 视觉统一。
- * ============================================================================
- */
+/** ScrollArea：隐藏原生滚动条，滚动时在右侧显示一条细指示条；未溢出/静止时不显示，三平台视觉统一。 */
 
 export type ScrollAreaProps = {
   children: ReactNode;
@@ -59,11 +52,10 @@ export function ScrollArea({
       updateThumb();
       scheduleHide();
     };
-    // 初始检测是否溢出
+    // 有溢出但未滚动时保持隐藏（只在滚动动作后短暂显示指示条）。
     const init = () => {
       updateThumb();
       if (el.scrollHeight > el.clientHeight) {
-        // 有溢出但未滚动：不显示（保持隐藏）
         setShow(false);
       }
     };
@@ -89,7 +81,6 @@ export function ScrollArea({
       >
         {children}
       </div>
-      {/* 滚动指示条 */}
       <div
         aria-hidden="true"
         className="pointer-events-none absolute top-0 right-0 z-10 rounded-full transition-opacity duration-300"

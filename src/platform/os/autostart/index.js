@@ -1,13 +1,8 @@
 'use strict';
 
-// 平台化开机自启（三端同一 setAutostart(on) / status()）—— 门面（组合 + 分派）。
-// 所有权矩阵：守卫服务定义（systemd unit / LaunchAgent plist / schtasks 任务）归桌面壳；
-// 守卫自启开关（enable/disable）与壳（GUI）自启产物归内核面板；壳崩溃自愈归守卫看护。
-// 历史缺陷：内核曾与壳同时写 macOS plist，且内核 disable 时 unlink，而壳下次启动会重建并
-// bootstrap，导致关闭自启不生效；现内核只做 enable/disable + bootstrap/bootout，绝不写/删该文件。
-// 机制：Linux systemd --user enable/disable + linger + XDG autostart；macOS launchctl +
-// bootstrap/bootout；Windows schtasks ONLOGON。外部命令一律经 platform/util/exec，能力缺失时
-// 返回明确错误，绝不静默成功。
+// 平台化开机自启（三端同一 setAutostart(on) / status()）—— 门面。机制：Linux systemd --user enable/disable + linger
+//   + XDG autostart；macOS launchctl bootstrap/bootout；Windows schtasks ONLOGON。外部命令一律经 platform/util/exec，
+//   能力缺失返回明确错误绝不静默成功。内核绝不写/删 plist：壳启动会重建自己的定义并 bootstrap，unlink 表现为关闭不生效。
 
 const os = require('node:os');
 const path = require('node:path');
@@ -22,8 +17,8 @@ const isLinux = process.platform === 'linux';
 const isMac = process.platform === 'darwin';
 const isWindows = process.platform === 'win32';
 
-/** 守护进程执行路径（自启/服务定义使用）。经跨平台解析（PATH 含 PATHEXT、%APPDATA%\npm、
- *  ~/.local/bin、~/.npm-global/bin）；仍无命中时回退平台规范的安装位置（Windows 带 .exe）。 */
+/** 守护进程执行路径（自启/服务定义使用）。经 exec-path 跨平台解析；无命中时回退
+ *  ~/.local/bin（Windows 带 .exe）。 */
 function daemonCommand() {
   const hit = resolveExecutable('dsh-supervisor', { envVar: 'DSH_SUPERVISOR_DAEMON' });
   if (hit) return hit;

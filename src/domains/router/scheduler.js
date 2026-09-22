@@ -1,15 +1,10 @@
 'use strict';
 
-// Q10 维护调度 + Q11 账号探测执行。
-// 拥有全部周期/延时定时器；定时器回调经 deps 注入（Q10 只触发不实现），
-// 探测执行读 state.providers（活数组）并对运行期 provider 对象调其方法。
-//
-// 契约导出：{ createScheduler(deps) }；deps={ store, logger, events, state, providers?, probe?,
-//   refreshProxyUpdateInfo, refreshOfficialUsageAll, refreshOfficialPricingAll, now }。
-// 另具名导出两个纯判据（最易测）：hasImminentReset / hasOverdueReset。
+// 周期维护调度 + 账号探测执行：拥有全部周期/延时定时器；定时器回调经 deps 注入（本模块只触发
+// 不实现），探测执行读 state.providers（活数组）并对运行期 provider 对象调其方法。
 
-/** 是否存在 frozen 账号临近解冻（nextResetAt 不晚于 now+5min）需提前精确触发检测。
- *  修复：frozen 且无恢复点也视为 imminent（立即确认真实额度，避免永久错冻）。 */
+/** 是否存在 frozen 账号临近解冻（nextResetAt 不晚于 now+5min）需提前精确触发检测；
+ *  frozen 且无 nextResetAt 也视为 imminent（立即确认真实额度，避免永久错冻）。 */
 function hasImminentReset(providers, now) {
   const horizon = (now || Date.now()) + 5 * 60 * 1000;
   for (const p of providers || []) {
@@ -21,8 +16,8 @@ function hasImminentReset(providers, now) {
   return false;
 }
 
-/** 是否存在 nextResetAt 已过但未恢复的 frozen 账号（1h 低频兜底触发）。
- *  修复：frozen 但恢复点缺失也视为需立即确认真实额度。 */
+/** 是否存在 nextResetAt 已过但未恢复的 frozen 账号（1h 低频兜底触发）；
+ *  frozen 但恢复点缺失同样计入（需立即确认真实额度）。 */
 function hasOverdueReset(providers, now) {
   const t = now || Date.now();
   for (const p of providers || []) {
@@ -44,7 +39,7 @@ function createScheduler(deps) {
   const now = d.now || (() => Date.now());
   const providers = () => state.providers || [];
 
-  /* ---- 周期维护：反代自动更新检测 / 官方配额与单价同步 / 冻结实例到点释放 ---- */
+  /* ---- 周期维护：反代更新检测 / 账号状态轮询 / 实例对账 ---- */
   function start() {
     // 启动即拉一次：反代版本检查（内部自带 6h TTL）+ 官方配额 + 官方单价
     refreshProxyUpdateInfo().catch(() => {});
@@ -58,7 +53,7 @@ function createScheduler(deps) {
       probeIfDue(); // 账号状态轮询（1h + 临近精确触发）+ 闲置实例回收
       ensureProxyInstances().catch(() => {});
     }, 5 * 60 * 1000);
-    // 实例生命周期监控（30s 轻量：纯进程/端口检查，无 HTTP）
+    // 实例生命周期监控（30s：进程存活/端口归属检查 + HTTP 卡死探活，见 probe.js#monitorLifecycle）
     if (state.lifecycleTimer) clearInterval(state.lifecycleTimer);
     state.lifecycleTimer = setInterval(() => { monitorInstanceHealth().catch(() => {}); }, 30 * 1000);
     // 启动 10s 后再做账号状态轮询（避开启动瞬间与实例保障并发拉进程）
@@ -73,7 +68,7 @@ function createScheduler(deps) {
     if (state.lifecycleTimer) { clearInterval(state.lifecycleTimer); state.lifecycleTimer = null; }
   }
 
-  /** 实例生命周期监控：只查进程/端口（生命周期层），不探业务（adopt 实例无 exit 事件）。 */
+  /** 周期驱动 provider 生命周期监控（adopt 实例无 exit 事件，须轮询发现进程/卡死异常）。 */
   async function monitorInstanceHealth() {
     for (const p of providers()) {
       if (p.supports('instanceLifecycle') && typeof p.monitorLifecycle === 'function') {
@@ -82,7 +77,7 @@ function createScheduler(deps) {
     }
   }
 
-  /** 单个供应商实例对账（幂等 reconcile）：期望运行集 = 常驻 1 + 至多 1 备胎。 */
+  /** 单个供应商实例对账（幂等 reconcile）：期望集判据唯一在 providers/pool.js。 */
   async function ensureProviderInstances(p) {
     if (!p || !p.supports('instanceLifecycle')) return;
     if (p.supports('reconcile')) {
@@ -140,7 +135,7 @@ function createScheduler(deps) {
     }
   }
 
-  /** 实例对账（启停唯一决策者）：对账 = 期望集实例拉起（幂等）+ 其余无在途实例停止（幂等）。 */
+  /** 实例对账转发（启停唯一决策入口）：委托各 provider.reconcileInstances（幂等）。 */
   function reconcileInstances() {
     for (const p of providers()) {
       if (!p.supports('instanceLifecycle') || p.activated !== true) continue;
@@ -176,7 +171,7 @@ function createScheduler(deps) {
     reconcileInstances();
   }
 
-  /** 刷新 ready（使用中）账号额度：检测 + 80% 预热信号（未冻结账号预热实例）。 */
+  /** 刷新 ready（使用中）账号额度：只探测已在运行实例，经 applyDetection 驱动冻结/恢复状态机。 */
   function refreshReadyAccounts() {
     if (state.refreshRunning) return Promise.resolve();
     state.refreshRunning = true;

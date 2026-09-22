@@ -1,7 +1,7 @@
 'use strict';
 
-// 智能路由底座（RouterService）——**薄门面**：只做组合与委托，零业务逻辑（DF-1 <=150）。
-// 业务下沉 store/ops/endpoint/views/scheduler + forward-core/router-ops 显式工厂；无 prototype 方法集合并。
+// 智能路由底座（RouterService）：薄门面，只做组合与委托，零业务逻辑（DF-1 <=150）。
+// 业务下沉 store/ops/endpoint/views/scheduler + forward-core/router-ops 显式工厂。
 
 const { DirectProvider } = require('./providers/direct');
 const { ProxyProvider } = require('./providers/proxy');
@@ -104,13 +104,12 @@ class RouterService {
   _stopProviderServer(id) { return this._endpoint.stopProviderServer(id); }
   _startActivatedProviders() { return this._endpoint.startActivatedProviders(); }
 
-  /* Q9 转发 */
   proxyFor(prov, req, res) { return this._forward.proxyFor(prov, req, res); }
   getUsage() { return this._forward.usage.getUsage(); }
   recordUsage(entry) { return this._forward.usage.recordUsage(entry); }
   recordError() { return this._forward.recordError(); }
 
-  /* Q7 注册表 + Q12 生命周期 */
+  /* 注册表 + 生命周期 */
   addDirectProvider(o) { return this._ops.addDirectProvider(o); }
   addProxyProvider(o) { return this._ops.addProxyProvider(o); }
   removeProvider(id) { return this._ops.removeProvider(id); }
@@ -119,7 +118,7 @@ class RouterService {
   stopAndWait(t) { return this._ops.stopAndWait(t); }
   stopAllInstances() { return this._ops.stopAllInstances(); }
 
-  /* Q10/Q11 调度 */
+  /* 调度 */
   _startMaintenance() { return this._scheduler.start(); }
   _stopMaintenance() { return this._scheduler.stop(); }
   _ensureProxyInstances() { return this._scheduler.ensureProxyInstances(); }

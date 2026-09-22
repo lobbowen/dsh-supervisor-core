@@ -1,8 +1,8 @@
 'use strict';
 
-// 供应商基座：抽象契约（B1）+ 账号池（B5）+ 检测应用（B7）。
-// 状态前置原则：添加账号必须启动检测（拿配额），检测结果直接入库并与运行中同一状态机：
-//   受限则 frozen + limit + recovery（恢复全自动），正常则 ready。一账号一实例（按 key 去重）。
+// 供应商基座：抽象契约 + 账号池 + 检测应用。
+// 状态前置原则：添加账号必须启动检测（拿配额），检测结果与运行中共用同一状态机：
+//   受限则 frozen + limit + recovery，正常则 ready；一账号一实例（按 key 去重）。
 // 纯策略在 model.js / policies/*，落盘经 store.js；本文件只做契约与账号池编排。
 
 require('../port-segments'); // 本域端口段/独立池申报（require 即注入）
@@ -48,12 +48,9 @@ class ProviderBase {
   async detectAccount(acc) {
     throw new Error('detectAccount must be implemented by subclass');
   }
-  // 能力契约声明（PG-1）。process-pool 能力面（startInstance/stopInstance/restartInstance/
-  // _waitHealthy/instanceOf/ensureServable/reclaimAccount/markRequestOk/markInstanceNetFail/
-  // _retryPendingStop/flushRestartPending/reconcileInstances 及其 this 图所需的
-  // accountOf/markInstanceProblem/_doStart）
-  // 由 providers/process-pool.js 的 mixin 实现并并入 supports 词表——契约在能力方声明，
-  // 基座不再携带实现不了的抛错占位；调用方一律以 supports(cap) 守卫。
+  // 能力契约声明（PG-1）：process-pool 能力面由 providers/process-pool.js 的 mixin 实现并
+  // 并入 supports 词表——契约在能力方声明，基座不携带实现不了的抛错占位；
+  // 调用方一律以 supports(cap) 守卫。
   /** 本 provider 是否具备某项能力；缺省为无 process 能力（最保守）。 */
   supports(_cap) { return false; }
 
@@ -108,7 +105,7 @@ class ProviderBase {
     return quota.classifyUpstreamLimited(status, bodyText);
   }
 
-  /** 账号处置副作用（M3 契约）：router 只发 signal，具体冻结/停实例/封号由 provider 执行。 */
+  /** 账号处置副作用契约：router 只发 signal，具体冻结/停实例/封号由 provider 执行。 */
   effect(signal, acc, ctx) {
     const c = ctx || {};
     if (signal === 'credits') { if (this.markCreditsExhausted) this.markCreditsExhausted(acc); return true; }
@@ -117,13 +114,13 @@ class ProviderBase {
     return false;
   }
 
-  /** 唯一「时间窗额度用尽」判定（M4）。 */
+  /** 唯一「时间窗额度用尽」判定。 */
   _windowExhausted(acc) { return quota.windowExhausted(acc); }
 
   _creditsResetDue(acc) { return quota.creditsResetDue(acc); }
   _creditsRefilled(acc) { return quota.creditsRefilled(acc); }
 
-  /** 账号可用性判定（唯一事实，M4）：ready 且未「预付余额不足」且窗口未满。 */
+  /** 账号可用性判定（唯一事实）：ready 且未「预付余额不足」且窗口未满。 */
   isAccountUsable(acc, opts) {
     if (!acc || acc.status !== 'ready') return false;
     if (this._isCreditsLow(acc)) return false;
@@ -134,14 +131,14 @@ class ProviderBase {
   // 冻结/恢复策略（policies/freeze.js）
   _setStatus(acc, status, nextResetAt, error, autoRecover) { return freeze.setStatus(acc, status, nextResetAt, error, autoRecover, this); }
   _ensureLimit(acc) { return freeze.ensureLimit(acc); }
-  /** limit 纯只读预览（#20；不赋值、不写盘）：只读视图唯一入口。写版 _ensureLimit 保留（门禁/测试消费）。 */
+  /** limit 纯只读预览（不赋值、不写盘）：只读视图唯一入口。写版 _ensureLimit 保留（门禁/测试消费）。 */
   _previewLimit(acc) { return freeze.previewLimit(acc); }
   _setLimit(acc, kind, reason, recovery) { return freeze.setLimit(acc, kind, reason, recovery, this); }
   _freezeLimited(acc, cause, reason, recovery) { return freeze.freezeLimited(acc, cause, reason, recovery, this); }
   markCreditsExhausted(acc) { return freeze.markCreditsExhausted(acc, this); }
   markQuotaExhausted(acc, cooldownMs) { return freeze.markQuotaExhausted(acc, cooldownMs, this); }
   markBanned(acc, error) { return freeze.markBanned(acc, error, this); }
-  // 状态投影完成处补齐 limit（写版 ensureLimit 从只读视图移到此）。唯一投影入口，覆盖全部 applyDetection 调用方。
+  // applyDetection 是唯一状态投影入口（覆盖全部调用方）：投影完成后补齐 limit（写版 ensureLimit）。
   applyDetection(acc, det) { const r = freeze.applyDetection(acc, det, this); freeze.ensureLimit(acc); return r; }
   _normalizeConsistency(acc) { return freeze.normalizeConsistency(acc, this); }
   _reconcileLock() { return freeze.reconcileLock(this); }

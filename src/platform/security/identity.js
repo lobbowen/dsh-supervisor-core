@@ -1,8 +1,7 @@
 'use strict';
 
 // HTTP 请求身份判定（请求到 socket 事实）。纯 IP 事实（normalize/isLoopback/isPrivateIpv4）
-// 在 src/shared/ip.js；此处只放消费 req 的 HTTP 部分，避免传输层概念污染 L0 纯函数层。
-// 原与 IP 判定同住 api/identity.js，导致 domains/relay 为复用 IP 判定而反向依赖 api。
+// 在 src/shared/ip.js，此处只放消费 req 的 HTTP 部分，避免传输层概念污染 L0 纯函数层。
 // 信任根唯一：req.socket.remoteAddress（操作系统连接事实，客户端无法伪造）；
 // 请求头（Host/Origin/Referer）是浏览器语义数据，绝不参与身份或鉴权判定。
 

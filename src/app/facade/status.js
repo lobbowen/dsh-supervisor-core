@@ -1,7 +1,6 @@
 'use strict';
 
 // app/facade/status.js —— 对外只读状态视图 statusSummary。
-// 用 installId()（安装标识，面板外显 + 灰度匹配依据），取不到时为 null，前端优雅降级。
 const { installId } = require('../../platform/service/install-id');
 
 function statusSummary(host) {
@@ -11,7 +10,7 @@ function statusSummary(host) {
     return {
       desired: host._mDesired(),
       phase: host._mPhase(),
-      // 会话生命周期（契约 ，INV-S4）：与 phase 正交——phase 是 main 状态机相位，
+      // 会话生命周期（INV-S4）：与 phase 正交——phase 是 main 状态机相位，
       // sessionState 是整个服务链的运行相位（前端/壳据此表达「退出中/已退出」）。
       sessionState: host._sessionState,
       // 数据目录保护状态（Windows 无 icacls 时可观测降级）。

@@ -2,11 +2,8 @@
 
 // app/main/shadow.js —— 影子记账（_actNote/_mainActualAction/_shadowExcluded/_shadowTickNote/_shadowHeartbeatBeat）。
 // 影子对照真实收敛动作，连续零 diff 是收敛切换门槛的观测依据。
-// 导出形态 { methods }；装配：app/assembly/facets.js 装到 host 实例；方法内部以 this 协作。
-//
-// 阶段六 B-2 原地去 this：实现体不再经 this 的隐式方法调用取事实，改经按 host 缓存的**惰性 deps**。
-// 方法名/{ methods }/逐字体保留，装配路径与读源码形态的门禁（adopt-token-reclaim 的 _shadowExcluded、
-// http_unhealthy、令牌回收 reason 判据）不变，AT 棘轮计数归零。
+// 导出 { methods }，由 app/assembly/facets.js 装到 host；方法名与 { methods } 形态不可改（读源码形态门禁按符号名匹配）。
+// 事实经 depsOf(host) 惰性缓存取得。
 const DEPS = new WeakMap();
 function depsOf(host) {
   let d = DEPS.get(host);
@@ -18,7 +15,7 @@ function depsOf(host) {
       events() { return host.events; },
       upgradeHold() { return host._upgradeHold; },
       stopping() { return host._stopping; },
-      // 兄弟方法/字段 helper 经 host 上的既有安装转发（等价于原经 this 的调用）。
+      // 兄弟方法/字段 helper 经 host 既有安装转发。
       mAdopted() { return host._mAdopted(); },
       mainActualAction(t0) { return host._mainActualAction(t0); },
       shadowExcluded(r) { return host._shadowExcluded(r); },
@@ -100,7 +97,7 @@ module.exports = {
       const shadow = d.main().decideAction(t0);
       const exActual = d.shadowExcluded(actual && actual.reason);
       const diff = !!(actual && shadow) && (actual.action !== shadow.action) && !exActual;
-      // 与原 `++this._shadowSeq` 等价：Number(undefined)+1 === NaN，Number(0)+1 === 1。
+      // 序号自增：初值 undefined 时 Number(undefined)+1 === NaN，这是刻意的起点语义（非漏初始化）。
       const seq = Number(d.readShadowSeq()) + 1;
       d.writeShadowSeq(seq);
       const rec = {

@@ -1,13 +1,9 @@
 'use strict';
 
-// 编排：实例 CRUD 顺序 + 兜底定时器 + 外部钩子外发。
-// 持久化/沙箱目录/端口登记经 store/sandbox/ports，启停与监督经 deps.lifecycle，
-// 版本/作业视图经 deps.upgrade（组装根注入）。无隐式 this。
-
+// 持久化/沙箱目录/端口登记经 store/sandbox/ports；启停与监督经 deps.lifecycle，版本/作业视图经 deps.upgrade（组装根注入）。无隐式 this。
 const fs = require('node:fs');
 const ports = require('../../platform/service/ports').shared;
-// 远程令牌强度闸。实现在 shared/credential（L0 纯判定），经它共用同一份下限——
-// 直接 require 兄弟域 relay/core 会构成 domains 间跨域边（DS-G1 判红）。
+// 远程令牌强度下限与 relay/core 共用一份实现（shared/credential）；直接 require 兄弟域 relay/core 会构成跨域边（DS-G1 判红）。
 const { remoteTokenStrength } = require('../../shared/credential');
 const model = require('./model');
 const sandbox = require('./sandbox');
@@ -29,24 +25,22 @@ function createOps(deps) {
     });
   }
 
-  /** 新增实例：生成独立 unit 名 + 独立配置。sandbox 默认标准隔离。 */
+  /** 新增实例：生成独立 unit 名与独立配置（默认标准隔离，见 model.createRecord）。 */
   async function addInstance(payload) {
     const port = parseInt(payload.port, 10);
     if (!Number.isInteger(port) || port <= 0 || port > 65535) return { ok: false, error: '无效端口' };
     if (store.instances.some((i) => i.port === port)) return { ok: false, error: '端口 ' + port + ' 已被实例占用' };
-    // 写入口强度闸 —— remoteToken 守护经 frp 暴露的 DSH 特权面，
-    //   1~7 位令牌等同无令牌（暴露闸/执行边界复校会拒，但必须拒绝落盘而非静默存弱值）。
+    // 写入口强度闸：remoteToken 守护的是经 frp 暴露的 DSH 特权面，1~7 位令牌等同无令牌；
+    // 后续闸口虽会拒执行，但这里必须拒绝落盘而非静默存弱值。
     const tk = String(payload.remoteToken || '');
     if (tk && !remoteTokenStrength(tk).ok) return { ok: false, error: '远程访问令牌（remoteToken）至少 8 位' };
     const id = 'inst-' + Date.now() + '-' + Math.floor(Math.random() * 1000);
-    // 新增时必须探测端口是否真的被占用（注册表 并 本机实际监听）：只查实例重名与注册表，
-    // 会建到被占端口后 bind 失败并陷入 BACKOFF 反复重试。
+    // 必须探测本机实际监听（仅查实例重名与注册表会建到被占端口，bind 失败后陷入 BACKOFF 反复重试）。
     try {
       if (await ports.isTaken(port)) {
         return { ok: false, error: '端口 ' + port + ' 已被占用（本机已有进程在监听，或已被系统服务登记）' };
       }
     } catch { /* 探测失败不阻断创建：交给启动期如实报错 */ }
-    // 端口登记入口严格校验（同步）：实例端口必须避开全部系统端口与动态池。
     try { ports.registerUser(port, 'inst:' + id); } catch (e) { return { ok: false, error: '端口 ' + port + ' 与系统服务端口冲突（' + (e.message || e) + '）' }; }
     const inst = model.createRecord(payload, id);
     store.instances.push(inst);
@@ -59,8 +53,8 @@ function createOps(deps) {
 
   function removeInstance(id) {
     const inst = store.instances.find((i) => i.id === id);
-    // 删除必须与进行中的安装/升级作业互斥，否则 npm install 会重建已删实例的 install/，
-    // 而守卫内存已无该实例，孤儿永久占盘。检查必须在任何状态变更之前。
+    // 删除与进行中的安装/升级作业互斥（检查必须先于任何状态变更）：否则 npm install 会重建
+    // 已删实例的 install/，守卫内存已无该实例，孤儿永久占盘。
     if (tasks && tasks.isBusy('instance', id)) {
       return { ok: false, error: '该实例有进行中的安装/升级作业，请等待其完成后再删除' };
     }
@@ -70,15 +64,12 @@ function createOps(deps) {
     store.replace(kept); // 原地替换：外部持有的 instances 数组引用身份保持不变
     store.save();
     if (tokens) tokens.detach(inst.id); // 唯一令牌节点：删除实例即注销其源与令牌
-    // 端口释放：按 owner 精确释放（不得用不带 ownerId 的 release，那会删掉他人登记）。
+    // 端口释放按 owner 精确进行：不带 ownerId 的 release 会删掉他人登记。
     if (inst) { try { ports.unregister('inst:' + id); } catch {} }
-    // 删数据目录前必须确认单元真的停了。stopUnit 已按契约区分成败（失败返回 false 不抛）；
-    // 在不支持用户单元的平台上会抛 CapabilityError，那等于无单元可停、非失败，不得让删除整体崩溃。
-    // 放行条件 = 停止成功；停止失败（含 is-active 查询因 dbus 挂起超时而失败）一律按未停止处理，
-    // 保守保留数据，绝不因「查询失败被当成不活跃」而删除可能仍在运行的实例数据。
+    // 删数据目录前必须确认单元真的停了：停止失败（含 is-active 因 dbus 挂起超时）一律按未停止处理、
+    // 保守保留数据；不支持用户单元的平台 stopUnit 抛 CapabilityError = 无单元可停，不算失败。
     const unit = 'dsh-web@' + id;
-    // portable 档的归属锚（端口/run.pid/cmdline）；systemd 档忽略。删除保护问「是不是我们的还活着」，
-    // 与 stop 用同一份 ctx，两侧语义才对称。
+    // portable 档归属锚（端口/run.pid/cmdline），systemd 档忽略；与 stop 用同一份 ctx，两侧语义才对称。
     const ctx = sandbox.launchCtx(instancesRoot, dshBin, inst);
     let stopOk;
     try { stopOk = service.stopUnit(unit, ctx) !== false; } catch { stopOk = true; }
@@ -97,23 +88,21 @@ function createOps(deps) {
         catch (e) { logger.warn && logger.warn('清理沙箱目录失败 ' + root + ': ' + e.message); }
       });
     } else if (stillActive) {
-      // 数据目录受保护：如实上报（调用方据此提示用户「实例未停止，数据已保留」）。
       logger.warn && logger.warn('[' + id + '] 单元 ' + unit + ' 仍在运行，已保留实例数据目录（防不可逆丢失）');
       if (events) events.append('inst_remove_data_preserved', { id, reason: 'unit-still-active' });
     }
     if (hooks.onRemove) hooks.onRemove(id, store.instances);
     if (hooks.onDestroy) { try { hooks.onDestroy(id); } catch (e) { logger.warn && logger.warn('onDestroy(' + id + '): ' + (e && e.message)); } }
     if (events) events.append('inst_removed', { id });
-    // 安全结果必须对用户可见：删除确认框承诺「彻底删除」，实际数据可能被保留。
+    // 删除确认框承诺「彻底删除」，实际数据可能被保留：安全结果必须以 dataPreserved 对用户可见。
     return stillActive ? { ok: true, dataPreserved: true, preserveReason: 'unit-still-active' } : { ok: true };
   }
 
   function updateInstance(id, patch) {
     const inst = store.instances.find((i) => i.id === id);
     if (!inst) return { ok: false, error: '实例不存在' };
-    // 令牌强度校验前置到**任何**字段变更之前 —— 放在 remoteToken 赋值点处会造成
-    //   guardian/remoteMode 已改而令牌被拒的半改状态（与本文件 removeInstance 的互斥检查同理）。
-    //   空串=清除（放行），非空但过短=拒绝整次补丁。
+    // 令牌强度校验前置到任何字段变更之前：先改其余字段再被拒会留下 guardian/remoteMode 半改状态。
+    // 空串=清除（放行），非空但过短=拒绝整次补丁。
     if (patch.remoteToken !== undefined) {
       const next0 = String(patch.remoteToken || '');
       if (next0 && !remoteTokenStrength(next0).ok) return { ok: false, error: '远程访问令牌（remoteToken）至少 8 位' };
@@ -123,8 +112,8 @@ function createOps(deps) {
       inst.guardian = !!patch.guardian;
       if (gChanged && events) events.append('inst_guardian_changed', { id: inst.id, name: inst.name, enabled: inst.guardian === true });
     }
-    // 远程暴露意图（remoteMode/remoteToken）任一变化都必须触发 onRemoteChange（AUDIT B-1）：
-    // 只换令牌不换模式时，旧实现不触发任何同步 -> 运行中的 relay 继续放行旧令牌、frpc 不收敛。
+    // remoteMode/remoteToken 任一变化都必须触发 onRemoteChange：只换令牌不同步会让运行中的
+    // relay 继续放行旧令牌、frpc 不收敛。
     let remoteChanged = false;
     if (patch.remoteMode !== undefined) {
       const next0m = patch.remoteMode === 'lan' || patch.remoteMode === 'wan' ? patch.remoteMode : 'off';

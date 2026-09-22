@@ -1,15 +1,13 @@
 'use strict';
 
-// 统一持久化（DSH-TOKEN-CONTRACT 契约2/3，TK-5/TK-6）。
-// 令牌是会话凭据，本仓只认这一处写入：原子写、写后 0600、统一脱敏；其它模块不得自行写令牌（TK-5）。
-// TK-6 超限必须轮转而非清空：旧实现用 rmSync 清空唯一持久链路，捕获链路一断令牌就永久丢失；现改为先原子备份进固定槽位再截断，全程没有删除调用。
-// P3 教训：appendFileSync 的 mode 只对新建文件生效，已存在文件的权限位被忽略，故写后必须显式 chmodSync 收口，writeAtomic 在 rename 后同样收口。
-// 注意 Windows 忽略 POSIX mode，本文件的 chmod 为 no-op，Windows 安全边界由 supervisor 的目录级 protectDir 承担。
+// 统一持久化（DSH-TOKEN-CONTRACT 契约2/3，TK-5/TK-6）：令牌是会话凭据，本仓只认这一处写入——原子写、写后 0600、统一脱敏（TK-5）。
+// TK-6 超限必须轮转而非清空（清空唯一持久链路即永久丢失）：先原子备份进固定槽位再截断，全程没有删除调用。
+// appendFileSync/writeFileSync 的 mode 只对新建文件生效，已存在文件的权限位被忽略，故所有写入后必须显式 chmod 收口。
+// Windows 忽略 POSIX mode，本文件的 chmod 为 no-op，安全边界由 supervisor 的目录级 protectDir 承担。
 
 const fs = require('node:fs');
 const path = require('node:path');
 
-/** 持久化阈值（集中于此便于审计）。 */
 const PERSIST_LIMITS = {
   /** 单个令牌文件超过此字节数即轮转。 */
   MAX_BYTES: 256 * 1024,
@@ -33,17 +31,15 @@ function stripAnsi(line) {
 }
 
 /** 统一脱敏入口（TK-5）：顺手清掉同一行里夹带的其它机密（access_token、password、api_key 等）。
- *  只做值替换不做行删除，行结构（含 ?token=）必须保留，恢复文件才能重新解析。
- *  已脱敏的 <redacted> 不重复处理，避免嵌套标记。 */
+ *  只做值替换不做行删除，行结构（含 ?token=）必须保留，恢复文件才能重新解析。 */
 function sanitizeTokenLine(line) {
   let s = stripAnsi(line).replace(/\r?\n$/, '');
-  // key=value / key: value / "key": "value" 三种常见形态；值到空白/引号/& 为止。
   s = s.replace(/([A-Za-z_][A-Za-z0-9_-]*)\s*[:=]\s*(["']?)([^\s"'&,;]+)\2/g, (m, key, q, val) => {
     if (!SECRET_KEY_RE.test(key)) return m;
     if (val === '<redacted>') return m;
     return key + '=' + '<redacted>';
   });
-  // Authorization: Bearer <credential> 形态（值和键名都不规则，单独处理）。
+  // Bearer 形态的值与键名都不规则，单独处理。
   s = s.replace(/\bBearer\s+[A-Za-z0-9._~+/=-]{8,}/gi, 'Bearer <redacted>');
   return s;
 }
@@ -53,8 +49,7 @@ function ensureDir(dir) {
   try { if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true }); } catch { /* 交给写入报错 */ }
 }
 
-/** 原子写：临时文件、chmod、rename、目标再 chmod。
- *  临时文件让读者永远看不到半个文件；旧实现直接 append，进程被杀会留下截断行。
+/** 原子写：临时文件、chmod、rename。临时文件让读者永远看不到半个文件；
  *  rename 在部分平台会重写权限，故目标文件再收口一次。 */
 function writeAtomic(file, data) {
   const fp = path.resolve(file);
@@ -73,12 +68,10 @@ function writeAtomic(file, data) {
   }
 }
 
-/** 轮转：把现有内容**整体改名**进固定备份槽。
- *  旧实现 readFileSync->写槽->truncateSync 存在跨进程丢失窗口：并发 appendByRotation（升级重叠期的
- *  新旧守卫）若恰在 read 与 truncate 之间追加，该行既不在备份里也会被 truncate 抹掉。
- *  rename 是目录项级原子操作：改名后仍持旧 fd 的并发写者把数据落进备份本体（不丢），
- *  之后的新追加按 O_APPEND 创建目标新文件。任一步失败返回 false 且不截断，宁可文件继续增长。
- *  极端平台（如 Windows 槽位被占用致 rename 失败）降级为「复制+截断」旧路径——窗口更小但不为零。 */
+/** 轮转：把现有内容整体改名进固定备份槽。
+ *  必须用 rename 而非「读-写槽-截断」：read 与 truncate 之间的并发追加（升级重叠期新旧守卫）既不在备份里也会被抹掉；
+ *  rename 原子，改名后仍持旧 fd 的写者把数据落进备份本体，新追加按 O_APPEND 建目标新文件。
+ *  任一步失败返回 false 且不截断，宁可文件继续增长；Windows 槽位占用致 rename 失败时降级为复制+截断（窗口更小但不为零）。 */
 function rotateByBackup(file, opts) {
   const fp = path.resolve(file);
   const keep = (opts && opts.keep) || PERSIST_LIMITS.KEEP_BACKUPS;
@@ -115,8 +108,7 @@ function pickBackupSlot(file, keep) {
 }
 
 /** 追加一行（经统一脱敏与权限收口）；超限时先轮转再追加。
- *  轮转失败（磁盘满等）时仍然追加：宁可文件超限，也不让当前令牌丢失（TK-1）。
- *  追加用 O_APPEND，崩溃最多丢最后一行，不会破坏既有内容。 */
+ *  轮转失败（磁盘满等）时仍然追加：宁可文件超限，也不让当前令牌丢失（TK-1）。 */
 function appendByRotation(file, line, opts) {
   const fp = path.resolve(file);
   const maxBytes = (opts && opts.maxBytes) || PERSIST_LIMITS.MAX_BYTES;
@@ -131,7 +123,6 @@ function appendByRotation(file, line, opts) {
     try { size = fs.statSync(fp).size; } catch { /* 不存在 = 0 */ }
     if (size > maxBytes) rotated = rotateByBackup(fp, opts);
     fs.appendFileSync(fp, text + '\n', { mode: 0o600 });
-    // P3 教训：mode 只对新建生效，写后必须显式收口。
     try { fs.chmodSync(fp, 0o600); } catch { /* Windows 无 POSIX 位 */ }
     return { ok: true, path: fp, rotated: rotated };
   } catch (e) {
@@ -157,9 +148,8 @@ function readTailLines(file, opts) {
   finally { try { if (fd !== undefined) fs.closeSync(fd); } catch { /* 关闭失败无影响 */ } }
 }
 
-// 恢复文件名的声明处已上移到 app/settings/token-kinds.js 的 TOKEN_FILE_NAME，由
-//   assembly/compose/core.js 直接取用拼装 attach 路径；platform 侧不再持有文件名
-//   注入链（积压 #24：原注入链写而不读，已删）。
+// 恢复文件名的单一事实源在 app/settings/token-kinds.js 的 TOKEN_FILE_NAME（assembly/compose/core.js 直接取用），
+// platform 侧不持有文件名注入链。
 module.exports = {
   PERSIST_LIMITS,
   writeAtomic,

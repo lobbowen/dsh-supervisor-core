@@ -1,10 +1,8 @@
 'use strict';
 
-// 统一的「包发布/安装/更新」平台能力（原 domains/dist 域解体上移）。
-// 它不是业务域而是通用基础设施（消费者横跨 root/daemon/instance），故归 platform/，与
-// platform/contract、platform/os 同层。本文件是薄门面，只做组合与导出，不含算法/IO：
-//   release.js 选版算法（纯）        policies.js 纯策略（镜像合法性/探测规格/合并）
-//   registry.js 镜像选择与探测（IO） install.js npm 安装 + 端口健康 + 版本检查（IO）
+// 统一的「包发布/安装/更新」平台能力，归 platform/，与 platform/contract、platform/os 同层（消费者横跨 root/daemon/instance）。
+// 本文件是薄门面，只做组合与导出，不含算法/IO：
+//   release.js 选版（纯）、policies.js 纯策略、registry.js 镜像选择与探测（IO）、install.js npm 安装 + 健康 + 版本检查（IO）。
 
 const policies = require('./policies');
 const release = require('./release');
@@ -13,15 +11,9 @@ const install = require('./install');
 // semver 合法性与比较器的唯一实现在 shared/version.js。
 const { semverCompare, VERSION_RE } = require('../../shared/version');
 
-/**
- * 统一分发管理器：门面。状态字段由本实例持有，实现函数显式收参（零跨文件 this）。
- *
- * @param {object} opts
- *   - registries: 候选镜像源（默认来自 config.registries）
- *   - registryFile: 全局镜像配置持久化路径（mode/origins/manualOrigin）
- *   - events / logger
- *   - canary: 本机灰度事实（默认 false）
- */
+/** 统一分发管理器：门面。状态字段由本实例持有，实现函数显式收参（零跨文件 this）。
+ *  @param opts - registries: 候选镜像源（默认来自 config.registries）；registryFile: 全局镜像配置持久化路径；
+ *  events / logger；canary: 本机灰度事实（默认 false） */
 class DistributionManager {
   constructor(opts) {
     opts = opts || {};
@@ -67,15 +59,14 @@ module.exports = {
   DistributionManager,
   semverCompare,
   VERSION_RE,
-  // 选版算法（release.js 唯一实现）+ 包归属判定 + rollback 防降级下限常量（RC-7 / A3-b）
+  // 选版算法（release.js 唯一实现）+ 包归属判定 + rollback 防降级下限常量（RC-7）
   pickReleaseVersion: release.pickReleaseVersion,
   isOurReleasePackage: release.isOurReleasePackage,
   OUR_RELEASE_SCOPE: release.OUR_RELEASE_SCOPE,
   ROLLBACK_FLOOR_VERSION: release.ROLLBACK_FLOOR_VERSION,
   ROLLBACK_MAX_AGE_DAYS: release.ROLLBACK_MAX_AGE_DAYS,
-  // 在途 npm 中止出口（D-10）：句柄登记在 install.js 的模块级集合（跨实例，覆盖全部调用路径），
-  // 故门面按**静态**导出，不挂 DistributionManager 实例方法——挂实例会漏掉直接 require('./install')
-  // 的调用方（app/native/installer.js 经 host.dist 走门面，但测试与未来 daemon 可直用）。
+  // 在途 npm 中止出口（D-10）：句柄登记在 install.js 的模块级集合（跨实例、覆盖全部调用路径），
+  // 故门面按静态导出而非实例方法——挂实例会漏掉直接 require('./install') 的调用方。
   killInflightNpm: install.killInflightNpm,
   inflightNpmCount: install.inflightNpmCount,
 };

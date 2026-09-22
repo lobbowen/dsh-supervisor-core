@@ -1,16 +1,12 @@
 'use strict';
 
-// 命令拼装（B9）：纯函数，零 IO / 零 require。缓存优先（npx 包缓存已命中直接用
-// node <bin>，零解析/零下载/秒起），缓存未命中走注入的 npx 启动形态（node 直启
-// npx-cli.js 优先——Windows 上 .cmd 垫片无 shell spawn 必 EINVAL，成对形态由
-// platform/os/npx-forms#npxLauncher 解析，本模块只消费不解析）。
-// 注意：凭证不在本模块处理，{{key}} / --api-key 的剔除是调用方（provider）的凭证纪律，
-// 本模块绝不持有或注入密钥。
+// 命令拼装：纯函数，零 IO / 零 require。缓存优先（npx 包缓存命中 -> 直接 node <bin>，零解析零下载）；
+// 未命中走注入的 npx 成对启动形态——win32 无 shell spawn .cmd 垫片必 EINVAL，形态解析归
+// platform/os/npx-forms#npxLauncher，本模块只消费不解析。
+// 凭证不在本模块处理：{{key}} / --api-key 的剔除是调用方（provider）的凭证纪律，本模块绝不持有密钥。
 
-/** 由 app 模板 + 端口构造 spawn argv（纯）。
- *  @param ctx { app, port, cachedBin, registry, launcher, execPath }
- *         launcher = platform 解析出的 npx 成对启动形态 {program,args,source}
- *  @returns { ok:boolean, cmd:string[], registry:string|null } */
+/** 由 app 模板 + 端口构造 spawn argv。ctx = { app, port, cachedBin, registry, launcher, execPath }，
+ *  launcher = platform 解析出的成对启动形态；返回 { ok, cmd, registry }。 */
 function buildCommand(ctx) {
   const { app, port, cachedBin, registry, launcher, execPath } = ctx || {};
   if (!app || !Array.isArray(app.command)) return { ok: false, error: '无效应用命令模板', cmd: [], registry: registry || null };
