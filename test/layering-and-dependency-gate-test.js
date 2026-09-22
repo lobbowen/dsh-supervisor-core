@@ -53,11 +53,14 @@
 //   L-2b 登记表无死条目（登记的单元确实还被引用）
 //   L-3  core.cjs 白名单为**前瞻守卫**（当前 platform -> root 真实 import 边 = 0）
 //   L-4  反向：判据能识别未登记跨层 / 能识别 platform 越界（门禁非空转）
+//   L-5  DEVELOPMENT-TRACK 记的层级名与本门禁 layerOf() 的取值域一致（真读规范正文）
+//   L-6  api 层不得读注入对象的下划线私有成员（依赖未声明的内部实现；基线 ratchet）
 // ---------------------------------------------------------------------------
 
 const fs = require('node:fs');
 const path = require('node:path');
 const ROOT = path.join(__dirname, '..');
+const { blankComments } = require('./_strip'); // 行对齐剥注释：注释里提及的私有成员不得计入穿层
 
 const results = [];
 const check = (n, c, x) => {
@@ -320,6 +323,60 @@ const edges = collect();
   const synthSec1 = ['root', 'api', 'app', 'domains', 'platform'].join(String.fromCharCode(10));
   check('L-5 反向：合成 §1（缺 shared）被检出（判据非空转）',
     LAYERS.filter((l) => !layerNamesIn(synthSec1).has(l)).length === 1, 'hit');
+}
+
+// -- L-6：api 层不得读注入对象的下划线私有成员 --
+// require 图看不见这条边：api 经注入的 sup（或其子对象）直调 `_` 前缀成员，等于依赖未声明的
+// 内部实现（会话退出意图、装配对象私有方法都是这样穿出去的）。故与 ML-2 同形态做 ratchet。
+{
+  const PRIV_RE = /\b([A-Za-z_$][\w$]*)\._[A-Za-z_$][\w$]*/g;
+  /** 逐文件统计**命中行数**（同一行的重复访问算一处，避免表达式里的二次引用虚增基线）。 */
+  function privHits(rel) {
+    const lines = blankComments(fs.readFileSync(path.join(ROOT, rel), 'utf8')).split(String.fromCharCode(10));
+    const hits = [];
+    lines.forEach((l, i) => {
+      PRIV_RE.lastIndex = 0;
+      if (PRIV_RE.test(l)) hits.push(i + 1);
+    });
+    return hits;
+  }
+  function apiFiles() {
+    const out = [];
+    (function walk(d) {
+      for (const e of fs.readdirSync(d, { withFileTypes: true })) {
+        const p = path.join(d, e.name);
+        if (e.isDirectory()) walk(p); else if (e.name.endsWith('.js')) out.push(path.relative(ROOT, p).split(path.sep).join('/'));
+      }
+    })(path.join(ROOT, 'src', 'api'));
+    return out;
+  }
+  /** 已知违例基线（显式登记，只减不增；收口后必须同步撤登记）。 */
+  const PRIV_BASELINE = {
+    'src/api/domains/shell.js': { n: 2, why: 'sup._sessionHalting —— 会话退出意图在 api 层自算，应经公开谓词' },
+    'src/api/domains/dist.js': { n: 2, why: 'sup.dist._registryOrigins —— 读装配对象的私有方法' },
+  };
+  const files = apiFiles();
+  const found = files.map((rel) => ({ rel, hits: privHits(rel) })).filter((x) => x.hits.length);
+  check('L-6 扫描确有覆盖面（api 文件数 >= 15，防空转）',
+    files.length >= 15, files.length + ' 个文件');
+  check('L-6 违规文件集合 ⊆ 登记集合（api 新增私有成员穿层即判红）',
+    found.every((x) => !!PRIV_BASELINE[x.rel]),
+    found.filter((x) => !PRIV_BASELINE[x.rel]).map((x) => x.rel + ':' + x.hits.join('/')).join(', ') || 'ok');
+  check('L-6 每文件命中行数 ≤ 基线（同文件加穿层点即判红）',
+    found.every((x) => !PRIV_BASELINE[x.rel] || x.hits.length <= PRIV_BASELINE[x.rel].n),
+    found.map((x) => x.rel + '=' + x.hits.length + '/' + (PRIV_BASELINE[x.rel] ? PRIV_BASELINE[x.rel].n : '-')).join(', '));
+  check('L-6 登记表无死条目（已收口的文件必须撤登记）',
+    Object.keys(PRIV_BASELINE).every((rel) => {
+      const h = found.find((x) => x.rel === rel);
+      return h && h.hits.length > 0;
+    }),
+    Object.keys(PRIV_BASELINE).filter((rel) => !found.some((x) => x.rel === rel)).join(', ') || 'ok');
+  // 反向自检（合成源码，不依赖真实数据）：判据必须计出穿层行，且不得误报普通属性访问。
+  const LF6 = String.fromCharCode(10);
+  const synthBad = ['function h(sup) {', '  if (sup._sessionHalting()) return 1;', '  return sup.publicFn();', '}'].join(LF6);
+  const synthBadHits = synthBad.split(LF6).filter((l) => { PRIV_RE.lastIndex = 0; return PRIV_RE.test(l); });
+  check('L-6 反向：合成的 sup._x() 行必被检出、公开方法调用不误报',
+    synthBadHits.length === 1 && /_sessionHalting/.test(synthBadHits[0]), 'hit');
 }
 
 const failed = results.filter((r) => !r);
