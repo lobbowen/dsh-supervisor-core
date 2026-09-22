@@ -43,7 +43,7 @@ TARGET_PORT=45758
 # 能否起守卫、绑 API 端口、登记 ports.json，DSH 本体不随本子包发布。
 REPO_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 MOCK="$REPO_ROOT/test/mock-target.js"
-[ -f "$MOCK" ] || fail "缺目标夹具 $MOCK（守卫需要一个可探测的 healthUrl）"
+[ -f "$MOCK" ] || fail "缺目标夹具 ${MOCK}（守卫需要一个可探测的 healthUrl）"
 if command -v cygpath >/dev/null 2>&1; then MOCK="$(cygpath -w "$MOCK")"; fi
 # 路径一律经 argv 传入，不拼进 JS 字面量：Windows 的转换后路径含反斜杠，插值即成语法陷阱。
 node -e 'const fs=require("fs");const [home,mock,tport,apiPort]=process.argv.slice(1);
