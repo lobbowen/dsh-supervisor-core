@@ -15,7 +15,14 @@ on:
     branches:
       - master
   pull_request:
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      # published-smoke 的目标版本。留空 = 取仓库根 package.json#version（tag 运行本就走该单源）。
+      #   仅手动补跑「发布后冒烟」时填一个已发布的 <ver> 用；不影响 build/test/precheck 任何 job。
+      ver:
+        description: '发布后冒烟目标版本（留空则取 package.json#version）'
+        required: false
+        default: ''
 
 # ── 发布条 1（AUDIT-2026-09-19 第 4 批）：顶层最小权限 + 同 ref 串行 + action 钉 SHA ──
 # permissions：原文件只有 build/release 两个 job 级块，`test`/`precheck` 的 GITHUB_TOKEN 范围
@@ -239,6 +246,23 @@ jobs:
         shell: bash
         run: bash release/scripts/ci-core.sh
 
+      # 安装包冒烟：把上一步 dry-run 产出的子包目录真装成全局命令，跑「装出来的那条命令」。
+      #   与 dry-run 同平台同 workspace，产物路径按 publish-core.sh 的口径计算（含 DSH_ARCH_OVERRIDE），
+      #   不硬编码当前平台名。push / PR / tag 四平台都跑（无 job 级/step 级 tag-only if）。
+      - name: 安装包冒烟（npm i -g dry-run 子包 · 全局命令自举）
+        shell: bash
+        run: |
+          PLAT="${DSH_PLATFORM_OVERRIDE:-$(node -p 'process.platform')}"
+          ARCH="${DSH_ARCH_OVERRIDE:-$(node -p 'process.arch')}"
+          case "$PLAT" in
+            linux) OS_TAG=linux ;; darwin) OS_TAG=darwin ;; win32) OS_TAG=win ;;
+            *) echo "::error::不支持的平台 $PLAT"; exit 1 ;;
+          esac
+          VER="$(node -p 'require("./package.json").version')"
+          PKG="./dist/npm/@dsh-sup/dsh-core-$OS_TAG-$ARCH"
+          [ -d "$PKG" ] || { echo "::error::缺少子包目录 $PKG（dry-run 步应已产出）"; exit 1; }
+          bash release/scripts/install-smoke-core.sh --pkg "$PKG" --ver "$VER"
+
       # 唯一发布入口。⚠ 令牌非空判断**必须在 run 内**：step 级 if 的上下文里没有
       #   secrets（引用即 workflow 解析错误 → 0-job 整文件红，A3-a 首推实测）。
       #   判定条件与拆分前等价：tag + 有 NPM_TOKEN + need_build。
@@ -314,6 +338,74 @@ jobs:
         with:
           files: out/*.tar.gz
           generate_release_notes: true
+
+  # ── 发布后冒烟（S8 的 CI 半边）：从**公开 registry** 装已发布子包，证明线上产物可自举 ──
+  # 与 build job 内的安装包冒烟共用同一脚本，区别只在装的是 registry 里的包而非本地 dist/。
+  #   registry/unpkg 传播有分钟级延迟，故重试数轮；只有最后一轮的失败才决定判据（早期轮失败
+  #   不算永久红）。公开包无需 NPM_TOKEN，本 job 也不挂载任何令牌。
+  # ⚠ 必须 needs release：npm 发布动作在 release job 里，只依赖 build 会在**同一 run 内**与发布赛跑，
+  #   四平台各 4 轮 45s 预算耗尽后判红——而线上其实已经发好了（追修于 0.1.6-BETA.5 补充批）。
+  #   always() 不可省：tag 之外的运行里 release 是 skipped，不加 always 本 job 会被连带跳过（假绿）。
+  published-smoke:
+    needs: [precheck, build, release]
+    if: ${{ always() && (github.event_name == 'workflow_dispatch' || (startsWith(github.ref, 'refs/tags/v') && needs.release.result == 'success')) }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-22.04
+            arch_override: ""
+          - os: windows-latest
+            arch_override: ""
+          - os: macos-latest
+            arch_override: ""
+          - os: macos-14
+            arch_override: x64
+    runs-on: ${{ matrix.os }}
+    env:
+      DSH_ARCH_OVERRIDE: ${{ matrix.arch_override }}
+      VER_INPUT: ${{ inputs.ver }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Install Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '24'
+
+      - name: 发布后安装包冒烟（npm i -g @dsh-sup/dsh-core-<os>-<arch>@<ver>）
+        shell: bash
+        # 显式关 -e：重试循环要靠 rc 分支决策，不能让中间轮的失败炸掉整个 run block。
+        run: |
+          set +e
+          PLAT="${DSH_PLATFORM_OVERRIDE:-$(node -p 'process.platform')}"
+          ARCH="${DSH_ARCH_OVERRIDE:-$(node -p 'process.arch')}"
+          case "$PLAT" in
+            linux) OS_TAG=linux ;; darwin) OS_TAG=darwin ;; win32) OS_TAG=win ;;
+            *) echo "::error::不支持的平台 $PLAT"; exit 1 ;;
+          esac
+          VER="${VER_INPUT:-$(node -p 'require("./package.json").version')}"
+          SPEC="@dsh-sup/dsh-core-$OS_TAG-$ARCH@$VER"
+          echo "  发布后冒烟目标: $SPEC"
+          ATTEMPTS=6
+          i=0
+          rc=1
+          while [ "$i" -lt "$ATTEMPTS" ]; do
+            i=$((i + 1))
+            echo "== 冒烟第 $i/$ATTEMPTS 轮 =="
+            if bash release/scripts/install-smoke-core.sh --pkg "$SPEC" --ver "$VER"; then
+              rc=0
+              break
+            else
+              rc=$?
+              echo "  第 $i 轮失败（registry 可能尚未传播）"
+              [ "$i" -lt "$ATTEMPTS" ] && sleep 45
+            fi
+          done
+          if [ "$rc" != 0 ]; then
+            echo "::error::发布后冒烟在 $ATTEMPTS 轮后仍失败（$SPEC）"
+            exit "$rc"
+          fi
 
   # 前端门禁（typecheck/lint/test/build）**已移出 CI**（2026-09 定案，额度优化）：
   #   原 ui-verify 作业常驻 ubuntu-latest，是矩阵去 ubuntu 后唯一的 Linux 消耗。
