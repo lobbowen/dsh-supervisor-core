@@ -16,7 +16,7 @@ function composeObservers(host) {
       host.lan.removeProxyForInstance(id).catch((e) => host.logger.warn && host.logger.warn('lan removeProxy: ' + e.message));
     };
     // 启停联动远程代理：起则确保 relay 在跑、停则停 relay 但保留注册；
-    //   同时申报目录（desired 随动作立即对齐，不等下一拍心跳同步）。
+    //   同时申报目录（lifecycle 刚写过意图，此处立即把新投影同步进目录，不等下一拍心跳）。
     host.instances.onInstanceStart = (inst) => {
       if (host.managedObjects) { try { host._upsertManaged(host._managedSandboxSpec(inst)); } catch {} }
       if (host.lanDaemonEnabled()) { host._syncLanState(); return; }

@@ -81,9 +81,9 @@ check('副作用经 deps.save 显式发出（非隐式 this）', saves > 0, 'sav
     isUnitActive() { return false; }, transientUnitFile() { return null; }, cleanTransient() {},
     startTransient() { svcCalls.push('startTransient'); return true; },
   };
-  const mkMgr = (tmp) => {
+  const mkMgr = (tmp, svcOverride) => {
     const mgr = new InstanceManager({
-      dir: tmp, logger: { info() {}, warn() {}, error() {} }, service: fakeService,
+      dir: tmp, logger: { info() {}, warn() {}, error() {} }, service: Object.assign({}, fakeService, svcOverride || {}),
       tasks: { isBusy: () => false, current: () => null, list: () => [] },
     });
     mgr._setSandboxSupportedForTest(true);
@@ -140,6 +140,38 @@ check('副作用经 deps.save 显式发出（非隐式 this）', saves > 0, 'sav
     seedEntry(mgr, inst);
     mgr.supervise('b15');
     check('B15 反向：守护开 FAILED+installOk → 兜底拉起', svcCalls.includes('startTransient') && inst.state.phase === 'STARTING', inst.state.phase + ' ' + svcCalls.join(','));
+  }
+
+  // ---- 6e/6f. ST-2c 运行意图落点：谁发起的停决定抹不抹意图 ----
+  //   意图只在实例自己的 state.desired 上写；升级收尾/插件生效的临时停必须保留用户意图，
+  //   否则一次长安装窗口就把「要它在跑」抹成 stopped 且无人恢复。
+  {
+    const mgr = mkMgr(fs.mkdtempSync(path.join(os.tmpdir(), 'b15-intent-')));
+    const inst = mk('STOPPED');
+    mgr.instances = [inst];
+    seedEntry(mgr, inst);
+    const r0 = await mgr.startInstance('b15', { fromUpgrade: true });
+    check('IN-1 start 走到拉起 → 意图落 running', r0.ok === true && inst.state.desired === 'running',
+      'ok=' + r0.ok + ' desired=' + inst.state.desired);
+    const r1 = mgr.stopInstance('b15', { intent: 'transient' });
+    check('IN-2 自动来源的停 → 相位 STOPPED 但意图留 running',
+      r1.ok === true && inst.state.phase === 'STOPPED' && inst.state.desired === 'running',
+      'phase=' + inst.state.phase + ' desired=' + inst.state.desired);
+    const r2 = mgr.stopInstance('b15');
+    check('IN-3 用户来源的停 → 意图落 stopped', r2.ok === true && inst.state.desired === 'stopped',
+      'desired=' + inst.state.desired);
+    const r3 = await mgr.startInstance('b15', { fromUpgrade: true });
+    check('IN-4 反向：再 start 把意图翻回 running（分档不是单向棘轮）',
+      r3.ok === true && inst.state.desired === 'running', 'desired=' + inst.state.desired);
+  }
+  {
+    const mgr = mkMgr(fs.mkdtempSync(path.join(os.tmpdir(), 'b15-intent-unconfirmed-')), { stopUnit() { return false; } });
+    const inst = mk('RUNNING', { desired: 'running' });
+    mgr.instances = [inst];
+    const r = mgr.stopInstance('b15');
+    check('IN-5 反向：停止未确认 → ok:false 且相位/意图都不动（不谎报已停、不顺手抹意图）',
+      r.ok === false && inst.state.phase === 'RUNNING' && inst.state.desired === 'running',
+      'ok=' + r.ok + ' phase=' + inst.state.phase + ' desired=' + inst.state.desired);
   }
 
   // ---- 7. W2 控制面监督拍（govern tick + 准入）：观测(假 resstats)->决策(真 governor+假机器事实)

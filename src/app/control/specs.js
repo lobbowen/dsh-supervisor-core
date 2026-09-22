@@ -32,17 +32,16 @@ function createSpecs(deps) {
     };
   }
 
-  /** 单个沙箱实例申报。 */
+  /** 单个沙箱实例申报。desired 取实例自己的运行意图（落点 inst.state.desired，
+   *  由 lifecycle 的 start/stop 写），相位不进应然面。 */
   function sandboxSpec(inst) {
     if (!inst || !inst.id) return null;
-    const phase = inst.state && inst.state.phase;
-    const running = phase === 'RUNNING' || phase === 'STARTING' || phase === 'INSTALLING';
     let rootPath = null;
     const im = instances();
     try { if (im && typeof im.sandboxRoot === 'function') rootPath = im.sandboxRoot(inst); } catch {}
     return {
       kind: 'sandbox-instance', id: inst.id, name: String(inst.name || inst.id),
-      desired: running ? 'running' : 'stopped',
+      desired: (inst.state && inst.state.desired === 'stopped') ? 'stopped' : 'running',
       guardian: inst.guardian === true,
       ownership: {
         ports: [{ role: 'inst', port: Number(inst.port) }],
@@ -53,16 +52,15 @@ function createSpecs(deps) {
     };
   }
 
-  /** 申报或更新（存在->update 应然；否则 register）。keepDesired 供观测推导路径（心跳同步/启动对齐）：
-   *  由实然推出的 desired 不得写回目录（契约 M-1）——崩溃进 BACKOFF 的实例会被每拍 upsert 把用户的
-   *  running 意图静默抹掉且无人恢复；意图唯一写口是 start()/stop() 与动作路径。旗标只作用 update 分支。 */
-  function upsert(spec, opts) {
+  /** 申报或更新（存在->update 应然；否则 register）。spec.desired 必须是意图源的投影
+   *  （main=state.desired、沙箱=inst.state.desired、域 B=config 业务条件），不得由 phase 推导：
+   *  观测到崩溃/退避不等于「用户想停」（契约 M-1），实然面另由 setPhase 落。 */
+  function upsert(spec) {
     const m = reg();
     if (!m || !spec) return;
-    const keepDesired = !!(opts && opts.keepDesired);
     try {
       const existing = m.get(spec.id);
-      if (existing) m.update(spec.id, { desired: keepDesired ? undefined : spec.desired, guardian: spec.guardian, name: spec.name, ownership: spec.ownership });
+      if (existing) m.update(spec.id, { desired: spec.desired, guardian: spec.guardian, name: spec.name, ownership: spec.ownership });
       else m.register(spec);
     } catch (e) {
       const l = logger();
@@ -89,10 +87,9 @@ function createSpecs(deps) {
       const sandboxes = (_m && typeof _m.all === 'function' && _m.all()) || [];
       for (const inst of sandboxes) {
         if (inst.id === 'main' || inst.domain === 'native') continue;
-        // 启动对齐同样不得回写 desired：load() 后的 state.phase 是实然快照
-        // （BACKOFF/FAILED/STOPPED 一律推导成 stopped），守卫重启恰逢实例退避时
-        // 会把用户运行意图抹掉。
-        upsert(sandboxSpec(inst), { keepDesired: true });
+        // 申报即意图投影：load() 后的 state.phase 只是实然快照，不参与 desired，
+        // 故守卫重启恰逢实例退避时不会抹掉用户运行意图。
+        upsert(sandboxSpec(inst));
       }
       // 域 B 基础设施（router/lan daemon）不写 guardian（契约 G-1）；desired 由配置业务条件驱动。
       const c = ctl();
