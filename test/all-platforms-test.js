@@ -156,6 +156,9 @@ console.log('== T5 workflow precheck ==');
   check('T5-e precheck 判据来自 npmPublish.packages（不硬编码平台）', /npmPublish/.test(code) && /packages/.test(code), 'ok');
   check('T5-f precheck 用 npm view 探测', /npm view/.test(code), 'ok');
   check('T5-h release 同时依赖 precheck 与 build', /needs:\s*\[precheck,\s*build\]/.test(code), 'ok');
+  // 发布后冒烟 job（安装包冒烟的后半）：名称含连字符，必须仍能被 jobSection 解析出非空段。
+  check('T5-i published-smoke job 能被 jobSection 取到（非空段）',
+    require(path.join(__dirname, '_workflow.js')).jobSection(y, 'published-smoke').length > 0, 'ok');
 }
 
 // -- T6 「纯 JS 产物」前提（全平台本地构建的成立条件）--

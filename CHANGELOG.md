@@ -6,6 +6,19 @@
 
 ## [未发布]
 
+### 补齐缺失的验证：CI 四平台「安装包冒烟」
+
+1.2.3 以来两仓都声明了安装包冒烟、却从无 CI 任务实现它 —— 内核发布物是全局安装的 npm 子包，
+「安装包冒烟」应是 `npm i -g` 产物并证明**装出来的全局命令**可用，而 `test/smoke.js` 一直只跑源码树。
+本批把它补进 CI（仅此，不改产品代码）：
+
+- 新增脚本单源 `release/scripts/install-smoke-core.sh`：装 → 命令可解析 → `--version` 自报比对 →
+  `self-check: OK` + `guardVersion` 比对 → 隔离状态根起 `daemon` → `/healthz` 2xx → `ports.json` 唯一
+  `supervisor-api` 记录且端口一致 → `npm rm -g` 收尾（不覆盖应用内更新落盘）。
+- `build.yml`：build job 在 dry-run 后、发布前对 `dist/npm/@dsh-sup/dsh-core-<os>-<arch>` 跑（S6b，四平台 PR/push/tag 都跑）；
+  新增 `published-smoke` job 从**公开 registry** 按 `@dsh-sup/dsh-core-<os>-<arch>@<ver>` 跑发布后半（S7b，仅 tag / dispatch，重试至末轮定判据）。
+- 门禁：新增 `test/install-smoke-gate-test.js`（含反向样本），并在 `all-platforms-test.js` T5 组校验 `published-smoke` 可被 `jobSection` 解析。
+
 ## [0.1.6-BETA.5]（2026-09-23）
 
 本版是真机「内核启动完，进面板直接 127.0.0.1 拒绝连接」的内核侧三条根因收口

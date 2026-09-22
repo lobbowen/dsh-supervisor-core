@@ -64,11 +64,20 @@
 | S4 | 全量回归（**由 CI 执行**）| `xvfb-run -a npm test`（本机不得执行）| ✅ | 修缺陷（含注入验证）|
 | S5 | **推向 CI**（commit + tag + push）| `git push origin HEAD --tags` | ✅ | **此后一切构建/发布都在 CI 内完成** |
 | S6 | CI 四平台构建 | 自动（`build` job，4 runner 矩阵）| ✅ | 看该平台日志 |
+| S6b | CI 四平台安装包冒烟（构建产物）| 自动（`build` job 步骤 `install-smoke-core.sh --pkg ./dist/npm/@dsh-sup/dsh-core-<os>-<arch>`）| ✅ | 看该平台日志（push/PR/tag 都跑）|
 | S7 | CI 四平台发布 | 自动（`build` job 内**单独发布步骤** `ci-core.sh --publish-only`；验证步骤不带令牌 —— A3-a）| ✅ | npm 同版本不可重发 → 提版本重来 |
+| S7b | 发布后安装包冒烟（公开 registry）| 自动（`published-smoke` job，4 平台矩阵，`install-smoke-core.sh --pkg '@dsh-sup/dsh-core-<os>-<arch>@<ver>'`）| ✅ | registry 传播延迟→按轮重试；末轮仍红查发布是否成功 |
 | S8 | 发布后验证 | 见 §5 | ✅ | 立即处置（见 §6）|
 
 > **本地只完成 S0–S3**（凭据 / 版本 / 前端产物）；**S4（全量回归）由推送后的 CI test job 执行**，**S5 起全部在 CI 内完成**（见 ACCEPTANCE-STANDARD：本机不得执行任何测试）。
 > `build:launcher` / `build:launcher:all` 在 CI 外**一律被脚本自身拒绝**（exit 2），不依赖操作者自觉。
+
+**安装包冒烟（S6b / S7b，脚本单源 `release/scripts/install-smoke-core.sh`）** —— 补齐「四平台安装包冒烟自 1.2.3 起从未在 CI 落地」这条缺失的验证。
+把已产出的 npm 子包**真正 `npm i -g` 装成全局命令**，只跑装出来的那条命令（不碰源码树）。判据链：
+装全局命令可解析 → `--version` 自报 = `<ver>` → `self-check: OK` 且 `guardVersion=<ver>` → 隔离状态根起守卫（`daemon`）→ `/healthz` 2xx → `ports.json` 里 `supervisor-api` **唯一一条** 且其端口与 healthz 实际应答端口一致 → `npm rm -g` 收尾。
+- **S6b 是构建半边**：`build` job 内、dry-run 之后、发布之前，对本地 `dist/npm/@dsh-sup/dsh-core-<os>-<arch>` 目录跑，push/PR/tag 四平台都跑。
+- **S7b 是发布后半（`published-smoke` job）**：`needs: [precheck, build]`、仅 tag 或 `workflow_dispatch` 触发，从**公开 registry** 按 `@dsh-sup/dsh-core-<os>-<arch>@<ver>` 装已发布包（不读 `dist/`、不需 `NPM_TOKEN`）；registry/unpkg 传播有分钟级延迟，故重试数轮，**只有末轮失败才判红**。
+- **不判据**：应用内更新的落盘与应用（`self-update` / `upgrade`）—— 那属壳仓安装程序冒烟，本脚本只验守卫自举。
 
 ## 2. 平台矩阵（单一事实源）
 
