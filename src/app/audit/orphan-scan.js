@@ -20,9 +20,11 @@ function orphanAudit(deps) {
   const reg = call(g.getManagedObjects, null);
   const issues = [];
   try {
+    // want = 「本守卫是否有意让它活着」，只取持久化/结构性判据本身；目录 entry 的 desired 是它的
+    //   派生镜像（specs 每拍由同一源重推），读镜像会把「镜像未及更新」误判成游离。
     const daemons = [
-      { kind: 'router-daemon', port: g.getCtl().routerPort(), active: () => g.getDaemons().routerActive(), managed: () => g.getDaemons().managed(), want: () => g.getConfig().routerAutostart === true || !!(reg && reg.get('router-daemon') && reg.get('router-daemon').desired === 'running') },
-      { kind: 'lan-daemon', port: g.getCtl().lanPort(), active: () => g.getDaemons().lanActive(), managed: () => g.getDaemons().lanManaged(), want: () => g.getDaemons().enabled() || !!(reg && reg.get('lan-daemon') && reg.get('lan-daemon').desired === 'running') },
+      { kind: 'router-daemon', port: g.getCtl().routerPort(), active: () => g.getDaemons().routerActive(), managed: () => g.getDaemons().managed(), want: () => g.getConfig().routerAutostart === true },
+      { kind: 'lan-daemon', port: g.getCtl().lanPort(), active: () => g.getDaemons().lanActive(), managed: () => g.getDaemons().lanManaged(), want: () => g.getDaemons().enabled() },
     ];
     for (const d of daemons) {
       if (!d.active()) continue;

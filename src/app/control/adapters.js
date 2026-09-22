@@ -21,8 +21,8 @@ function registerAll(mgr, deps) {
   const logger = (deps.logger) || null;
 
   // 1. 智能路由作为一个生命周期单元注册；其下反代实例是子层（router 自治），不在本表展开。
-  // 启停必须走 supervisor.setRouterRunning（拉/停独立 daemon + 持久化 routerAutostart），
-  // 不得直接 start() 内嵌实例——否则双占 ctl 43107 且状态与 daemon 脱节。
+  // 启停只走 supervisor.setRouterRunning（它同时持久化 routerAutostart，内嵌回退也在其内部），
+  // 不得直接 start() 内嵌实例——否则双占 ctl 43107，且运行意图落在没写库的对象上。
   if (router) {
     const sup = deps && deps.supervisor;
     // 契约 G-1：router-daemon 是基础设施，不设 guardian——失联由保活路径无条件拉起（_daemonSuperviseOnce）。
@@ -32,11 +32,11 @@ function registerAll(mgr, deps) {
       kind: 'router',
       name: '智能路由',
       logger,
-      start: async () => (sup && typeof sup.setRouterRunning === 'function') ? sup.setRouterRunning(true) : router.start(),
+      start: async () => (sup && typeof sup.setRouterRunning === 'function') ? sup.setRouterRunning(true) : { ok: false, error: '缺 setRouterRunning 写口：启停不得绕过 config 持久化' },
       // 守卫自身 shutdown（_stopping=true）不得停独立 daemon：守卫退出不影响被管模块，仅显式用户停止才停。
       stop: async () => {
         if (sup && sup._stopping) return { ok: true, already: true, reason: 'guard-shutdown 不停 daemon' };
-        return (sup && typeof sup.setRouterRunning === 'function') ? sup.setRouterRunning(false) : router.stop();
+        return (sup && typeof sup.setRouterRunning === 'function') ? sup.setRouterRunning(false) : { ok: false, error: '缺 setRouterRunning 写口：停止须同时清 config 持久化' };
       },
       // detail 走守卫真实 router 状态视图（daemon 模式经 ctl 取实时态）
       status: () => (sup && typeof sup.routerStatus === 'function') ? sup.routerStatus() : (router.status ? router.status() : null),

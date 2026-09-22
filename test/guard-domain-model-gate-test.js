@@ -2,7 +2,7 @@
 'use strict';
 
 // ---------------------------------------------------------------------------
-// 守护域模型门禁（GD-1..GD-5）—— SSOT: GUARD-DOMAIN-MODEL.md
+// 守护域模型门禁（GD-1..GD-6）—— SSOT: GUARD-DOMAIN-MODEL.md
 //
 // ## 为什么需要它
 //   GUARD-DOMAIN-MODEL.md 记录了「模型错位」的真实后果：把基础设施（lan-daemon）硬塞进
@@ -21,6 +21,7 @@
 //          或必须显式映射」，故按此断言。
 //   GD-4 反向：判据能识别「基础设施带 guardian 字段 / 分支仍发事件」的旧形态（门禁非空转）
 //   GD-5 基础设施保活路径不再有对恒 true 值的 guardian !== true 补丁判断（G-6）
+//   GD-6 保活/游离判据只读持久化意图，不读生命周期视图或目录 entry 的 desired 镜像
 //
 //  域划分（契约 ，**共识方案**）：
 //   域 A 用户意图 = main（原生 DSH）+ 沙箱实例；
@@ -131,6 +132,9 @@ const hasGuardianNotTruePatch = (src) => /\.guardian\s*!==\s*true/.test(src);
 
 /** GD-5 判据（旧形态，特指）：entry.guardian !== true（lan 分支当年那处补丁）。 */
 const hasEntryGuardianPatch = (src) => /entry\s*\.\s*guardian\s*!==\s*true/.test(src);
+
+/** GD-6 判据：是否读了派生的意图镜像（生命周期视图或 A 平面目录 entry 上的 desired）。 */
+const readsDerivedIntent = (src) => /\.desired\b/.test(src);
 
 /** 递归收集 src/ 下全部 .js 源码（供 GD-5 全域旧形态扫描）。 */
 function walkSrc(dir, out) {
@@ -291,6 +295,50 @@ const lanBranch = fnBody ? lanBranchOf(fnBody) : null;
   check('GD-5 全域不存在 entry.guardian !== true 旧补丁形态',
     offenders.length === 0,
     offenders.length ? offenders.map((p) => path.relative(ROOT, p)).join(', ') : allSrc.length + ' 个源码文件已扫描');
+}
+
+// ---------------------------------------------------------------------------
+// GD-6 保活/游离判据只读持久化意图，不读派生镜像（ST-1 读侧单源）
+//
+// 为什么单独一条：域 B 的「该不该活着」只有一个应然来源（config.routerAutostart / daemon 部署选择），
+//   而生命周期视图与 A 平面目录的 desired 都是它派生出来的镜像。判据里多读一个镜像，
+//   就等于承认「镜像与库里不一致时以镜像为准」——写库半途失败或被显式停止过的对象会被无限重拉，
+//   面板上的开关关掉后仍在跑。故本条只执法**读侧**，写侧由 session-lifecycle-test 的 ST-1 段锁。
+// ---------------------------------------------------------------------------
+{
+  const codeOf = (rel) => stripComments(read(rel));
+  const codeSrc = [
+    'src/app/facade/router.js',
+    'src/app/daemons/supervise.js',
+    'src/app/daemons/runtime.js',
+    'src/app/facade/lan.js',
+  ].map(codeOf).join(String.fromCharCode(10));
+  const fnCode = methodBody(codeSrc, '_daemonSuperviseOnce');
+  const routerCode = fnCode ? routerBranchOf(fnCode) : null;
+  const lanCode = fnCode ? lanBranchOf(fnCode) : null;
+  check('GD-6 去注释源码上保活函数体与两分支被定位（覆盖面非空）',
+    !!fnCode && !!routerCode && !!lanCode,
+    fnCode ? (routerCode && lanCode ? 'ok' : '分支定位失败') : '未找到 _daemonSuperviseOnce');
+  check('GD-6 router 保活判据不读派生意图镜像（只看持久化 config）',
+    !!routerCode && !readsDerivedIntent(routerCode),
+    routerCode && readsDerivedIntent(routerCode) ? 'router 分支仍读 .desired' : 'ok');
+  check('GD-6 lan 保活判据不读派生意图镜像',
+    !!lanCode && !readsDerivedIntent(lanCode),
+    lanCode && readsDerivedIntent(lanCode) ? 'lan 分支仍读 .desired' : 'ok');
+  const wantLines = codeOf('src/app/audit/orphan-scan.js')
+    .split(String.fromCharCode(10)).filter((l) => /want:\s*\(\)\s*=>/.test(l));
+  check('GD-6 orphan-scan 的 want 判据被定位（覆盖面非空）', wantLines.length === 2,
+    wantLines.length + ' 条 want 判据');
+  check('GD-6 orphan-scan 的 want 不读目录 entry 的 desired',
+    wantLines.length === 2 && !wantLines.some(readsDerivedIntent),
+    wantLines.filter(readsDerivedIntent).join(' ; ') || 'ok');
+  // 反向：判据必须认得出被移除的旧形态，否则上面几条是空转的正则。
+  const OLD_MIRROR = "const wantRunning = d.config().routerAutostart === true || (rlc && rlc.desired === 'running');";
+  const OLD_ENTRY_MIRROR = "want: () => g.getConfig().routerAutostart === true || !!(reg && reg.get('router-daemon').desired === 'running')";
+  check('GD-6 反向：判据能识别「|| 视图/目录 desired」的旧形态',
+    readsDerivedIntent(OLD_MIRROR) && readsDerivedIntent(OLD_ENTRY_MIRROR), 'hit');
+  check('GD-6 反向：判据不误报只读持久化源的现行形态',
+    !readsDerivedIntent("const wantRunning = d.config().routerAutostart === true;") && !readsDerivedIntent("want: () => g.getDaemons().enabled()"), 'ok');
 }
 
 // ---------------------------------------------------------------------------

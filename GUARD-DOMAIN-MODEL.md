@@ -102,6 +102,7 @@ ManagedRegistry（心跳驱动 —— 共用）
 | GD-3 | 两平面 id **显式映射**，保活路径不跨平面混用 id（G-5）；域 A 计数不经 `guardian_action` |
 | GD-4 | 反向：判据能识别"基础设施带 guardian 字段"的旧形态（门禁非空转） |
 | GD-5 | 不再存在对恒 true 值的 `guardian !== true` 补丁判断（基础设施无此概念）|
+| GD-6 | 保活/游离判据**只读持久化意图**，不读生命周期视图或目录 entry 的 `desired` 镜像（见 §6.2 读侧同规则）|
 | ML-1..ML-3 | **目录写入 / 生命周期视图写权**门禁，见 §6.4（同一 `test/guard-domain-model-gate-test.js`）|
 
 ---
@@ -140,6 +141,14 @@ ManagedRegistry（心跳驱动 —— 共用）
 **收口形态**：`control.upsert(spec, { keepDesired: true })` —— 旗标**只作用于 update 分支**
 （registry.update 对 `desired===undefined` 是"不改写"语义），register 分支仍带 `desired`。
 落点：`src/app/control/specs.js`（旗标实现 + 实例循环）、`src/app/control/instance-adapter.js`（心跳同步）。
+
+**读侧同规则（2026-09-22 ST-1）**：唯一写口成立后，镜像仍只是**派生态**，因此
+"该不该活着"的判据**只准读持久化意图本身**（`config.routerAutostart` / `daemons.enabled()`），
+不得再 `|| 视图或目录的 desired`。读镜像等于承认"镜像与库里不一致时以镜像为准"，
+后果是写库半途失败的 daemon 被无限重拉、面板关掉后仍在跑。落点：
+`src/app/daemons/supervise.js`（保活判据）、`src/app/audit/orphan-scan.js`（游离判据）；
+执法：GD-6（读侧）+ `test/session-lifecycle-test.js` 的 ST-1 段（写侧：缺 `setRouterRunning` 写口即显式拒绝，
+且 `ManagedLifecycle.start()` 异常分支与 `ok:false` 分支同语义复位 `desired`）。
 
 ### §6.3 生命周期视图（ManagedLifecycle）的写权分工（D-7）
 
