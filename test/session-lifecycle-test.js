@@ -210,7 +210,7 @@ const check = (n, c, x) => { results.push(!!c); console.log((c ? 'PASS' : 'FAIL'
       router: { start: async () => ({ ok: true }), stop: async () => ({ ok: true }), status: () => ({}) },
       lan: { reconcile: async () => {}, syncFrpc: () => {}, shutdown: () => {}, status: () => ({}) },
       instances: { instances: [] },
-      supervisor: { setDesired: () => ({ ok: true }), requestRestart: () => ({ ok: true }), mainGuardian: () => false, desired: 'stopped', phase: 'STOPPED', statusSummary: () => ({}) },
+      supervisor: { setDesired: () => ({ ok: true }), requestRestart: () => ({ ok: true }), setRouterRunning: async () => ({ ok: true }), mainGuardian: () => false, desired: 'stopped', phase: 'STOPPED', statusSummary: () => ({}) },
       pluginManager: {},
     });
     check('B1-a 可启停模块 startable=true（dsh/router/lan）',
@@ -225,6 +225,37 @@ const check = (n, c, x) => { results.push(!!c); console.log((c ? 'PASS' : 'FAIL'
     check('B1-e 不可启停模块 start/stop/restart 被拒（非假成功）',
       r1.ok === false && r2.ok === false && r3.ok === false && /不可启停/.test(r1.error || ''), JSON.stringify(r1));
     check('B1-f 可启停模块仍放行', (await mgr.start('router')).ok === true, 'ok');
+    // ST-1 写侧：router 的启停唯一写口是 setRouterRunning（它同时落 config.routerAutostart）。
+    //   缺该写口时必须显式拒绝，且不得把 running 意图留在视图上——否则读侧只看 config 就出现
+    //   「视图说该活着、库里说不该」的第二真相，被停掉的 daemon 会被无限重拉。
+    {
+      const mgr2 = new LifecycleManager({});
+      let embedded = 0;
+      registerAll(mgr2, {
+        router: { start: async () => { embedded++; return { ok: true }; }, stop: async () => { embedded++; return { ok: true }; }, status: () => ({}) },
+        lan: { reconcile: async () => {}, syncFrpc: () => {}, shutdown: () => {}, status: () => ({}) },
+        instances: { instances: [] }, supervisor: { setDesired: () => ({ ok: true }), mainGuardian: () => false, desired: 'stopped', phase: 'STOPPED', statusSummary: () => ({}) },
+        pluginManager: {},
+      });
+      const rNoWriter = await mgr2.start('router');
+      check('ST-1 缺 setRouterRunning 写口时 start 被拒（非假成功）', rNoWriter.ok === false && /setRouterRunning/.test(rNoWriter.error || ''), JSON.stringify(rNoWriter).slice(0, 90));
+      check('ST-1 被拒的 start 不留 running 意图（desired 不得为 running）', mgr2.get('router').desired !== 'running', 'desired=' + mgr2.get('router').desired);
+      check('ST-1 被拒时不得绕过持久化直调内嵌 router', embedded === 0, 'embedded=' + embedded);
+      // 反向对照：同一 adapter 换上带写口的 supervisor，启停只经写口、内嵌 router 零直调，成功才落 running 意图。
+      const mgr3 = new LifecycleManager({});
+      let writes = 0, emb3 = 0;
+      registerAll(mgr3, {
+        router: { start: async () => { emb3++; return { ok: true }; }, stop: async () => { emb3++; return { ok: true }; }, status: () => ({}) },
+        lan: { reconcile: async () => {}, syncFrpc: () => {}, shutdown: () => {}, status: () => ({}) },
+        instances: { instances: [] },
+        supervisor: { setRouterRunning: async (on) => { writes += on ? 1 : 2; return { ok: true }; }, setDesired: () => ({ ok: true }), mainGuardian: () => false, desired: 'stopped', phase: 'STOPPED', statusSummary: () => ({}) },
+        pluginManager: {},
+      });
+      const rWithWriter = await mgr3.start('router');
+      await mgr3.stop('router');
+      check('ST-1 有写口时启停只经写口且意图随之落定', rWithWriter.ok === true && writes === 3 && emb3 === 0 && mgr3.get('router').desired === 'stopped',
+        'writes=' + writes + ' embedded=' + emb3 + ' desired=' + mgr3.get('router').desired);
+    }
     // 能力声明单一源：adapters 从 MANAGED_KINDS 取（改表即生效）
     const adaptersSrc = fs.readFileSync(path.join(ROOT, 'src', 'app', 'control', 'adapters.js'), 'utf8');
     //  步骤6：guard/lifecycle/objects.js -> app/control/registry.js（编排层重组）

@@ -43,8 +43,11 @@ module.exports = {
       if (d.exitIntended()) return { ok: false, error: 'exit intended' };
       try {
         if (kind === 'router') {
+          // 运行意图唯一源是持久化 config。rlc.desired 只是同一次写口的内存镜像，读它等于承认
+          //   第二真相：镜像已置 running 而 config 未落库的半程状态会被无限重拉，用户看到「关不掉」。
+          const wantRunning = d.config().routerAutostart === true;
+          // rlc 在此只做视图回填（拉起后置相位），不参与「该不该活着」的判定。
           const rlc = d.lifecycleManager() ? d.lifecycleManager().get('router') : null;
-          const wantRunning = d.config().routerAutostart === true || (rlc && rlc.desired === 'running');
           if (!wantRunning) return { ok: d.daemons().routerActive() };
           if (!d.daemons().managed()) return { ok: d.daemons().routerActive() }; // 异主隔离：监督不介入
           // 代际分类（DaemonLifecycle.classify）：只按 cmdline 判 active 无法区分本守卫 daemon 与外部

@@ -109,6 +109,9 @@ class ManagedLifecycle {
     } catch (e) {
       this.error = (e && e.message) || String(e);
       this._setPhase('stopped');
+      // 抛异常与显式失败同语义（K4-e），desired 也必须一并复位：留着 running 就是把
+      //   「回调没跑完、意图根本没落库」的半程状态当成用户意图，会被面板与收敛回路当真。
+      this.desired = 'stopped';
       if (this.logger && this.logger.warn) this.logger.warn('[lifecycle] ' + this.id + ' start 失败: ' + this.error);
       return { ok: false, error: this.error };
     }
