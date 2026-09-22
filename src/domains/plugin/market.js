@@ -1,10 +1,8 @@
 'use strict';
 
-// 插件市场索引服务：实时聚合 npm + GitHub 的 DeepSeek Harness 插件。
-// 权威判定：包/仓库声明 dsh.bundle 才视为 DSH 插件；分类基于 keywords + 描述启发；
-// 来源标注 npm/github/community；磁盘缓存 + TTL 刷新。
-// HTTP 原语在 market-net.js，源叶子在 market-sources.js；批次循环体必须留在本文件
-// （test/market-budget-test.js M-d 以源码正则锁定「预算检查在 slice 之前」）。
+// 插件市场索引服务：实时聚合 npm + GitHub 的 DeepSeek Harness 插件；权威判定 = 包/仓库声明 dsh.bundle；
+// 分类基于 keywords + 描述启发；来源标注 npm/github/community；磁盘缓存 + TTL 刷新。
+// HTTP 原语在 market-net.js、源叶子在 market-sources.js；批次循环体必须留在本文件（test/market-budget-test.js M-d 以源码正则锁定「预算检查在 slice 之前」）。
 
 const path = require('node:path');
 const { getJson } = require('./market-net');
@@ -43,7 +41,7 @@ class PluginMarket {
     this.stateFile = opts.stateFile;
     this.ttl = opts.ttlMs || DEFAULT_TTL_MS;
     this.logger = opts.logger || console;
-    this.dist = opts.dist || null;   // 安装/分发系统：镜像源选择收口处（npm 版本查询走镜像，不再硬编码官方源）
+    this.dist = opts.dist || null;   // 安装/分发系统：镜像源选择的收口处，npm 版本查询同源
     this.indexFile = path.join(this.cacheDir, INDEX_FILE);
     this._cache = null;
     this._ts = 0;
@@ -69,7 +67,6 @@ class PluginMarket {
 
   /** 读取插件列表（带 TTL 缓存 + 并发去重）。 */
   async getIndex(force = false) {
-    // 有缓存（含磁盘加载）直接返回；后台刷新
     if (this._cache && !force) {
       this._refreshIfStale();
       return this._cache;
@@ -78,14 +75,10 @@ class PluginMarket {
     return this._startBuild();
   }
 
-  /** 启动一次构建并登记为并发去重引用，返回**原始** promise。
-   *  两条不变量必须同时成立：
-   *    (a) 无消费者的后台刷新失败不得成为进程级 unhandledRejection —— 靠给 raw **挂一个
-   *        no-op handler「标记已处理」**实现，而不是把 promise 消化掉；
-   *    (b) 被消费者取走时仍须如实失败 —— raw 的 reject 语义不变（api/domains/plugins.js 的
-   *        GET /plugins/market 分支据此回答 500）。
-   *  若改成「消化后存回 _inFlight」，则并发的 force 请求会取到这个已消化的 promise，
-   *  失败时 resolve 成 undefined -> 200 + 空体，正是本仓最忌讳的「假成功」。 */
+  /** 启动一次构建并登记为并发去重引用，返回原始 promise。两条不变量必须同时成立：
+   *  (a) 无消费者的后台刷新失败不得成为进程级 unhandledRejection —— 靠给 raw 挂 no-op handler「标记已处理」实现，而不是把 promise 消化掉；
+   *  (b) 被消费者取走时仍须如实失败 —— raw 的 reject 语义不变（api/domains/plugins.js 的 GET /plugins/market 据此回答 500）。
+   *  若改成「消化后存回 _inFlight」，force 请求会取到它并在失败时 resolve 成 undefined -> 200 + 空体。 */
   _startBuild() {
     const raw = this.buildIndex();
     raw.catch(() => {}); // 标记已处理：无人 await 时否则就是 unhandledRejection
@@ -141,9 +134,8 @@ class PluginMarket {
 
     const prev = this._cache;
 
-    // 保护 A：被预算截断的源仍出现在结果里（只是不完整），不会触发下面的保护 B，
-    // 从而会把缓存的完整列表替换成缩水版；故单独与旧缓存按 source 取并集，
-    // 不受 50% 比例约束（「截断」与「整源失败」语义不同，不能共用判据）。
+    // 保护 A：被预算截断的源仍出现在结果里（只是不完整），不会触发保护 B，故与旧缓存按 source 取并集、
+    // 不受 50% 比例约束（「截断」与「整源失败」语义不同，不能共用判据；否则会把完整列表换成缩水版）。
     const truncated = this._truncatedSources || new Set();
     if (prev && prev.plugins && prev.plugins.length > 0 && truncated.size > 0) {
       const freshNames = new Set(plugins.map((pp) => pp.name));
@@ -217,7 +209,7 @@ class PluginMarket {
     return (origin || REGISTRY).replace(/\/+$/, '');
   }
 
-  /** npm 最新版元数据查询：走 dist 统一镜像源（国内可达性/手动固定与全系统一致）。 */
+  /** npm 最新版元数据查询（镜像源选择见 _npmOrigin）。 */
   async safeFetchLatest(name) {
     return fetchLatest(await this._npmOrigin(), name);
   }
@@ -263,7 +255,7 @@ class PluginMarket {
       const links = [];
       let m;
       while ((m = re.exec(md)) !== null) { links.push({ npmName: m[2], ghName: m[3], label: m[1] || '' }); }
-      // 候选约 2468，串行逐个查 npm 太慢/易整体超时 -> 8 并发批次，单条失败跳过
+      // 串行逐个查 npm 太慢/易整体超时 -> 8 并发批次，单条失败跳过
       const seenName = new Set();
       for (let i = 0; i < links.length; i += 8) {
         // 预算耗尽即停止（社区源候选最多，最易超时）。

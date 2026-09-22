@@ -1,11 +1,8 @@
 'use strict';
 
-// pidlookup/norm.js —— 平台输出**纯解析器** + cmdline 归一化（零 IO）。
-// 本文件不 require 任何 IO 模块；DF-6：可独立 require 测试。
-// 生产代码直接调用这些解析器（非平行实现）。
-
-// 平台输出纯解析器（原内联在各平台的带 IO 函数里，只能在对应平台验证；而平台解析恰是跨平台
-// bug 的藏身处）。抽成纯函数后可在任意宿主穷举三种平台格式，且生产代码直接调用（非平行实现）。
+// pidlookup/norm.js —— 平台输出的纯解析器 + cmdline 归一化：零 IO，不 require 任何 IO 模块
+// （DF-6：可独立 require 测试）。解析与 IO 分离才能在任意宿主穷举三种平台格式（平台输出差异
+// 正是跨平台 bug 的藏身处），且生产代码直接调用这一份实现，不允许在带 IO 的一侧另写平行解析器。
 
 /** 解析 /proc/net/tcp{,6} 文本，取该 port 处于 LISTEN(0A) 的 socket inode 集合。
  *  @returns {Set<string>} 形如 socket:[12345]（与 /proc/<pid>/fd 的 link 同名） */
@@ -59,8 +56,8 @@ function parseSsPid(out) {
 }
 
 /** 解析 Windows wmic ... get CommandLine /value 输出，取命令行或 null。
- *  这是 P1-2 的回归锚点：No Instance(s) Available.（进程已退出/权限不足）必须返回 null，
- *  让调用方继续走 PowerShell CIM 回退；旧实现在此直接 return null 会跳过回退，使 cmdline 防线静默失效。 */
+ *  「No Instance(s) Available.」（进程已退出/权限不足）同样返回 null，让调用方继续走
+ *  PowerShell CIM 回退；在此短路 = cmdline 防线静默失效（解析不中/无输出同此）。 */
 function parseWmicCommandLine(out) {
   if (!out) return null;
   const m = /CommandLine=([\s\S]*)/.exec(String(out));

@@ -1,10 +1,8 @@
 'use strict';
 
-// app/assembly/compose/domains.js —— 组装第二步：各业务域/基础设施域构造 + 端口注册。
-// 以 host 显式入参，零 this。
-// 包含：端口池配置 -> RouterService / InstanceManager / ManagedRegistry（+adapter 挂接）
-//   -> Lan 占位 -> PluginMarket/PluginManager -> Lifecycle/Health/HostService/NativeManager
-//   -> 固定端口登记。
+// app/assembly/compose/domains.js —— 组装第二步：各业务域/基础设施域构造 + 固定端口登记。
+// 域实现不在本文件；此处只负责构造顺序与 deps 注入。
+// 持久化文件一律按 stateFile 派生：测试用自定义 stateFile 即天然隔离，不污染生产记录。
 
 const path = require('node:path');
 const os = require('node:os');
@@ -23,7 +21,6 @@ const ports = require('../../../platform/service/ports').shared;
 
 function composeDomains(host) {
     const swDir = path.dirname(host.config.stateFile);
-    // 智能路由底座：中转服务整体生命周期 + 直连/反代供应商 + 账号状态管理 + 统一切换
     host.router = new RouterService({
       config: host.config,
       providerFile: path.join(swDir, 'providers.json'),
@@ -33,10 +30,8 @@ function composeDomains(host) {
       dist: host.dist,
       tasks: host.tasks,
     });
-    // 端口注册表持久化与守卫状态同域（默认 <产品状态根>/supervisor/ports.json；自定义
-    // stateFile 时跟随），测试可经自定义 stateFile 天然隔离，绝不污染生产记录。
     try { ports.configureFile(path.join(path.dirname(host.config.stateFile), 'ports.json')); } catch (e) { host.logger.warn && host.logger.warn('ports configure: ' + e.message); }
-    // 端口池规模可配置：范围是配置项而非编译期常量，config.portPools 覆盖默认池。
+    // 端口池范围是配置项而非编译期常量：config.portPools 覆盖默认池。
     try { if (host.config.portPools) ports.configurePools(host.config.portPools); } catch (e) { host.logger.warn && host.logger.warn('ports pools configure: ' + (e && e.message)); }
     // 原生 DSH 检测 -> 绑定（必须先于任何消费者：InstanceManager/PluginManager/spawn）。
     host._bindNativeDshCommand();
@@ -50,15 +45,11 @@ function composeDomains(host) {
       dshBin: host.config.command && host.config.command[1] ? host.config.command[1] : 'dsh',
     });
     host.instances.load();
-    // 概念清分迁移：instances.json 含历史 main 记录时，元数据迁入 dsh-main.json（守卫核心存储）并剔除。
+    // 历史 instances.json 里的 main 记录：元数据迁入 dsh-main.json（守卫核心存储）后剔除。
     host._migrateMainRecord();
-    // 控制平面 v3 R1：管家注册机（声明目录）。
-    // 记录「管家直接负责」的受管对象（应然+所有权）；本阶段为影子（不驱动任何循环），随 add/remove 实时申报。
+    // 管家声明目录：记录受管对象的应然 + 所有权；当前是影子目录，不驱动任何循环。
     try {
-      // 目录持久化文件按守卫状态文件派生（修测试隔离）：
-      // 生产默认 stateFile=state.json 时 <dir>/managed-objects.json（与部署/文档一致）；
-      // 测试用自定义 stateFile(如 state-3900.json) 时 <dir>/state-3900.managed-objects.json，
-      // 同一 TMP 目录多守卫（smoke/upgrade 链）不再互相污染 desired/phase。
+      // 文件名按 stateFile 派生（默认 managed-objects.json），避免同 TMP 目录多守卫实例互相污染
       host.managedObjects = new ManagedRegistry({
         file: path.join(path.dirname(host.config.stateFile), host._registryFileName()),
         logger: host.logger,
@@ -78,9 +69,8 @@ function composeDomains(host) {
         host.managedObjects.registerAdapter('sandbox-instance', { supervise: (entry) => host._sandboxSuperviseOnce(entry), tickEvery: 1 });
       }
     } catch (e) { host.logger && host.logger.warn && host.logger.warn('managed registry init: ' + (e && e.message)); }
-    // 远程控制子系统（relay + frpc）：daemon 模式下守卫不创建本地 LanManager（relay 唯一由独立
-    // lan-daemon 承载，注册表 ports-lan 独占）。仅非 daemon 模式（config.lanDaemon 未启用）才经
-    // get lan() 惰性创建本地实例；曾无条件 new，任何漏网调用即写 relay 到 ports.json。
+    // relay 在 daemon 模式唯一由独立 lan-daemon 承载（独占 ports-lan），守卫只在非 daemon
+    //   经 get lan() 惰性创建本地实例；无条件 new 会让漏网调用把 relay 写进 ports.json。
     host._lan = null;
     host.pluginMarket = new PluginMarket({
       stateFile: host.config.stateFile,
@@ -106,12 +96,11 @@ function composeDomains(host) {
         catch (e) { host.logger.warn && host.logger.warn('plugin change → native restart: ' + e.message); return { ok: false, error: e.message }; }
       },
     });
-    // 版本管理：单一版本源（package.json），交给 platform/service/version。
+    // 单一版本源（package.json）归 platform/service/version。
     host.guardVersion = guardVersion();
     // 守卫自身生命周期 + 健康 + 遥测 + 主机服务对接（infra：与实例生命周期完全分离）
     host.lifecycle = new Lifecycle();
-    // 统一生命周期管理器：全部模块生命周期的唯一注册表与统一启停入口。
-    // 守卫持监测权，start/stop/状态统一经此；模块各自独立生命周期，守卫重启不停被管模块。
+    // 模块生命周期的唯一注册表：守卫持监测权，但模块各自独立启停，守卫重启不停被管模块。
     host.lifecycleManager = new LifecycleManager({ logger: host.logger, events: host.events });
     host.health = new Health(host.lifecycle);
     host.hostService = new HostService({ logger: host.logger, events: host.events });

@@ -1,8 +1,7 @@
 'use strict';
 
-// relay 监听服务生命周期（域：relay / ops 叶子；从 ops.js 抽出）。
-// 所有操作显式传入 host（LanManager 实例），无隐式 this。
-// 依赖：proxy（createRelay 服务本体）、ports（端口释放）、host 上的状态与 frp。
+// relay 监听服务生命周期（relay 域 ops 叶子）：操作显式传入 host（LanManager 实例），无隐式 this。
+// 依赖：proxy（createRelay 服务本体）、ports（端口释放）；frpc 停止经 host.frp。
 
 const { createRelay } = require('../proxy');
 const portsvc = require('../ports');
@@ -76,7 +75,7 @@ function shutdown(host) {
   } catch (e) { host.logger.warn && host.logger.warn('lan shutdown frpc: ' + e.message); }
 }
 
-/** 令牌变化经 onChange 下发到本消费方：热更新既有 relay 的 DSH 会话 cookie。本模块不持久化令牌。 */
+/** 令牌变化的下发端（由 tokenService.onChange 调用）：热换既有 relay 的 DSH 会话 cookie；本域不持令牌副本。 */
 function applyToken(host, instId) {
   if (!instId) return false;
   const proxy = host.lanInstances.find((p) => p.id === instId);

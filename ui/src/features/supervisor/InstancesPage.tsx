@@ -1,7 +1,6 @@
 /**
- * 实例管理（supervisor）— 老 UI 实例管理域，按新 UI 标准重建
- * 数据：supervisorStore.instances（统一 2s 快照）
- * 动作：supervisorApi.instance* -> refresh()
+ * 实例管理（supervisor）：数据经 supervisorStore.instances（统一 2s 快照），
+ * 动作 supervisorApi.instance* -> refresh()。
  */
 import { useEffect, useState } from "react";
 import {
@@ -26,17 +25,14 @@ export function InstancesPage({ onRegisterActions }: { onRegisterActions?: (a: {
   const [addOpen, setAddOpen] = useState(false);
   const [confirmId, setConfirmId] = useState<string | null>(null);
 
-  // 添加表单
   const [fName, setFName] = useState("");
   const [fPort, setFPort] = useState("");
   const [fCmd, setFCmd] = useState("");
 
-  // 概念清分：后端 /instances 已把沙箱与原生拆分——instances[] 即沙箱（原生主干在 native 字段，
-  // 由 Overview 主干卡呈现）。此处不再需要 domain 过滤。
+  // /instances 已拆分：instances[] 即沙箱；原生主干在 native 字段（由 Overview 主干卡呈现）
   const items = snap.instances?.instances ?? [];
-  // 平台能力（A1 断点修复）：跑舱能力与限额档位经 /env/status.capabilities 分字段暴露
-  //（sandboxLaunch=能否跑舱，sandboxEnforcement=限额由谁执行，两者不得混装）。
-  // 不支持时**前置提示**（而非等用户点「添加」后被后端 400 拒绝才知道）。
+  // /env/status.capabilities 分字段暴露：sandboxLaunch=能否跑舱，sandboxEnforcement=限额由谁执行；
+  // 不支持时前置提示，不等用户点「添加」被后端 400 拒绝才知道
   const [caps, setCaps] = useState<{ sandboxLaunch?: boolean; sandboxEnforcement?: string; platform?: string } | null>(null);
   useEffect(() => {
     let alive = true;
@@ -44,7 +40,7 @@ export function InstancesPage({ onRegisterActions }: { onRegisterActions?: (a: {
     return () => { alive = false; };
   }, []);
   const sandboxUnsupported = caps !== null && caps.sandboxLaunch === false;
-  // W3 档位翻转：三平台均可跑舱；supervise 软限（采样式治理、无内核强制）不拦功能，只如实标注语义。
+  // W3 档位：三平台均可跑舱；supervise 软限（采样式治理、无内核强制）不拦功能，只如实标注语义。
   // 能力未回读（caps=null）时档位句一律不说——宁可少讲，不谎报硬限。
   const softTier = caps?.sandboxEnforcement === "supervise";
   const tierLabel = caps == null ? null
@@ -52,7 +48,7 @@ export function InstancesPage({ onRegisterActions }: { onRegisterActions?: (a: {
       : softTier ? "采样式软限（超限由守卫按拍数收割重启，非内核级强制）"
         : "无内核级限额";
 
-  // 顶部 Toolbar 动作注册（对齐原版：页面动作按钮渲染在置顶行，点击打开本页 dialog）
+  // 顶部 Toolbar 动作注册：点击打开本页 dialog
   useEffect(() => {
     onRegisterActions?.({ onAdd: () => setAddOpen(true) });
     return () => onRegisterActions?.(null);
@@ -278,11 +274,8 @@ export function InstancesPage({ onRegisterActions }: { onRegisterActions?: (a: {
                 const id = confirmId;
                 setConfirmId(null);
                 if (!id) return;
-                //删除的**安全结果必须对用户可见**（失效模式 g）。
-                //   后端在「单元仍在运行」时会**保留数据目录**（防不可逆丢失）并返回
-                //   dataPreserved=true；而确认框承诺的是「彻底删除、不可恢复」。
-                //   不对用户说明就等于谎报「数据已清」，用户/支持都无从得知、
-                //   也无从清理（实例已从列表移除）。
+                // 删除的安全结果必须对用户可见：后端在「单元仍在运行」时保留数据目录
+                //（防不可逆丢失）并返回 dataPreserved=true，须如实说明，否则等于谎报「数据已清」。
                 void run(id, async () => {
                   const r = await supervisorApi.instanceRemove(id);
                   if (r && r.ok !== false && r.dataPreserved === true) {

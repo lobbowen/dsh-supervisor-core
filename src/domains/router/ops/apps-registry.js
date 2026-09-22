@@ -1,10 +1,7 @@
 'use strict';
 
-// 反代应用注册表与更新（IO）。deps 注入：{getProviders, proxyUpdateCache, dist, events, tasks, save, logger}。
-// 更新 job 状态收敛于本工厂闭包（jobs）。
-
-// npx 缓存目录是平台事实（win 在 %LOCALAPPDATA%\npm-cache）——清理逻辑收口 providers/pkg-cache，
-//   此处曾复制过一份硬编码 ~/.npm/_npx 的扫描（第二事实源，Windows 恒空转）。
+// 反代应用注册表与更新（IO）。deps 注入；更新 job 状态收敛于本工厂闭包（jobs）。
+// npx 缓存清理统一走 providers/pkg-cache（缓存目录是平台事实，硬编码 ~/.npm/_npx 在 Windows 恒空转）。
 const { PROXY_APPS } = require('../proxy-apps');
 const { invalidatePkgCache } = require('../providers/pkg-cache');
 const { semverCompare } = require('../../../shared/version');
@@ -25,7 +22,7 @@ function createAppsRegistryOps(deps) {
       const c = cache[a.id] || {};
       const instVers = [];
       for (const p of getProviders() || []) {
-        if (p.proxyAppId === a.id) { // proxyAppId 只在 process-pool 形态上有值，无需再问 kind
+        if (p.proxyAppId === a.id) { // proxyAppId 只在 process-pool 形态上有值
           for (const inst of (p.instances || [])) if (inst.version) instVers.push(inst.version);
         }
       }
@@ -61,8 +58,8 @@ function createAppsRegistryOps(deps) {
     const targets = (getProviders() || []).filter((p) => p.proxyAppId === appId && (p.instances || []).length);
     if (!targets.length) return { ok: false, error: 'no running ' + a.name + ' instances' };
     if (jobs[appId] && jobs[appId].state === 'running') return { ok: true, jobId: appId, already: true };
-    // 步骤集只快照「标签」（providerId+keyId+maskedKey）；执行时按 keyId 重取活实例，
-    //  否则常驻实例在 stop/start 之间被重建后仍用旧引用（静默空转/假成功）。
+    // 步骤集只快照标签（providerId+keyId+maskedKey）；执行时按 keyId 重取活实例——
+    // 常驻实例在 stop/start 之间被重建后若仍用旧引用，会静默空转/假成功。
     const insts = targets.flatMap((provider) => (provider.instances || []).map((i) => ({ providerId: provider.id, keyId: i.keyId, maskedKey: i.maskedKey })));
     const job = {
       state: 'running', startedAt: Date.now(), finishedAt: null, restarted: 0, errors: 0,
@@ -79,14 +76,14 @@ function createAppsRegistryOps(deps) {
       job.taskId = task.id;
     }
     (async () => {
-      // 0) 清除该 app 的 npx 缓存（强制重新拉取最新版）
+      // 先清该 app 的 npx 缓存（强制重新拉取最新版）
       try { invalidatePkgCache(a.pkg); } catch {}
       const setStep = (i, state, reason) => {
         job.steps[i].state = state; job.steps[i].ts = Date.now();
         if (reason) job.steps[i].reason = reason;
         if (task) { try { tasks.stepState(task.id, i, state); } catch {} }
       };
-      // 按 keyId 重取活实例；取不到即如实失败（不静默空转）。
+      // 按 keyId 重取活实例；取不到即如实失败。
       const resolveStep = (i) => {
         const { providerId, keyId } = insts[i];
         const p = (getProviders() || []).find((x) => x.id === providerId);
@@ -147,10 +144,8 @@ function createAppsRegistryOps(deps) {
   function proxyUpdateStatus(appId) {
     const t = tasks ? tasks.list('proxy-app').find((x) => x.target.id === appId) : null;
     if (t) {
-      // 此 taskState->job.state 映射与 instance/model.js 的 taskStateToView、plugin/model.js 的
-      // taskStateToJobState **三份有意平行**（各有各的状态词表：本处是代理应用更新进度，另两处分别是
-      // 实例视图态 / 插件 job 态）。跨域抽公共纯函数需三处同批改动并回归各自门禁，故此处不抽；
-      // 任一状态词表变更时，三处一并核对。
+      // 本映射与 instance/model.js 的 taskStateToView、plugin/model.js 的 taskStateToJobState
+      // 有意保持三份平行（各自状态词表不同），不抽跨域公共函数；任一状态词表变更时三处一并核对。
       return {
         state: (t.state === 'succeeded' || t.state === 'skipped') ? 'done' : (t.state === 'failed' || t.state === 'canceled') ? 'failed' : 'running',
         restarted: (t.steps.filter((s) => s.state === 'done')).length,

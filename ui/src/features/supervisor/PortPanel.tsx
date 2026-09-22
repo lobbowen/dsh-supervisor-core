@@ -1,7 +1,5 @@
 /**
- * 运行状态面板（Overview 右侧栏）：
- * 服务端口运行状态 —— 由 /ports 端口注册表反映各服务（DSH 主实例/管家 API/沙箱实例/
- *       路由守护/局域网守护/登录回调）真实监听状态。
+ * 运行状态面板（Overview 右侧栏）：/ports 端口注册表反映各服务真实监听状态。
  * 归属语义着色：system(核心服务) / inst(实例) / managed(守护进程) / oauth(登录回调)。
  */
 import { useMemo } from "react";
@@ -55,15 +53,14 @@ function resolveOwner(r: PortRecord, providers: RouterProvider[]): string {
   return r.role;
 }
 export function PortPanel({ providers = [] }: { providers?: RouterProvider[] }) {
-  // R4 修复：/ports 已并入全局 2s 统一心跳快照（polling.ts syncAll），
-  // 本组件直接消费 snap.ports —— 移除独立 5s setInterval（消除双数据源节奏重叠与写操作后的数据错位）。
+  // /ports 已并入全局 2s 快照（polling.ts syncAll）：直接消费 snap.ports，无独立轮询
   const { snap } = useSupervisorData();
   const raw = snap.ports?.records ?? null;
   const records = useMemo<PortRecord[] | null>(() => {
     if (!raw) return null;
-    // 过滤：supervisor-api 旧端口 3100 已废弃（当前 API 端口 36360 为新注册项）-> 不重复展示
+    // 过滤：已废弃旧端口 3100/3101（当前 API 端口 36360 为新注册项）-> 不重复展示
     const vis = raw.filter((r) => !(r.role === "supervisor-api" && (r.port === 3100 || r.port === 3101)));
-    // 排序：激活(监听中)在上，停用(未监听)在下；组内按端口号升序
+    // 排序：激活(监听中)在上，停用在下；组内按端口号升序
     return [...vis].sort((a, b) => {
       if (Boolean(a.active) !== Boolean(b.active)) return a.active ? -1 : 1;
       return a.port - b.port;

@@ -1,9 +1,7 @@
 'use strict';
 
-// 插件域目标解析（只读 fs）。
-// 把前端 target 串（native / all / id:<实例> / 实例 id）解析成可执行目标描述；
-// 全部显式传 ctx（配置 + instances 句柄），不读 this；仅 fs.existsSync 只读探测。
-// pathExtra 把 ~/.npm-global/bin 追加进 PATH。
+// 插件域目标解析（只读 fs）：把前端 target 串（native / all / id:<实例> / 实例 id）解析成可执行
+// 目标描述。全部显式传 ctx（配置 + instances 句柄），不读 this；仅 fs.existsSync 只读探测。
 
 const fs = require('node:fs');
 const path = require('node:path');

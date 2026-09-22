@@ -2,13 +2,10 @@
 
 const portsShared = require('../../platform/service/ports').shared;
 
-// app/assembly/api-rebind.js —— HTTP 监听主机重绑（面板切换「局域网访问」）。
-//
-// 本逻辑创建 HTTP 服务，若直接 require api 则构成 app -> api 越界（契约 DS-3），
-// 故 createServer 作为注入依赖（由 root 在装配时传入），app 只依赖抽象，不依赖 api 模块。
+// app/assembly/api-rebind.js —— HTTP 监听的启动与主机重绑（面板切换「局域网访问」）。
+// createServer 由 root 在装配时注入：本层若直接 require api 就构成 app -> api 越界（契约 DS-3）。
 
 function _rebindApiHost(host, createServer) {
-    // createServer 由 root 注入（见文件头说明：避免 app -> api 越界，契约 DS-3）。
     const old = host.api;
     if (old) {
       try { old.close(); } catch {}
@@ -24,11 +21,9 @@ function _rebindApiHost(host, createServer) {
       }
       const server = createServer(host);
       server.on('error', (err) => {
-        // C-9 / B-22c：监听错误按「是否可由重试消解」分类，绝不停在静默分支——
-        // API 静默永久下线比端口冲突更糟（面板失联且无事件可查）。
-        //   - EADDRINUSE / EADDRNOTAVAIL：瞬时（旧连接未散 / 网卡地址未就绪）-> 同一快慢重试环；
-        //   - EACCES：绑定特权端口(<1024)等配置性错误，重试不可消解 -> 一次性 api_offline 事件，
-        //     不空转重试（host.api 保持 null，/status 与事件流如实呈现下线）。
+        // 监听错误按「能否由重试消解」分类，不许有静默分支（API 永久下线比端口冲突更糟）：
+        //   EADDRINUSE/EADDRNOTAVAIL 属瞬时，进快慢重试环；EACCES 重试不可消解，只发一次
+        //   api_offline 且不空转，host.api 保持 null 如实呈现下线。
         const transient = err && (err.code === 'EADDRINUSE' || err.code === 'EADDRNOTAVAIL');
         if (transient) {
           // 端口仍被旧连接占用：短暂等待后重试；10 次后降级为 30s 慢重试（持续自愈，绝不永久下线）
@@ -59,7 +54,7 @@ function _rebindApiHost(host, createServer) {
       server.listen(host.config.apiPort, host.config.apiHost, () => {
         bind._tries = 0;
         host.api = server;
-        // 重绑成功后同样登记**实际端口**（与 start() 的 listen 一致；D3）。
+        // 重绑成功后同样登记实际端口（D3）。
         try { portsShared.register('supervisor-api', host.config.apiPort); } catch (e) { host.logger.warn('ports.register(supervisor-api) 失败: ' + ((e && e.message) || e)); }
         host.events.append('api_listening', { host: host.config.apiHost, port: host.config.apiPort });
         host.logger.info('api listening on ' + host.config.apiHost + ':' + host.config.apiPort);
@@ -70,7 +65,7 @@ function _rebindApiHost(host, createServer) {
     bind();
 }
 
-  /** 启动 HTTP API 服务（端口避让）。createServer 同为注入（见文件头 DS-3 说明）。 */
+  /** 启动 HTTP API 服务（端口被占时向后避让，最多 maxSkew 次）。 */
 function startApi(host, createServer) {
   const maxSkew = 50;
   const attempt = (port, skew) => {
@@ -89,13 +84,12 @@ function startApi(host, createServer) {
       host.api = server;
       const prev = host.config.apiPort;
       if (port !== prev) {
-        // 释放旧端口登记：否则 ports.json 会留两条 supervisor-api，
-        //   而壳的就绪判据取首条，可能永远等「已废弃的旧端口」。
+        // 释放旧端口登记：ports.json 留两条 supervisor-api 时壳取首条，会永远等已废弃的旧端口。
         try { portsShared.release(prev, 'system:supervisor-api'); } catch {}
         host.config.apiPort = port;
         if (host.configPath) host.persistConfigPatch({ apiPort: port });
       }
-      // 登记**实际绑定端口**（KERNEL-DAEMON-CONTRACT D3）：壳的唯一就绪判据。
+      // 登记实际绑定端口：KERNEL-DAEMON-CONTRACT D3，壳的唯一就绪判据。
       try { portsShared.register('supervisor-api', port); } catch (e) { host.logger.warn('ports.register(actual) 失败: ' + e.message); }
       host.events.append('api_listening', { host: host.config.apiHost, port });
       host.logger.info('api listening on ' + host.config.apiHost + ':' + port);

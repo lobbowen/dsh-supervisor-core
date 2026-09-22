@@ -1,7 +1,7 @@
 'use strict';
 
-// 额度判定（B3）+ 响应分类（B6）：纯函数，零 IO / 零 require，覆盖窗口/credits 谓词、重置
-// 时间归一、上游限制词表分类与配额总览。供应商可覆写 provider.classifyResponse 使用专属错误码，本文件只提供默认实现。
+// 额度判定 + 响应分类：纯函数，零 IO / 零 require，覆盖窗口/credits 谓词、重置时间归一、
+// 上游限制词表分类与配额总览。供应商可覆写 provider.classifyResponse 使用专属错误码，本文件只提供默认实现。
 
 /** 上游「限额/封禁」默认词表：只表达「这类词属于时间窗额度 / 属于预付余额」。
  *  识别不了 = 宁可不切，也不误判（供应商可覆写 classifyResponse 用专属语义）。 */
@@ -61,14 +61,13 @@ function bodyResetMs(text) {
   return 0;
 }
 
-/** 归一化窗口重置时间为 epoch 毫秒（或 null）：兼容 ISO 字符串、epoch 毫秒/秒数字、数字字符串。
- *  历史缺陷：Number(ISO)=NaN 导致 30d 兜底。 */
+/** 归一化窗口重置时间为 epoch 毫秒（或 null）：兼容 ISO 字符串、epoch 毫秒/秒数字、数字字符串；
+ *  epoch 秒/毫秒以 < 1e12 判秒消歧。 */
 function normalizeResetTs(v) {
   if (v === undefined || v === null || v === '') return null;
   if (typeof v === 'number' || /^\d{1,13}$/.test(String(v).trim())) {
     let n = typeof v === 'number' ? v : Number(String(v).trim());
     if (!Number.isFinite(n)) return null;
-    // epoch 秒/毫秒消歧：< 1e12 视为秒
     if (n < 1e12) n *= 1000;
     return n;
   }
@@ -130,7 +129,7 @@ function windowFull(w) {
   return !!w && (w.status === 'rate-limited' || (Number.isFinite(Number(w.percent)) && Number(w.percent) >= 100));
 }
 
-/** 唯一「时间窗额度用尽」判定（M4）：挑号/状态机/定时探测共用。 */
+/** 唯一「时间窗额度用尽」判定：挑号/状态机/定时探测共用。 */
 function windowExhausted(acc) {
   const sum = accountQuotaSummary(acc);
   return [sum.rolling, sum.weekly, sum.monthly].some((w) => w && (w.status === 'rate-limited' || (w.percent !== null && w.percent >= 100)));

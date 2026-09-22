@@ -9,9 +9,8 @@ const logcore = require('../../platform/service/log/logcore');
 const { createCtlServer } = require('../../platform/ctl/server');
 
 // router-daemon —— 智能路由独立进程（L3 进程解耦）。仅装配 + 启动，零业务判断。
-// 运行：node src/domains/router/daemon.js [-c <configPath>]
-// 配置/ctl 白名单见 ./config；端口迁移/重建见 ./ports-bootstrap（域构造前显式调用）。
-// 共享文件：config.json（读）、providers.json / router-usage-totals.json / ports-router.json（独占写）。
+// 运行：node src/domains/router/daemon.js [-c <configPath>]。ctl 白名单见 ./config。
+// 共享文件写权独占：providers.json / router-usage-totals.json / ports-router.json（config.json 只读）。
 
 const path = require('node:path');
 const { DEFAULT_CTL_PORT, ROUTER_CTL_METHODS, loadConfig } = require('./config');
@@ -21,7 +20,7 @@ function main() {
 
   const config = loadConfig();
   const swDir = config.stateFile ? path.dirname(path.resolve(config.stateFile)) : stateRoot.supervisorDir();
-  // 本进程自己声明日志汇聚源（域名词留在域内，不动 app 层，避免 domains 到 app 的上行依赖）。
+  // 本进程自行声明日志汇聚源：域名词留在域内，避免 domains -> app 上行依赖。
   hub.registerSource("router-daemon", { key: "router" });
   const core = logcore.init({
     process: 'router-daemon',
@@ -41,8 +40,8 @@ function main() {
   });
   const tasks = new TaskRegistry({ stateDir: swDir, logger, events });
 
-  // 端口迁移 + 按 providers 重建必须在 RouterService 构造之前（见 ports-bootstrap 说明）：
-  //   构造后执行会以内存空表覆盖历史绑定（真实数据丢失教训）。
+  // 端口迁移 + 按 providers 重建必须在 RouterService 构造之前（ports-bootstrap）：
+  // 构造后执行会以内存空表覆盖历史绑定，真实数据丢失。
   ensurePorts({ swDir, logger });
 
   const router = new RouterService({
@@ -56,8 +55,7 @@ function main() {
     tasks,
   });
 
-  // 守卫控制通道（L3 监督模式状态一致性）：通用 dispatcher 见 platform/ctl/server.js，
-  // 白名单按域注入（PG-5），内部方法永不可达。
+  // 守卫控制通道：白名单按域注入（PG-5），内部方法永不可达；通用 dispatcher 见 platform/ctl/server.js。
   const ctlPort = Number(config.routerCtlPort) || DEFAULT_CTL_PORT;
   const ctl = createCtlServer({ target: router, allowMethods: ROUTER_CTL_METHODS, logger, events });
   ctl.listen(ctlPort, '127.0.0.1', () => {
@@ -81,7 +79,7 @@ function main() {
     process.exit(1);
   });
 
-  // 优雅退出：SIGTERM 时停 router 并确认实例子进程已死再退出（根治停服孤儿化）。
+  // 优雅退出：SIGTERM 时停 router 并确认实例子进程已死再退出，防停服遗留孤儿进程。
   let shuttingDown = false;
   const shutdown = async () => {
     if (shuttingDown) return;
@@ -101,6 +99,5 @@ function main() {
   });
 }
 
-// 不要裸调用 main()：此前裸调导致 require('.../router/daemon')（测试/工具/静态分析）
-// 会立即启动真实 daemon（危险隐式副作用）。标准入口守卫：直接运行才启动，被 require 时纯导出。
+// 入口守卫：直接运行才启动。裸调 main() 会让 require 本文件（测试/工具/静态分析）立即拉起真实 daemon。
 if (require.main === module) main();

@@ -1,15 +1,8 @@
 'use strict';
 
-// process-pool 能力面（mixin）：实例进程治理的契约方法归能力方实现，而非基座抛错占位。
-// 判据纪律：调用方以 supports(cap) 守卫，不按 kind 字面量分支——「有没有实例」是能力事实，
-// 「是不是反代」是身份标签，二者今天重合、明天（binary 分发/新协议族）不一定。
-// POOL_CAPS：instanceLifecycle=池存在本身；reconcile=对账入口；processPool=伞能力
-// （_stopping 纪律、端口恢复等整组守卫）；gracefulStop=waitAllStopped 在途收敛。
-// 本文件方法自 proxy.js 搬移（方法体逐字保留）；池机制的 ctor 接线（重启编排/删账号钩子）
-// 一并归入 mixin——消费方 ctor 不再跨文件 this 调池方法，this 图保持单向（DG-4 语义）。
-// 生命周期引擎（PROXY-LIFECYCLE-STANDARD L-A）：进程动作唯一发出方。ensureServable 是
-// 请求路径/显式切换的统一可服务化门面，reclaimAccount 是等待区回收唯一入口，
-// _onStatusTransition 是状态迁移事件表的进程侧接线——外部只经门面驱动进程。
+// process-pool 能力面（mixin）：实例进程治理契约方法在此实现，生命周期引擎（L-A，进程动作唯一发出方）外部只经
+// ensureServable / reclaimAccount / _onStatusTransition 门面驱动；调用方以 supports(cap) 守卫不按 kind 分支，ctor 接线在此装配（DG-4：this 图单向）。
+// POOL_CAPS：instanceLifecycle=池存在；reconcile=对账；processPool=伞能力（_stopping 纪律/端口恢复守卫）；gracefulStop=在途收敛。
 
 const life = require('./instance-lifecycle');
 const restart = require('./restart');
@@ -32,8 +25,8 @@ function withProcessPool(Base) {
         logger: this.logger,
         isStopping: () => this._stopping,
       });
-      // 删账号钩子（打破 base 到池的 this.stopInstance 反向边）：force 回收 + 释放端口 + 剪除
-      // 实例记录（删除是永久摘除，在途丢弃属预期语义；记录不留场，杜绝 reconcile 'orphan' 名义补停）。
+      // 删账号钩子：force 回收 + 释放端口 + 剪除实例记录。删除是永久摘除（在途丢弃属预期），
+      // 记录不留场，杜绝 reconcile 以 'orphan' 名义补停，也打破 base 到池的 this.stopInstance 反向边。
       this._hooks = this._hooks || {};
       this._hooks.onDiscardAccount = (acc) => {
         if (acc.instance) { try { this.stopInstance(acc.instance, true); } catch {} }
@@ -45,12 +38,11 @@ function withProcessPool(Base) {
       };
     }
 
-    /** 能力声明 = 基座能力与 process-pool 能力的并集。 */
     supports(cap) {
       return POOL_CAPS.includes(cap) || super.supports(cap);
     }
 
-    /** 使用状态在基座（in-use/idle）上派生 warming：实例在场是池能力，覆写归 mixin。 */
+    /** 实例在场是池能力：在基座使用状态（in-use/idle）上覆写派生 warming。 */
     usageOf(acc) {
       const r = super.usageOf(acc);
       if (r !== 'idle') return r;
@@ -60,7 +52,7 @@ function withProcessPool(Base) {
 
     accountOf(inst) { return this.accounts.find((a) => a.key === inst.key) || null; }
 
-    /** 账号 -> 实例映射（一账号一实例）：usageOf 派生 warming 的依据。 */
+    /** 账号 -> 实例映射（一账号一实例硬规则）。 */
     instanceOf(acc) {
       if (!acc) return null;
       return (this.instances || []).find((i) => i.keyId === acc.keyId) || acc.instance || null;
@@ -88,19 +80,17 @@ function withProcessPool(Base) {
       return inst.startingPromise;
     }
 
-    /** 启动实例底层治理（spawn/探活在 probe.js）。方法在能力面上保持原型可覆写，
-     *  测试以 _doStart 打桩替换 spawn；留在 mixin 侧是为了 this 图单向（mixin 不回调消费方方法）。 */
+    /** 启动实例底层治理（spawn/探活在 probe.js）。测试以 _doStart 打桩替换 spawn；留在 mixin 侧是为 this 图单向。 */
     async _doStart(inst) { return probe.spawnInstance(this, inst); }
 
-    /** 请求成功后清零失败计数（时机是熔断可达的全部要害）。不触碰健康监测的 _monitorFails。 */
+    /** 请求级熔断计数清零；独立于健康监测的 _monitorFails。 */
     markRequestOk(inst) {
       if (!inst) return;
       inst._unhealthyCount = 0;
     }
 
-    /** 统一可服务化门面（LC 核心-1：请求路径/显式切换经此驱动进程，不裸调 start/kill）：
-     *  幂等启动（startingPromise 去重）+ 预算内同步等待。opts.budgetMs=null 表示等满探活周期
-     *  （显式切换的启动预算，裁决 1：超时诚实报错，绝不静默换号）。 */
+    /** 统一可服务化门面（LC 核心-1）：幂等启动 + 预算内同步等待，外部不裸调 start/kill。
+     *  budgetMs=null 表示等满探活周期（显式切换预算）；超时诚实报错，绝不静默换号。 */
     async ensureServable(acc, opts) {
       const inst = this.instanceOf(acc);
       if (!inst) return { ok: false, error: '实例不存在' };
@@ -117,11 +107,11 @@ function withProcessPool(Base) {
     }
 
     /** 等待区回收唯一入口（LC 核心-3）：force 终止 + 释放端口，账号进程层面同一轮零存在。
-     *  丢弃在途属预期语义——发不出请求的账号不该继续占进程（裁决：冻结零宽限）。幂等。 */
+     *  冻结零宽限：发不出请求的账号不该继续占进程；丢弃在途属预期语义。幂等。 */
     reclaimAccount(acc) { return life.reclaimAccount(this, acc); }
 
-    /** 状态迁移事件表接线（freeze.js setStatus 回调）：进入等待区（frozen/banned/discarded）
-     *  立即回收；恢复回可用池（status 回到 ready）立即重算期望集补缺口（LC 核心-5，不等周期对账的运气）。 */
+    /** 状态迁移事件表的进程侧接线（freeze.js setStatus 调用）：进等待区立即回收；
+     *  回 ready 立即重算期望集补缺口（LC 核心-5），不等周期对账。 */
     _onStatusTransition(acc, prev, status) {
       if (status === 'frozen' || status === 'banned' || status === 'discarded') {
         try { this.reclaimAccount(acc); } catch {}
@@ -130,9 +120,8 @@ function withProcessPool(Base) {
       }
     }
 
-    /** 实例停止（幂等）：在途/在用 -> 标记待停；force 跳过仲裁（委托 instance-lifecycle.js）。 */
+    /** 实例停止仲裁（在途/在用延后、force 跳过的语义在 instance-lifecycle.js）。 */
     stopInstance(inst, force) { return life.arbitrateStop(this, inst, force); }
-    /** 请求结束补刀（委托 instance-lifecycle.js）。 */
     _retryPendingStop(acc) { return life.retryPendingStop(this, acc); }
     async _waitHealthy(inst, tries) { return life.waitHealthy(this, inst, tries); }
 
@@ -141,14 +130,14 @@ function withProcessPool(Base) {
     restartInstance(inst, reason) {
       if (!inst || this._stopping) return;
       if (!inst.pid && !inst.port) return;
-      if (Date.now() < (inst._restartAt || 0)) return; // 退避中
+      if (Date.now() < (inst._restartAt || 0)) return;
       const acc = this.accountOf(inst);
       if (acc && (acc.inflight || 0) > 0) {
         inst._restartPending = reason || 'deferred';
         if (this.logger && this.logger.info) this.logger.info('[proxy-instance] 在途请求中，重启延后 key=' + inst.maskedKey + ' reason=' + inst._restartPending);
         return;
       }
-      inst._restartAt = Date.now() + 120000; // 仅在真正执行时置退避
+      inst._restartAt = Date.now() + 120000;
       inst._restartPending = null;
       if (this.logger && this.logger.warn) this.logger.warn('[proxy-instance] 实例重启 key=' + inst.maskedKey + ' port=' + inst.port + ' reason=' + reason);
       const hadPid = !!inst.pid;
@@ -182,10 +171,10 @@ function withProcessPool(Base) {
       } catch {}
     }
 
-    /** 兼容旧名（保持对外调用不破）。 */
+    /** 兼容旧名别名。 */
     markInstanceNetFail(instOrAcc) { this.markInstanceProblem(instOrAcc, 'net-error'); }
 
-    /** 实例空闲后补做「被延后的重启」（_restartPending 的消费点，不再只写不读）。 */
+    /** 实例空闲后补做被延后的重启（_restartPending 的唯一消费点）。 */
     flushRestartPending(inst) {
       if (!inst || !inst._restartPending) return;
       const acc = this.accountOf(inst);

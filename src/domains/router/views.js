@@ -1,10 +1,9 @@
 'use strict';
 
-// Q13 状态投影（只读）：把内部状态投影为对外视图。
+// 状态投影（只读）：把内部状态投影为对外视图。
 // 纯聚合——入参显式（state + deps），零 this 跨文件、零 IO（端口 list/探活经 deps 注入）。
-// 契约导出：{ status, listProviders, domainSummary }（另含 portsView）。
 
-/** 服务状态总览（含用量摘要）。deps={ getUsage }。 */
+/** 服务状态总览（含用量摘要）。 */
 function status(state, deps) {
   let keysTotal = 0;
   const provs = (state.providers || []).map((p) => {
@@ -17,7 +16,7 @@ function status(state, deps) {
     };
   });
   return {
-    running: state.running === true, // 中转服务逻辑开关（无公用入口；启用即提供已激活供应商的独立端点）
+    running: state.running === true, // 服务运行标志（由 RouterService start/stop 翻转，不在 ctl 方法白名单内）
     activatedProviders: (state.providers || []).filter((x) => x.activated).length, // 已激活供应商数（独立端点在线数）
     providers: provs,
     keysTotal,
@@ -26,8 +25,7 @@ function status(state, deps) {
 }
 
 /** 域摘要（router-daemon 黑盒经 ctl 向守卫目录呈报的紧凑摘要，目录只存引用）。
- *  内容：运行态 / providers 数 / 已激活独立端点数 / 账号数 / 反代实例数 / 自治资源端口记录数。
- *  不在摘要内暴露账号明细/令牌/额度。deps={ ports }。 */
+ *  不在摘要内暴露账号明细/令牌/额度。 */
 function domainSummary(state, deps) {
   let providers = 0;
   let activatedProviders = 0;
@@ -49,16 +47,14 @@ function domainSummary(state, deps) {
   };
 }
 
-/** 资源端口视图（router 自治资源 proxyInstance+providerApi，按 owner 前缀筛；附 TCP active 探测）。
- *  deps={ ports, probe }。 */
+/** 资源端口视图（router 自治资源 proxyInstance+providerApi，按 owner 前缀筛；附 TCP active 探测）。 */
 async function portsView(state, deps) {
   const recs = deps.ports.list().filter((r) => String(r.owner || '').startsWith('proxy:') || String(r.owner || '').startsWith('providerApi:'));
   const active = await Promise.all(recs.map((r) => deps.probe.portListening('127.0.0.1', r.port, 300)));
   return { records: recs.map((r, i) => ({ port: r.port, role: r.role, owner: r.owner, createdAt: r.createdAt, active: !!active[i] })) };
 }
 
-/** 供应商列表视图（账号/实例/额度/用量/锁定全量投影）。
- *  deps={ getUsage, quotaOverallStatus, semverCompare }。 */
+/** 供应商列表视图（账号/实例/额度/用量/锁定全量投影）。 */
 function listProviders(state, deps) {
   // 配额总览标签单源：与 proxy 检测端同一 quotaOverallStatus
   const byKey = deps.getUsage().byKey || {};
@@ -74,11 +70,11 @@ function listProviders(state, deps) {
       return {
         keyId: a.keyId,
         maskedKey: a.maskedKey,
-        status: a.status,                       // 单事实源
-        validity: a.status,                     // 兼容字段（=status，避免旧前端读 undefined）
+        status: a.status,
+        validity: a.status,                      // 兼容字段（=status，避免旧前端读 undefined）
         usage: usageOf,                          // 纯派生（activeAccount/实例实况）
         quota: a.quota || null,
-        limit: (p._previewLimit ? p._previewLimit(a) : a.limit) || null, // limitKind+recovery（#20 纯只读预览，无写副作用）
+        limit: (p._previewLimit ? p._previewLimit(a) : a.limit) || null, // limitKind+recovery（只读预览，无写副作用）
         nextResetAt: a.nextResetAt || null,
         registeredAt: a.registeredAt,
         detectError: a.detectError || null,

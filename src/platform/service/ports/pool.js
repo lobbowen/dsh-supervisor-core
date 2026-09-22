@@ -1,9 +1,7 @@
 'use strict';
 
-// 系统级统一端口注册表（PortRegistry）。
-// 全系统所有端口登记为唯一来源的端口记录 { port, role, owner, createdAt }，持久化到 ports.json（0600）：
-// 守卫重启后绑定全量恢复，不丢、不重复分配；owner 归属，删除对象即释放端口。
-// 职责分层：纯算法 core.js / 持久化 store.js / 迁移 migrate.js / 探测 probe.js / 分配 alloc.js。
+// 系统级统一端口注册表（PortRegistry）：全部端口登记为唯一来源的记录 { port, role, owner, createdAt }，
+// 持久化到 ports.json（0600），守卫重启后绑定全量恢复、不重复分配；owner 归属，删除对象即释放端口。
 
 const path = require('node:path');
 const stateRoot = require('../../service/state-root');
@@ -17,7 +15,7 @@ class PortRegistry {
   /** @param {object} [opts] { file, pools } — file 默认 <状态根>/supervisor/ports.json。 */
   constructor(opts) {
     this._file = (opts && opts.file) || path.join(stateRoot.supervisorDir(), 'ports.json');
-    this._records = new Map();   // port -> { port, role, owner, createdAt }
+    this._records = new Map();
     this._allocLock = false;     // 分配互斥：探测(await)窗口内并发调用必须串行
     this._pools = Object.assign({}, core.DEFAULT_POOLS, (opts && opts.pools) || {});
     this._alloc = new PortAllocator(this);
@@ -30,7 +28,7 @@ class PortRegistry {
     return this._pools;
   }
 
-  /** 实例侧注册接口（委托模块级函数；段名/池名同样是域知识）。 */
+  /** 实例侧注册接口（委托 core 模块级函数）；段名/池名是域知识，不在本平台模块硬编码（DS-G4）。 */
   registerSegment(role, pool) { core.registerSegment(role, pool); return this; }
 
   /** 逻辑段到池定义（未注册段名回退 managed 池）。 */
@@ -104,8 +102,7 @@ class PortRegistry {
     if (removed) this._save();
   }
 
-  /** 释放端口：不传 ownerId 按端口号；传了则仅当登记 owner 匹配才释放。
-   *  注意空值检查必须在 owner 比较之前（旧实现顺序反了会抛 TypeError）。
+  /** 释放端口：不传 ownerId 按端口号；传了则仅当登记 owner 匹配才释放。空值检查必须先于 owner 比较。
    *  @returns {boolean} 是否真的释放了一条记录 */
   release(port, ownerId) {
     const p = Number(port);
@@ -133,8 +130,8 @@ class PortRegistry {
     return null;
   }
 
-  /** 端口是否被占用：已登记 交 本机实际监听；excludeOwner 仅豁免 registry 登记。
-   *  监听探测为**双栈回环**（127.0.0.1 并::1），不再漏 IPv6-only 监听者。 */
+  /** 端口是否被占用：已登记 或 本机实际监听；excludeOwner 仅豁免 registry 登记。
+   *  监听探测为双栈回环（127.0.0.1 并 ::1），不漏 IPv6-only 监听者。 */
   async isTaken(port, excludeOwner) {
     const rec = this._records.get(Number(port));
     if (rec && (!excludeOwner || rec.owner !== excludeOwner)) return true;

@@ -1,12 +1,9 @@
 'use strict';
 
-// 平台化「本机局域网可访问地址」枚举（修平台泄漏：原实现在业务层直调 Linux 专有的 ip，
-// 在 mac/win 上静默返回空且不报错）。
-// 平台实现：linux 用 ip route / ip -o addr；darwin 用 route -n get default + ifconfig；
-// win32 用 PowerShell Get-NetRoute / Get-NetIPAddress。
-// 统一语义：返回局域网内设备真正能访问的 IPv4 —— 取默认路由的真实出口网卡（优先），
-// 过滤虚拟网桥（virbr/veth/docker/vmnet/br-/lo）与回环/链路本地，同网卡静态地址优先。
-// 全部经 platform/util/exec（默认 15s 硬超时 + SIGKILL）。
+// 本机局域网可访问地址枚举：三端各用自己的命令（linux: ip route / ip -o addr；darwin: route -n get
+// default + ifconfig；win32: PowerShell Get-NetRoute / Get-NetIPAddress），不得用单平台专有命令糊弄其余两端。
+// 统一语义：只报局域网内真正可达的 IPv4 —— 默认路由的真实出口网卡优先，过滤虚拟网卡（VIRTUAL_IFACE）
+// 与回环/链路本地，同网卡静态地址优先。外部命令一律经 platform/util/exec（15s 硬超时 + SIGKILL）。
 
 const ex = require('../util/exec');
 
@@ -95,12 +92,10 @@ function win32() {
 
 const IMPL = { linux, darwin, win32 };
 
-/**
- * @returns {string[]} 已去重的地址列表（**任何平台都不抛异常**；失败返回空数组）
- */
+/** 已去重的地址列表；任何平台都不抛异常，取不到就返回空数组（调用方展示「无可用地址」）。 */
 function lanAddresses() {
   const fn = IMPL[PLATFORM];
-  if (!fn) return []; // 未知平台：明确返回空（调用方展示「无可用地址」）
+  if (!fn) return []; // 未知平台
   try {
     return [...new Set(fn())];
   } catch {

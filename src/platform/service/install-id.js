@@ -1,9 +1,8 @@
 'use strict';
 
-// 安装标识（installId）：灰度发布需要稳定、唯一、我方生成的机器标识（RELEASE-CHANNEL-CONTRACT）。
-// 不用 IP（会变、NAT 共享）、主机名（可改/重名）、MAC（多网卡/可伪造），而自己生成 UUID 并持久化。
-// 关键设计：首次生成此后只读（UUID 漂移会让已在灰度名单的机器突然失配）；失败绝不静默新建，
-// 读/写失败返回 null 并记录原因；落盘 0600（标识即身份，写后 chmod 收口）；DSH_CANARY_ID 可显式覆盖。
+// 安装标识（RELEASE-CHANNEL-CONTRACT）：自行生成 UUID 并持久化，不用 IP/主机名/MAC（会变、共享、可伪造）。
+// 首次生成此后只读：UUID 漂移会让已入灰度名单的机器突然失配；读/写失败一律返回 null 并记录原因，绝不静默新建或覆盖。
+// 落盘 0600（标识即身份）；DSH_CANARY_ID 可显式覆盖。
 
 const fs = require('node:fs');
 const path = require('node:path');
@@ -28,13 +27,11 @@ function installIdPath() {
   return path.join(supervisorDir(), FILE_NAME);
 }
 
-/** 读取本机安装标识。
- *  source 为 'env'/'file'/'created'（诊断用）；null 表示无法确定（读/写失败），
- *  调用方必须按无标识处理并如实告知，绝不随便造一个（失败绝不静默新建）。 */
+/** 读取本机安装标识；source 为 'env'/'file'/'created'（诊断用）。
+ *  null 表示无法确定：调用方必须按无标识处理并如实告知，绝不随便造一个。 */
 function readInstallId() {
   if (_cached) return _cached;
 
-  // 显式覆盖优先（默认路径仍是持久文件）。
   const env = process.env[ENV_OVERRIDE];
   if (typeof env === 'string' && env.trim()) {
     _cached = { id: env.trim(), source: 'env' };
@@ -43,7 +40,6 @@ function readInstallId() {
 
   const fp = installIdPath();
 
-  // 既有文件只读返回，绝不重写（重写即 UUID 漂移）。
   try {
     const raw = fs.readFileSync(fp, 'utf8');
     const id = String(raw).split(/\r?\n/)[0].trim();
@@ -51,19 +47,18 @@ function readInstallId() {
       _cached = { id: id.toLowerCase(), source: 'file' };
       return _cached;
     }
-    // 文件存在但内容非法（被手工改坏/写了一半）：不覆盖，如实报错。覆盖会改变身份，
-    // 保持原样让运维看见并处置才是安全方向。
+    // 内容非法（被改坏/写了一半）时不覆盖：覆盖即改变身份，保持原样让运维可见并人工处置才是安全方向。
     console.warn('[install-id] ' + fp + ' 内容不是合法 UUID，拒绝覆盖（请人工处置）：' + JSON.stringify(id.slice(0, 40)));
     return null;
   } catch (e) {
     if (e && e.code !== 'ENOENT') {
-      // 存在但读不了（权限等）：同样是"无法确定"，不新建。
+      // 存在但读不了（权限等）同样属于「无法确定」，不新建。
       console.warn('[install-id] 读取失败（不新建，避免标识漂移）：' + e.message);
       return null;
     }
   }
 
-  // 确实不存在则首次生成并落盘（原子写 + 0600）。
+  // 确实不存在（ENOENT）才首次生成并落盘。
   try {
     const dir = path.dirname(fp);
     fs.mkdirSync(dir, { recursive: true });
@@ -72,8 +67,7 @@ function readInstallId() {
     _cached = { id: id.toLowerCase(), source: 'created' };
     return _cached;
   } catch (e) {
-    // 写失败（磁盘满/只读）：不返回内存里的临时 UUID，否则本次运行会把自己当成名单里的机器，
-    // 但重启后又变，行为不可复现。
+    // 写失败不返回内存临时 UUID：本次运行会自认为在名单内、重启后又变，行为不可复现。
     console.warn('[install-id] 生成/落盘失败（本次无标识）：' + e.message);
     return null;
   }

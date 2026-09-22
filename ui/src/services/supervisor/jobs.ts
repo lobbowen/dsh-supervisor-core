@@ -1,11 +1,6 @@
 /**
- * 任务（job）进度轮询——统一「提交 -> 轮询 -> 终态」闭环，消除黑盒等待。
- *
- * 背景（功能断点审计 A2/A3）：后端插件安装/更新/卸载与反代更新均实现了 job 模型
- * （返回 jobId，并提供 status 端点派生 running/done/failed），但前端提交后不轮询，
- * 用户只看到「任务已提交」而无进度与成败反馈。本模块统一补上该闭环。
- *
- * 设计：纯函数式轮询器（不依赖 React），便于在 action 内 await，也便于单测。
+ * 任务（job）进度轮询：提交返回 jobId，status 端点派生 running/done/failed，前端轮询到终态。
+ * 不依赖 React，可在 action 内 await。
  */
 
 export type JobState = "running" | "done" | "failed";

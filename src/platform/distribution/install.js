@@ -15,10 +15,9 @@ const registry = require('./registry');
 const policies = require('./policies');
 const input = require('../util/input');
 
-/** 字符集白名单取自 E-4 单源（platform/util/input）：pkg/version 会流入 argv 与
- *  commandTemplate 的 {pkg}/{version} 替换 —— 不进白名单就是注入面。此处保留**同名导出**
- *  （行为级门禁 npm-resolution 直接 inst.PKG_NAME_RE 判定），但尺子只有一把。
- *  BAD_ARGV_CHAR_RE 的 win32 盘符例外（WIN_DRIVE_ABS_RE）同源于 input，见其注释。 */
+/** 字符集白名单尺子取自 platform/util/input 单源，此处仅同名转发导出
+ *  （npm-resolution 门禁直接断言 inst.PKG_NAME_RE，尺子只有一把）：
+ *  pkg/version 会流入 argv 与 commandTemplate 的 {pkg}/{version} 替换，不进白名单就是注入面。 */
 const PKG_NAME_RE = input.PKG_NAME_RE;
 const BAD_ARGV_CHAR_RE = input.ARGV_UNSAFE_RE;
 const WIN_DRIVE_ABS_RE = input.WIN_ABS_PATH_RE;
@@ -37,14 +36,13 @@ async function fetchNpmLatest(state, pkg, opts) {
     origin = await registry.selectRegistry(state, false);
   }
   if (!origin) return null; // 全部镜像不可达：明确失败（checkUpdate 据此报错而非误报最新）
-  // 拉元数据前先过协议/形态闸（http(s) 纯 origin，无凭证/路径夹带）与包名字符集白名单。
-  // 覆盖 manualOrigin/契约 selected 等**不经 setRegistryConfig 校验**的来路（拼接 URL 的攻击面）。
+  // 拉元数据前过 origin 协议/形态闸与包名白名单：manualOrigin/契约 selected 等来路不经
+  // setRegistryConfig 校验，URL 拼接攻击面只能在这里堵。
   const base = policies.normalizeOrigin(origin);
   if (!policies.isValidOrigin(base)) return null;
   if (!PKG_NAME_RE.test(pkg)) return null;
   try {
-    // 拉包完整元数据（dist-tags + versions）；选版算法不在这里，一律交
-    //   release.pickReleaseVersion（isOurs 决定是否有 rollback/canary；两侧均 latest 优先）。
+    // 拉包完整元数据（dist-tags + versions）；选版一律交 release.pickReleaseVersion，此处不定策略。
     const res = await fetch(base + '/' + encodeURIComponent(pkg), { signal: AbortSignal.timeout(10000) });
     if (!res.ok) return null;
     const j = await res.json();
@@ -108,22 +106,20 @@ function killInflightNpm(reason) {
 }
 
 /** 安装执行器（统一 npm 安装）：镜像注入 / 超时 / 行日志 / 退出码 / 进程树清理。
- *
- *  @param {object} opts
- *   - pkg / version（version 必须显式）/ prefix（沙箱） / registry / timeoutMs / detached / onLine
+ *  @param {object} opts { pkg, version（必须显式）, prefix（沙箱）, registry, timeoutMs, detached, onLine }
  *  @returns Promise<{ ok, error, output, aborted? }> */
 function runNpmInstall(opts) {
   const o = opts || {};
   const pkg = o.pkg || '@deepseek-ai/dsh';
   if (!o.version) return Promise.resolve({ ok: false, error: 'runNpmInstall: 缺少 version（必须显式携带）', output: [] });
-  // B11 入参白名单（fail-closed）：pkg/version 来自配置/registry 返回值，任何一环被污染
+  // 入参白名单（fail-closed）：pkg/version 来自配置/registry 返回值，任何一环被污染
   // 都会经 argv 或模板替换直达 spawn —— 非法字符（空白/shell 元字符）在构造命令前即拒。
   if (!PKG_NAME_RE.test(pkg)) return Promise.resolve({ ok: false, error: 'runNpmInstall: 非法包名（字符集白名单不通过）: ' + String(pkg).slice(0, 80), output: [] });
   if (!VERSION_RE.test(String(o.version))) return Promise.resolve({ ok: false, error: 'runNpmInstall: 非法版本号（须为严格 semver）: ' + String(o.version).slice(0, 80), output: [] });
   // 唯一安装执行器：commandTemplate 支持完整替换命令（测试/特殊环境注入 fake-npm 等）。
   let argv;
-  // 经统一解析口拿**启动形态**（程序 + 前缀参数成对）：Windows 下是 npm.cmd，官方分发包只带
-  // 包内 JS 时是 `node <npm-cli.js>`。只取程序会把后者降级成裸跑 node（ENOENT 之外的第二种含糊失败）。
+  // 经统一解析口拿启动形态（程序 + 前缀参数成对）：win32 下是 npm.cmd；官方分发包只带
+  // 包内 JS 时是 `node <npm-cli.js>`。只取程序会把后者降级成裸跑 node（含糊失败）。
   const launcher = runtimeContract.npmLauncher();
   let bin = launcher.program;
   if (Array.isArray(o.commandTemplate) && o.commandTemplate.length) {
@@ -133,8 +129,9 @@ function runNpmInstall(opts) {
     bin = fromTemplate ? argv[0] : launcher.program;
     // 契约前缀参数只属于契约程序；模板自带解释器（如 node /tmp/fake.js）时不得前插。
     argv = (fromTemplate ? [] : launcher.args).concat(argv.slice(1));
-    // argv[0] 的非 'npm' 分支**不再进 spawn 解析器**（历史缺陷：argv[0]='evil' 原样
-    // 交给 PATH 解析执行）。逻辑名 'npm' 走统一解析口（两平台语义一致）；其余项过禁用字符集。
+    // 模板首项为逻辑名 'npm' 时走统一解析口并在解析失败时 fail-closed（两平台语义一致）；
+    // 首项非 'npm' 时按字面量作为程序交给 spawn（走其自身 PATH 语义），无解析口预校验，
+    // 唯一防线是下方逐项禁用字符集闸。
     if (!fromTemplate && launcher.source === 'path' && bin === 'npm' && !execPath.resolveExecutable('npm')) {
       return Promise.resolve({ ok: false, error: 'runNpmInstall: 未找到可执行的 npm（commandTemplate[0]="npm" 解析失败）', output: [] });
     }
@@ -161,8 +158,8 @@ function runNpmInstall(opts) {
   // 契约 PATH 注入（nodeBinDir 首位）：内核自身执行的 npm 也必须能找到 node。
   const envVars = runtimeContract.withPath(process.env);
   if (o.registry) {
-    // 镜像源只接受 http(s) origin（收紧自「仅查 scheme」-> 无凭证/无路径夹带的完整 URL）；
-    // 非法值不写入 env（npm_config_registry 指向 file:// 等协议同样是攻击面）。
+    // 镜像源只接受纯 http(s) origin（无凭证/路径夹带）：npm_config_registry 指向
+    // file:// 等协议同样是攻击面，非法值不写入 env。
     if (!policies.isValidOrigin(o.registry)) {
       return Promise.resolve({ ok: false, error: 'runNpmInstall: 非法 registry origin（须为纯 http(s) origin）: ' + String(o.registry).slice(0, 80), output: [] });
     }
@@ -176,10 +173,9 @@ function runNpmInstall(opts) {
       return resolve({ ok: false, error: e.message, output: [] });
     }
     const out = [];
-    // 在途 npm 子进程必须**可被守卫主动中止**。
-    //   子进程以 detached 起（自成进程组），故守卫退出/被 8s 强杀后它会继续跑：
-    //   新守卫 boot 时旧 npm 仍在写 node_modules 与全局前缀 —— 无人等待、无人记账的
-    //   并发写入者，正是 9-13/半成品形态的复发面。关停路径经 killInflightNpm() 收口。
+    // 在途 npm 子进程必须可被守卫主动中止：detached 子进程在守卫退出/被 8s 强杀后仍会
+    //   继续跑，新守卫 boot 时旧 npm 仍在写 node_modules 与全局前缀 —— 无人等待、无人记账
+    //   的并发写入者，正是半成品安装的来源。关停路径经 killInflightNpm() 收口。
     let settled = false;
     const finish = (r) => {
       if (settled) return;
@@ -190,10 +186,9 @@ function runNpmInstall(opts) {
     };
     const killTree = () => {
       if (!child || child.exitCode !== null) return;
-      // 必须走 platform/os/process 的整树终止（B13 已收口：win 用 taskkill /T /F）。
-      //   原先这里是 `process.kill(-pid)` + child.kill 的两段兜底：Windows **没有进程组语义**，
-      //   负 pid 抛错后只杀得到 npm.cmd 那一层壳，真正写 node_modules/全局前缀的 node 孙进程
-      //   照旧存活 —— 正是本条（D-10）要消灭的「无人记账的外部写入者」。
+      // 必须走 platform/os/process 的整树终止（win 用 taskkill /T /F）：Windows 没有进程组
+      //   语义，负 pid 组信号只杀得到 npm.cmd 那层壳，真正写 node_modules/全局前缀的 node
+      //   孙进程照旧存活 —— 正是本条（D-10）要消灭的「无人记账的外部写入者」。
       //   ownGroup:true —— 子进程以 detached 起，必为自身进程组组长（POSIX 组信号安全）。
       try { procOS.killTree(child.pid, 'SIGKILL', () => {}, { ownGroup: true }); } catch { /* 尽力而为 */ }
       try { child.kill('SIGKILL'); } catch { /* 已退出 */ }

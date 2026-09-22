@@ -1,7 +1,7 @@
 'use strict';
 
-// 运维门面（组合 + 导出），不再承载业务逻辑。组合 ops/{browser,oauth,apps-registry,quotasync,admin}，
-// 由 createAuxCore(deps) 显式注入依赖。
+// 运维门面（组合 + 导出），不承载业务逻辑：组合 ops/{browser,oauth,apps-registry,quotasync,admin}，
+// createAuxCore(deps) 显式注入依赖。
 
 require('./port-segments'); // 本域端口段/独立池申报（require 即注入）
 const ports = require('../../platform/service/ports').shared;
@@ -12,7 +12,6 @@ const { createAppsRegistryOps } = require('./ops/apps-registry');
 const { createQuotaSyncOps } = require('./ops/quotasync');
 const { createAdminOps } = require('./ops/admin');
 
-/** 显式组合：deps 由调用方注入（推荐新门面使用）。 */
 function createAuxCore(deps) {
   const d = deps || {};
   const getProviders = d.getProviders || (() => []);

@@ -1,21 +1,18 @@
 'use strict';
 
-// LogCore：每进程唯一日志/事件核心（platform 层一等原语）。进程入口调用一次
-// LogCore.init(opts)，此后统一经 LogCore.get() 消费 logger/events/dshWriter/hub，
-// 消灭散落的 new Events/createLogger/Rotator（守卫侧另有 EventHub 汇聚）。
-// 单例语义：Node 模块缓存按进程天然唯一；init 同 process 幂等、异 process 抛错（防误用）。
+// LogCore：每进程唯一日志/事件核心（platform 层一等原语）。入口调一次 init(opts)，
+// 此后统一经 get() 消费 logger/events/dshWriter/hub，消灭散落的 new Events/createLogger/Rotator。
+// Node 模块缓存使单例按进程天然唯一。
 
 const path = require('node:path');
 const Events = require('./events');
 const { createLogger, Rotator } = require('./log');
 const { EventHub, EventReader } = require('./hub');
 
-// DS-G4 生产装配注入（反转法）：platform 层代码字面量不得含业务域名词；业务源名单
-// （源名/短键/local/内部簿记类型）唯一声明在 app/assembly/log-sources.js。
-// platform 不得出边到 app（DS-G2），改由调用方注入：compose.js（守卫进程）、
-// router/daemon.js、relay/daemon.js 各自在 LogCore.init 之前 require 该模块。
-// Node 模块缓存保证幂等，app 模块不反向 require platform 业务标识，无循环依赖。
-// 未注入（文件缺失/抛错）时 EventHub 退化为「仅本地源」，聚合面变窄但进程内日志不受影响。
+// DS-G4 装配注入（反转法）：业务源名单唯一声明在 app/assembly/log-sources.js，platform 零域名词。
+// platform 不得出边到 app（DS-G2）：守卫进程（compose）在构造 LogCore 前 require 该模块做全量汇聚注入；
+// 域 daemon 进程只自注自己那一个源（domains 依赖 app 属上行，DS-3 禁止）。
+// 未注入时 EventHub 退化为「仅本地源」，聚合面变窄但进程内日志不受影响。
 
 let _instance = null;
 let _process = null;
@@ -76,7 +73,7 @@ class LogCore {
   get seq() { return this.events.seq; }
 }
 
-// 进程入口初始化一次。同 process 幂等；异 process 抛错。
+// 进程入口初始化一次，同 process 幂等、异 process 抛错（防误用换身份）。
 // process 只要求非空字符串（DS-G4：platform 不枚举业务进程名，具体名字由 app/ 注入）。
 function init(opts) {
   const p = (opts && opts.process) || null;

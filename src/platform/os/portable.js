@@ -1,13 +1,8 @@
 'use strict';
 
-// portable LaunchProvider：三平台共用的下限实现（规格出处 ARCHITECTURE-PLAN-instance-sandbox-governor）。
-// 无状态设计：实例身份 = 端口反查 + cmdline 锚点校验（与 monitor.probeInstance 同源锚），
-// run.pid 只作「STARTING 未监听窗口」的停止兜底——守卫重启后进程句柄必丢，盘上 pid 配合
-// cmdline 复核才防得住 PID 复用（读不到的存活 pid 如实报 null，绝不按「他人进程」误杀或误放行删除）。
-// 动词与 systemd Provider 同形（X-3 方法集一致判据），语义收口到既有三态契约：
-//   stopUnit true=已确认停止 / false=未确认；isUnitActive true/false/null（查询未完成 != 不活跃，FIX-5）。
-// 无内核强制：setLimits 恒 false（档位声明，非失败）——限额语义由 governor 采样 + 违规处置兑现
-// （sandboxEnforcement='supervise' 档即此含义）。
+// portable LaunchProvider：三平台共用下限实现，无状态——实例身份 = 端口反查 + cmdline 锚点校验（与 monitor.probeInstance 同源锚）。
+// run.pid 只作「STARTING 未监听窗口」的停止兜底：守卫重启后进程句柄必丢，盘上 pid 须配 cmdline 复核才防得住 PID 复用；
+// 动词与 systemd Provider 同形（调用方不按 provider 分支）；isUnitActive 三态（查询未完成 != 不活跃）；setLimits 恒 false 是档位声明非失败。
 
 const fs = require('node:fs');
 const pidlookup = require('./pidlookup');
@@ -47,8 +42,8 @@ const anchorsOf = (o) => (Array.isArray(o && o.anchors) ? o.anchors : []);
 
 /** 找「我们的」存活实例进程：{pid, ownGroup} 或 null。
  *  run.pid 命中的进程必由本 Provider detached 拉起（自成进程组）-> ownGroup=true 可组信号整树终止；
- *  仅端口锚点命中的监听进程可能来路不明（pidfile 丢失/手动实例）-> ownGroup=false 只发单进程信号
- *  （B13 教训：对外来 pid 做 kill(-pid) 会误杀无关进程组）。 */
+ *  仅端口锚点命中的监听进程来路不明（pidfile 丢失/手动实例）-> ownGroup=false 只发单进程信号：
+ *  对外来 pid 做 kill(-pid) 会误杀无关进程组。 */
 function findOurs(o) {
   const anchors = anchorsOf(o);
   const fp = readPidFile(pidFileOf(o));
@@ -76,8 +71,8 @@ const portable = {
   resetFailed() { return true; },
 
   /** 拉起：spawn(detached)——POSIX 自成进程组（kill(-pid) 语义的前提）、win32 windowsHide +
-   *  CREATE_NEW_PROCESS_GROUP（统一经 platform/os/spawn.js，NO-CONSOLE-WINDOW 纪律收口在那）。
-   *  props（cgroup 语义）在此被如实忽略——无内核强制可施加，处置归 governor 采样违规链。
+   *  CREATE_NEW_PROCESS_GROUP（NO-CONSOLE-WINDOW 纪律收口在 platform/os/spawn.js）。
+   *  调用方传来的 props（cgroup 语义）在此如实忽略：本档无内核强制可施加。
    *  @param {{cmd:string[], env?:object, workingDir?:string, pidFile?:string, port?:number, anchors?:string[]}} o */
   startTransient(o) {
     const opts = o || {};
@@ -121,15 +116,13 @@ const portable = {
     try { procOS.killTree(ours.pid, 'SIGKILL', undefined, { ownGroup: ours.ownGroup }); } catch { /* ignore */ }
     nap(NAP_MS);
     if (!findOurs(opts)) { removePidFile(opts); return true; }
-    return false; // 未确认停止：调用方保持原相位/保留数据（false != 成功，既有契约）
+    return false; // 未确认停止：调用方保持原相位/保留数据（false != 成功，三态契约）
   },
 
-  /** 活跃判定（三态）：见文件头契约。无任何锚点（port 与 pidFile 都缺）= 无从查询 -> null，
-   *  绝不被删除保护路径当成「已停止」。
-   *  anchors 为空时降级为与 monitor.probeInstance 同一口径「端口有监听即活跃」（该调用方本就以此
-   *  判在线，如 waitPortHealthy）；杀进程（stopUnit）仍要求锚点命中，二者宽严不同是有意的：
-   *  判定可宽，动手必严。存活 pid 的 cmdline 读取失败 = 无法区分「他人复用」与「查询失败」
-   *  -> null（与 FIX-5 同一保守方向）。 */
+  /** 活跃判定（三态）：port 与 pidFile 都缺 = 无从查询 -> null，删除保护路径不得把它当「已停止」。
+   *  anchors 为空时降级为「端口有监听即活跃」（monitor.probeInstance 同口径，该调用方本就以此判在线）；
+   *  杀进程（stopUnit）仍要求锚点命中 —— 判定可宽，动手必严。
+   *  存活 pid 的 cmdline 读不到 = 分不清「他人复用」与「查询失败」-> null。 */
   isUnitActive(unit, o) {
     const opts = o || {};
     if (findOurs(opts)) return true;
@@ -138,15 +131,14 @@ const portable = {
     const anchors = anchorsOf(opts);
     if (!port && !pidFile) return null;
     if (!anchors.length) {
-      // 无归属锚点：run.pid 是我方写入的归属凭证，存活即活跃；端口同理「有监听即活跃」（probe 口径）。
+      // run.pid 是我方写入的归属凭证，存活即活跃；端口同理「有监听即活跃」。
       const fp = readPidFile(pidFile);
       if (fp !== null && pidlookup.isAlive(fp)) return true;
       if (port) {
         const q = pidlookup.findListeningPid(port);
         if (q !== null) return true;
-        // pidlookup 把「查询失败」与「无监听」折成同一个 null（既有口径限制）：
-        // 只有持肯定证据才报 false——pidfile 存在且进程已判死。pidfile 缺失时本次查询
-        // 无任何肯定证据，报未知（FIX-5 保守方向；删除保护不得把查询失败当「已停止」）。
+        // pidlookup 把「查询失败」与「无监听」折成同一个 null（接口只回 pid）：
+        // 只有持肯定证据才报 false —— pidfile 存在且进程已判死；否则报未知。
         if (fp !== null) return false;
         return null;
       }
@@ -161,8 +153,7 @@ const portable = {
   // portable 无 systemd transient 单元文件；run.pid 的清理归 cleanTransient。
   transientUnitFile() { return null; },
 
-  /** 清理同名残留：先停掉仍活着的旧进程（重启自愈路径：旧进程未监听端口时端口探测拦不住），
-   *  再清 run.pid。返回形态与 systemd 档一致（{ok, errors}），调用方无需分支。 */
+  /** 清理同名残留：先停掉仍活着的旧进程（重启自愈路径：旧进程未监听端口时端口探测拦不住），再清 run.pid。 */
   cleanTransient(unit, o) {
     const opts = o || {};
     const errors = [];
@@ -171,11 +162,10 @@ const portable = {
     return { ok: errors.length === 0, errors };
   },
 
-  /** 运行期限额下发：portable 档恒 false（档位声明）。true/false 只表示「是否改动了内核强制」，
-   *  governor 不因 false 走任何降级分支——违规处置链本就平台无关。 */
+  /** 返回值只表示「是否改动了内核强制」；governor 不因 false 走降级分支 —— 违规处置链本就平台无关。 */
   setLimits() { return false; },
 };
 
 // findOurs/matchesAnchors 是公开出口：全仓「我们拉起的外部进程」归属判定只此一处实现
-//   （受管进程载体 carrier.js 与监督守卫共用；业务域一律经门面，不再自带 kill/-pgid 判定）。
+//   （受管进程载体 carrier.js 与监督守卫共用；业务域一律经门面，不得自带 kill/-pgid 判定）。
 module.exports = { portable, findOurs, matchesAnchors, _test: { readPidFile, matchesAnchors, findOurs } };

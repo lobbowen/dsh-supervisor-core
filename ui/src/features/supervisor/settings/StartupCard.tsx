@@ -1,6 +1,6 @@
 /**
- * 设置 — 启动区块（独立自治：只依赖 autostart / lan-panel / access-key 三个端点，
- * 与版本环境、镜像源彻底解耦——各自加载、各自失败，互不拖累。）
+ * 设置 — 启动区块：自治组件，只依赖 autostart / lan-panel / access-key / close-action 四端点，
+ * 与版本环境、镜像源彻底解耦——各自加载、各自失败，互不拖累。
  */
 import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
@@ -12,7 +12,7 @@ import {
 import { useSupervisorAction } from "../useSupervisorAction";
 import { Card, CardTitle } from "../widgets";
 
-/** 启动与访问区块（自身只拉自身数据；任一失败只影响本区块内容，不影响其他设置卡） */
+/** 各端点独立取数与 catch：任一失败只影响本区块。 */
 export function StartupCard() {
   const [autoOn, setAutoOn] = useState<boolean | null>(null);
   const [lan, setLan] = useState<LanPanelStatus | null>(null);
@@ -21,7 +21,6 @@ export function StartupCard() {
   const [closeAction, setCloseAction] = useState<"hide" | "exit">("hide");
   const { busy, run } = useSupervisorAction();
 
-  // 区块自加载：各端点独立失败（各自 catch），互不影响
   const load = useCallback(async () => {
     const [a, l, k, c] = await Promise.all([
       supervisorApi.autostart().catch(() => null),
@@ -61,9 +60,7 @@ export function StartupCard() {
       refresh: false,
       onDone: () => { setAkInput(""); void load(); },
     });
-    // 保存成功后把 key 同步进**本机**缓存（localStorage），此后本面板请求自动带
-    // Authorization: Bearer——否则局域网/公网访问会被后端 401 门卫整体挡死。
-    // 清除密钥（ok 且 key 为空）同步清空缓存。run 的 onDone 成败皆跑，故按返回值落盘。
+    // key 必须同步进 localStorage，否则本面板后续请求不带 Authorization，被 401 挡死；onDone 成败皆跑，故按返回值落盘。
     if (ok) setStoredAccessKey(key);
   }
   async function changeCloseAction(v: string) {
@@ -77,7 +74,6 @@ export function StartupCard() {
 
   return (
     <>
-      {/* 启动 */}
       <Card>
         <CardTitle title="启动" subtitle="开机行为与偏好" />
         <div className="grid gap-4 px-5 py-4">
@@ -105,7 +101,6 @@ export function StartupCard() {
         </div>
       </Card>
 
-      {/* 访问 */}
       <Card>
         <CardTitle title="访问" />
         <div className="grid gap-4 px-5 py-4">

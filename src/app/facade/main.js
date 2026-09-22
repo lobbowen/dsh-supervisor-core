@@ -1,14 +1,8 @@
 'use strict';
 
-// app/facade/main.js —— 原生 DSH(main) 域只读门面（写动作 patchDshMain 在
-// app/domain-actions/main.js，远程控制意图写入在 app/domain-actions/lan.js）。
-// 只读白名单（DG-14 强制）：dshMainView。
-// 导出契约：module.exports = { methods }，方法内部走 this。
-//
-// 阶段六 B-1 原地去 this：实现体不再经 this 的隐式方法调用取事实，改经按 host 缓存的
-// **惰性 deps**（WeakMap；getter 每次读 host 实时值）。方法仍以 { methods } 导出，
-// 装配路径 installMethods(host, mod.methods) 不变。
-// 唯一的 this 出现在 depsOf(this)（作为 WeakMap 键）。
+// app/facade/main.js —— 原生 DSH(main) 域只读门面（只读白名单 dshMainView；
+// 写动作 patchDshMain 在 app/domain-actions/main.js，远程控制意图写入在 app/domain-actions/lan.js）。
+// 导出契约：module.exports = { methods }，方法经按 host 缓存的惰性 deps（WeakMap）取事实，唯一的 this 出现在 depsOf(this)。
 
 const DEPS = new WeakMap();
 function depsOf(host) {

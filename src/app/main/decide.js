@@ -1,12 +1,9 @@
 'use strict';
 
 // app/main/decide.js —— 主进程收敛的纯决策段（_mainStateSnapshot/_decideMainAction/_decideCrashRestart）。
-// 导出形态 { methods }；装配：app/assembly/facets.js 装到 host 实例；方法内部以 this 协作。
-//
-// 阶段六 B-2 原地去 this：实现体不再经 this 的隐式方法调用取事实，改经按 host 缓存的**惰性 deps**
-// （WeakMap）。方法名/{ methods }/逐字体保留，装配路径与读源码形态的门禁不变，AT 棘轮计数归零。
-//  _decideMainAction 保持**零 this**：shadow-decision-test 直接以 `decide(base())` 形式调用它
-//   （this=undefined），故其内部经模块内纯函数 decideCrashRestart() 协作，绝不触碰 deps。
+// 导出 { methods }，由 app/assembly/facets.js 装到 host；方法名与 { methods } 形态不可改。
+// _decideMainAction 必须零 this：shadow-decision-test 以 decide(base()) 形式裸调（this=undefined），
+// 故其内部经模块内纯函数 decideCrashRestart() 协作、绝不触碰 deps；其余事实经 depsOf(host) 惰性缓存取得。
 const pidlook = require('../../platform/os/pidlookup');
 
 const DEPS = new WeakMap();
@@ -19,7 +16,7 @@ function depsOf(host) {
       upgradeHold() { return host._upgradeHold; },
       manualRestart() { return host.manualRestart; },
       crashHalted() { return host._crashHalted; },
-      // 字段 helper 与状态读取经 host 上的既有安装转发（等价于原经 this 的调用）。
+      // 字段 helper 与状态读取经 host 既有安装转发。
       mLastProbeOk() { return host._mLastProbeOk(); },
       mLastProbeHttpOk() { return host._mLastProbeHttpOk(); },
       mChild() { return host._mChild(); },
@@ -40,7 +37,7 @@ function depsOf(host) {
 }
 
 /** 崩溃类 restart 决策（模块内纯函数）：语义与 _beginRestart(countCrash=true) 一致。
- *  抽成模块局部函数是**刻意的**：_decideMainAction 的调用契约允许无 host 的裸调用，不能经 deps。 */
+ *  刻意留作模块局部：_decideMainAction 允许无 host 裸调用，不能经 deps。 */
 function decideCrashRestart(reason) {
   return { action: 'restart', reason, countCrash: true };
 }
@@ -122,7 +119,7 @@ module.exports = {
         return { action: 'none', reason: 'starting_wait' };
       }
       case 'RUNNING': {
-        // adopt 令牌重建/假死识别是守卫业务钩子（adapter 外，G3 由 _dshConverge 保留）——纯决策不含
+        // adopt 令牌重建/假死识别属守卫业务钩子（由 _dshConverge 承担），纯决策段不含。
         if (s.adoptedPidSet && !s.adoptedAlive) return decideCrashRestart('adopted_exit');
         if (s.childPresent && !s.childAlive) return decideCrashRestart('child_exit');
         return { action: 'none', reason: 'running_steady' };

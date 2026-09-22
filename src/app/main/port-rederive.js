@@ -1,19 +1,15 @@
 'use strict';
 
-// app/main/port-rederive.js —— 原生 DSH 端口的运行时再推导（独立切面）。
-// 消费全局端口注册表（ports.register/release）并更正 config/dsh-main/relay 目标的五处跟随，
-// 与进程 spawn/停/杀生命周期正交。由 app/assembly/facets.js 装到 host（成员名
-// _findManagedDshPort / _applyMainPort 不变——协作方接口表与 test/main-port-rederive-test.js 依赖）。
+// app/main/port-rederive.js —— 原生 DSH 端口的运行时再推导（独立切面）：消费全局端口注册表（ports.register/release）并更正 config/dsh-main/relay 等跟随，与进程 spawn/停/杀生命周期正交。
+// 由 app/assembly/facets.js 装到 host；成员名 _findManagedDshPort / _applyMainPort 不变——协作方接口表与 test/main-port-rederive-test.js 依赖。
 // 依赖单向：本模块 -> platform（pidlookup/ports/config）；main/process.js -> 本模块。
 
 const pidlook = require('../../platform/os/pidlookup');
 const ports = require('../../platform/service/ports').shared;
 const { extractPortFromCommand } = require('../../platform/service/config');
 
-/** 原生 DSH 端口运行时再推导：
- *  DSH 端口由用户可改（config 默认 3080 只是默认），进程真实端口以 cmdline --port 为准。
- *  在配置端口无监听但 DSH 进程在跑时，找出受管 DSH 进程的真实端口并更正注册（dsh-main /
- *  main 实例 / relay 目标 / healthUrl / 状态），让系统跟随用户改动而非卡死在旧配置。 */
+/** 原生 DSH 端口运行时再推导：DSH 端口用户可改（config 默认 3080 只是默认），真实端口以 cmdline --port 为准。
+ *  配置端口无监听但受管 DSH 进程在跑时，找出其真实端口并更正注册，让系统跟随用户改动而非卡死旧配置。 */
 function findManagedDshPort(config) {
   // 候选：配置 bin 精确匹配（config.command[1]）优先；兼容手动标准 DSH（isDshCmdline）
   const bins = [];

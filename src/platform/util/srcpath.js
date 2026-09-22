@@ -2,8 +2,7 @@
 
 // 源文件定位器（单一真源）：用存在性验证代替脆弱的相对路径推算。候选根逐个验证
 // 「根下确实存在本模块自身」，第一个通过者胜出；全部不成立返回 null，调用方据此降级。
-// 只做通用路径能力，业务域名词（router/lan 到脚本）的映射已上移到 app/daemons/scripts.js。
-// 门禁 G10 断言本模块解析出的每个脚本路径都真实存在。
+// 只做通用路径能力，业务域名词的映射在 app/daemons/scripts.js。
 
 const fs = require('node:fs');
 const path = require('node:path');

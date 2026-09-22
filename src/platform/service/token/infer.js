@@ -1,9 +1,9 @@
 'use strict';
 
-// 源形态到 kind 推断（纯函数，DS-G4 反转法）。
-// 平台不硬编码业务 kind 名或单元前缀；规则由 app/ 装配期经 configureKindInference 注入。
-// 未注入时无任何推断映射，未登记的源不会被猜测成某个域 kind（TK-3）。
-// 字段：byId 为 id 直接命中；unitPrefix 为 [前缀, kind] 列表；unitKind 为任意非空单元的兜底；fileKind 为恢复文件源的 kind。
+// 源形态到 kind 推断（纯函数，DS-G4 反转法）：平台不硬编码业务 kind 名或单元前缀，
+// 规则由 app/ 装配期经 configureKindInference 注入；未注入时无任何映射，未登记的源不会被
+// 猜成某个域 kind（TK-3）。字段：byId=id 直接命中；unitPrefix=[前缀,kind] 列表；
+// unitKind=任意非空单元兜底；fileKind=恢复文件源的 kind。
 
 let _infer = { byId: null, unitPrefix: [], unitKind: null, fileKind: null };
 

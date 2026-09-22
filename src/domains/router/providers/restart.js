@@ -1,23 +1,19 @@
 'use strict';
 
-// 重启编排（B13）+ 实例对账编排 —— IO 编排，经 provider 显式入参（零 this 跨文件）。
-// 重启后的「kill -> 延迟 -> 拉起 -> 探活」重拉段、以及 reconcile 单飞回路。
-// 对账 = 生命周期引擎期望集（pool.js）的执行面：拉起缺口 + 回收非期望实例，
-// 一律走停止仲裁（在途 drain 补刀），无闲置宽限（PROXY-LIFECYCLE-STANDARD 事件表）。
-// 在途延后/退避/停进程（restartInstance 主体）仍留在池 mixin —— 那部分被源码门禁钉住。
+// 重启重拉 + 实例对账编排（IO，provider 经显式入参，零 this 跨文件）。
+// 对账 = 生命周期引擎期望集（pool.js）的执行面：拉起缺口 + 回收非期望实例，一律走停止仲裁
+// （在途 drain 补刀），无闲置宽限。restartInstance 主体（在途延后/退避/停进程）留在池 mixin——被源码门禁钉住位置。
 
 const { INSTANCE_STATES } = require('../model');
 const ports = require('../../../platform/service/ports').shared;
 
-/** 重启重拉编排：kill 后短延迟（端口释放）-> 拉起 -> 探活。
- *  @param deps { startInstance, waitHealthy, isAlive, logger, isStopping } */
+/** 重启重拉编排：kill 后短延迟（等端口释放）-> 拉起 -> 探活。deps 见下方解构清单。 */
 function createRestartOrchestrator(deps) {
   const d = deps || {};
   const { startInstance, waitHealthy, isAlive, logger } = d;
   const isStopping = d.isStopping || (() => false);
 
-  /** 重拉一个已被 kill 的实例（账号须为 ready）。
-   *  @param inst 实例  @param ctx { acc, hadPid } */
+  /** 重拉一个已被 kill 的实例（账号须为 ready）。ctx = { acc, hadPid }。 */
   function respawn(inst, ctx) {
     const acc = ctx && ctx.acc;
     const hadPid = ctx && ctx.hadPid;
@@ -29,7 +25,7 @@ function createRestartOrchestrator(deps) {
         if (inst.pid) {
           const alive = isAlive ? isAlive(inst.pid) : true;
           if (alive) return;
-          inst.pid = null; // 进程已死：清残留，走下方重拉
+          inst.pid = null;
         }
         const attempt = () => startInstance(inst).then((sr) => {
           if (sr && sr.ok) return waitHealthy(inst).then((ok) => { if (!ok) logger.warn && logger.warn('[proxy-instance] 重启后不健康 key=' + inst.maskedKey); });
@@ -46,9 +42,8 @@ function createRestartOrchestrator(deps) {
   return { respawn };
 }
 
-/** 对账单轮（幂等）：拉起期望集缺口 + 回收非期望实例进程（允许停止时）+ 收敛残留态。
- *  等待区（非期望集）的进程回收零闲置宽限：此刻起该账号不该再有进程；
- *  在途请求走停止仲裁的 drain 补刀（retryPendingStop），不是宽限。 */
+/** 对账单轮（幂等）：拉起期望集缺口 + 回收非期望实例（allowStop 时）+ 收敛残留态。
+ *  等待区回收零闲置宽限：在途请求走停止仲裁的 drain 补刀，不是宽限。 */
 async function runReconcile(provider, allowStop) {
   const out = { started: [], stopped: [], desired: [] };
   const desired = provider.desiredRunningAccounts();
@@ -88,7 +83,7 @@ async function runReconcile(provider, allowStop) {
     if (acc && desiredIds.has(acc.keyId)) continue;
     provider.stopInstance(inst); // 走仲裁：有在途标记待停（drain 补刀），无在途立即终止
     out.stopped.push(acc ? acc.keyId : 'orphan:' + inst.keyId);
-    if (!acc) { // E11 残余孤儿（旧版本落盘/钩子前崩溃）：端口随之释放，记录不保留
+    if (!acc) { // 残余孤儿（旧版本落盘/钩子前崩溃）：端口随之释放，记录不保留
       provider.instances = (provider.instances || []).filter((i) => i !== inst);
       try { ports.unregister('proxy:' + inst.keyId); } catch {}
       inst.port = null;

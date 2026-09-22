@@ -1,11 +1,9 @@
 'use strict';
 
-// instance 域契约声明（DOMAIN-STRUCTURE-DESIGN /domain-contract-and-gates.md B.1）。
-// **纯数据，零 require、零副作用**（DF-3），数据来源均为实测：exports 取自 index.js 的 module.exports
-// 字面量键（DG-9 双向一致）；PUBLIC_API 为全仓消费点与对外契约面（DG-10）；classApi 为 InstanceManager
-// 公开方法/访问器；deps 为 ctor 的 opts.* 读取集与出站 hooks；pure 为零 IO require 的纯文件（DG-3）。
-// deps.hooks 是 DG-4b 的豁免出处：门禁 CONTRACT_HOOKS.instance 的 6 个回调必须能在此找到声明，
-// 否则 DG-4b FAIL（防豁免表腐化，照 L-2b 纪律）。
+// instance 域契约声明：纯数据，零 require、零副作用（DF-3），供域结构门禁消费。
+// exports 取 index.js 的 module.exports 字面量键（DG-9 双向一致）；PUBLIC_API 为全仓消费点（DG-10）；
+// pure 为零 IO require 的纯文件（DG-3）。deps.hooks 是 DG-4b 豁免出处：门禁 CONTRACT_HOOKS.instance
+// 的 6 个回调必须能在此找到声明，否则 DG-4b FAIL（防豁免表腐化）。
 
 module.exports = {
   domain: 'instance',
@@ -15,7 +13,7 @@ module.exports = {
 
   // 域间契约（被 app/**、api/**、其它域消费；DG-10 消费方成员必须 <= 本表）
   PUBLIC_API: [
-    // instances 活数组（EXECUTION-CONTRACT 冻结接口：store 唯一持有，getter 每次返回当前数组）
+    // instances 活数组（冻结接口：store 唯一持有，getter 每次返回当前数组引用）
     'instances',
     // 查询接口（DG-11 契约面：跨域消费方只经这些方法访问，不直读活数组）
     'all', 'forEach', 'find', 'map',

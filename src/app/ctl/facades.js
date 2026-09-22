@@ -1,14 +1,13 @@
 'use strict';
 
-// ctl 门面工厂：把 ctl 端口包成方法转发 Proxy（router/lan 共用）。
-// 具名工厂 + deps 注入；不再用宿主隐式 this 做跨文件调用。
-// routerApi() 门面在 app/facade/router.js —— 打断 facade/router 与 ctl/facades 的 this 调用环。
-// 本文件只保留「ctl 端口 -> 方法转发 Proxy」的通用构造，供 routerApi 单向取用。
+// ctl 门面工厂：把 ctl 端口包成方法转发 Proxy（router/lan 共用），具名工厂 + deps 注入。
+// routerApi() 门面在 app/facade/router.js：本文件只保留通用 Proxy 构造、供其单向取用，
+// 避免 facade/router 与 ctl/facades 互相调用成环。
 
 const { createCtlClient } = require('./client');
 
-// 反射禁区：这些属性名若被当作 ctl 方法转发，会落到 Proxy/对象内部语义（thenable 陷阱、
-// 原型污染、Function 元操作），必须显式拒绝。
+// 反射禁区：这些属性名若被当作 ctl 方法转发，会落到 Proxy/对象内部语义
+// （thenable 陷阱、原型污染、Function 元操作），必须显式拒绝。
 const BANNED = new Set(['then', 'constructor', 'toJSON', 'inspect', 'Symbol.toPrimitive', '__proto__', 'prototype', 'defineProperty', 'defineGetter', 'defineSetter', 'apply', 'call', 'bind']);
 
 /** 把一个 ctl 端口包成「属性名即方法名」的转发 Proxy。deps: { port, ctlCall }。 */
@@ -37,8 +36,8 @@ function createRouterCtlFacade(deps) {
   return createCtlFacade({ port, ctlCall: g.ctlCall });
 }
 
-// host 既有方法安装（facets.js 的 { methods } 不动）：config 为宿主字段读取，
-// ctl 调用经 createCtlClient 显式构造，不再走跨文件 this。
+// host 既有方法安装（facets.js 的 { methods } 形状不动）：config 为宿主字段读取，
+// ctl 调用经 createCtlClient 显式构造。
 const methods = {
   _makeRouterFacade() {
     const client = createCtlClient({ getConfig: () => this.config });

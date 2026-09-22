@@ -1,19 +1,16 @@
 'use strict';
 
-// DSH 浏览器会话桥（IO 层）：按需从令牌池取 dshToken，换取 dsh-auth-* cookie，缓存派生结果并注入
-// HTTP/WS；上游 401/403 时清 cookie 自愈。TK-4：本模块不缓存 DSH 令牌值（令牌池是唯一存储），
-// 只保留派生 cookie 与在途 Promise。
+// DSH 浏览器会话桥（IO 层）：按需从令牌池取 dshToken，换取 dsh-auth-* cookie，注入 HTTP/WS；
+// 上游 401/403 时清 cookie 自愈。TK-4：令牌池是唯一存储，本模块只保留派生 cookie 与在途 Promise，
+// 不复制令牌真值（dshToken 初值仅为旧调用方兼容路径，真值一律经 dshTokenOf 按需读）。
 
 const { cookieByName } = require('./core');
-// 换取 dsh-auth cookie 的实现已上收到令牌组件；协议知识只有一份。
+// 换取 dsh-auth cookie 的协议实现只在 platform/service/token/exchange 一份。
 const { bootstrapDshCookie } = require('../../platform/service/token/exchange');
 
-/**
- * @param {object} opts
- *   - targetHost/targetPort: 回环 DSH 目标
- *   - id/logger/events: 诊断与事件
- *   - dshTokenOf: 令牌按需读取函数（TK-4）；缺省退化为初值 dshToken
- *   - dshToken: 启动令牌初值（兼容旧调用方）
+/** 构造会话桥。
+ *  opts: targetHost/targetPort（回环 DSH 目标）、id/logger/events（诊断与事件）、
+ *  dshTokenOf（令牌按需读取函数，TK-4）、dshToken（启动令牌初值，兼容旧调用方）。
  */
 function createSession(opts) {
   const o = opts || {};
@@ -97,7 +94,7 @@ function createSession(opts) {
     return bootstrapping || startBootstrap(dshToken, 'lazy');
   }
 
-  /** 把 DSH cookie 合并进客户端 Cookie 串（同名则保留客户端值，避免重复段）。纯拼接。 */
+  /** 把 DSH cookie 合并进客户端 Cookie 串：同名则保留客户端值（避免重复段）。纯拼接，无 IO。 */
   function mergeDshCookie(cookie, dshC) {
     let out = cookie || '';
     if (dshC) {
@@ -107,7 +104,6 @@ function createSession(opts) {
     return out;
   }
 
-  /** 合并转发 Cookie：保留客户端携带的 cookie，注入 DSH 会话 cookie。 */
   async function mergedCookieHeaders(reqHeaders) {
     const dshC = await ensureDshCookie();
     return mergeDshCookie((reqHeaders && reqHeaders.cookie) || '', dshC);

@@ -1,21 +1,7 @@
 import type { ComponentType, ReactNode } from "react";
 import { cn } from "../utils";
 
-/**
- * ============================================================================
- * DSH 通用 UI 框架 — AppSidebar（应用侧边栏）
- * ============================================================================
- * 通用侧边栏：品牌区（logo + 标题 + 标语）+ 导航项列表 + 底部扩展区。
- * 完全由 props 驱动，业务只需提供导航数据。
- *
- * 用法：
- *   <AppSidebar
- *     brand={{ logo, title, slogan }}
- *     items={[{ key, label, icon, active, badge, onClick }]}
- *     footer={<ModeSwitcher/>}
- *   />
- * ============================================================================
- */
+/** AppSidebar：通用应用侧边栏（品牌区 + 导航项列表 + 底部扩展区），完全由 props 驱动。 */
 
 export type SidebarItem = {
   key: string;

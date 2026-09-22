@@ -30,21 +30,10 @@ function dirSizeBytes(root) {
   return total;
 }
 
-/** 原子写（E-1 单源）：状态/配置文件的唯一落盘路径。
- *
- *  为什么必须单源：全仓曾有 26 处各自实现的「tmp + rename」，
- *  其中绝大多数用**固定** `file + '.tmp'` 名——升级重叠期新旧两个守卫进程同时写同一份
- *  状态时，两者写的是**同一个临时文件**，rename 出去的就是混合内容（不是「谁的版本」，
- *  而是两次序列化的字节交错）。少数实现又缺 mode，令牌/URL 落 0644。
- *
- *  语义（与各调用点原写法保持一致，只补齐缺失项）：
- *  - tmp 名含 pid + 毫秒：并发写者各用各的临时文件，rename 只可能落在完整内容上。
- *  - `mode` 默认 0600；writeFileSync 的 mode 只对**新建**文件生效，故 rename 后再 chmod 收口
- *    （rename 在部分平台会重写权限位）。
- *  - 失败**抛出**（不是返回 false）：调用点原本就是 writeFileSync/renameSync 的抛错语义，
- *    各自的 try/catch 口径不变；抛错前把 tmp 截断为 0 而不是 unlink——门禁 TK-G3 把
- *    rmSync 判为危险信号，且截断不会误删并发写者刚换名的文件。
- */
+/** 原子写：状态/配置文件的唯一落盘路径（各调用点不得自行实现 tmp+rename）。
+ *  tmp 名含 pid+毫秒：并发写者各用各的临时文件，rename 只落在完整内容上；mode 默认 0600（令牌/URL 类不得 0644），
+ *  writeFileSync 的 mode 只对新文件生效且 rename 在部分平台重写权限，故 rename 后再 chmod 收口。
+ *  失败抛出（非返回 false）；抛前把 tmp 截 0 而非 unlink——TK-G3 判 rmSync 危险，截断也不误删并发写者刚换名的文件。 */
 function writeAtomic(file, data, opts) {
   const mode = (opts && typeof opts.mode === 'number') ? opts.mode : 0o600;
   const fp = path.resolve(file);

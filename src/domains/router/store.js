@@ -1,14 +1,7 @@
 'use strict';
 
-// router 域持久化（providers.json + 写权单闸）。
-// 写权单闸（PG-7）：本类是唯一判定「此刻能否落盘」的地方——服务级写开关（setPersistEnabled）
-// 与文件级健康（loadedOk）之并。save 在方法体内自查 canPersist()，调用方不再各自判断；
-// 用量账本（router-usage-totals.json）的读写唯一实现在 store/usage.js 的 UsageLedger，
-// 本类不带第二读写口——闸以谓词（this.canPersist）由门面注入账本。落盘走 platform/util/fs 的
-// writeAtomic 单源（tmp 名含 pid+毫秒，防并发写混合内容）；本文件的 renameSync 只用于把损坏
-// 原件改名保留现场。
-// provider 反序列化：纯映射，工厂经 deps 注入，使 store 不 require providers（保持叶子方向）；
-// stateDir 由注入的 config.stateFile 派生，provider 落盘/落日志必须用它，不得各自 os.homedir()。
+// router 域持久化（providers.json）。写权单闸（PG-7）：本类唯一判定「此刻能否落盘」= 服务级写开关与文件级健康（loadedOk）之并，save 自查 canPersist()、调用方不各自判断；落盘走 platform/util/fs 的 writeAtomic 单源；用量账本唯一实现在 store/usage.js#UsageLedger（闸以谓词注入）。
+// provider 反序列化为纯映射，工厂经 deps 注入（store 不 require providers）；stateDir 由注入的 config.stateFile 派生，provider 落盘/落日志必须用它，不得各自 os.homedir()。
 
 const fs = require('node:fs');
 const path = require('node:path');
@@ -25,10 +18,9 @@ class RouterStore {
   }
 
   load() {
-    // 注意：不得把「解析失败」与「本来就是空」混为一谈。原实现 catch 后静默返回 {providers: []}，
-    // 而调用方启动维护阶段会立刻 _save()，把刚读出的「空」覆盖回文件，一次外部损坏/半写即导致
-    // 用户全部供应商与账号配置（含 API Key）静默清零且不可恢复。故解析失败时保留现场
-    // （改名 .corrupt-<ts> 备份）、logger.error 上报、置 loadedOk=false，让调用方跳过「空态回写」。
+    // 「解析失败」与「本来就是空」必须分开：解析失败时保留现场（改名 .corrupt-<ts>）、
+    // logger.error 上报、置 loadedOk=false，让调用方跳过「空态回写」——否则一次外部损坏/
+    // 半写会被启动期的立刻回写放大成用户全部配置（含 API Key）静默清零。
     this.loadedOk = false;
     let raw = null;
     try { raw = fs.readFileSync(this.file, 'utf8'); }
@@ -52,7 +44,7 @@ class RouterStore {
   /** 唯一写权闸：服务级开关 并 文件级健康（解析失败后禁止，防把损坏放大成清零）。 */
   canPersist() { return this._writable !== false && this.loadedOk === true; }
 
-  /** L3：设置状态文件写开关（true=本实例写；false=只读，由外部 router-daemon 独占写）。 */
+  /** 设置状态文件写开关（true=本实例写；false=只读，由外部 router-daemon 独占写）。 */
   setPersistEnabled(v) { this._writable = v !== false; }
 
   /** providers.json 原子写；未过闸返回 false（调用方无需重复判断）。 */
@@ -70,11 +62,9 @@ class RouterStore {
   }
 }
 
-/** provider JSON 快照转为 provider 对象（纯映射，工厂/依赖全经 deps 注入，便于独立单测）。
- *  deps = { createDirect, createProxy, createInstance, apps, logger, events, dist, onPersist, config } */
+/** provider JSON 快照转为 provider 对象（纯映射，工厂/依赖全经 deps 注入，便于独立单测）。 */
 function deserializeProvider(p, deps) {
   const d = deps || {};
-  // stateDir：数据目录（由 config.stateFile 派生），供 provider 落盘/落日志，不得各自 os.homedir()。
   const stateDir = (d.config && d.config.stateFile) ? path.dirname(d.config.stateFile) : null;
   const common = {
     id: p.id, name: p.name, logger: d.logger, events: d.events, dist: d.dist,
@@ -103,16 +93,14 @@ function deserializeProvider(p, deps) {
   }
   // 统一恢复持久化锁定（直连/反代共用；反代旧数据 selectedProxyKeyId 兼容迁移）
   prov.selectedAccountKeyId = p.selectedAccountKeyId || p.selectedProxyKeyId || null;
-  // 统一状态机恢复：恢复「当前在用账号」与每账号使用状态。旧数据无 activeAccountKeyId/usage 时
-  // 安全降级（active 待首个请求重新标，usage 默认 idle），账号 key/配额等字段逐项恢复，绝不丢弃。
+  // 统一状态机恢复：activeAccount/usage 等旧数据缺失字段安全降级，账号字段逐项恢复、绝不丢弃。
   const restoredActiveId = p.activeAccountKeyId || null;
   prov.accounts = (p.accounts || []).map((a) => {
     const acc = {
       key: a.key || null,
       keyId: a.keyId,
       maskedKey: a.maskedKey,
-      // 单事实源：只读 status；
-      //   usage 不反序列化（纯派生，由 usageOf 从 activeAccount/实例实况算）。
+      // 单事实源：只读 status；usage 不反序列化（纯派生，由 usageOf 计算）。
       status: a.status || a.validity || 'registered',
       quota: a.quota || null,
       registeredAt: a.registeredAt || Date.now(),
@@ -123,7 +111,7 @@ function deserializeProvider(p, deps) {
       lastProbeError: a.lastProbeError || null,
       instance: prov.kind === 'proxy' ? (prov.instances.find((i) => i.keyId === a.keyId) || null) : null,
     };
-    // 恢复在用指向：持久化的 active 账号若存在则恢复 activeAccount（粘滞 + 前端锁定显示）
+    // 恢复在用指向：持久化的 active 账号存在则恢复 activeAccount（粘滞 + 前端锁定显示）
     if (restoredActiveId && a.keyId === restoredActiveId) prov.activeAccount = acc;
     return acc;
   });

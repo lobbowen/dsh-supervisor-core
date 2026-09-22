@@ -1,10 +1,8 @@
 'use strict';
 
 // 局域网反向代理 server 本体：在 0.0.0.0:<wanPort> 监听，把 LAN 流量转发到 127.0.0.1:<dshPort>，
-// 做回环呈现 + HTML polyfill 注入（注入有全量缓冲上限，超限按流透传，D-5）+ 断线保持，
-// 并暴露 setToken/setDshToken/hasToken/status 热更新面。
-// 硬边界：DSH 本体保持只监听 127.0.0.1，不改动其源码/配置/插件；把 Origin/Referer 改写为回环权威，
-// 使 DSH 信任围栏视为本机流量，访问控制（令牌/来源闸）留在反代层；session.js 换 dsh-auth-* 注入 HTTP/WS。
+// 做回环呈现（Origin/Referer 改写为回环权威）+ HTML polyfill 注入 + 断线保持，并暴露 setToken/setDshToken/hasToken/status。
+// 硬边界：DSH 本体只监听 127.0.0.1，不改其源码/配置/插件；访问控制（令牌闸、来源闸）全部留在反代层。
 
 const http = require('node:http');
 const crypto = require('node:crypto');
@@ -17,7 +15,7 @@ const { createTunnelHandler } = require('./tunnel');
 const HTML_INJECT_MAX_BYTES = 2 * 1024 * 1024;
 
 /** 门卫令牌失败退避账本：按来源 IP 计失败，窗口内超阈值即拒（429）。
- *  仅内存、进程重启即清空；判定纯函数在 core.backoffGate，本层只管计时与账本。 */
+ *  判定在纯函数 core.backoffGate，本层只管计时与账本（仅内存，进程重启即清空）。 */
 function createGateLedger() {
   const map = new Map();
   return {
@@ -38,12 +36,9 @@ function createGateLedger() {
   };
 }
 
-/** 流式转发 + 断线保持。
- *
- *  浏览器(res)断开时不 destroy 上游(ur)，改为继续读丢弃，保持 DSH 侧连接存活：DSH 前端认为客户端
- *  仍在接收，agent 不被取消；agent 完成后消息存 DSH 会话，浏览器重连拉历史可见完整结果。
- *  保持模式不设时限，只等上游自然结束。
- */
+/** 流式转发 + 断线保持：浏览器断开时不 destroy 上游，继续读并丢弃，直到上游自然结束。
+ *  destroy 会让 DSH 判定客户端离线并取消 agent；保持下 agent 结果仍落 DSH 会话，浏览器重连可见。
+ *  保持模式不设时限。 */
 function pipeWithHold(ur, res, clientReqPath, logger) {
   let clientGone = false;
   const log = (lv, msg) => { if (logger && logger[lv]) { try { logger[lv]('[relay] ' + msg); } catch {} } };
@@ -98,16 +93,13 @@ function handleUpstream(ur, res, clientReqPath, onStatus, logger) {
   }
   res.writeHead(ur.statusCode || 502, h);
   if (!isHtml) { pipeWithHold(ur, res, clientReqPath, logger); return; }
-  // polyfill 注入需全量缓冲整份文档，原实现 chunks 无上限
-  //   => 单个被代理页面可无界吃内存（identity 强制未压缩，体积即真实字节）。
-  //   超上限**不截断**（截断会给浏览器半份 HTML）：改为放弃注入、按原始流继续透传，降级留痕。
+  // polyfill 注入需全量缓冲整份文档，故有 HTML_INJECT_MAX_BYTES 上限（强制 identity，体积即真实字节）。
+  // 越限时不截断（半份 HTML 会让浏览器拿到坏文档），改为放弃注入、按原始流透传并留痕降级。
   const chunks = [];
   let total = 0, passed = false, done = false;
   const log = (msg) => { if (logger && logger.warn) { try { logger.warn('[relay] ' + msg); } catch {} } };
-  // 超限切透传：吐出已缓冲部分并挂 pipeWithHold 接管后续 end/error/close。
-  //   越限的**当前块**不能指望 pipeWithHold 写出——本次 data 分发早已开始，后挂监听器收不到它；
-  //   ur.end 已抢先到达（单块即越限）时后挂监听器也永不触发 => 两处都要显式收口，
-  //   否则浏览器永久挂在未结束的 chunked 响应上。
+  // 越限的当前块不能指望后挂的 pipeWithHold 写出（本次 data 分发已开始），ur.end 已抢先到达时后挂
+  // 监听器也永不触发——两处都必须在这里显式收口，否则浏览器永久挂在未结束的 chunked 响应上。
   const switchToPassThrough = () => {
     passed = true;
     let acc = Buffer.concat(chunks);
@@ -140,25 +132,16 @@ function handleUpstream(ur, res, clientReqPath, onStatus, logger) {
   });
 }
 
-/**
- * 创建局域网反向代理。
- * @param {string} targetHost 回环目标主机（127.0.0.1）
- * @param {number} targetPort 回环目标端口（DSH Web 端口）
- * @param {object} opts
- *   - token: 局域网访问令牌（remoteToken；空 = 不设门卫）
- *   - dshToken: DSH 启动令牌初值（兼容旧调用方）
- *   - dshTokenOf: 令牌按需读取函数（TK-4）；签名 () => string
- *   - id/logger/events
- * @returns http.Server（附 setToken/hasToken/setDshToken/status）
- */
+/** 创建局域网反向代理（回环目标 targetHost:targetPort），返回 http.Server（附 setToken/hasToken/setDshToken/status）。
+ *  opts: token 门卫令牌（remoteToken；空 = 不设门卫恒放行）；dshTokenOf DSH 启动令牌按需读取函数（TK-4），
+ *  dshToken 仅为旧调用方的初值；id/logger/events。 */
 function createRelay(targetHost, targetPort, opts) {
   const o = opts || {};
-  // 必须用 let：门卫令牌需经 setToken 热更新。
+  // 门卫令牌要经 setToken 热更新，故必须是可变量。
   let token = o.token || '';
   const logger = o.logger || null;
   const authority = targetHost + ':' + targetPort;
-  // 门卫会话盐：每进程随机，dsh_lan_token cookie 只存派生值（sha256(salt|token)），
-  //   门卫令牌原文永不上会话通道；重启/换令牌即全部会话失效（重凭 ?token= 进入）。
+  // 门卫会话盐：每进程随机，cookie 只存派生值（见 core.lanGateCookieValue），令牌原文永不上会话通道。
   const gateSalt = crypto.randomBytes(16).toString('hex');
 
   const session = createSession({
@@ -174,7 +157,7 @@ function createRelay(targetHost, targetPort, opts) {
   const gateLedger = createGateLedger();
 
   const server = http.createServer((req, res) => {
-    // 来源闸：公网来源一律拒绝 —— 与 config.js 声称的「RFC1918 白名单」一致。
+    // 来源闸：公网来源一律拒绝（relay 只听私网/回环，见 core.isTrustedSource）。
     if (!isTrustedSource(req)) {
       res.writeHead(403, { 'Content-Type': 'text/plain; charset=utf-8' });
       return res.end('仅允许局域网（RFC1918）或本机访问');
@@ -182,15 +165,15 @@ function createRelay(targetHost, targetPort, opts) {
     const peerIp = (req.socket && req.socket.remoteAddress) || '?';
     const gate = tokenGateDecision(req, token, gateSalt);
     if (!gate.ok) {
-      // 凭据失败退避——同 IP 60s 窗口内 >=10 次失败即 429（Retry-After），
-      //   封堵门卫令牌的公网侧无限速爆破（frp 通道把公网访客呈现为回环/私网来源）。
+      // 退避闸：同 IP 60s 窗口内 >=10 次失败即 429，封堵门卫令牌的无限速爆破
+      // （frp 通道会把公网访客呈现为回环/私网来源，来源闸挡不住）。
       const waitMs = gateLedger.waitMsFor(peerIp);
       if (waitMs !== null) {
         res.writeHead(429, { 'Content-Type': 'text/plain; charset=utf-8', 'Cache-Control': 'no-store', 'Retry-After': String(Math.max(1, Math.ceil(waitMs / 1000))) });
         return res.end('尝试过于频繁，请稍后再试');
       }
       if (gate.redirect !== undefined) {
-        // 首次凭 URL 令牌进入：种 HttpOnly Cookie 后跳到干净路径（C-4：no-store 防凭证响应被缓存）。
+        // C-4：no-store，防带凭证的响应被缓存。
         res.writeHead(302, { Location: gate.redirect, 'Set-Cookie': gate.cookie, 'Cache-Control': 'no-store' });
         return res.end();
       }
@@ -238,19 +221,19 @@ function createRelay(targetHost, targetPort, opts) {
     onGateFailure: (ip) => gateLedger.recordFailure(ip),
   }));
 
-  // 初始令牌：池中已有即换取（尽早拿到 cookie，避免首个请求等待）。
+  // 初始令牌：池中已有即换取，避免首个请求等待 cookie。
   if (session.hasToken()) session.refreshDshSession();
 
-  /** 热更新 DSH 启动令牌（实例重启后令牌轮换）。真实值一律由 dshTokenOf() 按需读取。 */
+  /** 令牌轮换后重置并重换 DSH 会话 cookie（真实值一律由 dshTokenOf() 按需读取）。 */
   server.setDshToken = () => { session.refreshDshSession(); return server; };
 
-  /** 热更新**门卫令牌**（remoteToken 变更时由 LanManager.syncProxy 下发）。 */
+  /** 热更新门卫令牌（remoteToken 变更时由 LanManager.syncProxy 下发）。 */
   server.setToken = (t) => { token = String(t || ''); return server; };
 
-  /** 当前门卫令牌是否已设置（**只回布尔**，绝不回传令牌明文）。 */
+  /** 门卫令牌是否已设置：只回布尔，绝不回传令牌明文。 */
   server.hasToken = () => !!token;
 
-  /** 注入状态快照（远程就绪诊断；不含任何令牌/cookie 明文）。 */
+  /** 注入状态快照（远程就绪诊断）：不含令牌/cookie 明文。 */
   server.status = () => session.status();
 
   return server;

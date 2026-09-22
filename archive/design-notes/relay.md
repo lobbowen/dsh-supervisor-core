@@ -1,6 +1,6 @@
 # relay 域功能设计
 
-> 范围：`src/domains/relay/`（index.js 12 / core.js 252 / ops.js 286 / proxy.js 260 / daemon.js 194，合计 **2044 行**，2026-09-21 实测；原 502 行 index 已按设计拆出）。结构已落地。
+> 范围：`src/domains/relay/`（index.js 12 / core.js 276 / ops.js 266 / proxy.js 260 / daemon.js 191 等 15 文件，合计 **2041 行**，2026-09-21 实测；原 502 行 index 已按设计拆出）。结构已落地。
 > 约束：只做设计；所有「文件:行号」来自本轮实际 read；已按主代理裁决 **R1–R5** 补正。
 > 定位：relay 是 **域 B 基础设施**（`GUARD-DOMAIN-MODEL.md` §2：router-daemon + lan-daemon 不设 guardian）。本设计**不得**改变该语义（见 G-4 / H-DL-G5）。
 
@@ -54,6 +54,8 @@
 ---
 
 ## A. 现状审计
+
+> ⚠ **§0 四问与 A 节均为「迁移立项时的现状审计」（拆分前取证）**。A.1 表内原文件名（index.js 502 / manager.js 504 / frpmgr.js 439）与行数为**迁移前**值，**不是当前事实**（manager.js / frpmgr.js 已由拆分消解）。拆分已按 B/C 节落地，**当前**结构/行数以页首「范围」清单（**2041 行**）为准。
 
 ### A.1 文件清单与职责（逐文件）
 

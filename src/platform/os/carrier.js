@@ -1,18 +1,8 @@
 'use strict';
 
-// 受管进程载体（managed process carrier）：反代进程池这类「需要管道读输出、长驻管理」的
-// 池式消费者拉起外部进程的唯一通道。
-//
-// 为什么要有它（PROXY-ISOLATION-STANDARD L1）：归属/终止语义全仓只允许一套——
-//   portable LaunchProvider 的锚点身份引擎（findOurs/matchesAnchors/run.pid + 端口反查，
-//   防 PID 复用误杀；win32 无进程组语义，整树终止走 killTree）。此前反代域绕过该引擎，
-//   自带 `process.kill(-pid)` 与 sameProcessGroup 判定，在 Windows（EINVAL/无组语义）与
-//   macOS（无 /proc，sameProcessGroup 恒 false -> 误判孤儿）上系统性失效。
-// 与 portable.startTransient 的分工：startTransient 服务守卫式拉起（stdio ignore、无句柄、
-//   systemd 动词同形）；载体服务池式拉起（detached 自成进程组 + pipe 句柄 + 停止确认），
-//   两者的身份判定同为 portable.findOurs，不存在第二份归属逻辑。
-// 平台事实全部下沉 L0：spawn 经 os/spawn（windowsHide/detached 固定），终止经 os/process#killTree，
-//   pid/端口/cmdline 经 os/pidlookup。本模块不含任何 process.platform 分支。
+// 受管进程载体：反代进程池这类「需管道读输出、长驻管理」的池式消费者拉起外部进程的唯一通道；
+// 与 portable.startTransient（守卫式拉起，stdio ignore、无句柄）的分工是本模块做池式拉起。
+// 归属/终止语义全仓唯一（PROXY-ISOLATION-STANDARD L1）：平台事实下沉 L0（os/spawn、os/process#killTree、os/pidlookup，无 process.platform 分支），身份判定只走 portable.findOurs（run.pid + 端口反查 + 锚点，防 PID 复用误杀）；域内不得自带 process.kill(-pid)/sameProcessGroup（win32 无进程组语义EINVAL、macOS 无 /proc 恒误判孤儿），整树终止走 killTree。
 
 const fs = require('node:fs');
 const spawner = require('./spawn');
@@ -31,14 +21,10 @@ function escalateKill(pid) {
   }, ESCALATE_MS).unref();
 }
 
-/**
- * 拉起并纳管：detached（POSIX 自成进程组，ownGroup 组信号前提）+ 管道句柄。
- * @param {{cmd:string[], env?:object, cwd?:string, identity:{port?:number,pidFile?:string,anchors?:string[]},
- *          onOutput?:(child:import('node:child_process').ChildProcess)=>void}} spec
- *        identity.anchors 必含能同时出现在「载体进程」与「其子孙监听者」cmdline 的特征串
- *        （约定为包名 + '--port <端口>'）；onOutput 由调用方接线 stdout/stderr（落盘/过滤进事件）。
- * @returns {{pid:number, child:import('node:child_process').ChildProcess, identity:object}}
- */
+/** 拉起并纳管：detached（POSIX 自成进程组，ownGroup 组信号前提）+ 管道句柄。
+ *  @param {{cmd:string[], env?:object, cwd?:string, identity:{port?:number,pidFile?:string,anchors?:string[]}, onOutput?:(child:import('node:child_process').ChildProcess)=>void}} spec
+ *  identity.anchors 必含同时出现在「载体进程」与「其子孙监听者」cmdline 的特征串（约定为包名 + '--port <端口>'）；onOutput 由调用方接线 stdout/stderr。
+ *  @returns {{pid:number, child:import('node:child_process').ChildProcess, identity:object}} */
 function start(spec) {
   const o = spec || {};
   const cmd = o.cmd || [];

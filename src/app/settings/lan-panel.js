@@ -2,8 +2,6 @@
 
 // 管家面板局域网访问开关门面。
 // 导出形态 { methods }，方法经 this 协作。
-//
-// 阶段六 B-5：直接调用与属性访问去 this（改经按 host 缓存的**惰性 deps**）。方法名/{ methods }/逐字体保留。
 const fs = require('node:fs');
 const netInfo = require('../../platform/os/netinfo');
 const { writeAtomic } = require('../../platform/util/fs');
@@ -18,7 +16,6 @@ function depsOf(host) {
       events: () => host.events,
       configPath: () => host.configPath,
       api: () => host.api,
-      // 同模块兄弟方法经 host 上的既有安装转发（等价于原经 this 的调用）。
       lanPanelStatus: () => host.lanPanelStatus(),
       apiRebind: () => host._apiRebind(),
     };
@@ -33,12 +30,11 @@ module.exports = {
       const d = depsOf(this);
       const enabled = d.config().apiHost === '0.0.0.0';
       const port = d.config().apiPort;
-      // 真实可访问地址：只给局域网内设备真正能访问的地址——取「走默认路由的真实出口网卡」的
-      // IPv4，过滤虚拟网桥(virbr*/veth*/docker*/br-*)。
+      // 真实可访问地址：只给局域网内设备真正能访问的地址——「走默认路由的真实出口网卡」的
+      // IPv4，过滤虚拟网桥(virbr*/veth*/docker*/br-*)。不能直接调 ip(iproute2)：Linux 专有，
+      // macOS/Windows 上抛异常被吞、ips 恒空且不报错；须经 platform/os/netinfo 三平台实现。
       const ips = [];
       if (enabled) {
-        // 不能直接调 ip(iproute2)——Linux 专有，macOS/Windows 抛异常被吞，ips 恒空且不报错；
-        // 经 platform/os/netinfo（三平台实现 + platform/util/exec 有界执行）。
         ips.push(...netInfo.lanAddresses());
         if (!ips.length) {
           d.logger() && d.logger().warn && d.logger().warn(
@@ -68,9 +64,8 @@ module.exports = {
         const host = on ? '0.0.0.0' : '127.0.0.1';
         const changed = d.config().apiHost !== host;
         d.config().apiHost = host;
-        // 落盘失败必须如实上报（与 access.js 的处理口径一致）：内存是运行期权威，故仍完成重绑与事件，
-        //   但把「未落盘」这一事实透传（api/domains/guard.js 据此回 500）。原实现只 logger.error 后
-        //   照报 ok:true —— 面板显示已切换、重启后却回旧值（AUDIT D8 的同型另一半）。
+        // 落盘失败必须如实上报（与 access.js 口径一致）：内存是运行期权威，故仍完成重绑与事件，
+        //   但把「未落盘」透传（api/domains/guard.js 据此回 500）。否则面板显示已切换、重启后回旧值。
         let persistError = null;
         if (d.configPath()) {
           try {
@@ -85,8 +80,8 @@ module.exports = {
         if (changed && d.api() && typeof d.api().close === 'function') d.apiRebind();
         if (d.events()) d.events().append('lan_panel_changed', { enabled: on });
         if (d.logger() && d.logger().info) d.logger().info('管家面板局域网访问 -> ' + (enabled ? '开(0.0.0.0)' : '关(127.0.0.1)'));
-        // 取一次即可（原两处各调一次）：lanPanelStatus 会枚举局域网地址（平台子进程），
-        //   且两者必须是同一份快照，否则成功/失败返回的 host/urls 可能不一致。
+        // 只取一次快照：lanPanelStatus 会枚举局域网地址（平台子进程），且成功/失败返回的
+        //   host/urls 必须同源，否则两次调用可能给出不一致结果。
         const panel = d.lanPanelStatus();
         if (persistError) return { ok: false, error: persistError, ...panel };
         return { ok: true, ...panel };

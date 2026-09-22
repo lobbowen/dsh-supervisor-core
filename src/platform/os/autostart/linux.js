@@ -1,15 +1,13 @@
 'use strict';
 
-// autostart/linux.js —— Linux 自启策略（systemd --user enable/disable + linger + XDG autostart）。
-
 const fs = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
 const ex = require('../../util/exec');
 const { writeAtomic } = require('../../util/fs');
 
-/** XDG 自启条目模板（内嵌，不依赖外置 desktop/ 目录，launcher 发行态不携带它）。
- *  @HOME@ 与 Exec/Icon 行在写入前按实际安装路径重写（见 setGuiAutostart）。 */
+/** XDG 自启条目模板（内嵌，不依赖外置 desktop/ 目录——launcher 发行态不携带它）。
+ *  @HOME@ 与 Exec/Icon 行在写入前按实际安装路径重写。 */
 const GUI_AUTOSTART_TEMPLATE = [
   '[Desktop Entry]',
   'Type=Application',

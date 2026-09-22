@@ -1,16 +1,5 @@
-/**
- * 设置（supervisor settings）— 容器页
- * ============================================================================
- * 结构：本页只做排版拼接，不再持有任何数据加载/状态逻辑。
- * 三个语义独立的区块各自是自治组件——各自加载、各自失败、互不拖累：
- *   - StartupCard  启动 + 访问（autostart / lan-panel / access-key）
- *   - RegistryCard 镜像源（registry：探测/候选/手动固定）
- *   - AboutCard    关于（产品当前版本 + 简介 + 检查更新，置于最底部）
- * 修复的错误耦合：旧实现一个 load() 用 Promise.all 拉 7 端点后统一 setState，
- * 任一端点慢/失败会让整个设置页所有区块停在初始兜底态（启动开关看不见、
- * 镜像源列表空白）——现已按区块彻底拆分，各自独立请求与失败隔离。
- * ============================================================================
- */
+/** 设置容器页：只做排版拼接，不持有数据/状态。
+ *  StartupCard(启动+访问) / RegistryCard(镜像源) / AboutCard(关于) 各为自治组件：各自加载、各自失败，互不拖累。 */
 import { StartupCard } from "./settings/StartupCard";
 import { RegistryCard } from "./settings/RegistryCard";
 import { AboutCard } from "./settings/AboutCard";

@@ -1,11 +1,7 @@
 'use strict';
 
-// shell 域纯核心（域内依赖图汇点，零出度，不引入任何模块）。
-// 汇集全部无 IO 判定/谓词/解析：DEFAULTS、HEADLESS_FLAGS、isShellProcess、decide、exeFromCmdline、
-// isUpdatePhase、deriveState，与有副作用的 journal/restart/watchdog 分离；
-// 其它文件引用 core，而 core 无出边，保证单向与无环。
-// 纪律：本文件不得出现模块引入 / fs. / spawn( / process.kill / setInterval /
-// Date.now / Math.random，否则纯/IO 分离与汇点纪律即破。
+// shell 域纯核心：域内依赖图汇点（零出度），汇集全部无 IO 判定/谓词/解析，与有副作用的 journal/restart/watchdog 分离；其它文件引用 core，core 无出边。
+// 纪律：本文件不得出现模块引入 / fs. / spawn( / process.kill / setInterval / Date.now / Math.random，否则纯/IO 分离即破。
 
 const DEFAULTS = {
   enabled: true,
@@ -20,13 +16,9 @@ const DEFAULTS = {
   procPattern: 'dsh-supervisor-gui',
 };
 
-/** 壳的**无头模式**全集：桌面壳二进制自己以非 GUI 身份跑一次的入口清单。
- *
- * 这些进程的可执行文件名就是壳，但语义上「桌面壳在运行」为假。清单必须与壳侧 `main.rs`
- *   里「在 Tauri 初始化之前 exit」的那批分支逐一对应 —— 漏一项，看护就会把一次瞬时进程
- *   当成壳活着（`alive > 0` 直接短路，永不拉起真壳）。此后补三项：
- *   `--platform-matrix`（此前已漏）、`--run-guard`（服务定义指向的守卫入口）、
- *   `--watchdog`（Windows 计划任务每 5 分钟的看护入口，取代内嵌 PowerShell 脚本）。 */
+/** 壳的无头模式全集：可执行文件名是壳、但语义上「桌面壳在运行」为假的入口清单。
+ *  必须与壳侧 main.rs 里「在 Tauri 初始化之前 exit」的分支逐一对应——漏一项，看护就会把
+ *  一次瞬时进程当成壳活着（alive > 0 直接短路，永不拉起真壳）。 */
 const HEADLESS_FLAGS = Object.freeze([
   '--shell-update-plan', '--core-plan', '--node-plan', '--mirror-plan', '--env-plan',
   '--service-plan', '--platform-matrix', '--run-guard', '--watchdog',
@@ -41,12 +33,9 @@ function isShellProcess(proc) {
   return /dsh-supervisor-gui(\.exe)?/.test(c);
 }
 
-/**
- * 纯决策（不碰进程/时钟/文件系统，便于穷举单测）。
- * i: { alive, absentForMs, expectedAbsence, sessionAvailable, restartsInWindow,
- *      hasExe, config:{ graceMs, updateGraceMs, maxRestarts } }
- * 返回 { action:'alive'|'record'|'wait'|'skip'|'restart', reason, needMs? }
- */
+/** 纯决策（不碰进程/时钟/文件系统，便于穷举单测）。
+ *  i: { alive, absentForMs, expectedAbsence, sessionAvailable, restartsInWindow, hasExe, config:{ graceMs, updateGraceMs, maxRestarts } }
+ *  返回 { action:'alive'|'record'|'wait'|'skip'|'restart', reason, needMs? } */
 function decide(i) {
   const c = i.config || {};
   if (i.alive > 0) return { action: 'alive', reason: '壳在运行' };
@@ -71,7 +60,7 @@ function decide(i) {
   return { action: 'restart', reason: '壳缺失且已过宽限期', needMs };
 }
 
-/** 壳是否处于更新中相位（自更新/重启）：单一事实源，消除看护内两处重复判定。 */
+/** 壳是否处于更新中相位（自更新/重启）：单一事实源。 */
 function isUpdatePhase(phase) {
   const p = String(phase || '');
   return p === 'restarting' || p.indexOf('shell-update') === 0;
@@ -88,26 +77,23 @@ function exeFromCmdline(cmdline) {
   return s.split(/\s+/)[0] || null;
 }
 
-/** 更新账本状态机纯内核：由（壳身份, 更新账本）两个快照推导状态。
- *  返回 { state, reason, ... }：idle 无进行中更新；pending 更新已安装待壳启动确认；
- *  confirmed 壳已成功运行新版本。没有回退判定（壳更新强制且不可回退、不得跳过）；
- *  只描述事实，不产生副作用，落盘由调用方 evaluate 按 state 显式执行；
- *  不修改入参：确认分支返回新账本对象（confirmed=true），旧对象保持只读。
- *  id：壳身份快照；journal：更新账本快照。
- */
+/** 更新账本状态机纯内核：由（壳身份, 更新账本）两快照推导 { state, reason, ... }：
+ *  idle 无进行中更新；pending 已安装待壳启动确认；confirmed 壳已成功运行新版本。
+ *  无回退判定（壳更新强制且不可回退）。只描述事实不落盘（落盘由调用方 evaluate 按 state
+ *  执行）；不修改入参：确认分支返回新账本对象（confirmed=true）。 */
 function deriveState(id, journal) {
   const j = journal || {};
   if (!j.to) return { state: 'idle', reason: '无进行中的更新', journal: j, identity: id };
 
   const cur = id && id.version ? String(id.version) : null;
 
-  // 情形 1：壳已运行到目标版本 -> 确认成功（账本翻转由 evaluate 落盘）
+  // 壳已健康运行目标版本且 phase=ready -> 确认（账本翻转由 evaluate 落盘）
   if (cur && cur === j.to && id && id.phase === 'ready') {
     const next = j.confirmed === true ? j : Object.assign({}, j, { confirmed: true });
     return { state: 'confirmed', version: cur, reason: '壳已健康运行新版本', journal: next, identity: id };
   }
 
-  // 其余：等待壳重启到目标版本并就绪。壳更新强制且不可回退，此处只描述事实。
+  // 其余：等待壳重启到目标版本并就绪。
   return {
     state: 'pending',
     target: j.to, current: cur,

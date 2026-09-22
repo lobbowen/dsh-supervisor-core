@@ -1,11 +1,9 @@
 'use strict';
 
-// 供应商独立账号「切换控制器」（SwitchController 职责，M3）：
-//  - S1 选号：调纯策略 policies/switch.pickAccount，再施加副作用（markInUse/cursor/事件/持久化）
-//  - S2 失败反应：调纯策略 policies/failure.decideFailure，再执行 provider.effect / 日志
-// 信号语义（credits/window/banned/transient/none）由 provider.classifyResponse 判定；
-// 账号处置副作用经 provider.effect 执行；本控制器只决定「是否重试 / 是否透传」。
-// 绝不跨供应商 failover——每个供应商独立端点只在自己的账号池内选号。
+// 切换控制器：S1 选号（policies/switch.pickAccount）与 S2 失败反应（policies/failure.decideFailure）
+// 两个纯策略的编排层——只施加副作用（markInUse/cursor/事件/持久化/provider.effect），决定「重试/透传」。
+// 信号语义（credits/window/banned/transient/none）判定归 provider.classifyResponse。
+// 硬契约：绝不跨供应商 failover——每个供应商只在自己的账号池内选号。
 
 const { pickAccount } = require('./policies/switch');
 const { decideFailure } = require('./policies/failure');
@@ -17,8 +15,7 @@ class SwitchEngine {
     this.onPersist = opts.onPersist || null; // selected 失效自动清理时持久化
   }
 
-  /** 在指定供应商的账号池内选择（供应商独立端点语义）：绝不跨供应商 failover，本池无可用返回 null。
-   *  opts.excludeKeys=Set 时把本请求内瞬时故障（5xx/net-error）账号直接排除，强制轮换不粘滞。 */
+  /** 在指定供应商池内选号（不跨池，见文件头）。opts.excludeKeys=Set 时排除本请求内瞬时故障账号，强制轮换不粘滞。 */
   pickFor(provider, opts) {
     if (!provider) return null;
     return this._pickIn(provider, opts);
@@ -40,7 +37,6 @@ class SwitchEngine {
       instancePool,
     };
     const d = pickAccount(state, opts);
-    // 锁定失效清理：仅当 S1 判定「永久失效」才清锁并持久化（临时冻结保留锁定）。
     if (d.clearSelected) {
       p.selectedAccountKeyId = null;
       if (this.onPersist) this.onPersist();
@@ -54,11 +50,8 @@ class SwitchEngine {
     return picked;
   }
 
-  /** 上游失败反应（唯一编排点）。ctx = { status, headers, body, attempt, attempts, error? }：
-   *  1) provider.classifyResponse 给出 signal；
-   *  2) provider.effect 执行账号副作用（credits/window 冻结，proxy 会停实例并预热；banned 封号）；
-   *  3) 返回 action：'retry'（credits/window/transient，带 transient 标记供调用方定退避）或
-   *     'passthrough'（banned/none/unknown 原样回状态/头/体，绝不误切）。 */
+  /** 上游失败反应（唯一编排点）。ctx = { status, headers, body, attempt, attempts, error? }；
+   *  action/retry 语义见 policies/failure.js decideFailure 契约。 */
   reactToFailure(provider, acc, ctx) {
     const c = ctx || {};
     const status = c.status;

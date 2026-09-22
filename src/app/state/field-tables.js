@@ -1,8 +1,6 @@
 'use strict';
 
-// main entry/process 字段表（纯数据，零依赖）。
-// fields.js re-export 同名常量（ENTRY_FIELDS/PROC_FIELDS）：buildFieldHelpers 生成的 helper
-// 与访问器形态据此保持稳定，且可独立 require 断言。
+// main entry/process 字段表（纯数据，零依赖）。fields.js re-export 同名常量，可独立 require 断言。
 
 const ENTRY_FIELDS = [
   // [读写 helper 后缀, entry 字段]

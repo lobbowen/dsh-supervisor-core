@@ -1,12 +1,8 @@
 'use strict';
 
-// app/facade/lan.js —— lan(relay) 域只读门面（写动作 setRemoteMode/setRemoteToken/lanFrpc/
-// syncFrpc 在 app/domain-actions/lan.js）。只读白名单（DG-14 强制）：listLan（读触发对账，见
-// FACADE_EXCEPTIONS）/ frpStatus；daemon 模式经 43108 ctl 委托，内嵌模式走 LanManager
-// 只读方法。导出契约：module.exports = { methods }，方法内部走 this。
-//
-// 阶段六 B-1 补齐：属性级去 this（改经按 host 缓存的**惰性 deps**）。DG-14 的
-// facadeWriteViolations 与 token-boundary 的 host._lanCtlCall 覆写面不变。
+// app/facade/lan.js —— lan(relay) 域只读门面（写动作 setRemoteMode/setRemoteToken/lanFrpc/syncFrpc 在 app/domain-actions/lan.js）。
+// 只读白名单：listLan（读触发对账，见 FACADE_EXCEPTIONS）/ frpStatus；daemon 模式经 43108 ctl 委托，内嵌模式走 LanManager 只读方法。
+// 导出契约 module.exports = { methods }，方法经按 host 缓存的惰性 deps 取事实。
 const DEPS = new WeakMap();
 function depsOf(host) {
   let d = DEPS.get(host);
@@ -19,15 +15,12 @@ function depsOf(host) {
 
 module.exports = { methods: {
 
-  // 远程控制委托：全部转发给 LanManager。
-  // daemon 监督模式经 43108 ctl 委托（异步）；本地模式走 LanManager（同步）。
-  // 令牌收敛：listLan 输出剔除 token/dshToken——/lan-access 允许 LAN/私网 Host 访问，
-  // 直出 dshToken 会把 DSH 会话令牌泄漏给局域网；权威仍在 DshTokenService（relay 经
-  // tokenOf 内部读取，无需经此透传）。remote（projectRemoteView 产物）为后端单一推导
-  // 视图 {mode,ready,accessUrl,reasons}，不含机密，整段放行给 UI 消费。返回形如 {items,addresses}。
+  // 远程控制委托：全部转发给 LanManager；daemon 监督模式经 43108 ctl 委托（异步），本地模式走 LanManager（同步）。
+  // 令牌收敛：listLan 输出必须剔除 token/dshToken —— /lan-access 允许 LAN/私网 Host 访问，直出会把 DSH 会话令牌泄漏给局域网，权威仍在 DshTokenService。
+  // remote（projectRemoteView 产物）为后端单一推导视图 {mode,ready,accessUrl,reasons}，不含机密，整段放行给 UI。返回形如 {items,addresses}。
   listLan() {
     const d = depsOf(this);
-    // 白名单外显：只放行结构字段与注入状态 inject 与远程视图 remote；任何令牌字段都不外传。
+    // 白名单外显：只放行结构字段与 inject 状态、remote 视图；任何令牌字段都不外传。
     const sanitize = (r) => {
       if (!r || !r.items) return r;
       return { items: r.items.map((it) => {

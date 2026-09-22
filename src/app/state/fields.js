@@ -1,7 +1,6 @@
 'use strict';
 
-// app/state/fields.js —— 状态字段口工厂（真 ctor 注入；phase/desired 真身）。
-// createFields(deps) 自己持有 phase/desired/字段读写实现，不再转发 host._mPhase，可独立直测。
+// app/state/fields.js —— 状态字段口工厂（真 ctor 注入；phase/desired 真身，可独立直测）。
 // 纯映射/字段表在 phase.js / field-tables.js。
 
 const { ENTRY_FIELDS, PROC_FIELDS } = require('./field-tables');
@@ -48,7 +47,7 @@ function createFields(deps) {
     try { return mainStore.readDshMain().guardian === true; } catch { return false; }
   }
 
-  /** 公开门面：main 守护开关（A 平面同源）。 */
+  /** main 守护开关公开门面（与 guardian 同源）。 */
   function mainGuardian() { return guardian(); }
 
   /** 读 desired（running|stopped）。守卫内唯一 desired 读口。 */

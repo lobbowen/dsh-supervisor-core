@@ -8,15 +8,9 @@
 const fs = require('node:fs');
 const path = require('node:path');
 
-// 前端静态资源目录解析：打包后 __dirname 不再等于源码目录，故多候选探测覆盖全部发行形态。
-//  候选（按优先级，命中 supervisor.html 即用）：
-//    0) $DSH_UI_DIR                     — 显式注入（测试/特殊部署）
-//    1) <__dirname>/ui-react            — Node launcher 统一形态（core.cjs 同目录 ui-react）
-//    2) <exe 同目录>/ui-react            — 单文件分发态（二进制旁放 ui-react）
-//    3) <exe>/../ui-react                — npm 子包态（pkg/bin/dsh-supervisor + pkg/ui-react）
-//    4) <repo 根>/ui-react               — 源码态发布镜像（release.sh 产物）
-//    5) <repo 根>/ui/dist                — 开发态（ui 源码 npm run build 产物）
-//  esbuild/launcher 中 __dirname = core.cjs 真实所在目录，1/2/3 覆盖发行态，4/5 覆盖源码态。
+// 前端静态资源目录解析：打包后 __dirname 不再等于源码目录，故多候选探测覆盖全部发行形态：
+// $DSH_UI_DIR 显式注入 / core.cjs 或可执行文件旁的 ui-react / repo 根 ui-react / 开发态 ui/dist。
+// 命中 supervisor.html 即用，候选顺序即优先级。
 function resolveUiDir() {
   const exeDir = (function () {
     try { return path.dirname(process.execPath); } catch { return __dirname; }
@@ -50,8 +44,8 @@ const MIME = {
   '.png': 'image/png',
   '.ico': 'image/x-icon',
 };
-// frame-ancestors 'none'（AUDIT B-27）：面板写操作是同源 fetch，而 originAllowed 对**同源 iframe**
-// 同样放行——第三方页嵌入面板后诱导一次单击即可开公网暴露/停实例。禁止任何页面 framing 是唯一
+// frame-ancestors 'none'：面板写操作是同源 fetch，而 originAllowed 对同源 iframe 同样放行——
+// 第三方页嵌入面板后诱导一次单击即可开公网暴露/停实例。禁止任何页面 framing 是唯一
 // 在 Origin 闸之外仍然成立的防线（点击劫持与框选拖拽都发生在框架内）。
 const CSP = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'";
 

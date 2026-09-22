@@ -1,21 +1,17 @@
 'use strict';
 
-// api/transport/server —— 本地 HTTP 网关本体（传输层原语，与 ./body.js 同层）。
-// 安全判定见 ../security.js；静态托管见 ../static.js；body 读取 ./body.js；
-// 域注册表 ../router-table.js；契约面 ../contract.js；每域依赖 ../deps.js。
+// api/transport/server —— 本地 HTTP 网关本体（传输层原语，与安全模型、域分派无关）。
 // 注：api 契约面扫描只扫 api 顶层 + api/domains/，网关里的静态资源路由字面量不属于契约面。
-//
 const http = require('node:http');
 
 const { API_DOMAINS } = require('../router-table');
 const { collectBody } = require('./body');
 const { serveStatic } = require('../static');
 const { identify } = require('../identity');
-// 安全判定（Host/Origin 闸、访问密钥、壳源）——唯一实现在 ../security.js。
 const { originAllowed, requestHasAccessKey, isShellOrigin } = require('../security');
 
 /** 请求级失败的统一兜底：只应答一次（头已发则仅断开），并记录一条错误事件。
- *  绝不把异常抛给进程层（对比：bin 的 uncaughtException 策略是 3 次自杀重启）。 */
+ *  绝不把异常抛给进程层。 */
 function safeFail(res, err, where) {
   try {
     const body = JSON.stringify({ ok: false, error: (err && err.message) || String(err) });
@@ -27,20 +23,10 @@ function safeFail(res, err, where) {
   try { console.error('[api] handler error (' + (where || '?') + '):', (err && err.stack) || err); } catch {}
 }
 
-/**
- *   GET  /status             状态摘要
- *   GET  /events?after=&limit= 增量事件
- *   GET  /lifecycle/{id}     统一生命周期视图（main 启停：/lifecycle/dsh/{start|stop|restart}）
- *   GET  /native/status      原生 DSH 版本/升级状态
- *   POST /native/upgrade     一键升级（先停后装，失败自动回滚）
- *   GET  /                   控制面板首页（React UI：ui-react 或 ui/dist 的 supervisor.html）
- */
 function createServer(sup) {
   return http.createServer((req, res) => {
-    // 本地壳源 CORS 白名单：判定与 CSRF 深化层（api/security.js 的
-    // isShellOrigin）共用同一事实源。旧版此处自带更宽字面量（`*.tauri.localhost` 通配），
-    // 造成 CORS 集合 > CSRF 集合的分裂：通配子源能读到响应却驱动不了写请求。
-    // 收敛后仅 tauri://localhost 与 tauri.localhost（http/https）放行，其余零 CORS。
+    // 壳源 CORS 白名单与 CSRF 判定（isShellOrigin）共用同一事实源：
+    // 此处若自带更宽字面量，会造成 CORS 松于 CSRF——子源能读响应却驱动不了写请求。
     const shellOrigin = (() => {
       const o = req.headers.origin;
       if (!o) return null;
@@ -58,24 +44,20 @@ function createServer(sup) {
       res.end(body);
     };
 
-    // 每实例的 DSH 访问令牌（随实例重启轮换）只有一个权威来源：唯一令牌节点
-    // DshTokenService（原生与沙箱共用同一套获取/分发，见 src/platform/service/token/）。生成直连认证 URL
-    // 时按目标查取，绝不跨实例借用（主实例令牌套到沙箱实例会 401 "dsh web authentication required"）。
+    // DSH 访问令牌随实例重启轮换，唯一权威来源是 DshTokenService（原生与沙箱共用）；
+    // 按目标实例查取，绝不跨实例借用（主实例令牌套到沙箱实例会 401）。
     const tokOf = (id) => {
       try { if (sup.tokenService && typeof sup.tokenService.get === 'function') return sup.tokenService.get(id) || ''; } catch {}
       return '';
     };
 
-    // 访问者身份（第一层，socket 事实）：唯一判定入口见 ../identity.js
-    // token 下发 / access-key 豁免一律消费 identity.loopback——绝不从请求头推断来源。
+    // 访问者身份（socket 事实）：token 下发 / access-key 豁免一律消费 identity.loopback，
+    // 绝不从请求头推断来源。唯一判定入口见 ../identity.js。
     const identity = identify(req);
 
-    // 访问密钥门卫（第三层，apiAccessKey 可选配置）
-    // fail-closed：非回环请求（0.0.0.0 局域网 / FRP 通道）必须携带**匹配的** key ——
-    //   未配置 key 时同样拒绝，**不再「整层跳过」**。否则 apiHost='0.0.0.0' 且未设 key 时，
-    //   局域网任意主机可零认证驱动写 API（配合 security.js 对无 Origin 请求的放行与
-    //   Host 允许 RFC1918，构成完整旁路）。回环豁免——CLI/同机面板语义必需。
-    // OPTIONS 预检豁免（浏览器跨源探测不发自定义头，给 204 而非 401）。
+    // 访问密钥门卫（apiAccessKey 可选配置），fail-closed：非回环请求（局域网 / FRP 通道）
+    // 必须携带匹配的 key，未配置 key 时同样拒绝——否则 apiHost='0.0.0.0' 且未设 key 时，
+    // 局域网任意主机可零认证驱动写 API。回环与 OPTIONS 预检豁免（预检不发自定义头，给 204）。
     const accessKey = (sup && sup.config && sup.config.apiAccessKey) || null;
     if (!identity.loopback && req.method !== 'OPTIONS' && (!accessKey || !requestHasAccessKey(req, accessKey))) {
       res.writeHead(401, { 'Content-Type': 'application/json' });
@@ -108,8 +90,8 @@ function createServer(sup) {
     }
 
 
-    // 路径段安全解码（单点）：畸形百分号编码返回 400。域 handler 只拿已解码的
-    // 干净字符串，任何域不得自行 decodeURIComponent（异常边界唯一化的组成部分）。
+    // 路径段安全解码（单点）：畸形百分号编码返回 400；域 handler 只拿已解码的干净字符串，
+    // 任何域不得自行 decodeURIComponent（异常边界唯一化）。
     let decodedPathname;
     try {
       decodedPathname = pathname.split('/').map((seg) => {
@@ -122,8 +104,8 @@ function createServer(sup) {
     const ctx = { sup, req, res, pathname: decodedPathname, identity, send, collectBody, originAllowed, tokOf };
 
     // 按域分派（每域 owns 为粗前缀超集；域内未匹配由该域 handle 兜底 404/405）。
-    // 统一异常边界：handler 同步抛错 / 返回的 Promise reject 一律在此兜底为 500——
-    // 请求级错误绝不穿透为进程级 uncaughtException（异常处理层级归位，RC3）。
+    // handler 同步抛错 / 返回的 Promise reject 一律在此兜底为 500，
+    // 绝不穿透为进程级 uncaughtException。
     for (const d of API_DOMAINS) {
       if (d.owns(pathname)) {
         try {
@@ -134,7 +116,7 @@ function createServer(sup) {
       }
     }
 
-    // 静态文件（新 React UI 产物：assets/ 哈希文件开放）
+    // 静态托管（React UI 产物：assets/ 哈希文件开放）
     if (req.method === 'GET') {
       if (pathname === '/' || pathname === '/index.html' || pathname === '/supervisor.html') {
         return serveStatic(res, 'supervisor.html', shellOrigin);

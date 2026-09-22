@@ -1,9 +1,7 @@
 'use strict';
 
-// 用量账本（IO）：记账 + 按 key/model 聚合 + 原子落盘 + 汇总视图。写权单闸：落盘前问注入的
-// canPersist()（store.js 提供唯一闸，本模块不再自行判断 _persistEnabled）。.tmp 命名与 store.js
-// 统一为 <file>.tmp.<pid>.<ts>（唯一，防并发写混合内容）。依赖 node:fs/node:path 与注入的
-// 纯函数（keyFingerprint/estimateCost）。
+// 用量账本（IO）：记账 + 聚合 + 落盘。写权单闸：落盘前只问注入的 canPersist()（store.js 唯一闸）。
+// .tmp 命名与 store.js 统一为 <file>.tmp.<pid>.<ts>，防并发写混合；keyFingerprint/estimateCost 为注入纯函数。
 
 const fs = require('node:fs');
 const path = require('node:path');
@@ -27,26 +25,23 @@ class UsageLedger {
     const o = opts || {};
     this.file = o.file || null;
     this.logger = o.logger || null;
-    // 注入的纯函数（依赖倒置：账本本身不 require providers/parse）
+    // 注入纯函数（依赖倒置：账本不 require providers/parse）
     this._keyFingerprint = typeof o.keyFingerprint === 'function' ? o.keyFingerprint : ((k) => k);
     this._estimateCost = typeof o.estimateCost === 'function' ? o.estimateCost : (() => 0);
-    // 唯一写权闸（谓词注入）；字段名加 _ 前缀与兄弟文件同名方法（RouterStore.canPersist）区分
+    // 唯一写权闸（谓词注入）；_ 前缀区别于兄弟文件同名方法 RouterStore.canPersist
     this._canPersist = typeof o.canPersist === 'function' ? o.canPersist : (() => true);
     this.events = o.events || null;
     this.totals = null;
     // byModel 键来自客户端请求体，可被撑到无界 -> 截断 + 限流桶；
-    //   同步全量写盘改脏标记 + 尾部定时器（测试可注入 writeDelayMs=0 保持即时落盘语义）。
+    //   全量同步写盘改脏标记 + 尾部定时器（writeDelayMs=0 保持即时落盘语义，供测试）。
     this._writeDelayMs = typeof o.writeDelayMs === 'number' ? o.writeDelayMs : 1000;
     this._maxModelKeys = typeof o.maxModelKeys === 'number' ? o.maxModelKeys : 64;
     this._timer = null;
     this._dirty = false;
   }
 
-  /** 归一 model 键：E-4 单源字符集闸（platform/util/input.ledgerKey）。
-   *  旧实现只做「字符串化 + 截断」，于是客户端 body 里的 model 名可以就是
-   *  `__proto__` / `constructor` —— `t.byModel[key] = {...}` 走的是原型赋值，
-   *  账本静默失真且污染面在 Object.prototype 上（空白/控制符键同理，面板也没法看）。
-   *  违规值**折进 (other) 桶**而不是丢弃：B19 的上限语义与「不丢计数」都保持不变。 */
+  /** model 键归一走 platform/util/input.ledgerKey（外部输入字符集单源闸）：
+   *  __proto__/constructor/空白/控制符等违规值折进 (other) 桶——不丢计数，也不做对象键（防原型污染）。 */
   _modelKey(model) {
     return input.ledgerKey(model, { max: 128, empty: 'unknown', unsafe: '(other)' });
   }
@@ -65,7 +60,6 @@ class UsageLedger {
     return bm;
   }
 
-  /** 记账：累计总量 + byModel + byKey，按快照单价估算费用，节流落盘。 */
   recordUsage(entry) {
     const t = this.load();
     t.requests += 1;
@@ -90,7 +84,6 @@ class UsageLedger {
     return t;
   }
 
-  /** 错误计数（持久化）。 */
   recordError() {
     const t = this.load();
     t.errors = (t.errors || 0) + 1;
@@ -98,7 +91,7 @@ class UsageLedger {
     return t.errors;
   }
 
-  /** 脏标记 + 尾部定时器合并落盘（delay=0 时保持每调用同步写，兼容既有测试语义）。 */
+  /** 脏标记 + 尾部定时器合并落盘；delay=0 时每调用同步写（兼容既有测试语义）。 */
   _scheduleWrite() {
     this._dirty = true;
     if (this._writeDelayMs <= 0) return this._writeTotals();
@@ -117,9 +110,8 @@ class UsageLedger {
     this._writeTotals();
   }
 
-  /** 读盘。读源纪律：写者以内存为准（节流窗口内盘落后于内存，重读会丢在途账）；
-   *  只读实例（守卫/内嵌，无写权）从不记账，盘上是别人的活账，必须每次新鲜读盘——
-   *  永久缓存会让面板冻结在进程启动时的旧快照。兼容旧格式补默认字段，防 undefined 崩溃。 */
+  /** 读源纪律：写者以内存为准（节流窗口内盘落后于内存，重读丢在途账）；
+   *  只读实例（无写权）从不记账、盘上是别人的活账，必须每次新鲜读盘——永久缓存会冻结面板。 */
   load() {
     if (this.totals && this._canPersist()) return this.totals;
     let t;
@@ -129,14 +121,13 @@ class UsageLedger {
     return this.totals;
   }
 
-  /** 汇总视图（byModel 取 token 前 12）。 */
   getUsage() {
     const t = this.load();
     const byModel = Object.entries(t.byModel || {}).map(([model, v]) => ({ model, ...v })).sort((a, b) => b.totalTokens - a.totalTokens).slice(0, 12);
     return { requests: t.requests, promptTokens: t.promptTokens, completionTokens: t.completionTokens, totalTokens: t.totalTokens, costUsd: t.costUsd, errors: t.errors || 0, byModel, byKey: t.byKey || {} };
   }
 
-  /** 原子落盘（tmp+rename 防崩溃/断电损坏高频用量文件）；写权单闸。 */
+  /** 原子落盘：tmp+rename 防崩溃/断电损坏高频用量文件；写权单闸。 */
   _writeTotals() {
     try {
       if (typeof this._canPersist === 'function' && !this._canPersist()) return;

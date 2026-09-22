@@ -55,17 +55,13 @@ function createDesired(deps) {
     return { ok: true };
   }
 
-  /*  config.json 补丁持久化；原子写 0600。
-   *  返回**落盘成败**：成功 true；无 configPath（未配置落点）或写失败均 false。
-   *  为什么返回布尔：调用方需要如实上报"配置是否真的落盘"，此前只能靠"回读 configPath 逐键比对"
-   *  来核验 —— 那是第二套落盘判定，与这里必然分叉（P4-A #6）。既有调用方一律忽略返回值，故向后兼容。
-   *  既有文件**读失败或解析失败时拒绝写回**（fail-closed）。
-   *  旧行为是 catch{} 后以 cur={} 继续写 —— 一次瞬时读错/半截 JSON 就把 apiAccessKey 等
-   *  全部键抹掉且不可回滚。文件缺失（ENOENT）
-   *  仍视为首启空配置，照常写入。 */
+  /*  config.json 补丁持久化；原子写 0600。返回落盘成败：无 configPath 或写失败均 false
+   *  （调用方据此如实上报，不再靠回读比对核验）。
+   *  既有文件读/解析失败时拒绝写回（fail-closed）：瞬时读错后继续写会把 apiAccessKey 等全部键抹掉。
+   *  文件缺失（ENOENT）视为首启空配置，照常写入。 */
   function persistConfigPatch(patch) {
     const p = configPath();
-    if (!p) return false; // 无落点 = 未持久化（如实回 false，不再静默返回 undefined）
+    if (!p) return false; // 无落点 = 未持久化
     const abort = (m) => {
       const l = logger();
       if (l && l.warn) l.warn('config persist aborted (fail-closed): ' + m);

@@ -1,8 +1,8 @@
 
 # 迁移历史总览（_MIGRATION-HISTORY.md）
 
-> 本文件是对 archive/design-notes/_*.md（80 份作业单/登记表/裁决/存疑报告）的压缩整合。
-> 源文件保留于该目录；本汇总是其「活」索引。行号可能随代码演进漂移，请以「文件 + 符号/文本」定位。
+> 本文件是对 archive/design-notes/_*.md（EXEC*/FIX*/WO_REG*/_p*/_audit*/_workorder* 等作业单/登记表/裁决/存疑报告）的压缩整合。
+> 源文件（EXEC*/FIX*/WO_REG*/_p*/_audit*/_workorder* 等作业单/登记表/裁决/存疑报告）已在收敛后**删除**；本汇总是其**唯一存活索引**。行号可能随代码演进漂移，请以「文件 + 符号/文本」定位。
 
 ## 1. 一句话与目标
 - 目标：把 6 个域（app/instance/plugin/relay/router/shell）按 5 层（app/daemons、app/facade、app/settings、api/domain、domain/*）拆出，让门禁（DF-1..7、DG-1..19、TK、G9、R3G）可自动验证。

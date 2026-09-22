@@ -1,8 +1,6 @@
 'use strict';
 
-// 跟随变动广播（DSH-TOKEN-CONTRACT 契约3/4，TK-8）。
-// 令牌变动有值与失效两个方向，消费方只关心结果，故把订阅与广播收敛于此。
-// 强制一条：凡对外状态变化（含 value=null）必须经 emit，不允许内部静默 set/delete；历史上清空不广播会让 relay 继续用旧 cookie 直到 401。
+// 跟随变动广播（DSH-TOKEN-CONTRACT 契约3/4，TK-8）：对外状态变化（含 value=null 的失效/清空）必须经 emit，不允许内部静默 set/delete——清空不广播会让消费方一直用旧凭据。
 // emit 第 3 参 record 是契约4 的向后兼容新增；单个 listener 抛异常不得影响其它 listener。
 
 class FollowBus {
@@ -10,7 +8,7 @@ class FollowBus {
   constructor(opts) {
     const o = opts || {};
     this.logger = o.logger || console;
-    this._listeners = new Set(); // 订阅者集合，Set 去重，同一函数重复订阅只广播一次
+    this._listeners = new Set();
   }
 
   /** 订阅令牌变化，返回取消订阅函数（幂等，重复调用无副作用）。 */

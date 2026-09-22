@@ -1,8 +1,7 @@
 'use strict';
 
-// 插件域作业服务（有状态，零出边指向 ops/updater/index，只依赖 model）。
-// 作业表（保留上限 50）+ 作用域互斥队列 + 状态视图 + 统一任务注册表桥接；
-// tasks 经 ctor 注入。
+// 插件域作业服务（有状态，零出边指向 ops/updater/index，只依赖 model）：作业表（保留上限 50）+
+// 作用域互斥队列 + 状态视图 + 统一任务注册表桥接（tasks 经 ctor 注入）。
 // 互斥语义须逐字保持（异常不吞、调用方 .then 继续推进）：
 //   prev.then(fn, fn) + 续链 run.catch(()=>{}) + 返回 run.catch(e=>({ok:false,error}))
 
@@ -12,7 +11,7 @@ function createJobs({ tasks }) {
   const _jobs = {};          // jobId -> job（install/uninstall/update；兼容视图，桥接统一任务）
   const _scopeQueues = {};   // targetId -> Promise 链（作用域互斥）
 
-  /** 作用域互斥：同目标串行；异常不吞，调用方 .then 继续推进。 */
+  /** 作用域互斥：同目标串行。 */
   const withScopeLock = (targetId, fn) => {
     const prev = _scopeQueues[targetId] || Promise.resolve();
     const run = prev.then(fn, fn);

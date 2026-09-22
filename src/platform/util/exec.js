@@ -1,17 +1,8 @@
 'use strict';
 
-// 统一子进程执行器：同步 exec 的唯一入口（src 内只有本文件可调用 execFileSync/spawnSync）。
-// 选项必须固定 timeout、killSignal=SIGKILL、windowsHide、显式 maxBuffer：
-// timeout 到期默认发 SIGTERM，对挂起或被停住的进程可能无效；GUI 进程调用控制台程序会弹黑框；
-// maxBuffer 默认 1MB，systemctl status 之类冗长输出会被误判为命令失败。
-// 仅限守卫启动早期、CLI 一次性命令或无法异步的调用点；新增调用优先用 execFile + await。
-// run() 同步执行，默认 15s 硬超时，失败或超时返回 null；runOut() 返回 stdout 字符串；
-// runDetail() 返回 { ok, code, stdout, stderr, timedOut, error }；runAsync() 为其异步同族。
-// runOutAsync()：心跳/事件循环敏感路径专用 —— 同步 execFileSync 在长超时下
-//   会冻结整个 tick（journalctl 5s 即守卫心跳停摆 5s），此类调用点必须用异步版。
-//   异步版沿用同一套有界纪律（timeout/SIGKILL/windowsHide/maxBuffer），失败/超时 resolve(null)。
-// K-W2 门禁把异步 execFile 纳入扫描后，本文件是 src 内**唯一**的
-//   execFile/execFileSync 合法调用点（spawn.js 豁免 spawn）；新增异步调用一律经 runAsync/runOutAsync。
+// 统一子进程执行器：src 内 execFile / execFileSync 的唯一合法调用点（spawn.js 豁免 spawn）。
+// 选项固定：timeout、killSignal=SIGKILL（SIGTERM 对挂起进程可能无效）、windowsHide（不弹黑框）、显式 maxBuffer（Node 默认 1MB 会误判冗长输出）；
+//   run()/runOut() 失败或超时返回 null。同步版仅限守卫启动早期与 CLI 一次性命令，事件循环敏感路径必须 runOutAsync/runAsync（同步会冻结整个 tick）。
 
 const { execFileSync, execFile } = require('node:child_process');
 
@@ -24,10 +15,10 @@ const DEFAULT_MAX_BUFFER = 8 * 1024 * 1024;
 function options(opts) {
   const o = opts || {};
   return {
-    // timeout 是历史别名：service.js 曾传 { timeout } 而被静默忽略，所有超时回落默认值（N1）。
+    // timeout 是历史别名（兼容旧调用点拼写，若不与 timeoutMs 归一会被静默忽略）：
     // 两种拼写都收，timeoutMs 优先；新调用一律用 timeoutMs。
     timeout: o.timeoutMs || o.timeout || DEFAULT_TIMEOUT_MS,
-    // 必须 SIGKILL：SIGTERM 对挂起或被停住的进程可能无效，否则有超时等于没超时。
+    // 必须 SIGKILL：SIGTERM 对挂起或被停住的进程可能无效。
     killSignal: o.killSignal || 'SIGKILL',
     maxBuffer: o.maxBuffer || DEFAULT_MAX_BUFFER,
     stdio: o.stdio || ['ignore', 'pipe', 'pipe'],
@@ -69,9 +60,8 @@ function runOut(bin, args, opts) {
   try { return String(r); } catch { return null; }
 }
 
-/** 异步有界执行（runDetail 的异步同族，绝不 reject）：返回
- *  { ok, code, stdout, stderr, timedOut, error }。有界纪律与同步版同一套（options()）：
- *  timeout/SIGKILL/windowsHide/maxBuffer。区分「命令失败」与「超时」的调用方用它。 */
+/** 异步有界执行（runDetail 的异步同族，绝不 reject）：有界纪律与同步版同一套（options()）。
+ *  需区分「命令失败」与「超时」的调用方用它。 */
 function runAsync(bin, args, opts) {
   const o = opts || {};
   return new Promise((resolve) => {
@@ -100,9 +90,7 @@ function runAsync(bin, args, opts) {
   });
 }
 
-/** 异步有界执行，返回 stdout 字符串 Promise（失败/超时 resolve(null)，绝不 reject）。
- *  专供事件循环敏感路径（守卫心跳 tick 内的 journalctl 回填等）：同步 execFileSync 会把
- *  整个进程冻结到 timeout 到期，心跳/定时器全部停摆。选项与同步版同一套有界纪律。 */
+/** 异步有界执行，返回 stdout 字符串 Promise（失败/超时 resolve(null)，绝不 reject）。 */
 function runOutAsync(bin, args, opts) {
   return runAsync(bin, args, opts).then((r) => (r.ok ? r.stdout : null));
 }

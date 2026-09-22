@@ -12,18 +12,13 @@ const fs = require('node:fs');
 // eventsTail 是 dispatcher 的内置特例（守卫 EventHub 增量拉事件），须显式登记才可达。
 const DEFAULT_CTL_PORT = 43107;
 const ROUTER_CTL_METHODS = Object.freeze([
-  // 只读视图
   'status', 'domainSummary', 'portsView', 'listProviders', 'proxyApps', 'proxyUpdateStatus',
-  // 供应商增删启停
   'addDirectProvider', 'addProxyProvider', 'removeProvider',
   'activateProvider', 'deactivateProvider',
-  // 账号/Key 写操作
   'addProxyKey', 'setProviderKeys', 'removeProxyKey', 'setSelectedProxyKey', 'switchToKey',
   'discardAccount',
-  // 配额/更新/登录
   'refreshProviderQuota', 'refreshProxyUpdateInfo', 'applyProxyUpdate',
   'commandcodeLoginStart', 'commandcodeLoginWait',
-  // 系统日志框架内置特例（守卫 EventHub 增量拉事件）
   'eventsTail',
 ]);
 
@@ -31,9 +26,9 @@ const CONFIG_PATH = process.env.DSH_SUPERVISOR_CONFIG || path.join(require('../.
 
 function loadConfig() {
   const raw = JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf8'));
-  // normalize 展开 ~ 路径等（与守卫同源处理，保证 providerFile/ports.json 等路径一致）。
-  // 注意：platform 的 DEFAULTS 不含业务域键（routerCtlPort 等），本进程无需注入，
-  // 端口以本域常量 DEFAULT_CTL_PORT 兜底——domains 到 app 属非法依赖边。
+  // normalize 展开 ~ 路径等（与守卫同源，保证 providerFile/ports.json 等路径一致）。
+  // platform 的 DEFAULTS 不含业务域键（routerCtlPort 等）：端口以本域常量 DEFAULT_CTL_PORT
+  // 兜底——domains 到 app 属非法依赖边。
   return normalize(raw);
 }
 

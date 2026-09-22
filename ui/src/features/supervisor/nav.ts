@@ -1,7 +1,4 @@
-/**
- * supervisor 功能域导航 — 7 域（对照老 UI 侧边栏）
- * 数据契约、页面均独立于 skiff 清理工具 App。
- */
+/** supervisor 功能域导航（7 域）；数据契约与页面均独立于 skiff 清理工具 App。 */
 import {
   Activity, Boxes, LayoutDashboard, ListChecks, Package, Settings, Wifi,
   type LucideIcon,
@@ -24,8 +21,9 @@ export const SUPERVISOR_NAV: Array<{
   { key: "settings", label: "设置", icon: Settings },
 ];
 
-/** DSH phase 元数据（语义色 tone 对齐 DashboardPage PHASE_META + 老 UI） */
+/** 展示组件语义色取值 */
 export type Tone = "ok" | "warn" | "err" | "boot" | "off";
+/** DSH phase -> label + tone */
 export const SUP_PHASE_META: Record<string, { label: string; tone: Tone }> = {
   RUNNING: { label: "运行中", tone: "ok" },
   STOPPED: { label: "已停止", tone: "off" },
@@ -61,7 +59,7 @@ export const TASK_STATE_META: Record<string, { label: string; tone: Tone }> = {
   canceled: { label: "已取消", tone: "off" },
 };
 
-/** 最近故障 -> 友好中文（对齐 FAILURE_META；绝不暴露内部码） */
+/** 最近故障原因 -> 友好中文（绝不对外暴露内部码） */
 const FAILURE_META: Record<string, string> = {
   manual: "手动重启", start_timeout: "启动超时", child_exit: "进程退出", adopted_exit: "实例退出",
   main_down: "原生实例未运行", systemd_start_failed: "启动失败", spawn_error: "启动失败",
@@ -122,7 +120,7 @@ export const EVENT_LABELS: Record<string, string> = {
   plugin_update_done: "插件更新完成", plugin_update_job_failed: "插件更新失败",
   plugin_uninstall_started: "插件卸载开始", plugin_uninstall_done: "插件卸载完成",
   plugin_uninstall_job_failed: "插件卸载失败",
-  // 守卫/远端/反代扩展类型（穿透审计后补齐，与后端发射全集对齐）
+  // 扩展类型：与后端事件发射全集（EVENT_META）对齐补齐
   access_key_changed: "访问密钥变更", adopt_token_reclaim_started: "令牌回收重建",
   autostart_changed: "自启变更", dist_registry_selected: "分发源选定",
   lan_binding_lost: "远程绑定丢失", lan_cookie_exchanged: "远程会话刷新",

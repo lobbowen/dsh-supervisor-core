@@ -1,23 +1,16 @@
 'use strict';
 
-// relay 域纯层（DL-G8：不 require node:fs/http/https/net/child_process）。
-// 只放判定与构造：来源信任、常数时间比较、令牌门卫决策、Cookie 取值、HTML polyfill 常量、
-// 远程访问模式归一（normalizeRemoteMode）、wan 前置闸（validateWanAccess）、访问视图投影
-// （projectRemoteView）、frpc.toml 文本生成、frp 设置归一；副作用一律留在 proxy/session/tunnel/frp 等 IO 层。
+// relay 域纯层：只有判定与构造，不 require node:fs/http/https/net/child_process（副作用一律在 proxy/session/tunnel/frp）。
 
 const crypto = require('node:crypto');
-// 来源必须落在回环或 RFC1918 私有网段；复用 shared/ip 的同一份判定，绝不在本域重写第二份。
+// 来源判定复用 shared/ip 的同一份实现，本域不得写第二份。
 const { isLoopbackAddress, isPrivateIpv4 } = require('../../shared/ip');
-// 远程令牌强度下限同理由三个跨层消费点共用，实现在 shared/credential（DS-G1 禁跨域边）。
+// 令牌强度下限由多个消费点共用，故实现在 shared/credential（DS-G1 禁跨域边）。
 const { remoteTokenStrength } = require('../../shared/credential');
 
-/** 来源地址是否可信（回环 并 RFC1918）。
- *
- *  relay 监听 0.0.0.0 且把 Origin/Referer 改写成回环权威（「回环呈现」），故「谁连得上」等于
- *  「谁拿到 DSH 特权面」；本闸把可达来源收窄到回环与私有网段。注意这不等于鉴权：私网内仍是
- *  共享信任域，只是堵住了暴露到公网这一档。
- *  @param req  HTTP 请求（取 req.socket.remoteAddress）
- *  @param sock 可选的原始 socket（Upgrade 路径的 socket）
+/** 来源地址是否可信（回环 或 RFC1918 私有网段）。
+ *  relay 监听 0.0.0.0 且把 Origin/Referer 改写成回环权威，「连得上」就等于拿到 DSH 特权面，
+ *  故来源闸收窄到回环与私有网段；这不是鉴权——私网内仍是共享信任域。
  */
 function isTrustedSource(req, sock) {
   const addr = (req && req.socket && req.socket.remoteAddress)
@@ -49,11 +42,8 @@ function cookieByName(headerValue, name) {
   return null;
 }
 
-/** 转发给上游的请求路径：门卫令牌 ?token= 只服务于 relay 自己的准入，
- *  对 DSH 上游是纯噪声，且门卫令牌会随 path 落进 DSH 访问日志/Referer 链——转发前剥离。
- *  （lan cookie 302 之后本已无 token；此处兜住「带 token 直达非根路径」与 WS 升级形态。
- *   DSH 自身的启动令牌不经此路：/open bootstrap 走回环直连。HTTP 与 tunnel 共用本实现，
- *   放纯层也避免 proxy<->tunnel 互 require 成环。） */
+/** 转发给上游的路径：剥离 ?token=。门卫令牌只服务于 relay 准入，随 path 落进 DSH 访问日志与
+ *  Referer 链；DSH 自身启动令牌不经此路（/open bootstrap 走回环直连）。HTTP 与 tunnel 共用本实现。 */
 function upstreamPath(rawUrl) {
   try {
     const u = new URL(rawUrl, 'http://127.0.0.1');
@@ -62,11 +52,8 @@ function upstreamPath(rawUrl) {
   } catch { return rawUrl || '/'; }
 }
 
-/** 门卫会话 cookie 值：`sha256(salt + '\n' + token)`。
- *  旧实现把 remoteToken **原文**写进 dsh_lan_token cookie 当会话凭据——静态门卫凭据随每个请求
- *  上线、落进浏览器 cookie 仓，一次截获永久有效且无法与令牌本身分开轮换。改为加盐派生后：
- *  cookie 是派生会话凭据（kinds 'lan-gate' 的声明语义「我方签发并校验」），从 cookie 值反推
- *  不出令牌明文；salt 为 relay 进程随机数，进程重启即全部会话失效（须重凭 ?token= 进入）。
+/** 门卫会话 cookie 值：`sha256(salt + '\n' + token)`。cookie 存派生值而非令牌明文，被记录/截获都不等于门卫令牌
+ *  （匹配 kinds 'lan-gate' 声明），两者可分开轮换；salt 为 relay 进程随机数，重启即全部会话失效。
  *  @returns {string} hex；salt/token 任一缺失返回 ''（调用方据此拒绝匹配）。 */
 function lanGateCookieValue(token, salt) {
   const t = String(token == null ? '' : token);
@@ -75,8 +62,7 @@ function lanGateCookieValue(token, salt) {
   return crypto.createHash('sha256').update(s + '\n' + t).digest('hex');
 }
 
-/** 请求是否携带有效令牌（URL ?token= 或派生会话 Cookie）。纯判定，无 IO。
- *：Cookie 档只认派生值，门卫令牌原文只允许经 ?token= 一次性出示。 */
+/** 请求是否携带有效令牌（纯判定，无 IO）。Cookie 档只认派生值，门卫令牌原文只允许经 ?token= 一次性出示。 */
 function hasValidToken(req, token, salt) {
   if (!token) return true;
   const url = new URL(req.url, 'http://localhost');
@@ -96,10 +82,8 @@ function hasValidToken(req, token, salt) {
 }
 
 /** 令牌门卫决策（HTTP 响应路径）。纯函数，应答由调用方落笔。
- *  @param salt relay 进程随机盐（lanGateCookieValue；缺失 = 无法签发/校验会话 cookie，fail-closed）
- *  @returns {ok:true} 放行；
- *           {ok:false, redirect, cookie} 首次凭 URL 令牌进入，302 种 HttpOnly 派生会话 Cookie；
- *           {ok:false, unauthorized:true} 401。
+ *  @param salt relay 进程随机盐；缺失 = 无法签发/校验会话 cookie，fail-closed
+ *  @returns {ok:true} 放行 | {ok:false, redirect, cookie} 首次凭 URL 令牌进入，302 种派生会话 Cookie | {ok:false, unauthorized:true} 401
  */
 function tokenGateDecision(req, token, salt) {
   if (!token) return { ok: true };
@@ -117,16 +101,15 @@ function tokenGateDecision(req, token, salt) {
     return {
       ok: false,
       redirect: url.pathname,
-      // 令牌条 5：种的是派生会话值，绝不是门卫令牌原文。
+      // 令牌条 5：种派生会话值，绝不是门卫令牌原文。
       cookie: 'dsh_lan_token=' + lanGateCookieValue(token, salt) + '; Path=/; HttpOnly; SameSite=Lax',
     };
   }
   return { ok: false, unauthorized: true };
 }
 
-// 非回环 HTTP 源上 crypto.randomUUID 不存在（secure-context-only），
-// 而 DSH 客户端用它生成每个 RPC 的 id —— 缺失即所有请求抛错、WS 就绪握手失败。
-// 反代在 HTML 注入此 polyfill，使局域网源的客户端获得等价能力。
+// 非回环 HTTP 源不是 secure context，crypto.randomUUID 缺失，而 DSH 客户端用它生成每个 RPC 的
+// id —— 缺失即所有请求抛错、WS 就绪握手失败。反代在 HTML 注入此 polyfill 补齐。
 const POLYFILL_SCRIPT = `<script>
 if (typeof crypto.randomUUID !== 'function') {
   crypto.randomUUID = function () {
@@ -140,10 +123,10 @@ if (typeof crypto.randomUUID !== 'function') {
 }
 </script>`;
 
-/** settings 与 instances 生成 frpc.toml 文本（纯，无 IO）。
- *  loginFailExit 必须为 false：frpc 默认 true 时首次连不上 frps 即退出且不重试，隧道永久失效；
- *  置 false 让 frpc 自身持续重连。wanPort 未分配时不得写出无效 [[proxies]]。
- *  端口纪律：公网口与本机 relay 口恒同号（remotePort = wanPort），不存在第二套端口分配。 */
+/** 生成 frpc.toml 文本（纯，无 IO）。
+ *  loginFailExit 必须为 false：frpc 默认 true 时首次连不上 frps 即退出且不重试，隧道永久失效。
+ *  端口纪律：公网口与本机 relay 口恒同号（remotePort = wanPort），不存在第二套端口分配；
+ *  wanPort 未分配（非正整数）的实例不得写出 [[proxies]]。 */
 function buildFrpcToml(settings, instances) {
   const s = settings || {};
   const lines = [];
@@ -168,8 +151,7 @@ function buildFrpcToml(settings, instances) {
   return { text: lines.join('\n'), count };
 }
 
-/** frp 设置归并（patch 覆盖现值，纯）。frpc 进程生命周期由「是否存在 wan 实例」驱动，
- *  设置面只有连接参数，没有总闸。 */
+/** frp 设置归并（patch 覆盖现值，纯）：设置面只有连接参数，没有总闸（见 frp.js 生命周期条件）。 */
 function normalizeFrpSettings(patch, current) {
   const j = patch || {};
   const cur = current || {};
@@ -191,11 +173,10 @@ function validateFrpServerSettings(settings) {
   return { ok: true };
 }
 
-/** 凭据失败退避判定：纯函数，计时与账本由调用方（proxy 层内存 Map）持有。
- *  门卫令牌校验（tokenGateDecision/hasValidToken）此前对失败完全无状态，公网侧可无限速爆破。
- *  @param {{failCount:number, firstAt:number, now:number}} f  now=当前时刻(ms)
- *  @param {{max:number, windowMs:number, lockMs:number}} [cfg]
- *  @returns {{waitMs:number|null}} null=可立即尝试；否则须等待的毫秒数（可为正数=锁未到期） */
+/** 凭据失败退避判定（纯）：计时与账本由调用方（proxy 层内存 Map）持有。
+ *  门卫校验本身无状态，否则公网侧可无限速爆破。
+ *  @param {{failCount:number, firstAt:number, now:number}} f  @param {{max:number, windowMs:number, lockMs:number}} [cfg]
+ *  @returns {{waitMs:number|null}} null=可立即尝试；否则须等待的毫秒数 */
 function backoffGate(f, cfg) {
   const c = cfg || {};
   const max = c.max || 10;
@@ -209,12 +190,9 @@ function backoffGate(f, cfg) {
   return { waitMs: Math.max(0, lockMs - (now - firstAt)) };
 }
 
-/** 公网访问（wan）前置安全闸（纯）：relay 空 token 恒放行 + 回环呈现，公网可零认证触达特权 API。
- *  进入 wan 模式前强制要求已设访问令牌；端口无自由度（公网口与 relay 口恒同号），
- *  端口合法性/占用不在本闸——由 relay 槽位注册表单一事实源保证。
- *  @param {string} remoteToken
- *  @returns {{ok:true}|{ok:false, error:string}}
- */
+/** 公网访问（wan）前置安全闸（纯）：relay 空 token 恒放行 + 回环呈现，故进入 wan 前强制要求已设且强度
+ *  达下限（remoteTokenStrength）的访问令牌，否则 DSH 特权接口对公网零认证可达。端口无自由度（公网口与
+ *  relay 口恒同号），端口合法性/占用不在本闸——由 relay 槽位注册表单一事实源保证。 */
 function validateWanAccess({ remoteToken }) {
   const strength = remoteTokenStrength(remoteToken);
   if (!strength.ok) {
@@ -232,11 +210,9 @@ function normalizeRemoteMode(v) {
 }
 
 /** 远程访问视图投影（纯）——URL 与就绪态的唯一事实源，前端零判定直消费。
- *  ready 语义：relay 在监听 且 DSH 会话 cookie 已注入（= 扫码即进入已认证会话）；
- *  wan 模式额外要求 frpc 在跑（公网隧道存活）。未就绪的具体原因按优先级给出，供 UI 悬停呈现。
- *  @param {{mode,relayListening,cookieReady,tokenSet,frpcRunning,serverAddr,lanAddress,wanPort}} v
- *  @returns {{mode:string, ready:boolean, accessUrl:string|null, reasons:string[]}}
- */
+ *  ready = relayListening（listen 失败会即时移除）且 DSH 会话 cookie 已注入；wan 额外要求 frpc 在跑；
+ *  未就绪原因按优先级列在 reasons 供 UI 呈现。
+ *  @param {{mode,relayListening,cookieReady,tokenSet,frpcRunning,serverAddr,lanAddress,wanPort}} v */
 function projectRemoteView(v) {
   const x = v || {};
   const mode = normalizeRemoteMode(x.mode);

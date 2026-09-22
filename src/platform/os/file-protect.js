@@ -1,9 +1,7 @@
 'use strict';
 
-// 跨平台文件/目录访问保护。
-// POSIX mode 在 Windows 被忽略（NTFS 用 ACL），故含 apiAccessKey/remoteToken/会话令牌的文件
-// 必须另行收紧：Windows 用 icacls 移除继承并仅授当前用户（目录用 (OI)(CI) 让内部文件继承）。
-// 保护目录一次即可让后续新建文件继承约束，逐文件保护用于目录已存在、文件为历史遗留的场景。
+// 跨平台文件/目录访问保护。POSIX mode 在 Windows 被忽略（NTFS 用 ACL），故含 apiAccessKey/remoteToken/会话令牌的文件
+// 在 Windows 必须另行收紧：icacls 移除继承并仅授当前用户（目录用 (OI)(CI) 让内部文件继承）。
 // 全部 best-effort：失败不阻断主流程，但经返回值可观测。
 
 const fs = require('node:fs');
@@ -66,9 +64,8 @@ function ensurePrivateDir(dir) {
   return protectDir(dir);
 }
 
-/** 写入敏感文件并施加保护（原子写 + 保护，避免写完到保护之间的可读窗口）。
- *  保护失败必须如实返回 ok:false；当前生产零调用点（唯一调用方是 cross-platform-test），
- *  但同目录 protectDir 是真正生效的那一半。
+/** 写入敏感文件并施加保护（原子写 + 保护，避免写完到保护之间的可读窗口）；保护失败如实返回 ok:false。
+ *  生产零调用点（仅测试套件使用）；真正生效的那一半是同目录 protectDir。
  *  @returns {{ok:boolean, reason?:string, mode?:string}} */
 function writePrivate(file, data) {
   try {

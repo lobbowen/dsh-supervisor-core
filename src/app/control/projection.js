@@ -1,9 +1,7 @@
 'use strict';
 
-// app/control/projection.js —— 聚合视图投影工厂（真 ctor 注入）。
-// createProjection(deps) 自己持有三个 sync 视图实现（纯视图投影，不驱动启停）：
-//   const p = createProjection({ getLifecycleManager, getState, getManagedObjects });
-// 可只 require 本模块 + 假 deps 直测。
+// app/control/projection.js —— 聚合视图投影工厂（真 ctor 注入）：createProjection(deps)
+// 持有三个 sync 视图实现（纯视图投影，不驱动启停），假 deps 可直测。
 
 function createProjection(deps) {
   const g = deps || {};
@@ -43,7 +41,7 @@ function createProjection(deps) {
         dsh.error = errText;
       } else if (ph === 'BACKOFF') {
         dsh._setPhase('starting');
-        dsh.healthy = false; // 退避中进程未在提供服务；必须落 healthy=false，否则视图沿用上一拍的 true 谎报健康（P3-E #8）
+        dsh.healthy = false; // 退避中进程未提供服务；不落 false 会沿用上一拍的 true 谎报健康
         dsh.error = '启动退避中';
       } else {
         dsh._setPhase('stopped');

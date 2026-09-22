@@ -1,10 +1,8 @@
 'use strict';
 
 // app/main/process.js —— 主进程生命周期（spawn/接管/重启/停止）。
-// 导出形态 { methods }；装配：app/assembly/facets.js 装到 host 实例；方法内部以 this 协作。
-//
-// 实现体经按 host 缓存的惰性 deps（depsOf）取事实，不走 this 的隐式方法调用；方法名与 { methods }
-//  外壳保持不变（装配路径不变）。applyMainPort(this, ...) 仍显式传**宿主**：签名要求真实 host。
+// 导出 { methods }，由 app/assembly/facets.js 装到 host；方法名与 { methods } 形态不可改。
+// 事实经 depsOf(host) 惰性缓存取得；applyMainPort(this, ...) 仍显式传宿主：签名要求真实 host 实例。
 const spawnOS = require('../../platform/os/spawn');
 const pidlook = require('../../platform/os/pidlookup');
 const { LineBuffer } = require('../../platform/service/log/log');
@@ -68,10 +66,9 @@ module.exports = {
     const [cmd, ...args] = d.spawnCommand();
     let child;
     try {
-      // detached：独立进程组，便于按组发信号（DSH 派生的子进程一并收到）。
+      // detached：独立进程组，便于按组发信号（DSH 派生子进程一并收到）；进程组语义经 opts.detached:true 保持。
       // 插件 --patch 覆盖层由 spawnCommand()/native.nativeCommand() 统一附加（顶层位置），此处不再拼接。
-      // stdio 必须保持 ['ignore','pipe','pipe']（下方要读 stdout 里的令牌），故用 piped 而非 detached；
-      // 进程组语义经 opts.detached:true 保持。
+      // stdio 须保持 ['ignore','pipe','pipe']（下方要读 stdout 里的令牌），故用 piped 而非 detached 封装。
       child = spawnOS.piped(cmd, args, { env: process.env, detached: true });
     } catch (err) {
       d.events().append('spawn_failed', { message: err.message });

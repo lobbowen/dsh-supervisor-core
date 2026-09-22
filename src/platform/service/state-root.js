@@ -1,11 +1,8 @@
 'use strict';
 
-// 产品状态根（与 DSH 的 ~/.dsh 完全独立）。
-// 为什么：我们管控 DSH，却曾把全部状态放在被管控对象的数据目录下，DSH 卸载/清理会带走我们，
-// 概念错位。现采用自有状态根：覆盖 DSH_SUPERVISOR_HOME；Linux $XDG_STATE_HOME/dsh-supervisor
-// 或 ~/.local/state/dsh-supervisor；macOS ~/Library/Application Support/dsh-supervisor；
-// Windows %LOCALAPPDATA%\dsh-supervisor。目录为 <root>/supervisor（内核）与 <root>/shell（桌面壳）。
-// 单一事实源：本模块是内核侧唯一入口；桌面壳侧在壳仓 src-tauri/src/env.rs，两侧 schema 常量由门禁握手锁定。
+// 产品状态根：与 DSH 的 ~/.dsh 完全独立——状态若放在被管控对象的数据目录下，DSH 卸载/清理会连带带走我方状态。
+// 覆盖项 DSH_SUPERVISOR_HOME；其余按平台约定（Linux XDG state / macOS Application Support / Windows LOCALAPPDATA），目录为 <root>/supervisor 与 <root>/shell。
+// 单一事实源：本模块是内核侧唯一入口；壳侧在壳仓 src-tauri/src/env.rs，两侧 schema 常量由门禁握手锁定。
 
 const fs = require('node:fs');
 const os = require('node:os');

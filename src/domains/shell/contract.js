@@ -1,9 +1,7 @@
 'use strict';
 
-// shell 域契约声明（纯数据，零 require）。
-// exports/PUBLIC_API 为逐字冻结的 10 项导出面（supervisor.js 消费 status/evaluate/health/
-// markPending/identity/readJournal/shellDir/checkUpdate/restartShell/SHELL_RELEASE_PKG）；
-// pure 为 core.js（零 require 汇点）。
+// shell 域契约声明（纯数据，零 require）。exports/PUBLIC_API 为逐字冻结的导出面
+//（消费方 supervisor.js / watchdog deps.shell），pure 标记零 require 汇点 core.js。
 
 module.exports = {
   domain: 'shell',

@@ -1,9 +1,9 @@
 'use strict';
 
-// macOS 自启策略（launchctl enable/disable + bootstrap/bootout）。
-// 内核只做 enable/disable + bootstrap/bootout，绝不写/删守卫的 plist（定义归桌面壳）：launchctl
-// enable/disable 会持久化到 launchd 覆盖库，这正是关闭自启能生效的机制；旧实现用 unlink 删文件，
-// 壳下次启动即重建并 bootstrap，导致关闭不生效。GUI 的 LaunchAgent 归内核所有，plist 由本文件创建/删除。
+// macOS 自启策略：launchctl enable/disable + bootstrap/bootout。
+// 守卫 plist 的所有权矩阵见 autostart/index.js —— 本文件绝不写/删守卫 plist：enable/disable 会持久化
+// 进 launchd 覆盖库，这才是「关闭自启」真正生效的机制；删文件则会被壳下次启动重建并 bootstrap。
+// GUI（桌面壳）的 LaunchAgent 归内核所有，其 plist 由本文件创建/删除。
 
 const fs = require('node:fs');
 const path = require('node:path');
@@ -47,9 +47,8 @@ function xmlEscape(s) {
   return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 
-/** 桌面壳（GUI）的 LaunchAgent plist —— 内核所有（面板开关创建/删除）。
- *  关键设计：不加保活。壳的崩溃恢复由守卫看护负责，再加保活会互相争抢拉起；本 plist 只表达
- *  登录时启动这一件事。LimitLoadToSessionType=Aqua 限定只在实际图形会话中加载。 */
+/** 桌面壳（GUI）的 LaunchAgent plist：只表达「登录时启动」，不加保活 —— 壳的崩溃恢复归守卫看护，
+ *  两套机制同时拉起会互相争抢。LimitLoadToSessionType=Aqua 限定只在实际图形会话中加载。 */
 function macGuiPlist(guiExe) {
   const log = path.join(shellDir(), 'gui-stdio.log');
   return '<?xml version="1.0" encoding="UTF-8"?>\n'
@@ -66,7 +65,7 @@ function macGuiPlist(guiExe) {
     + '</dict></plist>\n';
 }
 
-/** 守卫与 GUI 的自启状态。守卫定义由桌面壳建立（service.rs），内核只读其存在性 + 查询载入状态。 */
+/** 守卫与 GUI 的自启状态：守卫定义由桌面壳建立，内核只读其存在性并查询载入状态。 */
 function status() {
   const guardDefined = fs.existsSync(laFile(GUARD_LABEL));
   const guardLoaded = guardDefined && macLoaded(GUARD_LABEL);
@@ -82,7 +81,6 @@ function status() {
   };
 }
 
-/** 守卫服务自启开关。内核不写、不删守卫 plist（定义归桌面壳）。 */
 function setAutostart(on, deps) {
   const errors = [];
   try {
@@ -97,7 +95,7 @@ function setAutostart(on, deps) {
     } else {
       if (macLoaded(GUARD_LABEL)) macBootout(GUARD_LABEL);
       if (!macSetEnabled(GUARD_LABEL, false)) errors.push('launchctl disable 失败');
-      // 刻意**不删除 plist**：定义属壳；删掉会被壳重建 -> 关闭不生效。
+      // 不删 plist：定义属壳，删了会被壳下次启动重建，关闭反而不生效。
     }
   } catch (e) { errors.push('launchagent: ' + e.message); }
   const g = setGuiAutostart(on, deps);

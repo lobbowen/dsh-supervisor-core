@@ -1,19 +1,13 @@
 'use strict';
 
-// 配额策略注册表。分两层：模式（direct 直连共享端点 / proxy 每账号本地实例）只做生命周期与
-// 运输，不携带供应商解析词；配额策略（本文件）负责「官方配额面到统一 quota 结构」的取数与解析。
-// 供应商在 proxy-apps.js / PROVIDER_PRESETS 里用 quota.type 声明引用；同形态直接复用 type，
-// 形态不同才新增策略函数，模式类与其它策略零改动。
-// 现有策略：window-usage（官方 /usage 或本地实例 /usagePath，解析 rolling/weekly/monthly 并归一
-// status/percent/resetsAt；percent 是否取整由调用方按历史行为决定；别名 opencode-usage、proxy-usage）；
-// commandcode-billing（Command Code 官方 billing 面：credits 窗口 + subscriptions 的月度 periodEnd，
-// 6h 缓存、仅受限账号取）。返回 { ok, quota }，quota 不含 overallStatus。
+// 配额策略注册表：模式层（direct/proxy）只管生命周期与运输，本层负责「官方配额面 -> 统一 quota 结构」的取数与解析。
+// 供应商在 proxy-apps.js / PROVIDER_PRESETS 用 quota.type 声明引用；同形态复用 type，形态不同才新增策略函数。
+// 策略统一返回 { ok, quota }，quota 不含 overallStatus。
 
 const { normalizeResetTs } = require('./policies/quota');
 
 /** Command 默认 API 根（订阅面与 credits 面同主机）。 */
 const DEFAULT_API_BASE = 'https://api.commandcode.ai';
-/** 订阅信息端点：月度额度随订阅续期重置的精确时刻（data.currentPeriodEnd）。 */
 const SUBSCRIPTIONS_PATH = '/alpha/billing/subscriptions';
 /** 订阅信息重探周期（ms）：periodEnd 仅在续订/取消/变动时变化，低频即可（防高频 billing API 触发风控）。 */
 const SUBSCRIPTION_REFETCH_MS = 6 * 3600 * 1000;
@@ -39,11 +33,9 @@ async function detectWindowUsage(ctx) {
   return { ok: true, quota: { rolling: pick(u.rolling), weekly: pick(u.weekly), monthly: pick(u.monthly) } };
 }
 
-/** Command billing 面解析：credits 端点返回 windowLimits 与 credits 池。窗口耗尽只由 used/cap
- *  推导（used>=cap 即 100%/rate-limited），不依赖 exceeded 标志（上游对 100% 窗口可能不返该标志，
- *  旧实现曾存出 status:ok+percent:100 的矛盾记录）。credits 原体无 period 字段，月度重置精确时刻
- *  只在 subscriptions 的 currentPeriodEnd，仅 credits-limited 账号取订阅（其它账号零额外 API），
- *  ctx.cache._subCheckedAt 做 6h 缓存；非 limited 清空 monthlyResetAt（陈旧日期不残留）。
+/** Command billing 面解析：窗口耗尽只由 used>=cap 推导，不依赖 exceeded 标志（上游对 100% 窗口可能不返该标志）。
+ *  credits 原体无 period 字段，月度重置精确时刻只在 subscriptions 的 currentPeriodEnd：
+ *  仅 credits-limited 账号取订阅（其它账号零额外 API），cache._subCheckedAt 做 6h 缓存；非 limited 清空 monthlyResetAt（不留陈旧日期）。
  *  ctx = { key, quota, cache, prevQuota }。 */
 async function detectCommandCodeBilling(ctx) {
   const q = (ctx && ctx.quota) || {};
@@ -72,9 +64,9 @@ async function detectCommandCodeBilling(ctx) {
   const monthlyRemaining = [cr.monthlyCredits, cr.purchasedCredits, cr.freeCredits]
     .reduce((s, v) => { const n = num(v); return n !== null && n >= 0 ? s + n : s; }, 0);
   const hasCredits = cr.monthlyCredits !== undefined || cr.purchasedCredits !== undefined || cr.freeCredits !== undefined || cr.belowThreshold !== undefined;
-  //  月度重置（真实采样核验）：仅 credits-limited 取订阅；非 limited -> 清空 monthlyResetAt
-  // 月额度受限 = 数据面信号（原判定）并 冻结面信号（ctx.creditFrozen：上游 400 拒绝驱动的冻结——
-  // 冻结期间必须持续掌握 periodEnd 以呈现/调度精确恢复时刻；余额灰区（>0 但不足服务）靠数据面永远测不到）
+  // 月度重置：仅 credits-limited 取订阅；非 limited -> 清空 monthlyResetAt。
+  // creditLow 并入 ctx.creditFrozen（上游 400 拒绝驱动的冻结）：冻结期间必须持续掌握 periodEnd 以呈现/调度
+  // 精确恢复时刻——余额灰区（>0 但不足服务）单靠数据面永远测不到。
   const creditLow = (hasCredits && ((typeof cr.monthlyCredits === 'number' && cr.monthlyCredits <= 0)
     || cr.belowThreshold === true
     || (Number.isFinite(Number(monthlyRemaining)) && Number(monthlyRemaining) <= 0)))
@@ -99,9 +91,8 @@ async function detectCommandCodeBilling(ctx) {
       monthlyResetAt = prevReset; // 缓存期内沿用上次已知 periodEnd（不重复取）
     }
   }
-  // 月度窗口推导：Command 订阅含月配额池（quota.monthlyCapUsd）——周窗口从池内扣
-  // （weekly.used + monthlyRemaining 约等于月上限）。有 monthlyCapUsd 且 monthlyRemaining 可数时
-  // 推导 monthly = { percent, resetsAt }，使前端每月格子显示真实百分比（曾长期 monthly=null）。
+  // 月度窗口推导：Command 订阅含月配额池（monthlyCapUsd），周窗口从池内扣；
+  // 池存在且 monthlyRemaining 可数时推导 monthly={percent,resetsAt}，供前端每月格子显示真实百分比。
   const monthlyCap = q.monthlyCapUsd ? num(q.monthlyCapUsd) : null;
   const derivedMonthly = (hasCredits && monthlyCap !== null && Number.isFinite(Number(monthlyRemaining)) && monthlyRemaining >= 0)
     ? (() => {

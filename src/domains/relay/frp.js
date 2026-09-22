@@ -3,9 +3,8 @@
 const platform = require('../../platform/os/index');
 const pidlook = require('../../platform/os/pidlookup');
 
-// frpc 进程托管 + settings 持久化 + status + syncFromInstances（frp 安装/校验/解压在 frp-install.js）。
-// 由受管清单里 remoteMode==='wan' 的实例动态生成 frpc.toml，并托管 frpc 进程生命周期
-// （启动/停止/崩溃退避重启/孤儿清理/权限加固）。
+// frpc 进程托管 + settings 持久化 + status + syncFromInstances（安装/校验/解压在 frp-install.js）。
+// frpc.toml 由受管清单里 remoteMode==='wan' 的实例生成；生命周期单一条件 = 是否存在 wan 隧道，无全局总闸。
 
 const fs = require('node:fs');
 const path = require('node:path');
@@ -34,11 +33,11 @@ class FrpManager {
     this._restartAttempts = 0;
     this._intentionalStop = false;
     this._sumCache = null;     // 官方校验和缓存（按 asset）
-    this._hardenPermissions(); // 历史遗留文件权限加固（见方法说明）
+    this._hardenPermissions();
   }
 
-  /** 敏感文件权限加固：frpc.toml 含 auth.token 明文、frp.json 同含 token；
-   *  新写入已用 0600，但历史遗留文件可能是早期版本以默认 umask 写出的 0644/0664。 */
+  /** frpc.toml 含 auth.token 明文、frp.json 同含 token：新写入已用 0600，
+   *  但历史遗留文件可能是早期以默认 umask 写出的 0644/0664，故启动时补加固。 */
   _hardenPermissions() {
     try {
       const fp = platform.fileProtect;
@@ -63,8 +62,7 @@ class FrpManager {
 
   saveSettings(s) {
     fs.mkdirSync(this.dir, { recursive: true });
-    // frp.json 含 authToken 明文：tmp 必须带 pid（防并发写互踩/预测名劫持）且以 0600 建立——
-    // 与 syncFromInstances 的 frpc.toml 写法同规（旧实现默认 umask 落盘，存在明文窗口）。
+    // frp.json 含 authToken 明文：tmp 带 pid（防并发互踩/预测名劫持）且以 0600 建立，与 frpc.toml 同规。
     writeAtomic(this.settingsFile, JSON.stringify(s, null, 2), { mode: 0o600 });
   }
 
@@ -74,21 +72,20 @@ class FrpManager {
       installed: fs.existsSync(this.binPath),
       running: !!(this.child && this.child.pid),
       pid: this.child ? this.child.pid : null,
-      // API 面绝不回显 authToken 明文（与 access.js「只报 configured」同规）。
-      // UI 需要改动令牌时显式提交新值；normalizeFrpSettings 是 patch 归并——
-      // **字段缺省（undefined）= 保留现值**，显式提交 '' = 清除（UI 留空时必须省略字段）。
+      // API 面绝不回显 authToken 明文，只报 authTokenSet（与 access.js「只报 configured」同规）。
+      // normalizeFrpSettings 是 patch 归并：字段缺省（undefined）= 保留现值，显式 '' = 清除；
+      // 故 UI 想保留现值必须省略字段而不是留空。
       settings: { serverAddr: s.serverAddr, serverPort: s.serverPort, user: s.user, authTokenSet: !!s.authToken },
       logTail: this.logTail.slice(-20),
     };
   }
 
-  /** instances 里 remoteMode==='wan' 的映射到远程端口（纯文本生成委托 core.buildFrpcToml）。 */
+  /** wan 实例映射为远程端口；文本生成委托纯函数 core.buildFrpcToml。 */
   buildConfig(settings, instances) {
     return buildFrpcToml(settings, instances);
   }
 
-  /** 由受管清单变化时调用：重写配置并在运行中时平滑重启。
-   *  frpc 生命周期单一条件 = 是否存在 wan 隧道（count>0）；无全局总闸。 */
+  /** 受管清单变化时调用：重写配置，运行中则平滑重启（生命周期条件见类头：是否存在 wan 隧道）。 */
   syncFromInstances(instances) {
     const settings = this.loadSettings();
     const { text, count } = this.buildConfig(settings, instances);
@@ -113,8 +110,7 @@ class FrpManager {
 
   start() {
     if (this.child && this.child.pid) return { ok: true, already: true, pid: this.child.pid };
-    // 执行边界复校（FIX-1 同型）：serverAddr 为空时不允许 spawn frpc —— 不论配置由谁写出
-    // （旧版 frp.json enabled:true / ctl 直写 / 停用态手动 toggle），也不论全局开关状态。
+    // 执行边界复校：serverAddr 为空即不允许 spawn frpc，不论配置由谁写出。
     const vs = validateFrpServerSettings(this.loadSettings());
     if (!vs.ok) return { ok: false, error: vs.error, needServerAddr: true };
     this._intentionalStop = false; // 显式启动：清除主动停止标记
@@ -144,8 +140,8 @@ class FrpManager {
     // 必须监听 'error'：二进制存在但不可执行时 Node 会异步 emit 'error'，无监听器即未捕获异常。
     child.on('error', (e) => {
       pushLog('[spawn error] ' + ((e && e.message) || e));
-      // 所有权守卫：只有仍是当前子进程时，其事件才可影响状态与重启排期。守卫若已换新进程，
-      // 旧进程迟到的 error/exit 仍排期重启会毒化重试计数，最终让真实崩溃不再自愈（FIX-7 B1 同型）。
+      // 所有权守卫：只有仍是当前子进程时，其事件才可影响状态与重启排期。已换新进程时，旧进程
+      // 迟到的 error/exit 若仍排期重启会毒化重试计数，让真实崩溃不再自愈。
       if (this.child !== child) return;
       this.child = null;
       if (!this._intentionalStop) this._scheduleRestart();
@@ -164,7 +160,6 @@ class FrpManager {
     return { ok: true, pid: child.pid };
   }
 
-  /** 非预期退出后的有界退避重启。 */
   _scheduleRestart() {
     if (this._restartTimer) return;
     if (!this._lastCount) return; // 已无代理应运行：不重启
@@ -233,7 +228,6 @@ class FrpManager {
     return download(url, report);
   }
 
-  /** 安装 frpc（下载 + 完整性校验 + 解压）。 */
   async install(onProgress) {
     const cache = this._sumCache || (this._sumCache = {});
     return installFrpc({

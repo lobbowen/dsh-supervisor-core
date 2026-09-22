@@ -15,10 +15,9 @@ function handle(ctx) {
       return send(200, sup.statusSummary());
     }
 
-    // 会话生命周期（契约 ARCHITECTURE-CONTRACT-phase0）
-    // GET  /session/status：{ sessionState }，会话态唯一读取口（INV-S4）。
-    // POST /session/stop：进入 stopping，停全部被管对象，置 stopped 并回执（INV-S2）。
-    //   守卫不停止自己；壳收到本回执后执行 systemctl --user stop。
+    // 会话生命周期：GET /session/status 为会话态唯一读取口（INV-S4）；
+    // POST /session/stop 进入 stopping、停全部被管对象后置 stopped 并回执（INV-S2）。
+    // 守卫不停止自己；壳收到本回执后执行 systemctl --user stop。
     if (req.method === 'GET' && pathname === '/session/status') {
       return send(200, { sessionState: sup.sessionState ? sup.sessionState() : 'unknown' });
     }
@@ -30,10 +29,8 @@ function handle(ctx) {
         .catch((e) => send(500, { ok: false, error: e.message }));
     }
 
-    // 统一生命周期接口：所有模块生命周期经此，前端不再直调模块对象。
-    // GET /lifecycle/status：全部模块生命周期状态一览
-    // GET /lifecycle/{id}：单个模块状态
-    // POST /lifecycle/{id}/start | /stop | /restart
+    // 统一生命周期接口：所有模块生命周期经此（status 一览 / {id} 单查 / {id}/start|stop|restart），
+    // 前端一律不直调模块对象。
     if (pathname === '/lifecycle' || pathname === '/lifecycle/status') {
       const lm = sup.lifecycleManager;
       return send(200, lm ? { modules: lm.statusAll() } : { modules: [] });
@@ -54,9 +51,8 @@ function handle(ctx) {
         if (!originAllowed(req, sup.config.apiPort)) { req.resume(); return send(403, { ok: false, error: 'cross-origin request rejected' }); }
         const lc = lm.get(id);
         if (!lc) return send(404, { error: '模块未注册: ' + id });
-        // main(dsh) 启停收敛到统一生命周期入口：不再直通 supervisor.setDesired，
-        // 经 lm.start/stop/restart 调 adapters dsh 的 start/stop，再到 setDesired/requestRestart，
-        // 动作申报进 lifecycleManager（审计/事件），形状经 snapshot 补 desired/phase 保持一致。
+        // main(dsh) 启停收敛到统一生命周期入口：经 lm -> adapter dsh 的 start/stop -> setDesired/requestRestart，
+        // 动作申报进 lifecycleManager（审计/事件），响应形状经 statusSummary 补 desired/phase 保持一致。
         if (id === 'dsh' && sup && (action === 'start' || action === 'stop' || action === 'restart')) {
           const act = action === 'start' ? lm.start(id)
             : action === 'stop' ? lm.stop(id, 'user')
@@ -75,7 +71,7 @@ function handle(ctx) {
       return send(400, { error: '非法请求' });
     }
 
-    // 健康 / readiness（guard/health）
+    // 健康 / readiness
     if (req.method === 'GET' && pathname === '/healthz') {
       return send(200, sup.health ? sup.health.live() : { ok: true, pid: process.pid });
     }
@@ -97,11 +93,10 @@ function handle(ctx) {
         const typ = u.searchParams.get('type');
         if (src || typ) filter = { source: src || undefined, type: typ || undefined };
       } catch {}
-      // /events 对外读守卫 EventHub 聚合流（gseq 全局有序；跨守卫重启连续）。
-      // 默认过滤内部簿记事件（heartbeat 影子 shadow_* / 注册机 managed_object_*，
-      // 聚合时打 internal 标）：它们只进审计（/logs/export、internal=1），UI 时间线只显示业务事件。
-      // 统一读路径：sup.eventHub 是真实 EventHub 或 EventReader 降级适配器，
-      // 两者同接口同语义，不再有 if/else 双分支（旧 fallback 会忽略 source/type filter）。
+      // /events 读守卫 EventHub 聚合流（gseq 全局有序、跨守卫重启连续）；sup.eventHub 为真实
+      // EventHub 或 EventReader 降级适配器，同接口同语义。
+      // 默认过滤内部簿记事件（heartbeat 影子 shadow_* / 注册机 managed_object_*，聚合时打 internal 标），
+      // 它们只进审计（internal=1 / /logs/export），UI 时间线只显示业务事件。
       const hub = sup.eventHub;
       if (!hub) return send(200, { seq: (sup.events && sup.events.seq) || 0, events: [] });
       const seq = hub.seq;
@@ -140,7 +135,7 @@ function handle(ctx) {
       return send(200, sup.eventHub.metrics());
     }
 
-  // 域内未匹配(方法/子路径)：全局兜底语义(与单文件时代一致)
+  // 域内未匹配(方法/子路径)：全局兜底语义
   if (req.method === 'GET' || req.method === 'POST') return send(404, { error: 'not found', path: pathname });
   return send(405, { error: 'method not allowed' });
 }

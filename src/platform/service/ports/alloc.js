@@ -7,9 +7,9 @@ const fs = require('node:fs');
 const core = require('./core');
 const probe = require('./probe');
 
-/** B14：跨进程分配锁参数。注册表文件是**多守卫共享**的事实源（升级重叠期新旧守卫并存），
- *  内存布尔锁完全跨不了进程 —— 用 wx 独占创建同名 `.alloc.lock` 做自旋锁。 */
-const XLOCK_TIMEOUT_MS = 3000;   // 拿不到锁的等待上界（超时后 fail-open 继续，见 _acquireAlloc）
+/** 跨进程分配锁参数。注册表文件是多守卫共享的事实源（升级重叠期新旧守卫并存），
+ *  内存布尔锁跨不了进程 —— 用 wx 独占创建同名 `.alloc.lock` 做自旋锁。 */
+const XLOCK_TIMEOUT_MS = 3000;   // 拿不到锁的等待上界（超时后 fail-open 继续，见 _acquireXLock）
 const XLOCK_STALE_MS = 15000;    // 持有者崩溃后的锁老化窗口（持锁临界区远短于此；超过即可接管）
 
 class PortAllocator {
@@ -42,9 +42,9 @@ class PortAllocator {
     if (rel) { try { rel(); } catch { /* 锁文件已不在：无所谓 */ } }
   }
 
-  /** 跨进程分配锁（best-effort，B14）。返回释放函数；获取超时返回 null 并**继续**
-   *  （fail-open 有界：登记后的「二次确认、被抢即撤销」复检是第二层防线，且 ports.json
-   *  读路径 reload 使外部分配可见 —— 宁可退化到复检层，也不让锁 IO 故障冻结分配）。 */
+  /** 跨进程分配锁（best-effort）。返回释放函数；获取超时返回 null 并继续（fail-open 有界：
+   *  登记后的「二次确认、被抢即撤销」复检是第二层防线，且 ports.json 读路径 reload 使外部
+   *  分配可见 —— 宁可退化到复检层，也不让锁 IO 故障冻结分配）。 */
   async _acquireXLock() {
     const f = String(this._registry._file || '') + '.alloc.lock';
     const deadline = Date.now() + XLOCK_TIMEOUT_MS;
@@ -71,7 +71,7 @@ class PortAllocator {
     }
   }
 
-  /** 登记 + 有界复检（B14 TOCTOU）：登记后端口若立刻被外部占用（bind 探测与登记间隙被抢），
+  /** 登记 + 有界复检（TOCTOU）：登记后端口若立刻被外部占用（bind 探测与登记间隙被抢），
    *  撤销登记并返回 false —— 宁可让调用方换下一个端口，也不留下必然失败的占用登记。
    *  self-listening 等「自己就在监听」的登记走 _register，不经本复检。 */
   async _confirmRegister(port, rangeKey, owner) {

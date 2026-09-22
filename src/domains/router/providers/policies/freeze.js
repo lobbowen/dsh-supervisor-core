@@ -1,31 +1,28 @@
 'use strict';
 
-// 冻结/恢复策略（B4）+ 检测应用（B7）：近乎纯，状态迁移纯计算，事件/持久化经 provider 注入。
-// 文件不 require 任何 IO；对 provider 的调用一律显式经入参（保留 provider 的方法覆写语义）。
+// 冻结/恢复策略：状态迁移纯计算，事件/持久化全部经显式入参 provider 执行（保留其方法覆写语义）。
+// 本文件 require 零 IO。
 
 const quota = require('./quota');
 
 /** credits 余额不足的重探周期（ms）：预付余额无自然恢复时刻——冻结后按此周期回探。 */
 const CREDITS_RECHECK_MS = 10 * 60 * 1000;
 
-/** 状态迁移 + 事件 + 锁收敛。 */
 function setStatus(acc, status, nextResetAt, error, autoRecover, provider) {
   const prev = acc.status;
   acc.status = status;
   if (nextResetAt !== undefined) acc.nextResetAt = nextResetAt;
   if (error !== undefined) acc.lastProbeError = error;
-  // 状态真实化：冻结/封号后若还挂着在用则释放（避免「frozen 且在用」矛盾）
+  // 状态真实化：杜绝「frozen 且在用」矛盾
   if ((status === 'frozen' || status === 'banned') && provider.activeAccount && provider.activeAccount.keyId === acc.keyId) {
     provider.markNotInUse(acc.keyId);
   }
-  // 锁收敛：离开可用池 -> 锁失效
   if ((status === 'frozen' || status === 'banned' || status === 'discarded') && provider.selectedAccountKeyId === acc.keyId) {
     provider.selectedAccountKeyId = null;
   }
   provider._persist();
   if (prev === status) return;
-  // 生命周期引擎钩子（PROXY-LIFECYCLE-STANDARD 事件表接线）：迁移的进程副作用归能力方
-  // mixin（process-pool）执行，本文件零 IO；直接冻结/解冻的回收与补槽由此触发。
+  // 迁移的进程副作用经 provider._onStatusTransition 由能力方 mixin（process-pool）执行；本文件零 IO。
   if (typeof provider._onStatusTransition === 'function') provider._onStatusTransition(acc, prev, status);
   if (provider.events) {
     if (autoRecover) {
@@ -37,7 +34,7 @@ function setStatus(acc, status, nextResetAt, error, autoRecover, provider) {
   if (provider.logger && provider.logger.info) provider.logger.info('account ' + acc.maskedKey + ': ' + prev + ' → ' + status);
 }
 
-/** limit（M2）：把「为什么受限 / 何时恢复」固化为账号一等字段。 */
+/** limit：把「为什么受限 / 何时恢复」固化为账号一等字段。 */
 function ensureLimit(acc) {
   if (!acc) return null;
   if (acc.limit && acc.limit.kind) return acc.limit;
@@ -53,8 +50,7 @@ function ensureLimit(acc) {
   return acc.limit;
 }
 
-/** limit 的纯只读预览（#20）：与 ensureLimit 逐字段同逻辑、同返回形状，但**不赋值、不写盘**。
- *  只读视图（views.listProviders）唯一入口，杜绝视图内写副作用。 */
+/** limit 纯只读预览：与 ensureLimit 同逻辑同形状，但不赋值、不写盘——只读视图（views.listProviders）唯一入口，视图内禁写副作用。 */
 function previewLimit(acc) {
   if (!acc) return null;
   if (acc.limit && acc.limit.kind) return acc.limit;
@@ -174,7 +170,7 @@ function applyDetection(acc, det, provider) {
     return;
   }
   if (provider._windowExhausted(acc)) {
-    // 仍限额：冻结保持，其余升级为冻结/限额（nextResetAt 精确更新）
+    // 仍限额：保持冻结，nextResetAt 按下述规则精确更新
     const nr = provider._nextResetAt(acc.quota);
     // 防回推：纯兜底不得覆写已精确值；精确值仅在更早时收敛；过期值无条件采纳新精确值。
     const precise = nr.precise && nr.t;
@@ -201,11 +197,9 @@ function applyDetection(acc, det, provider) {
         setLimit(acc, 'credits', reason, recovery, provider);
         acc.detectError = reason;
         provider._persist();
-        return; // 维持冻结：不是恢复，只是快照未到阈值
+        return;
       }
-      // 有正向证据 -> 落到下方通用解冻
     }
-    // 已恢复：自动解冻/解封
     acc.nextResetAt = null;
     acc.limit = null;
     if (prev === 'frozen' || prev === 'banned') {

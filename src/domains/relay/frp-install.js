@@ -2,32 +2,29 @@
 
 const zlib = require('node:zlib');
 
-// frp 安装：平台标签 / 镜像 URL / 下载 / sha256 完整性校验 / 纯 JS 解压。
-// 与进程托管（frp.js）按副作用生命周期切开，便于独立单测。
-// 信任根：校验和从官方 GitHub 主机直连取得（frp_<ver>_checksums.txt），不经镜像前缀，
-// 于是只控制镜像的攻击者无法同时伪造校验和。
-// **取不到期望校验和即拒绝安装** ——
-//   旧行为「降级放行 + warn」允许镜像被攻陷或 GitHub 抖动时装入无校验二进制并长期执行；
-//   取得后不匹配同样拒绝。frpc 是可被本守卫长期托管执行的第三方二进制，宁失败不裸奔。
+// frp 安装：平台标签 / 镜像 URL / 下载 / sha256 完整性校验 / 纯 JS 解压（进程托管在 frp.js）。
+// 信任根：校验和直连官方 GitHub 取（frp_<ver>_checksums.txt），不经镜像前缀——只控制镜像的攻击者
+// 无法同时伪造校验和。取不到或不匹配期望校验和即拒绝安装（A2 fail-closed）：
+// frpc 是被本守卫长期托管执行的第三方二进制，宁失败也不装入未校验产物。
 
 const fs = require('node:fs');
 const path = require('node:path');
 const http = require('node:http');
 const https = require('node:https');
 const crypto = require('node:crypto');
-// 平台知识唯一事实源：os/arch 到标签的映射只在 src/platform/contract/matrix.js。
+// os/arch 到标签的映射只在 src/platform/contract/matrix.js（平台知识唯一事实源）。
 const matrix = require('../../platform/contract/matrix');
 
 const FRP_VERSION = '0.61.1';
 
-// 下载镜像前缀（国内镜像优先，GitHub 官方兜底）。URL 主体按平台动态生成。
+// 下载镜像前缀（国内镜像优先，GitHub 官方兜底）；URL 主体按平台动态生成。
 const MIRROR_PREFIXES = [
   'https://ghfast.top/',
   'https://gh-proxy.com/',
   '', // GitHub 官方直连
 ];
 
-/** FRP 官方发布平台标签：委托 matrix（唯一事实源），保持"不支持返回 null"不变。 */
+/** FRP 官方发布平台标签：委托 matrix；当前平台无官方产物时返回 null（调用方据此拒绝安装）。 */
 function frpPlatformTag(platform, arch) {
   return matrix.frpTag(platform, arch);
 }
@@ -65,10 +62,9 @@ function download(url, report) {
   });
 }
 
-/** 取官方校验和表里的期望 sha256（**直连官方主机，不经镜像**）。
- *  返回 null 表示取不到（离线/官方不可达）——调用方 **fail-closed 拒绝安装**（A2），并记 warn。
- *  结果按 asset 缓存到调用方传入的 cache（一次安装只需取一次）。
- */
+/** 取官方校验表里的期望 sha256：直连官方主机，不经镜像（信任根见文件头）。
+ *  返回 null = 取不到（离线/官方不可达/表内缺项），调用方按 A2 fail-closed 拒绝安装并记 warn。
+ *  结果按 asset 缓存在调用方传入的 cache（一次安装只需取一次）。 */
 async function expectedSha256({ asset, download: dl, report, logger, cache }) {
   const c = cache || {};
   if (c[asset] !== undefined) return c[asset];
@@ -76,7 +72,7 @@ async function expectedSha256({ asset, download: dl, report, logger, cache }) {
   try {
     const buf = await dl(url, () => {});
     const text = String(buf || '');
-    // 官方格式：每行 "<64hex>  <filename>"
+    // 官方表格式：每行 "<64hex>  <filename>"
     const want = new RegExp('^([0-9a-fA-F]{64})\\s+\\*?' + asset.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '$', 'm');
     const m = want.exec(text);
     const sum = m ? m[1].toLowerCase() : null;
@@ -87,7 +83,7 @@ async function expectedSha256({ asset, download: dl, report, logger, cache }) {
     }
     return sum;
   } catch (e) {
-    // 不缓存失败：离线一次不得让生命周期级 _sumCache 在本进程内永久拒绝安装
+    // 失败不写 cache：离线一次不得让本进程后续永久拒绝安装。
     if (report) report('warn: 取官方校验和失败(' + e.message + ')（安装将被拒绝）');
     if (logger && logger.warn) logger.warn('[frp] 取官方校验和失败：' + e.message + ' —— fail-closed：本次安装将被拒绝，稍后可重试（A2）');
     return null;

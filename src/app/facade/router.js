@@ -1,16 +1,8 @@
 'use strict';
 
-// app/facade/router.js —— router 域只读门面（写动作 setRouterRunning 在
-// app/domain-actions/router.js）。只读白名单（不得引入写动词；DG-14 强制）：
-// routerDaemonActive / routerStatusView / routerProviders / routerStatus / routerDomainSummary；
-// 另含只读访问器 routerApi（返回 ctl Proxy / 本地 RouterService，自身不写）。
-// 导出契约：module.exports = { methods }，方法内部走 this。
-//
-// 阶段六 B-1 原地去 this：实现体不再经 this 的隐式方法调用取事实，改经按 host 缓存的**惰性 deps**
-// （WeakMap；getter 每次读 host 实时值，装配期 host 未就绪也安全）。方法仍以 { methods }
-// 导出、名字与体逐字保留：装配路径 installMethods(host, mod.methods) 不变，读源码形态的门禁
-// （DG-14 对 app/facade/*）覆盖面不变，AT 棘轮统计的直接方法调用计数据此归零。
-// 唯一的 this 出现在 depsOf(this)（作为 WeakMap 键）。
+// app/facade/router.js —— router 域只读门面（写动作 setRouterRunning 在 app/domain-actions/router.js）。
+// 只读白名单（不得引入写动词）：routerDaemonActive / routerStatusView / routerProviders / routerStatus / routerDomainSummary，
+//   另含只读访问器 routerApi。导出 { methods }，方法经按 host 缓存的惰性 deps（WeakMap）取事实，唯一的 this 在 depsOf(this)。
 
 const DEPS = new WeakMap();
 function depsOf(host) {
@@ -23,7 +15,7 @@ function depsOf(host) {
       logger() { return host.logger; },
       managedObjects() { return host.managedObjects; },
       ctl() { return host.ctl; },
-      // 同模块兄弟方法经 host 上的既有安装转发（等价于原经 this 的调用；外部覆写 host 方法仍生效）。
+      // 同模块兄弟方法经 host 上的既有安装转发（外部覆写 host 方法仍生效）。
       routerDaemonActive() { return host.routerDaemonActive(); },
       routerApi() { return host.routerApi(); },
       routerStatus() { return host.routerStatus(); },
@@ -39,11 +31,10 @@ module.exports = { methods: {
 
   routerDaemonActive() {
     const d = depsOf(this);
-    // 仅当本守卫期望 daemon 运行（routerAutostart）且管理锁在手（本守卫写过的 lock）且
-    // ctl 端口（_routerCtlPort，默认 43107）监听者为 router-daemon 时，才视为 daemon 监督模式
-    // （routerApi/门面/ctl 生效）。
-    // 绝不因全局 ctl 端口被占就把任意 Supervisor 实例（含测试内嵌实例）误判为监督模式，
-    // 否则测试 api 调用会经 ctl 打到线上 daemon（曾把测试的 provider 写操作打到生产路由）。
+    // 仅当本守卫期望 daemon 运行（routerAutostart）且管理锁在手且 ctl 端口监听者为
+    // router-daemon 时，才视为 daemon 监督模式（routerApi/门面/ctl 生效）。
+    // 绝不因全局 ctl 端口被占就把任意 Supervisor 实例（含测试内嵌实例）误判为监督模式——
+    // 否则测试 api 调用会经 ctl 打到线上 daemon。
     try {
       const cfg = d.config();
       if (!cfg || cfg.routerAutostart !== true) return false;
@@ -111,12 +102,10 @@ module.exports = { methods: {
     }
   },
 
-  // L3 监督模式：router 控制通道（daemon 唯一事实源）。
-  // 本方法上移至此以打断 facade/router 与 ctl/facades 的 this 调用环：ctl/facades 不再
-  // 调用本文件的 routerDaemonActive；本文件对 ctl 的依赖单向（经 this._makeRouterFacade）。
-  // 守卫 API/视图统一从 routerApi() 取 router 门面：daemon 在跑则转发 ctl
-  // （POST /ctl {method,args}，见 src/platform/ctl/server.js）——写即 daemon 生效、读即
-  // daemon 最新；daemon 未跑则走守卫本地实例（内嵌回退路径）。
+  // router 控制通道门面：守卫 API/视图统一从这里取。
+  // 本方法在此文件以保证对 ctl 的依赖单向（ctl/facades 不调本文件的 routerDaemonActive）。
+  // daemon 在跑则转发 ctl（POST /ctl {method,args}）——写即 daemon 生效、读即 daemon 最新；
+  // daemon 未跑则走守卫本地实例（内嵌回退路径）。
   routerApi() {
     const d = depsOf(this);
     if (d.routerDaemonActive()) {

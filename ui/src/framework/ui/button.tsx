@@ -54,5 +54,5 @@ export function Button({
   );
 }
 
-/** 变体工厂导出（U1：AlertDialog 等组合组件复用同一套按钮令牌） */
+/** 变体工厂导出：AlertDialog 等组合组件复用同一套按钮令牌。 */
 export { buttonVariants };

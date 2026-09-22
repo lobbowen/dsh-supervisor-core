@@ -1,13 +1,8 @@
 'use strict';
 
-// 服务管理器抽象（Provider 分派）。
-// 铁律：平台无关域（domains/*、supervisor）不得直接调用 systemctl/launchctl/schtasks，一律经本模块；
-// 平台差异在此按 Provider 分派，未实现的能力显式抛 CapabilityError（绝不静默失败）。
-// 分派口径（ARCHITECTURE-PLAN-instance-sandbox-governor，实测不写死）：
-//   linux 且有 systemd-run -> systemd（cgroup 硬档，set-property 动态下发）；
-//   linux 无 user-systemd（容器/WSL1）-> portable —— 这类环境过去把沙箱功能整体判死，现一并解锁；
-//   darwin / win32 -> portable（采样式限额 supervise 档；Job Object / launchd plist 一期不做，属计划定案范围外）；
-//   未知平台 -> NONE（显式失败，不谎报；能力档位 sandboxLaunch=false 在域层入口即挡）。
+// 服务管理器抽象（Provider 分派）。铁律：平台无关域（domains/*、supervisor）不得直接调用 systemctl/launchctl/schtasks，一律经本模块；未实现的能力显式抛 CapabilityError，绝不静默失败。
+// 分派口径（实测不写死）：linux 且有 systemd-run -> systemd（cgroup 硬档，set-property 动态下发）；linux 无 user-systemd（容器/WSL1）-> portable；darwin / win32 -> portable（采样式限额 supervise 档，Job Object / launchd plist 属定案范围外）；
+// 未知平台 -> NONE（显式失败；能力档位 sandboxLaunch=false 在域层入口即挡）。
 
 const fs = require('node:fs');
 const os = require('node:os');
@@ -26,19 +21,15 @@ const PLATFORM = process.platform;
 
 function run(cmd, args, opts) {
   // 经统一执行器（默认 15s 硬超时 + SIGKILL，防 systemd/dbus 挂起时无限阻塞）；调用方 timeoutMs 仍生效。
-  // 必须原样透传 opts，不得强制 stdio ignore：否则要读 stdout 的调用（如 isUnitActive 经 runDetail
-  // 读单元状态）会拿不到输出，实例就绪判定与「仍活跃则不删」的保护全部失效。
+  // 必须原样透传 opts、不得强制 stdio ignore：isUnitActive 等要读 stdout 判单元状态，丢输出则
+  // 就绪判定与「仍活跃则不删」保护失效。
   return exec.run(cmd, args, opts || {});
 }
 
-/** systemd 单元名字符集白名单。
- *
- *  unit 名的唯一来源是 `'dsh-web@' + inst.id`，而 inst.id 会从 instances.json **原样载回**
- *  —— 该文件沙箱侧/人工可改，属信任边界之外。历史上 stop/reset-failed/is-active 与
- *  transient 文件路径都直接拼接 unit：名字里带 `/`、`..`、空白或控制符即可把命令指向
- *  其它 `*.service`、把删除指向任意路径（fail-open）。
- *  判据（fail-closed）：1..128 字符，仅允许 systemd 单元名安全集（字母数字 + `:` `-` `_` `.` `@`），
- *  必须带 `.service` 后缀或无任何后缀（内核两种来路都覆盖：裸名与具名）。 */
+/** systemd 单元名字符集白名单（fail-closed）。
+ *  unit 名唯一来源是 'dsh-web@' + inst.id，而 inst.id 从 instances.json 原样载回——该文件
+ *  沙箱侧/人工可改，属信任边界之外：名字含 /、..、空白或控制符即可把命令指向其它 *.service、
+ *  把删除指向任意路径。判据：1..128 字符，仅字母数字 + : - _ . @，须带 .service 后缀或无后缀。 */
 const UNIT_NAME_RE = input.UNIT_NAME_RE;
 // 判定体即 E-4 单源的 input.unitNameViolation（保留本模块同名导出：exec-return-contract A4b
 // 按 svcMod.unitNameViolation 做行为级判定，且各 Provider 在调用前就地问闸）。
@@ -55,15 +46,14 @@ const systemd = {
     try { return run('systemctl', ['--user', 'stop', unit], { timeoutMs: o.timeoutMs || 15000 }) !== null; }
     catch { return false; } // 停止失败不抛（调用方多为 best-effort 清理）；可经 isUnitActive 复核
   },
-  // run() 失败返回 null 而不抛，故原 try/catch 是死代码、恒返回 true（N5）。如实回传成败。
+  // run() 失败返回 null 而不抛，try/catch 包裹会恒返回 true；如实回传成败。
   resetFailed(unit) {
-    if (unitNameViolation(unit)) return false; // B12
+    if (unitNameViolation(unit)) return false;
     return run('systemctl', ['--user', 'reset-failed', unit], { timeoutMs: 10000 }) !== null;
   },
   /** 单元活跃判定（三态）：确认 active -> true；确认不活跃 -> false；查询未完成 -> null（未知）。
-   *  旧实现把「查询未完成」折成 false，而 run() 失败只返回 null，于是
-   *  instance/ops.js 删除数据目录前的 null 保护成了不可达死分支，is-active 超时时仍会 rmSync
-   *  沙箱数据（FIX-5 A 的根因）。调用方按「!== false 才放行删除」消费本函数。 */
+   *  run() 失败只返回 null，「查询未完成」不可折成 false：instance/ops.js 删除数据目录前
+   *  按「!== false 才放行删除」消费本函数，折假即超时窗口内误删沙箱数据。 */
   isUnitActive(unit) {
     if (!unit) return true; // 无单元约束 -> 视为通过（调用方语义）
     if (unitNameViolation(unit)) return false; // 非法名不可能由内核启动，恒判「确认不活跃」
@@ -85,9 +75,8 @@ const systemd = {
   },
   /** 清理 stale transient 单元：stop/reset-failed/删单元文件/daemon-reload。
    *  必须 reload：删除文件后 systemd 仍缓存该单元为 loaded，否则 systemd-run 拒绝重建同名单元。
-   *  返回 {ok, errors}：原实现四步全由 try/catch 包裹，而 run() 失败只返回 null 不抛 —— 四步
-   *  全部静默，调用方无条件记「cleaned」日志（N5）。stop/reset-failed 对「从未加载的单元」非零
-   *  退出属正常，不计入 ok；真正的硬失败只有删单元文件与 daemon-reload。 */
+   *  返回 {ok, errors}：stop/reset-failed 对「从未加载的单元」非零退出属正常，不计入 ok；
+   *  硬失败只有删单元文件与 daemon-reload（run() 失败返回 null 不抛，成败须如实回传）。 */
   cleanTransient(unit) {
     const errors = [];
     const bad = unitNameViolation(unit);
@@ -119,8 +108,7 @@ const systemd = {
     return true;
   },
   /** 运行期改限额（W3 动态化）：systemctl --user set-property 立即生效，无需重启单元。
-   *  必带 --runtime：transient 单元本不落盘，不带它会把 drop-in 写进用户配置目录，
-   *  与「每次启动按当时拓扑重算」的 governor 语义失同步（陈旧下限永久黏住）。
+   *  必带 --runtime：transient 单元本不落盘，不带它会把 drop-in 写进用户配置目录，陈旧下限永久黏住。
    *  值只来自 sandbox.unitProps 同源的 alloc（平台层翻译语义、不决定数额）。 */
   setLimits(unit, alloc) {
     if (unitNameViolation(unit)) return false; // 非法名绝不进 systemctl argv
@@ -146,7 +134,7 @@ function makeUnsupported(kind, label) {
     resetFailed() { return false; },
     isUnitActive(unit) { return unit ? false : true; },
     transientUnitFile() { return null; },
-    // 无 transient 单元可清 = 成功；返回形态与 systemd 一致，调用方无需分支（N5）。
+    // 无 transient 单元可清 = 成功；返回形态与 systemd 一致，调用方无需分支。
     cleanTransient() { return { ok: true, errors: [] }; },
     startTransient() { throw new CapabilityError(label + '：不支持拉起实例舱（portable 档未启用）'); },
     setLimits() { return false; },
@@ -174,5 +162,5 @@ function current() {
 }
 
 // _testProviders：X-3「provider 方法集完全一致」判据的静态对账缝——伪造 linux 且清空 PATH 时
-// current() 只能落 portable，systemd/NONE 的键集在任意宿主都拿得到，否则该不变量悄悄失去覆盖面。
+// current() 只能落 portable，systemd/NONE 的键集在任意宿主都要拿得到，否则该不变量悄悄失去覆盖面。
 module.exports = { current, CapabilityError, kind: () => current().kind, PLATFORM, UNIT_NAME_RE, unitNameViolation, _testProviders: { systemd, portable, NONE } };

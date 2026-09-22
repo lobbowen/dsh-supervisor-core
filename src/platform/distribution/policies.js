@@ -6,10 +6,9 @@
 // SSRF 主机分级复用 shared/ip 的同一份判定，不在本层重写第二份。
 const { isPrivateHostLiteral } = require('../../shared/ip');
 
-/** 最小兜底镜像源——仅契约缺失/损坏时使用（完整目录与探测规格归壳，由壳经
- *  `<产品状态根>/supervisor/registry.json` 的 catalog 投放）。内核只保证契约不可用时也能跑
- *  （不变量 C2），故保留 2 条覆盖两种基本情形：能上网（官方）+ 中国网络（npmmirror）。
- *  此处不参与正常选择路径。 */
+/** 最小兜底镜像源——仅契约缺失/损坏时使用，不参与正常选择路径（不变量 C2 的兜底）。
+ *  完整目录与探测规格归壳（经 registry.json 的 catalog 投放）。保留 2 条覆盖两种基本
+ *  情形：能上公网（官方）/ 中国网络（npmmirror）。 */
 const FALLBACK_REGISTRIES = [
   'https://registry.npmjs.org',
   'https://registry.npmmirror.com',
@@ -19,18 +18,12 @@ function normalizeOrigin(origin) {
   return String(origin || '').trim().replace(/\/+$/, '');
 }
 
-/** 是否为合法 http(s) **纯 origin**（防 SSRF 到任意协议；B11 收紧自「仅查 scheme」）。
- *
- *  旧实现 `/^https?:\/\//` 有三个漏洞面（origin 会经字符串拼接进请求 URL / 写进 npm_config_registry）：
- *    - `http://u:pass@host` —— 凭证夹带；
- *    - `http://host/path?q=1` 与 `http://host/#x` —— 路径/查询/片段借拼接污染真实请求路径；
- *    - `http://host//a` —— 拼接后双斜杠改语义。
- *  现判据：能被 WHATWG URL 解析 + 协议仅 http/https + 无用户名密码 + 主机存在，
- *  且（normalizeOrigin 剥尾斜杠后）剩余只能是空或单个 `/`。 */
+/** 是否为合法 http(s) 纯 origin（防 SSRF 到任意协议；origin 会经字符串拼接进请求 URL /
+ *  写进 npm_config_registry，凭证夹带 `u:pass@host`、路径/查询/片段污染、双斜杠改语义都必须拒）。
+ *  判据：原文形态闸（仅 scheme://host[:port]，杜绝 ?/#/@/路径夹带）+ WHATWG URL 解析闸
+ *  （协议仅 http/https、无用户名密码、主机存在、路径为空或纯斜杠）。 */
 function isValidOrigin(origin) {
   const s = normalizeOrigin(origin); // 与拼接侧同一归一（剥尾斜杠），合法 `https://host/` 不被误拒
-  // 原文形态闸：仅 scheme://host[:port]（host 允许 IPv6 方括号），杜绝 `?`/`#`/`@`/路径等一切夹带；
-  // URL 解析闸（下方）兜住原文闸放行的畸形体。
   if (!/^https?:\/\/(\[[0-9A-Fa-f:]+\]|[A-Za-z0-9.\-_]+)(:\d+)?$/.test(s)) return false;
   let u;
   try { u = new URL(s); } catch { return false; }
@@ -41,15 +34,10 @@ function isValidOrigin(origin) {
   return u.pathname === '' || u.pathname === '/' || u.pathname === '//';
 }
 
-/** 写入口镜像源闸：镜像源是**唯一能进内核 fetch 与 npm 下载链**的外部地址，
- *  配置它等同于授予「守卫替你发请求」的能力，故写盘侧必须与探测端点（api/domains/dist.js
- *  的 probeTargetError）同规——纯 origin 合法性 + 主机字面量非私网。
- *  旧 setRegistryConfig 只过 isValidOrigin，`http://169.254.169.254` / `http://127.0.0.1:4873`
- *  这类字面量能直接落盘并**反向豁免**探测闸第1)层（已配置源按 hostname 放行），把守卫变成
- *  内网/元数据探针与投毒下载源。
- *  已知残留（如实登记 AUDIT）：域名形态的 DNS-rebinding（写入时公网解析、连接时私网）
- *  与 HTTP 重定向已由 redirect:'manual' 封堵一半；连接时 IP 固定需自定义 resolver，暂不实现。
- *  @returns {string|null} 错误文案；null=放行 */
+/** 写入口镜像源闸：镜像源是唯一能进内核 fetch 与 npm 下载链的外部地址，写盘侧与探测端点（api/domains/dist.js 的 probeTargetError）同规：
+ *  纯 origin 合法 + 主机字面量非私网。只过 isValidOrigin 不够 —— `http://169.254.169.254` 这类字面量落盘后会反向豁免探测闸
+ *  （已配置源按 hostname 放行），把守卫变成内网/元数据探针与投毒下载源。已知残留：域名形态 DNS-rebinding 需连接时 IP 固定才能根治（暂不实现），
+ *  重定向面由 redirect:'manual' 封堵。@returns {string|null} 错误文案；null=放行 */
 function registryOriginViolation(origin) {
   const o = normalizeOrigin(origin);
   if (!isValidOrigin(o)) return '镜像源必须是 http(s) 纯 origin（无路径/查询/凭证）: ' + o;
@@ -80,11 +68,9 @@ function rebuildRegistryConfig(doc, contract, defaultRegistries) {
   };
 }
 
-/** 展开单个镜像的探测目标。契约 probe.kind='package-metadata' 时用与壳完全一致的
- *  真实包元数据 URL，无契约则退化为 `/-/ping` 兜底。实测两种方法延迟差 6.7 倍，
- *  故两侧必须用同一规格，否则会出现「面板显示一个源、实际下载用另一个」。
- *  platformTag 为 null/空（宿主不可产标或不在发布矩阵，调用方 probeRegistry
- *  已判定）时同样退化 ping —— 缺守卫会把字面量 `undefined` 拼进 pathTemplate 恒 404。 */
+/** 展开单个镜像的探测目标。契约 probe.kind='package-metadata' 且有 platformTag 时用与壳完全一致的真实包元数据 URL，否则退化为 `/-/ping`
+ *  （实测两种规格延迟差数倍，两侧必须同规格，否则「面板显示一个源、实际下载用另一个」分叉）。
+ *  platformTag 为 null/空（宿主不可产标或不在发布矩阵，调用方 probeRegistry 已判定）时必须退化 —— 缺守卫会把字面量 `undefined` 拼进 pathTemplate 恒 404。 */
 function resolveProbe(origin, spec, platformTag) {
   const base = normalizeOrigin(origin);
   if (spec && spec.kind === 'package-metadata' && spec.pathTemplate && platformTag) {

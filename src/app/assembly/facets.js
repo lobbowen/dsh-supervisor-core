@@ -1,24 +1,16 @@
 'use strict';
 
-// app/assembly/facets.js —— 编排层「切面装配清单 + 兼容门面落地」。
-//
-// 取代旧 supervisor.js 末尾的原型挂载（DG-8 / DS-G3b 硬失败项）：装配目标是 host
-// 实例（Supervisor 的组装上下文），不再触碰任何 prototype：
-//   { methods }             -> 成员方法，this = host（跨文件 this.X() 语义不变）
-//   { accessors }           -> get/set 描述符（落到 host 实例）
-//   host-first 自由函数模块 -> 首参绑定包装（fn(this, ...args)）
-//   api-rebind              -> 需 root 注入 createServer（app 不得 require api，DS-3）
-// 每个模块在 FACETS 里是一个具名切面（name）；本表是「哪些模块 -> 哪些成员」的唯一声明处。
+// app/assembly/facets.js —— 编排层切面装配清单 + 兼容门面落地。FACETS 是「哪些模块 -> 哪些成员」的唯一声明处，
+// 装配目标是 host 实例（Supervisor 的组装上下文），不触碰任何 prototype（DG-8 / DS-G3b）。
+// 四种形态：{ methods } 成员方法（this = host，跨文件 this.X() 语义不变）/ { accessors } get-set 描述符 / host-first 自由函数（包装成 fn(this, ...args)）/ api-rebind（createServer 由 root 注入，DS-3）。
 
 const { installCollaborators } = require('./collaborators');
 
-// 切面清单（顺序与旧 APP_MODULES 逐字一致，保证同名成员覆盖序不变）
+// 切面清单：数组顺序即覆盖序，同名成员后装者胜，调整顺序会改变落地结果。
 const FACETS = [
   { name: 'assembly/bootstrap', mod: require('./bootstrap'), hostFirst: true },
   { name: 'assembly/api-rebind', mod: require('./api-rebind'), apiRebind: true },
-  // 级 2：session/machine + state/{store,fields,desired,upgrade-hold,main-store}
-  //   + control/{projection,specs} 已改为**真 ctor 工厂**，经 assembly/collaborators.js 装配，
-  //   不再在此以 { methods }/{ hostFirst } 形态安装（见 collaborators.js）。
+  // session/state/control 不在本清单：它们是真 ctor 工厂，由 assembly/collaborators.js 装配。
   { name: 'session/shutdown', mod: require('../session/shutdown'), hostFirst: true },
   { name: 'self/notify', mod: require('../self/notify'), hostFirst: true },
   { name: 'control/scheduler', mod: require('../control/scheduler') },
@@ -27,7 +19,6 @@ const FACETS = [
   { name: 'main/controller', mod: require('../main/controller') },
   { name: 'main/shadow', mod: require('../main/shadow') },
   { name: 'main/process', mod: require('../main/process') },
-  // R3 严值 DF-2：端口运行时再推导从 main/process.js 拆为独立切面（_findManagedDshPort/_applyMainPort）。
   { name: 'main/port-rederive', mod: require('../main/port-rederive') },
   { name: 'main/signals', mod: require('../main/signals') },
   { name: 'main/health-gate', mod: require('../main/health-gate') },
@@ -42,10 +33,9 @@ const FACETS = [
   { name: 'facade/ports', mod: require('../facade/ports') },
   { name: 'facade/main', mod: require('../facade/main') },
   { name: 'facade/status', mod: require('../facade/status'), hostFirst: true },
-  // 域写动作下沉 app/domain-actions/（facade 只读），同一装配契约。
-  //    P6-B：三者已改为**真 ctor 工厂**（实现体经显式 deps 取事实，不再直连 this），
-  //   故不再走 `f.mod.methods` 分支 —— 用 factory 名在装配期构造，并把产物**平铺安装**到 host，
-  //   保证 api 消费面（sup.setRouterRunning / patchDshMain / setRemoteMode …）名字逐个不变。
+  // 域写动作在 app/domain-actions/（facade 侧只读）：三者是真 ctor 工厂，实现体经显式 deps
+  //   取事实、不直连 this；按 factory 名在装配期构造后把产物平铺安装到 host，
+  //   平铺名必须与 api 消费面（setRouterRunning / patchDshMain / setRemoteMode 等）逐个一致。
   { name: 'domain-actions/router', mod: require('../domain-actions/router'), factory: 'createRouterActions' },
   { name: 'domain-actions/lan', mod: require('../domain-actions/lan'), factory: 'createLanActions' },
   { name: 'domain-actions/main', mod: require('../domain-actions/main'), factory: 'createMainActions' },
@@ -81,15 +71,8 @@ function installHostFirst(host, mod) {
   }
 }
 
-/**
- * 组装期把全部切面装到 host 实例。必须在 composeSystem 业务体之前调用：
- * compose 构造期即会经 host._mSetX()/_bindNativeDshCommand()/loadState() 取用。
- * @param host  组装上下文（Supervisor 实例）
- * @param deps  { createServer } 由 root 注入（app 不得 require api，DS-3）
- */
 /** 域写动作工厂的惰性 deps：装配期 host 尚未就绪，故一律 getter（与 collaborators.js 同范式）。
- *  覆盖三个工厂实际取用的全部成员（router: config/daemons/lifecycleManager/router/state/views；
- *  lan: ctl/daemons/lifecycleManager/lan/state/views/instances/events/logger；main: daemons/events/logger/state/views）。 */
+ *  deps 是三个工厂（router/lan/main）实际取用成员的并集，多出的键不会被读到。 */
 function domainActionDeps(host) {
   return {
     getConfig: () => host.config,
@@ -106,21 +89,24 @@ function domainActionDeps(host) {
   };
 }
 
+/** 组装期把全部切面装到 host 实例：必须在 composeSystem 业务体之前调用
+ *  （compose 各步构造期即经 host._mSetX()/_bindNativeDshCommand()/loadState() 取用）。
+ *  deps.createServer 由 root 注入（app 不得 require api，DS-3）。 */
 function installFacets(host, deps) {
   const d = deps || {};
   for (const f of FACETS) {
     if (f.apiRebind) {
-      // api-rebind 的 startApi/_rebindApiHost 需要 createServer，以注入方式提供。
       host._apiStart = function _apiStart() { return f.mod.startApi(this, d.createServer); };
       host._apiRebind = function _apiRebind() { return f.mod._rebindApiHost(this, d.createServer); };
       continue;
     }
     if (f.hostFirst) { installHostFirst(host, f.mod); continue; }
-    // 真 ctor 工厂切面（域写动作）：构造后平铺安装，平铺名与旧 { methods } 逐字一致。
+    // 域写动作工厂：构造后把产物平铺安装，平铺名就是 api 消费面的名字，不得改名。
     if (f.factory) { installMethods(host, f.mod[f.factory](domainActionDeps(host))); continue; }
     if (f.mod.methods) installMethods(host, f.mod.methods);
     if (f.mod.accessors) installAccessors(host, f.mod.accessors);
-    // 字段 helper（_mXxx/_mSetXxx）由生成器产出于实例上（取代挂原型）。
+    // 兜底分支：模块自带 buildFieldHelpers 时才调用；_mXxx/_mSetXxx 现由 collaborators.js
+    //   的 installFieldHelpers 装到实例上（不挂 prototype），当前无切面走这里。
     if (typeof f.mod.buildFieldHelpers === 'function') f.mod.buildFieldHelpers(host);
   }
   // state/session/control 由真 ctor 工厂构造（自己持有实现）；其余切面为薄委托。

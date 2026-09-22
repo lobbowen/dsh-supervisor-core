@@ -1,6 +1,6 @@
 # instance 域 功能设计
 
-> 范围：`src/domains/instance`（index.js 106 / ops.js 163 / upgrade.js 231 / lifecycle.js 364 / governor.js 206，合计 **1741 行**，2026-09-21 实测；原 397 行 core 已按设计拆为 model/store/sandbox/state-machine/ops/upgrade/lifecycle/governor）。结构已落地。
+> 范围：`src/domains/instance`（index.js 106 / ops.js 164 / upgrade.js 231 / lifecycle.js 364 / governor.js 208 等 11 文件，合计 **1753 行**，2026-09-21 实测；原 397 行 core 已按设计拆为 model/store/sandbox/state-machine/ops/upgrade/lifecycle/governor）。结构已落地。
 > 只做设计，不改 `src/`，不 commit，不启动任何守卫进程。
 > 本文所有 `文件:行号` 均来自实际 `read`（行号为该文件内 1-based 行号）。方法论：`design-notes/_MIGRATION-HISTORY.md` §4；
 > 跨层 SSOT：`DIRECTORY-STRUCTURE-DESIGN.md`；主代理裁决 `design-notes/_MIGRATION-HISTORY.md`（R1–R7）。
@@ -21,6 +21,8 @@
 ---
 
 ## A. 现状审计
+
+> ⚠ **§0 与 A 节均为「迁移立项时的现状审计」（拆分前取证）**。A.1 表内原文件名（core.js / ops.js 449 / upgrade.js 407 / index.js 33）与行数为**迁移前**值，**不是当前事实**。拆分已按 B 节落地，**当前**结构/行数以页首「范围」清单（11 文件、**1753 行**）为准。
 
 ### A.1 文件清单与职责
 

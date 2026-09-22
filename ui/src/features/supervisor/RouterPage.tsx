@@ -1,6 +1,5 @@
 /**
- * 智能路由（supervisor router + providers）
- * 顶部：路由启停 + 用量四卡；下方：供应商卡片（直连/反代统一行语义）+ 添加供应商
+ * 智能路由页：路由启停 + 用量指标 + 供应商卡片（直连/反代统一行语义）。
  */
 import { useEffect, useState } from "react";
 import {
@@ -18,20 +17,17 @@ import { Card, Metric, Pill, QuotaBox, MonoEllipsis, ToneDot } from "./widgets";
 import { useSupervisorAction } from "./useSupervisorAction";
 import { cn } from "../../framework/utils";
 
-/** 冻结/限额判定：任一窗口 rate-limited 或 >=100% */
 function quotaFull(q?: ProviderAccount["quota"]): boolean {
   if (!q) return false;
   const w = (x?: { status?: string; percent?: number }) => !!(x && (x.status === "rate-limited" || Number(x.percent) >= 100));
   return w(q.rolling) || w(q.weekly) || w(q.monthly);
 }
 
-/** epoch ms -> 「YYYY/MM/DD HH:mm」本地时间（月度重置/恢复倒计时展示）。 */
 function fmtClock(ms?: number | null): string {
   if (!ms || !Number.isFinite(ms)) return "";
   return new Date(ms).toLocaleString("zh-CN", { year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" });
 }
 
-/** 账号排序：当前使用(selected)最前 -> 可用(usable 且非限额)其次 -> 限额(rate-limited/冻结)排后。 */
 function sortAccounts(accs: ProviderAccount[]): ProviderAccount[] {
   return [...accs].sort((a, b) => {
     const rank = (x: ProviderAccount) => x.selected ? 0 : (x.usable && !quotaFull(x.quota)) ? 1 : 2;
@@ -39,7 +35,7 @@ function sortAccounts(accs: ProviderAccount[]): ProviderAccount[] {
   });
 }
 
-/** 账号表网格列（完整字面量，Tailwind 需可静态扫描）。直连与反代统一：账号|用量|操作（无版本列）。 */
+// 必须写成完整字面量：Tailwind 只能静态扫描类名。
 const accountGridCols = "grid-cols-[minmax(0,1fr)_230px_84px]";
 
 export function RouterPage({ onRegisterActions }: { onRegisterActions?: (a: { onAdd: () => void; onDelete: () => void } | null) => void }) {
@@ -50,13 +46,13 @@ export function RouterPage({ onRegisterActions }: { onRegisterActions?: (a: { on
   const r = snap.router;
   const pr = snap.providers;
 
-  // 页级 Toolbar 动作注册：添加/删除供应商（对齐实例页机制）
+  // 页级 Toolbar 动作注册：添加/删除供应商
   useEffect(() => {
     onRegisterActions?.({ onAdd: () => setAddOpen(true), onDelete: () => setDelOpen(true) });
     return () => onRegisterActions?.(null);
   }, [onRegisterActions]);
 
-  /** 子组件动作回调：保持 (key, fn, success?) 签名，内部走共享 run */
+  /** 子组件动作回调：内部走共享 run */
   function act(key: string, fn: () => Promise<unknown>, success?: string) {
     return run(key, fn, { success });
   }
@@ -123,7 +119,7 @@ export function RouterPage({ onRegisterActions }: { onRegisterActions?: (a: { on
   );
 }
 
-/** 删除供应商：列出全部供应商，选择删除（危险操作逐项确认）。 */
+/** 删除供应商：危险操作逐项确认。 */
 function DeleteProviderDialog({ open, onOpenChange, providers }: {
   open: boolean; onOpenChange: (o: boolean) => void; providers: RouterProvider[];
 }) {
@@ -167,7 +163,6 @@ function DeleteProviderDialog({ open, onOpenChange, providers }: {
 
 
 
-/** 供应商容器（清理记录式：标题栏 + 信息行/用量框 + 账号表） */
 function ProviderCard({ p, proxyApps, busy, onAction }: {
   p: RouterProvider;
   proxyApps: ProvidersResponse["proxyApps"] | [];
@@ -177,9 +172,9 @@ function ProviderCard({ p, proxyApps, busy, onAction }: {
   const accs = sortAccounts(p.accounts ?? []);
   const sel = accs.find((a) => a.selected) || accs.find((a) => a.usable && !quotaFull(a.quota)) || accs[0];
   const [editOpen, setEditOpen] = useState(false);
-  // 反代应用级版本/更新信息（proxyAppId 匹配 proxyApps；可更新时标题栏出更新入口，更新该 app 全部实例）
+  // proxyAppId 匹配 proxyApps 取反代应用版本/更新状态；更新作用于该 app 全部实例
   const appInfo = p.kind === "proxy" ? (proxyApps ?? []).find((a) => a.id === p.proxyAppId) ?? null : null;
-  // API 地址死绑（不随启用/停用变化）：apiBase 缺失时按 apiPort 推导（停用态后端会清 apiBase，端口仍在）
+  // 停用态后端会清 apiBase（端口仍在）：缺失时按 apiPort 推导，保证地址不随启停漂移
   const apiBase = p.apiBase || (p.apiPort ? "http://127.0.0.1:" + p.apiPort + "/v1" : null);
   return (
     <Card className="flex min-h-0 flex-col overflow-hidden">
@@ -192,8 +187,7 @@ function ProviderCard({ p, proxyApps, busy, onAction }: {
                 className="gap-1 rounded-full px-2.5 text-xs text-warning"
                 disabled={busy}
                 onClick={() => void onAction("proxy-upd-" + p.id, async () => {
-                  // A3 断点修复：后端注释承诺「job 模型，前端轮询消除黑盒」——此处补上轮询，
-                  // 多实例依次更新期间显示进度（steps），到终态给出成败汇总。
+                  // 更新为 job 模型：轮询到终态，多实例依次更新期间显示进度并给出成败汇总
                   const appId = p.proxyAppId as string;
                   const r = await supervisorApi.proxyUpdateApply(appId);
                   if (r.ok === false) { toast.error((r as { error?: string }).error || "提交失败"); return; }
@@ -222,12 +216,11 @@ function ProviderCard({ p, proxyApps, busy, onAction }: {
                 className="gap-1 rounded-full px-2.5 text-xs font-mono text-muted-foreground"
                 disabled={busy}
                 onClick={() => {
-                  // 检测后明确反馈：有更新 -> 提示可点更新；无更新 -> 已是最新（版本源为 npm/GitHub 镜像，与全局一致）
                   void onAction("proxy-chk-" + p.id, async () => {
                     const r = await supervisorApi.proxyUpdateCheck();
                     await supervisorStore.refresh();
                     if (!r.ok) { toast.error(r.error || "版本检测失败"); return; }
-                    // versions: { appId: latest }，用当前 app 的结果比对已装版本
+                    // 响应 versions: { appId: latest }，用当前 app 的结果比对已装版本
                     const latest = (r as { versions?: Record<string, string> }).versions?.[p.proxyAppId || ""] || null;
                     const installed = appInfo.installed;
                     toast.info(latest && latest !== installed
@@ -313,7 +306,7 @@ function ProviderCard({ p, proxyApps, busy, onAction }: {
   );
 }
 
-/** 编辑供应商：查看/移除已录入 Key + 添加新 API Key/账号（直连走 keys/set，反代走 proxy/key）。 */
+/** 编辑供应商：查看/移除已录入 Key + 添加新 Key。直连走 keys/set，反代走 proxy/key。 */
 function EditKeysDialog({ open, onOpenChange, p }: {
   open: boolean; onOpenChange: (o: boolean) => void; p: RouterProvider;
 }) {
@@ -339,14 +332,14 @@ function EditKeysDialog({ open, onOpenChange, p }: {
     finally { setLoggingIn(false); }
   }
   async function addKeys() {
-    const keys = input.split(/[,;\s]+/).map((s) => s.trim()).filter(Boolean); // \s=空白（原 /[;s]+/ 把字母 s 当分隔符，切碎含 s 的 Key）
+    const keys = input.split(/[,;\s]+/).map((s) => s.trim()).filter(Boolean); // \s 为空白；写成 s 会把字母 s 当分隔符切碎 Key
     if (!keys.length) { toast.error("请输入至少一个 Key"); return; }
     setSaving(true);
     try {
       if (isProxy) {
         for (const k of keys) {
           const addRes = await supervisorApi.proxyAddKey(p.id, k) as { limited?: string; account?: { limit?: { recovery?: { type?: string; at?: number | null } | null } | null } | null } | null;
-          // 检测后如实列示：月额度用尽的账号直接入库显示「月额度用尽」，无需 review/等待
+          // 额度用尽的账号照常入库（界面显示「额度用尽」），不在添加时拒绝
           if (addRes && addRes.limited === "credits") {
             const rec = addRes.account?.limit?.recovery;
             toast.warning("已添加：该账号额度用尽" + (rec?.type === "at" && rec.at ? `（预计 ${fmtClock(rec.at)} 自动恢复）` : "（等待月度重置后自动恢复）"));
@@ -355,9 +348,7 @@ function EditKeysDialog({ open, onOpenChange, p }: {
       } else {
         const r = await supervisorApi.providerKeysSet(p.id, { add: keys });
         if (r.ok === false) { toast.error(r.error || "添加失败"); return; }
-        //  P复：如实呈现**真实结果**，不再一律报 keys.length。
-        //   此前无论后端丢弃多少个，这里都提示「已添加 N 个」——
-        //   而 keys/set 过去根本不等检测结果（现已修），UI 也无从知道谁失败。
+        // keys/set 同步返回逐 Key 检测结果：added/discardedKeys 如实呈现，不按输入条数一律报成功
         const okN = typeof r.added === "number" ? r.added : keys.length;
         const badKeys = r.discardedKeys || [];
         if (badKeys.length) {
@@ -383,7 +374,6 @@ function EditKeysDialog({ open, onOpenChange, p }: {
     setSaving(true);
     try {
       if (isProxy) {
-        // 反代: masked -> 找 keyId
         const acc = accs.find((a) => a.maskedKey === masked || masked.startsWith(a.maskedKey));
         if (acc) await supervisorApi.proxyRemoveKey(p.id, acc.keyId);
       } else {
@@ -460,9 +450,8 @@ function QuotaSummary({ acc, busy, p, onAction }: { acc: ProviderAccount; busy: 
   const isActive = Boolean(acc.selected);
   const isLocked = Boolean(acc.locked);
   const qm = q && q.monthlyRemaining;
-  // 每月用量展示（20正，解析层已推导真实月用量）：Command 订阅含 $10/月配额池
-  // （app.quota.monthlyCapUsd），解析层据 credits.monthlyRemaining 推导 monthly.percent（实测
-  // $4.15 剩余 -> 58%）。monthly.percent 存在 -> 显示百分比；缺失才 fallback 金额/—。
+  // 解析层据 credits.monthlyRemaining 推导 monthly.percent（$10/月订阅配额池，app.quota.monthlyCapUsd）：
+  // 有百分比则显示百分比，缺失才回退剩余金额/—
   const mpct = q?.monthly?.percent;
   const monthlyValue = Number.isFinite(Number(mpct))
     ? mpct + "%"
@@ -494,7 +483,7 @@ function QuotaSummary({ acc, busy, p, onAction }: { acc: ProviderAccount; busy: 
 function AccountRow({ a, p, busy, onAction }: { a: ProviderAccount; p: RouterProvider; busy: boolean; onAction: (key: string, fn: () => Promise<unknown>, success?: string) => void }) {
   const isActive = Boolean(a.selected);
   const status = a.instanceStatus === "frozen" ? "frozen" : a.status || "";
-  // limited = 冻结 / 时间窗额度满 / 预付 credits 余额不足（limit.kind 驱动——避免把空余额 key 显示成可“切换”）
+  // limited = 冻结 / 时间窗额度满 / 预付 credits 余额不足（limit.kind 驱动——避免把空余额 key 显示成可「切换」）
   const limitKind = a.limit?.kind;
   const limited = status === "frozen" || !!limitKind || (!isActive && quotaFull(a.quota));
   const limitHint = limitKind === "credits"
@@ -506,7 +495,7 @@ function AccountRow({ a, p, busy, onAction }: { a: ProviderAccount; p: RouterPro
   const stats = formatCount(a.requests || 0) + " 次 · " + formatCount(a.totalTokens || 0) + " tok";
   const [quotaOpen, setQuotaOpen] = useState(false);
   let actionBtn: React.ReactNode;
-  //  review 分支已删除（Phase 5 / 决策 A6）：该状态无写入方，账号入库即终态。
+  // 无 review 态写入方：账号入库即终态
   if (limited && !isActive) {
     actionBtn = (
       <Button size="chip" variant="outline" className="w-[70px] gap-1 px-1.5" onClick={() => setQuotaOpen(true)} title={limitHint ?? "查看该账号限额情况"}>
@@ -553,15 +542,12 @@ function AccountRow({ a, p, busy, onAction }: { a: ProviderAccount; p: RouterPro
   );
 }
 
-/** 限额详情弹窗：展示该账号各窗口(5小时/每周/每月)的额度占用与重置时间。 */
+/** 限额详情弹窗：各窗口(5小时/每周/每月)额度占用与重置时间。 */
 function QuotaLimitDialog({ open, onOpenChange, a, p }: {
   open: boolean; onOpenChange: (o: boolean) => void; a: ProviderAccount; p: RouterProvider;
 }) {
   const q = a.quota;
-  // 每月用量磁贴（20正）：顶部始终显示三格（5小时/每周/每月）——每月格子不因 monthly.percent
-  // 是否为 null 而隐藏。Command 的 monthly.percent 由解析层从 credits.monthRemaining 推导（如 58%已用）；
-  // 无推导值时用 credits 剩余兜底算 used% 或显示 0（保持三格布局稳定）。底部「每月额度（Command）」
-  // 区块为补充金额详情（剩余 $X / $10），非替代格子。
+  // 三格布局恒定：monthly.percent 缺失时用 credits 剩余对 $10 配额池兜底算 used%，不因无推导值而隐藏每月格
   const monthlyUsed = (() => {
     const mp = q?.monthly?.percent;
     if (mp != null && Number.isFinite(Number(mp))) return Number(mp);
@@ -642,7 +628,7 @@ function QuotaLimitDialog({ open, onOpenChange, a, p }: {
   );
 }
 
-/** 添加供应商 Dialog（preset/proxy 选择） */
+/** 添加供应商 Dialog */
 function AddProviderDialog({ open, onOpenChange, presets, proxyApps, onDone }: {
   open: boolean; onOpenChange: (o: boolean) => void;
   presets: ProvidersResponse["presets"] | [];

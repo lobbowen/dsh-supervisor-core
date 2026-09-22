@@ -1,6 +1,6 @@
 'use strict';
 
-// 账号模型（B2）：账号结构、keyId、状态字段、序列化形状，纯模块（零 IO）。
+// 账号模型：结构、keyId、状态字段、序列化形状。纯模块，零 IO。
 
 const crypto = require('node:crypto');
 
@@ -11,13 +11,13 @@ function keyFingerprint(k) {
   return hash + '…' + String(k).slice(-4);
 }
 
-/** 展示用掩码（绝不暴露完整 key）。 */
+/** 展示用掩码（日志/面板安全形态：绝不输出完整 key）。 */
 function maskKey(k) {
   if (!k || String(k).length <= 8) return '***';
   return '...' + String(k).slice(-6);
 }
 
-/** 账号模型构造（唯一入口，直连/反代共用）：规范化的入库账号对象。 */
+/** 账号构造唯一入口（直连/反代共用），产出规范化入库对象。 */
 function accountModel(key, extra) {
   return {
     key,
@@ -30,7 +30,7 @@ function accountModel(key, extra) {
   };
 }
 
-/** 单账号序列化形状（唯一事实源：只写 status，不写 validity/usage 派生字段）。 */
+/** 单账号序列化形状（落盘字段唯一事实源：只写 status，不写 validity/usage 派生字段）。 */
 function serializeAccount(a) {
   return {
     key: a.key,
@@ -74,8 +74,8 @@ const PROVIDER_PRESETS = [
   },
 ];
 
-/** provider 整体序列化（供 RouterStore 落盘）：一致性守卫 + 锁收敛前置。provider 经显式入参
- *  传入，基类/子类方法经 provider.* 调用，保留覆写语义。 */
+/** provider 整体序列化（供 RouterStore 落盘）：先跑一致性守卫 + 锁收敛再取形状；
+ *  provider 经显式入参调用其方法，保留子类覆写语义。 */
 function serializeProvider(p) {
   try { for (const a of (p.accounts || [])) p._normalizeConsistency(a); } catch {}
   p._reconcileLock();
@@ -95,7 +95,7 @@ function serializeProvider(p) {
     selectedAccountKeyId: p.selectedAccountKeyId || p.selectedProxyKeyId || null,
     activeAccountKeyId: (p.activeAccount && p.activeAccount.keyId) || null,
     accounts: (p.accounts || []).map((a) => {
-      p._normalizeConsistency(a); // 一致性守卫：ready+满额矛盾写盘前自我修正
+      p._normalizeConsistency(a);
       return serializeAccount(a);
     }),
     instances: (p.instances || []).map((i) => (i.toJSON ? i.toJSON() : null)).filter(Boolean),

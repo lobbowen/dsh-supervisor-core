@@ -1,6 +1,6 @@
 /**
- * 任务中心（supervisor）— 老 UI 任务中心域，统一安装/升级/卸载/更新任务状态与历史
- * 数据：GET /tasks（低频，进入页面时拉取 + 手动刷新）
+ * 任务中心：统一安装/升级/卸载/更新任务的状态与历史。
+ * 数据 GET /tasks（低频：进页拉取 + 手动刷新）。
  */
 import { useEffect, useState } from "react";
 import { ListChecks, RefreshCw } from "lucide-react";

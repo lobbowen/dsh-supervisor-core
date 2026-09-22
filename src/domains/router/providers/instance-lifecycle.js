@@ -1,7 +1,6 @@
 'use strict';
 
-// 账号与实例生命周期（providers 叶子）。有状态协作经 provider 显式入参（与 probe.js/restart.js
-// 同形），无隐式 this。
+// 账号与实例生命周期（providers 叶子）。有状态协作经 provider 显式入参（与 probe.js/restart.js 同形），无隐式 this。
 
 const { INSTANCE_STATES } = require('../model');
 const pidlook = require('../../../platform/os/pidlookup');
@@ -23,8 +22,7 @@ function canStopInstance(provider, acc) {
 //   实例若被悬挂在途请求无限续命，可活过冻结很久。到期后 force kill（丢在途请求是预期语义）。
 const STOP_PENDING_MAX_MS = 5 * 60 * 1000;
 
-/** 实例停止仲裁入口（幂等）：在途/在用 -> 标记待停（请求结束补刀/reconcile 补停）；force 跳过仲裁。
- *  更名 arbitrateStop：与 process-pool mixin 的 stopInstance 方法消歧（DG-4c 同名歧义）。 */
+/** 实例停止仲裁入口（幂等）：在途/在用 -> 标记待停（请求结束补刀/reconcile 补停）；force 跳过仲裁。 */
 function arbitrateStop(provider, inst, force) {
   if (!inst) return;
   const acc = provider.accounts.find((a) => a.keyId === inst.keyId) || null;
@@ -54,9 +52,9 @@ function arbitrateStop(provider, inst, force) {
     }
   }
   try { provider._terminatingPids.add(pid); } catch {}
-  // 停止经载体：POSIX 组信号整树 + 1.5s 有界升级 SIGKILL；win32 无进程组语义，
-  //   旧 kill(-pid) 抛错后只杀得到 .cmd/npx 壳一层、子孙 node 照旧占端口（B13 同型），
-  //   由 platform/os/process#killTree 的 taskkill /T /F 补平（PROXY-ISOLATION-STANDARD L1）。
+  // 停止经载体：POSIX 组信号整树 + 1.5s 有界升级 SIGKILL；win32 无进程组语义，直接
+  //   kill 只打得到 .cmd/npx 壳、子孙 node 照旧占端口，由 platform/os/process#killTree
+  //   的 taskkill /T /F 补平（PROXY-ISOLATION-STANDARD L1）。
   carrier.signalTermination(pid);
   inst.pid = null;
   inst.status = INSTANCE_STATES.COLD;
@@ -64,7 +62,7 @@ function arbitrateStop(provider, inst, force) {
   provider._persist();
 }
 
-/** 请求结束补刀：待停且已无在途 -> 立即停（取代旧一次性 timer 的泄漏根因）。 */
+/** 请求结束补刀：待停且已无在途 -> 立即停。 */
 function retryPendingStop(provider, acc) {
   if (!acc || !acc._stopPendingUntilIdle) return;
   if ((acc.inflight || 0) > 0) return;
@@ -73,9 +71,9 @@ function retryPendingStop(provider, acc) {
   else { acc._stopPendingUntilIdle = false; acc._stopPendingSince = 0; }
 }
 
-/** 等待区回收执行体（LC 核心-3，经 process-pool#reclaimAccount 门面调用）：force 终止进程 +
- *  释放端口登记与绑定——冻结/封号/删号后账号在进程层面零存在。丢弃在途属预期语义
- *  （发不出请求的账号不该继续占进程，裁决：冻结零宽限）。幂等：无进程时只补端口释放。 */
+/** 等待区回收执行体（经 process-pool#reclaimAccount 门面调用）：force 终止进程 + 释放端口登记与
+ *  绑定——冻结/封号/删号后账号在进程层面零存在。丢弃在途属预期语义（发不出请求的账号不该继续占
+ *  进程，裁决：冻结零宽限）。幂等：无进程时只补端口释放。 */
 function reclaimAccount(provider, acc) {
   if (!acc) return;
   const inst = provider.instanceOf(acc);
@@ -139,8 +137,8 @@ async function addAccount(provider, key, extra) {
   acc.quota = det.quota || null;
   inst.quota = det.quota || null;
   const summary = provider.accountQuotaSummary(acc);
-  // 统一入库：与 base 同一 applyDetection 状态机（受限则 frozen + limit + recovery，正常则 ready）；
-  // 受限冻结的进程/端口回收由 setStatus 的 _onStatusTransition 钩子按事件表自动接线，此处不重复。
+  // 统一入库：与 base 共用 applyDetection 状态机；受限冻结的进程/端口回收由 setStatus 的
+  // _onStatusTransition 钩子按事件表自动接线，此处不重复。
   provider.applyDetection(acc, { ok: true, quota: det.quota || null });
   if (acc.status === 'ready' && provider.events) provider.events.append('account_ready', { provider: provider.name, key: acc.maskedKey });
   const limited = (acc.limit && acc.limit.kind) || null;

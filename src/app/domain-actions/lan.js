@@ -1,15 +1,8 @@
 'use strict';
 
-// app/domain-actions/lan.js —— relay(lan) 域写动作（facade 只读，写动作下沉至此）。
-// 远程控制意图的唯一写入口：setRemoteMode/setRemoteToken（main 与沙箱同口，按 id 路由），
-// 以及 frpc 门面 lanFrpc（settings/install）与 syncFrpc。
-// 导出形态 { createLanActions(deps) }：**原地去 this**（P6-B-3），实现只经注入的惰性 deps 取事实。
-// 本地（非 daemon）模式不直接穿透 lan 改 LanManager 状态，而是经 lifecycleManager 的
-// 'lan' 登记项（app/control/adapters.js 注册时把 module 挂上）这一唯一入口取用模块，
-// 生命周期登记/视图不被绕开；daemon 模式下本层仍是唯一写入方（写守卫存储后 lanCall('syncFrpc')
-// 与 lan-state 收敛），daemon 只是运行时执行者、不接受意图写入。
-// wan 前置闸单一事实源：core.validateWanAccess（令牌强度）；serverAddr 缺失不拦写入
-// （frpc 执行边界 FIX-1 闸已拒 spawn，视图层如实报 reason），避免配置顺序锁死用户。
+// app/domain-actions/lan.js —— relay(lan) 域写动作（facade 只读）：远程控制意图的唯一写入口 setRemoteMode/setRemoteToken（main 与沙箱同口、按 id 路由），
+// 另有 frpc 门面 lanFrpc（settings/install）与 syncFrpc，实现只经注入的惰性 deps 取事实。本地（非 daemon）模式不直接穿透 lan 改 LanManager，只经 lifecycleManager 的 'lan' 登记项（adapters 注册时挂 module）取用，
+// 生命周期登记/视图不被绕开；daemon 模式下本层仍是唯一写入方（写守卫存储后 lanCall 收敛），daemon 只是运行时执行者、不接受意图写入。wan 前置闸单一事实源：domains/relay/core.validateWanAccess（令牌强度）；serverAddr 缺失不拦写入（frpc 执行边界已拒 spawn、视图如实报 reason），避免配置顺序锁死用户。
 
 const { validateWanAccess } = require('../../domains/relay/core');
 // 强度下限是 L0 纯判定（与 relay/instance 域同源）；app->domains 只取纯闸，不触域状态。
@@ -23,8 +16,7 @@ function lanModule(deps) {
   if (lm && typeof lm.get === 'function') {
     const lc = lm.get('lan');
     if (!lc) return null;
-    // 模块挂载在 adapters 注册的 ManagedLifecycle 登记项上（首次经此取用时绑定）——
-    // 写动作只经此「唯一入口」，不直接穿透 lan。
+    // 模块挂载在 adapters 注册的 ManagedLifecycle 登记项上（首次经此取用时绑定）。
     if (!lc.module && hostLan) lc.module = hostLan;
     return lc.module || null;
   }

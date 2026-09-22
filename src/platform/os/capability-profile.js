@@ -1,15 +1,14 @@
 'use strict';
 
-// 平台静态能力档位（纯数据；DF-1 拆分）。index.js#capabilityProfile 只做按平台选择的分派
-// （cross-platform-architecture-gate CP-3 要求门面显式列出三平台分支），档位本体在此。
-// 工具类字段在此返回平台期望值，index.js#capabilities 用 hasTool 实测覆写（缺失才降 false）。
-// guardAutostart/guardSelfHeal/shellAutostart/shellSelfHeal 为服务链自愈/自启声明。
+// 平台静态能力档位（纯数据）：各平台的期望声明，工具类字段由 index.js#capabilities 用 hasTool
+// 实测覆写。分派留在 index.js#capabilityProfile —— cross-platform-architecture-gate CP-3 要求门面
+// 显式列出三平台分支，故本表不带平台判断。
+// guardAutostart/guardSelfHeal/shellAutostart/shellSelfHeal 为服务链的自启与自愈声明。
 
 /** Linux 档位：期望 systemd（systemd-run/systemctl/notify-send 实测覆写）。 */
 const linux = {
-  // 沙箱舱拆两字段（multiInstance 一字段混装「能否跑舱」与「有无 cgroup」，掩盖降级形状）：
-  // sandboxLaunch=能否运行实例舱；sandboxEnforcement=限额由谁执行（cgroup|supervise|none）。
-  sandboxLaunch: true,        // W3 起恒可跑舱：有 systemd-run 走 cgroup 硬档，无则落 portable 软档（容器/WSL1 解锁）
+  // 两维拆分声明：sandboxLaunch = 能否运行实例舱；sandboxEnforcement = 限额由谁执行（cgroup|supervise|none）。
+  sandboxLaunch: true,        // W3：恒可跑舱；有 systemd-run 走 cgroup 硬档，无则落 portable 软档（容器/WSL1）
   sandboxEnforcement: 'cgroup', // 期望 cgroup 硬限额；无 systemd-run 实测降 'supervise'（采样式，无内核强制）
   pidAdoption: true,
   processTreeKill: true,
@@ -35,8 +34,8 @@ const darwin = {
   hostService: 'launchd',
   guardAutostart: true,  // LaunchAgent RunAtLoad + KeepAlive
   guardSelfHeal: true,   // KeepAlive
-  // 独立 LaunchAgent com.dsh.supervisor.gui（RunAtLoad）；守卫 plist 归桌面壳建立，
-  // 内核只 enable/disable（见 autostart.js 头注的所有权矩阵）。
+  // 壳自启 = 独立 LaunchAgent com.dsh.supervisor.gui（RunAtLoad），内核创建/删除；
+  // 守卫 plist 归桌面壳建立，内核只 enable/disable + bootstrap/bootout。
   shellAutostart: true,
   shellSelfHeal: true,   // 守卫看护（三平台一套机制）
 };
@@ -46,17 +45,15 @@ const win32 = {
   sandboxLaunch: true, // portable provider（W3）：windowsHide + CREATE_NEW_PROCESS_GROUP，整树终止走 taskkill
   sandboxEnforcement: 'supervise', // 采样式限额；Job Object 硬档一期不做不预留（届时以真机数据另立项）
   pidAdoption: true,    // netstat
-  // processTreeKill 已接入 _killTree（supervisor 的 SIGKILL 升级路径 + 接管实例路径），
-  processTreeKill: true, // taskkill /PID /T /F（由 hasTool 覆写；使用点见 main-process._killTree）
+  processTreeKill: true, // taskkill /PID /T /F（hasTool 覆写；使用点见 app/main/signals.js 的 _killTree）
   desktopNotify: true,   // 期望 powershell（实测覆写）
   autostart: true,       // 期望 schtasks（实测覆写）
   frpExpose: true,
   hostService: 'windows-service',
-  guardAutostart: true,  // schtasks DSH-Supervisor（ONLOGON）
-  guardSelfHeal: true,   // schtasks DSH-Supervisor-Watchdog 每 5 分钟
-  shellAutostart: true,  // schtasks DSH-Supervisor-GUI（ONLOGON，由 setAutostart 建立）
-  // watchdog 的壳检查不再限定在守卫也挂的块内 —— 壳崩而守卫活正是唯一需要它的场景。
-  // 前置条件：登录自启已启用（watchdog 任务由 setAutostart 建立），与 guardSelfHeal 同前提。
+  guardAutostart: true,  // schtasks DSH-Supervisor（ONLOGON，由壳建立）
+  guardSelfHeal: true,   // schtasks DSH-Supervisor-Watchdog 每 5 分钟（同样归壳，内核只查询存在性）
+  shellAutostart: true,  // schtasks DSH-Supervisor-GUI（ONLOGON，内核 setAutostart 创建）
+  // 壳的自愈依赖那条 watchdog 任务，故与 guardSelfHeal 同前提：登录自启未启用时无从检查。
   shellSelfHeal: true,
 };
 

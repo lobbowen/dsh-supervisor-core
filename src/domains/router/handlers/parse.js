@@ -1,7 +1,6 @@
 'use strict';
 
-// 纯解析层（无 IO、无 this，可独立单测）：URL/请求映射 + 用量解析 + 费用估算 + 目标解析 +
-// 请求体读取。不 require 任何 node:fs/net/child_process。
+// 纯解析层（无 IO、无 this，不 require node:fs/net/child_process）：URL/请求映射 + 用量解析 + 费用估算 + 目标解析。
 
 /** 上游 URL 拼接：base + 请求路径（去重 /v1）+ 原始 query。 */
 function joinUpstream(base, reqPath, rawQuery) {
@@ -65,7 +64,7 @@ function estimateCost(entry) {
   return (pt / 1e6) * input + (ct / 1e6) * output;
 }
 
-/** 实例的唯一解析入口：走 prov.instanceOf(acc)（内部 find(keyId) || acc.instance 的安全超集）。 */
+/** 实例的唯一解析入口：有池能力时走 prov.instanceOf(acc)，否则回退内联 acc.instance 引用。 */
 function instOf(prov, acc) {
   if (!acc) return null;
   if (prov && prov.supports && prov.supports('instanceLifecycle')) {

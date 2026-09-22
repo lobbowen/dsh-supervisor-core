@@ -39,9 +39,8 @@ function createStore(deps) {
   }
 
   function loadState() {
-    // 原来「读 + 解析 + 逐字段恢复」挤在同一个静默 catch 里 —— 文件不存在（首启，正常）
-    //   与「恢复中途抛错」（shellHalted/upgradeHold/desired 种子凭空丢失，9-18 同族）无痕同级。
-    //   拆成两段：读段只对 ENOENT 保持安静，恢复段失败一律留痕。
+    // 读段只对 ENOENT（首启，正常）保持安静；恢复段失败一律留痕，
+    //   否则 shellHalted/upgradeHold/desired 种子丢失无痕可查。
     let raw = null;
     try {
       raw = JSON.parse(fs.readFileSync(config().stateFile, 'utf8'));

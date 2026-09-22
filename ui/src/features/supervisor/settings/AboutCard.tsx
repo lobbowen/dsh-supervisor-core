@@ -1,14 +1,6 @@
 /**
- * 设置 — 关于卡（产品信息，放设置页最底部）
- * 产品逻辑：像成熟产品一样，设置页底部是「关于」——版本信息 + 产品简介 + 检查更新。
- *
- * 调整（用户要求）：
- *   1) 本产品由**两个独立组件**构成，各有独立版本线，须分别呈现：
- *        - 桌面壳（Tauri 壳，dsh-supervisor-gui）—— 承载窗口/托盘/引导
- *        - 内核（守卫，dsh-supervisor）—— 承载生命周期/路由/远程控制/实例
- *      「当前版本」只显示一个会产生歧义，故拆为两行明确呈现。
- *   2) 「检查更新」对**两者一起检测**（内核走 npm 子包；桌面壳走壳发布清单，同源 npm registry）。
- *   3) 版本号**不带 v 前缀**（直接显示纯版本号），与用户定稿一致。
+ * 关于卡。桌面壳（dsh-supervisor-gui）与内核（dsh-supervisor）版本线各自独立须分行呈现，
+ * 「检查更新」对两者一起检测；版本号不带 v 前缀。
  */
 import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
@@ -28,7 +20,7 @@ type VerInfo = {
   updateAvailable?: boolean;
   ok?: boolean;
   error?: string | null;
-  // 源码形态（git-repo）字段：A5 接线后经 /guard/version 与 /guard/version/check 携带
+  // 源码形态（git-repo）字段：由 /guard/version 与 /guard/version/check 携带
   upstream?: string;
   commit?: string;
 };
@@ -48,7 +40,6 @@ const PRODUCT_DESC =
   "独立于 Harness 运行的系统级守卫：负责启动、存活监测与故障自动重启被监管目标，" +
   "提供生命周期管理、智能路由、远程控制与多实例沙箱的运维面板。";
 
-/** 版本号展示：去掉常见 v 前缀（用户定稿：直接显示版本号）。 */
 const fmt = (s?: string | null) => (s ? String(s).replace(/^v/i, "") : "—");
 
 export function AboutCard() {
@@ -57,12 +48,12 @@ export function AboutCard() {
   const [logOpen, setLogOpen] = useState(false);
   const [logKind, setLogKind] = useState<"dsh" | "guard">("dsh");
   const [logText, setLogText] = useState("");
-  // 壳中继回来的安装进度（B4b）。内核安装可长达十几分钟，没有这一行时界面在数分钟内
-  // 完全静止，用户只能判定「卡死」并重试 —— 重试即两个进程并发写同一个 npm 全局包。
+  // 壳中继回来的安装进度：内核安装可长达十几分钟，无此行时界面长时间静止，
+  // 用户会判定「卡死」并重试——重试即两个进程并发写同一个 npm 全局包。
   const [coreProg, setCoreProg] = useState<KernelUpdateProgress | null>(null);
   const { busy, run } = useSupervisorAction();
 
-  // 更新日志（A4）：按需拉取文本，失败给出明确提示而非静默。
+  // 更新日志按需拉取文本，失败给出明确提示而非静默。
   const openLog = useCallback(async (kind: "dsh" | "guard") => {
     setLogKind(kind);
     setLogText("");
@@ -92,8 +83,8 @@ export function AboutCard() {
   }, []);
   useEffect(() => { void load(); }, [load]);
 
-  // 挂载后台权威检查（非阻塞）：本地 GET 恒不联网，若不校验则「可更新」徽标永不自发出现。
-  //**内核与桌面壳各查一次**（用户要求「一起检测」）。
+  // 挂载后台权威检查（非阻塞）：本地 GET 恒不联网，不校验则「可更新」徽标永不自发出现；
+  // 内核与桌面壳各查一次。
   useEffect(() => {
     let alive = true;
     (async () => {
@@ -108,11 +99,10 @@ export function AboutCard() {
     return () => { alive = false; };
   }, []);
 
-  // -- 检查更新（内核 + 桌面壳一起检测）--
-  // 内核两条通道：1) 标准形态 -> /self-update/status（npm）；2) 源码形态 -> /guard/version/check（git）。
+  // 检查更新：内核两条通道——标准形态 /self-update/status（npm）；源码形态 /guard/version/check（git）。
+  // 桌面壳走 /shell/check-update。
   const check = async () => {
     await run("chk", async () => {
-      // 1) 内核
       let coreMsg = "内核：状态未知";
       const r = await supervisorApi.selfUpdateStatus().catch(() => null);
       if (r && r.ok !== false) {
@@ -132,7 +122,7 @@ export function AboutCard() {
           coreMsg = "内核：" + ((r && r.error) || "自更新未配置");
         }
       }
-      // 2) 桌面壳
+      // 桌面壳
       const sh = await supervisorApi.shellCheckUpdate().catch(() => null);
       let shellMsg = "桌面壳：状态未知";
       if (sh && sh.ok !== false) {
@@ -144,16 +134,14 @@ export function AboutCard() {
         setShell((prev) => ({ ...(prev || {}), error: (sh && sh.error) || "检测失败" }));
         shellMsg = "桌面壳：" + ((sh && sh.error) || "检测失败");
       }
-      // 汇总提示：任一有更新用警示色，否则成功色
       const anyUpdate = Boolean((r?.updateAvailable && r?.latest) || (sh?.updateAvailable && sh?.latest));
       if (anyUpdate) toast.warning(coreMsg + "；" + shellMsg);
       else toast.success(coreMsg + "；" + shellMsg);
     }, { refresh: false });
   };
 
-  // 内核更新：**唯一写入者 = 桌面壳**。
-  //   面板不能调用内核端点安装（/self-update/apply 已下架 = 410）；经消息桥请壳执行
-  //   kernel_update_apply（装内核 + 由所有者重启守卫）。
+  // 内核更新唯一写入者 = 桌面壳：面板不能调内核端点安装（/self-update/apply 已下架 = 410），
+  // 必须经消息桥请壳执行 kernel_update_apply（壳装内核 + 由所有者重启守卫）。
   const applyCoreUpdate = async () => {
     if (!hasShellHost()) { toast.error("内核更新由桌面壳执行：请在桌面壳面板中操作。"); return; }
     if (!window.confirm("发现内核新版本 " + fmt(ver?.latest) + "，是否立即更新？\n\n内核将由桌面壳安装，并自动重启守卫。")) return;
@@ -167,8 +155,8 @@ export function AboutCard() {
     }, { refresh: true, onDone: () => setCoreProg(null) });
   };
 
-  // 桌面壳更新：壳的自更新发生在**启动时**（门 0：查清单 -> 下载 -> 验签 -> 安装 -> 重启）。
-  // 因此「应用壳更新」= 重启桌面壳，新进程的门 0 会把它升到新版本。
+  // 桌面壳自更新发生在启动时（查清单 -> 下载 -> 验签 -> 安装 -> 重启）：
+  // 「应用壳更新」= 重启桌面壳，新进程启动门会升到新版本。
   const applyShellUpdate = async () => {
     if (!window.confirm("将重启桌面壳以应用更新 " + fmt(shell?.latest) + "。\n\n桌面壳窗口会关闭并重新打开；内核与被管实例不受影响。是否继续？")) return;
     await run("shupd", async () => {
