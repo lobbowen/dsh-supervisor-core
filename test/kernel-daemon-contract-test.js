@@ -104,10 +104,13 @@ check('D-5 陈旧锁被接管并留痕', /清理陈旧守卫锁/.test(cli) && /f
 // 实例的锁看成无效，反而制造双守卫。
 check('D-5 锁内容为 JSON 且读侧兼容纯 pid 旧格式', /JSON\.stringify\(LOCK_OWNER\)/.test(cli) && /parseInt\(raw, 10\)/.test(cli), 'ok');
 check('D-5 只释放自己的锁（按解析后的 pid 比）', /held && held\.pid === process\.pid/.test(cli), 'ok');
-// 反向：旧形态（只看 pid 存活就 return false）必须被上面的判据抓到，证明非空转。
+// 反向：旧形态（只认 pid 存活就裸 return false）必须被抓到，证明上一条非空转。
 const legacyOnly = "if (Number.isInteger(holder) && holder > 0) { try { process.kill(holder, 0); return false; } catch (err) { if (err.code === 'EPERM') return false; } }";
+// 比对只用分诊区（读锁之后）：tryCreate 里的 `return false` 是 EEXIST 布尔，不是让位。
+const yieldRegion = cli.slice(cli.indexOf('const held = readLock();'), cli.indexOf('function releaseLock'));
 check('D-5 反向：只认 pid 存活的旧形态被识别为违规',
-  !/isOwnGuardEntry\(cmdline\)/.test(legacyOnly) && bareYield(legacyOnly), 'ok');
+  /return false/.test(legacyOnly) && !/return '持有 pid /.test(legacyOnly)
+    && !/return false/.test(yieldRegion) && /return '持有 pid /.test(yieldRegion), 'ok');
 
 // -- D-6：绑定后登记**实际端口**（P6 就绪判据的单一来源）--
 // 判据跨文件：实现随步骤 7 下沉到 app/assembly/api-rebind.js（见上 D-2），故在整组上断言。
