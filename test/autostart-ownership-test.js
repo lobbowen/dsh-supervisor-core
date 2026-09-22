@@ -19,7 +19,9 @@
 //   P6 XDG 自启模板内嵌（不再读外置 desktop/ 目录）
 //   P7 存在层归壳：三平台的 setAutostart 都不建立/不删除**守卫**服务定义（P2 的平台无关版）
 //
-// 全部离线：只做源码与纯函数断言，不调用 launchctl、不写真实 LaunchAgents。
+// P1..P3 与 P6/P7 是源码与纯函数断言；**P4/P5 例外**：它们真调 setGuiAutostart(false, 平台)，
+//   该实现在 linux 会 unlink 真实 XDG autostart 条目、在 darwin 真跑 launchctl 并删 GUI plist。
+//   故本套件**不在本机直跑**（会摘掉开发者自己的登录自启），只在 CI 的干净 runner 上验。
 // ---------------------------------------------------------------------------
 
 const fs = require('node:fs');
