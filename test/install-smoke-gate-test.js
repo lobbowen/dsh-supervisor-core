@@ -43,6 +43,10 @@ const judges = {
   // 夹具取仓内唯一那一份 mock-target.js，路径经 argv 传入（Windows 转换后的路径含反斜杠）。
   configBusinessKeys: (t) => /command:\["node",mock/.test(t) && /healthUrl:"http:\/\/127\.0\.0\.1:"/.test(t)
     && /test\/mock-target\.js/.test(t) && /cygpath/.test(t),
+  // arm64 腿产 darwin-x64：npm 按当前宿主拒装（EBADPLATFORM）。只允许撞上这一条才带 --force 重装，
+  // 裸装命令自己不得常开 --force —— 那会把真装不上的包放行成假绿。
+  crossArchInstall: (t) => /grep -q EBADPLATFORM/.test(t)
+    && /npm i -g "\$PKG" --no-audit --no-fund >/.test(t) && /--force/.test(t),
 };
 
 // -- G1 脚本本体 --
@@ -120,6 +124,8 @@ console.log('== G4 反向：坏夹具让判据返回 false ==');
     cleanupTrap: 'npm i -g "$PKG"',
     daemonInstalled: 'node src/supervisor.js',
     configBusinessKeys: "printf '{\"apiPort\":%d}\\n' \"$CONFIG_PORT\" > \"$SMOKE_HOME/supervisor/config.json\"",
+    // 常开 --force 的裸装：平台校验被彻底关掉，真装不上也会一路往下跑 —— 必须判 false。
+    crossArchInstall: 'npm i -g "$PKG" --no-audit --no-fund --force || fail "npm i -g 失败: $PKG"',
   };
   const bad = Object.entries(rev).filter(([k, s]) => judges[k](s));
   check('G4-rev 每条坏夹具都不被误判为通过', bad.length === 0, bad.map((x) => x[0]).join(', ') || '全部判 false');

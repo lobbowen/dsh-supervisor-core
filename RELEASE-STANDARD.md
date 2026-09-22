@@ -77,6 +77,9 @@
 装全局命令可解析 → `--version` 自报 = `<ver>` → `self-check: OK` 且 `guardVersion=<ver>` → 隔离状态根起守卫（`daemon`）→ `/healthz` 2xx → `ports.json` 里 `supervisor-api` **唯一一条** 且其端口与 healthz 实际应答端口一致 → `npm rm -g` 收尾。
 - **S6b 是构建半边**：`build` job 内、dry-run 之后、发布之前，对本地 `dist/npm/@dsh-sup/dsh-core-<os>-<arch>` 目录跑，push/PR/tag 四平台都跑。
 - **S7b 是发布后半（`published-smoke` job）**：`needs: [precheck, build, release]` —— npm 发布动作在 `release` job 内，冒烟**必须等它**，否则同一 run 里抢先起跑、包尚未上架就 404 到耗尽重试。触发条件 `always() && (workflow_dispatch || (tag && needs.release.result == 'success'))`：tag 运行只在发布真成功后跑，`always()` 是为手动 `workflow_dispatch(ver=…)` 补跑历史版本留通道（非 tag 运行里 `release` 是 skipped，不写 `always()` 本 job 会被连带跳过 = 假绿）。从**公开 registry** 按 `@dsh-sup/dsh-core-<os>-<arch>@<ver>` 装已发布包（不读 `dist/`、不需 `NPM_TOKEN`）；registry/unpkg 传播有分钟级延迟，故重试 6 轮，**只有末轮失败才判红**。
+- **darwin-x64 腿的宿主是 arm64**（macos-14 矩阵只有 arm64 机）：npm 按当前宿主拒装 os/cpu 不匹配的包（`EBADPLATFORM`）。
+  子包运行时依赖为 0、纯 JS，os/cpu 只是分发选型元数据，故脚本**仅在撞上这一条时**带 `--force` 重装一次并留日志；
+  其余安装失败一律判红 —— 常开 `--force` 会把真装不上的包也放行（判据 `G4-crossArchInstall` + 坏夹具钉住）。
 - **不判据**：应用内更新的落盘与应用（`self-update` / `upgrade`）—— 那属壳仓安装程序冒烟，本脚本只验守卫自举。
 
 ## 2. 平台矩阵（单一事实源）

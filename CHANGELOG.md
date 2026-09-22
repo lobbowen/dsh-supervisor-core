@@ -23,6 +23,11 @@
 - 门禁：新增 `test/install-smoke-gate-test.js`（G1–G5 含反向样本；G3-i/G3-j 专钉上面那条依赖与 `always()`），
   并在 `all-platforms-test.js` T5 组校验 `published-smoke` 可被 `jobSection` 解析；
   规范 JSON 的 `ciJobs`/`specGates`/`entries` 三处清单同步收录本 job 与其脚本、门禁，使「文档列出=CI 存在」双向成立。
+- 首跑（四平台）暴露并收口的三处本批缺陷：守卫配置的 `command` / `healthUrl` 属**业务键**，只写 `apiPort`
+  会让 `daemon` 死在 `config.normalize`（三平台同点）；告警文案里 `$MOCK（` 被 shell 可移植性 S-1 抓到
+  （macOS bash 3.2 把全角字符首字节并进变量名）；darwin-x64 腿的宿主是 arm64，npm 按宿主拒装（`EBADPLATFORM`），
+  改为仅在撞上这一条时按目标平台重装一次。三条各补判据（`G4-configBusinessKeys` / `G4-crossArchInstall`），
+  反向夹具就是这次失败的那几行原文。
 
 ## [0.1.6-BETA.5]（2026-09-23）
 

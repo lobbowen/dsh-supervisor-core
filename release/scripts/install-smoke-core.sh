@@ -94,8 +94,19 @@ dump_daemon_log() {
   if [ -f "$DAEMON_LOG" ]; then echo "----- daemon 日志 -----"; cat "$DAEMON_LOG"; echo "----- 日志结束 -----"; fi
 }
 
+INSTALL_LOG="$SMOKE_HOME/npm-install.log"
 echo "== 安装包冒烟: pkg=$PKG ver=$VER =="
-npm i -g "$PKG" --no-audit --no-fund || fail "npm i -g 失败: $PKG"
+# 先按 npm 的常规校验装；只有撞上 EBADPLATFORM 才带 --force 重装一次。
+# macos-14 腿在 arm64 机上产 darwin-x64 子包，npm 按当前宿主拒装 —— 挡的是分发选型元数据，
+# 本子包运行时依赖为 0、纯 JS，装到 arm64 上跑的就是同一份字节。常开 --force 会连带放行真坏掉的包。
+if ! npm i -g "$PKG" --no-audit --no-fund >"$INSTALL_LOG" 2>&1; then
+  cat "$INSTALL_LOG"
+  grep -q EBADPLATFORM "$INSTALL_LOG" || fail "npm i -g 失败: $PKG"
+  echo "  宿主与包声明平台不符，按目标平台重装修（仅此一条放行）"
+  npm i -g "$PKG" --no-audit --no-fund --force >"$INSTALL_LOG" 2>&1 || { cat "$INSTALL_LOG"; fail "EBADPLATFORM 重装仍失败: $PKG"; }
+  cat "$INSTALL_LOG"
+fi
+rm -f "$INSTALL_LOG"
 # 装后才解析入口：不硬编码单一形态，git-bash 优先命中无后缀 shim，.cmd/.ps1 兜底；一个都没有才判失败。
 for c in dsh-supervisor dsh-supervisor.cmd dsh-supervisor.ps1; do
   if found="$(command -v "$c" 2>/dev/null)"; then DSH_BIN="$found"; break; fi
