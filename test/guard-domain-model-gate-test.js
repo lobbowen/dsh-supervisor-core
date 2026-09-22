@@ -2,7 +2,7 @@
 'use strict';
 
 // ---------------------------------------------------------------------------
-// 守护域模型门禁（GD-1..GD-6）—— SSOT: GUARD-DOMAIN-MODEL.md
+// 守护域模型门禁（GD-1..GD-8）—— SSOT: GUARD-DOMAIN-MODEL.md
 //
 // ## 为什么需要它
 //   GUARD-DOMAIN-MODEL.md 记录了「模型错位」的真实后果：把基础设施（lan-daemon）硬塞进
@@ -22,6 +22,8 @@
 //   GD-4 反向：判据能识别「基础设施带 guardian 字段 / 分支仍发事件」的旧形态（门禁非空转）
 //   GD-5 基础设施保活路径不再有对恒 true 值的 guardian !== true 补丁判断（G-6）
 //   GD-6 保活/游离判据只读持久化意图，不读生命周期视图或目录 entry 的 desired 镜像
+//   GD-7 以派生 desired 入参、不带 keepDesired 的 upsert 调用点按文件登记，只减不增
+//   GD-8 每类 desired 的来源分类（意图源/派生源）与其是否有决策消费者，必须自洽
 //
 //  域划分（契约 ，**共识方案**）：
 //   域 A 用户意图 = main（原生 DSH）+ 沙箱实例；
@@ -342,6 +344,123 @@ const lanBranch = fnBody ? lanBranchOf(fnBody) : null;
 }
 
 // ---------------------------------------------------------------------------
+// GD-7 派生 desired 的裸写入调用点计数（ST-2 写侧，只减不增的基线）
+//
+// 为什么登记而不硬禁：沙箱 spec 工厂的 desired 由 state.phase 反推，register 分支必须带它
+//   （createEntry 对缺省会落成 running），update 分支带它才是 M-1 违例。两类调用点源码同形，
+//   只能按「以 sandboxSpec 形态入参且不带 keepDesired 的 upsert 调用行」计数并登记基线。
+//   基线 3 处含 onCreate（走 register 属合法），start/stop 两处是待收口的缺陷形态。
+// ---------------------------------------------------------------------------
+{
+  const NL = String.fromCharCode(10);
+  const isDerivedWrite = (line) => /(?:_upsertManaged|\bupsert)\s*\(/.test(line)
+    && /andboxSpec\s*\(/.test(line) && !/keepDesired/.test(line);
+  const isGuardedWrite = (line) => /andboxSpec\s*\(/.test(line) && /keepDesired/.test(line);
+  const countBy = (src, pred) => src.split(NL).filter(pred).length;
+  const BASELINE = { 'src/app/assembly/compose/observers.js': 3 };
+  const found = {};
+  const guarded = {};
+  const files = walkSrc(path.join(ROOT, 'src'), [])
+    .map((p) => path.relative(ROOT, p).split(path.sep).join('/'));
+  for (const rel of files) {
+    const code = stripComments(read(rel));
+    const n = countBy(code, isDerivedWrite);
+    if (n) found[rel] = n;
+    const g = countBy(code, isGuardedWrite);
+    if (g) guarded[rel] = g;
+  }
+  const guardedTotal = Object.keys(guarded).reduce((a, k) => a + guarded[k], 0);
+  const unknownFiles = (b) => Object.keys(found).filter((f) => !(f in b));
+  const grewEntries = (b) => Object.keys(found).filter((f) => f in b && found[f] > b[f]);
+  const deadEntries = (b) => Object.keys(b).filter((f) => !found[f]);
+  const echo = (b) => Object.keys(found).length
+    ? Object.keys(found).map((f) => f + '=' + found[f] + '/' + (b[f] === undefined ? '未登记' : b[f])).join(' ')
+    : '零命中';
+  check('GD-7 判据覆盖面非空（扫描 src 下源码文件数）', files.length > 50, files.length + ' 个文件');
+  check('GD-7 裸写 desired 的文件集合 ⊆ 登记基线（新增文件即红）',
+    unknownFiles(BASELINE).length === 0, echo(BASELINE));
+  check('GD-7 已登记文件的裸写处数只减不增',
+    grewEntries(BASELINE).length === 0, echo(BASELINE));
+  check('GD-7 基线无死条目（收口后须同步摘登记，防静默回潮）',
+    deadEntries(BASELINE).length === 0, Object.keys(BASELINE).map((f) => f + '=' + (found[f] || 0)).join(' '));
+  check('GD-7 keepDesired 保护点仍为 2 处（心跳同步 + 启动对齐，不得被抹掉）',
+    guardedTotal === 2, JSON.stringify(guarded));
+  // 反向：判据必须认得出缺陷形态、且不误报两种合法形态，否则上面四条是空转的正则。
+  check('GD-7 反向：hook 裸写形态计数命中',
+    countBy("host._upsertManaged(host._managedSandboxSpec(inst));", isDerivedWrite) === 1, 'hit');
+  check('GD-7 反向：工厂函数自身与 register 声明不误报',
+    countBy("function sandboxSpec(inst) {", isDerivedWrite) === 0
+      && countBy("return { mainSpec, sandboxSpec, upsert, unregister };", isDerivedWrite) === 0, 'ok');
+  const LEGAL = "d.control().upsert(d.control().sandboxSpec(inst), { keepDesired: true });\n";
+  check('GD-7 反向：带 keepDesired 的观测路径不误报（且被保护点判据命中）',
+    countBy(LEGAL, isDerivedWrite) === 0 && countBy(LEGAL, isGuardedWrite) === 1, 'ok');
+  check('GD-7 反向：处数棘轮与死条目判据对构造输入会翻红',
+    grewEntries({ 'src/app/assembly/compose/observers.js': 2 }).length === 1
+      && unknownFiles({}).length === 1 && deadEntries({ 'src/gone.js': 1 }).length === 1, 'hit');
+}
+
+// ---------------------------------------------------------------------------
+// GD-8 desired 的来源分类与决策消费者必须一致（ST-2 读侧）
+//
+// 四类写入源分两类：意图源（config / 持久化 state.desired）与派生源（由 state.phase 反推）。
+//   派生源同时「无人读」时，该 kind 的运行意图既没有落点也没有生效路径；「有人读」则是 M-1
+//   直接违例。沙箱实例命中前者，登记为已知缺陷面（行为收口另批）。
+//   reader 判定只取自源码（心跳 derivePhase 与域内收敛函数），不采信文档措辞与手写断言。
+// ---------------------------------------------------------------------------
+{
+  const NL = String.fromCharCode(10);
+  const specsCode = stripComments(read('src/app/control/specs.js'));
+  const SOURCES = {
+    'dsh': { re: /desired:\s*state\(\)\.desired\(\)/, source: 'intent', reader: true },
+    'router-daemon': { re: /desired:\s*config\(\)\.routerAutostart/, source: 'config', reader: true },
+    'lan-daemon': { re: /desired:\s*d\.enabled\(\)/, source: 'config', reader: true },
+    'sandbox-instance': { re: /desired:\s*running\s*\?\s*'running'\s*:\s*'stopped'/, source: 'derived', reader: false },
+  };
+  const unlocated = Object.keys(SOURCES).filter((k) => !SOURCES[k].re.test(specsCode));
+  check('GD-8 四类 desired 来源表达式全部定位成功', unlocated.length === 0,
+    unlocated.length ? '未定位: ' + unlocated.join(', ') : 'dsh/router/lan/sandbox 均已定位');
+  check('GD-8 specs.js 内 desired 字面量恰为 5 处（4 个来源 + upsert 的分发点）',
+    (specsCode.match(/\bdesired\s*:/g) || []).length === 5,
+    '实数=' + (specsCode.match(/\bdesired\s*:/g) || []).length);
+  check('GD-8 派生源的推导输入确实是 state.phase（分类前提成立）',
+    /const phase = inst\.state && inst\.state\.phase;/.test(specsCode), 'sandboxSpec 内已定位 phase 取值');
+
+  const hbCode = stripComments(read('src/app/control/heartbeat.js'));
+  check('GD-8 目录 desired 的唯一决策读者是 daemon 类的 derivePhase 相位收敛',
+    /if\s*\(ad\.derivePhase[\s\S]{0,200}?e\.desired\s*===\s*'running'/.test(hbCode), hbCode.match(/\be\.desired\b/) ? '已定位' : '未找到读取点');
+  const adapterLines = stripComments(read('src/app/assembly/compose/domains.js'))
+    .split(NL).filter((l) => /registerAdapter\(/.test(l));
+  const daemonLines = adapterLines.filter((l) => /daemon/.test(l));
+  const domainALines = adapterLines.filter((l) => /'dsh'|'sandbox-instance'/.test(l));
+  check('GD-8 四个 kind 的 adapter 注册点被定位（覆盖面非空）',
+    adapterLines.length === 4 && daemonLines.length === 2 && domainALines.length === 2,
+    '共 ' + adapterLines.length + ' 条，daemon ' + daemonLines.length + ' 条，域 A ' + domainALines.length + ' 条');
+  check('GD-8 域 A 的 dsh 与 sandbox-instance 均无 derivePhase（desired 不参与其相位）',
+    daemonLines.every((l) => /derivePhase\s*:\s*true/.test(l)) && !domainALines.some((l) => /derivePhase/.test(l)),
+    domainALines.map((l) => l.trim().slice(0, 46)).join(' | '));
+  const instCode = stripComments(read('src/domains/instance/lifecycle.js'));
+  check('GD-8 沙箱生命周期（含退避重试与违规自愈）不读目录 desired',
+    !/\bdesired\b/.test(instCode), 'lifecycle.js 内 desired 出现次数=' + (instCode.match(/\bdesired\b/g) || []).length);
+  const guardianCode = stripComments(read('src/shared/guardian.js'));
+  check('GD-8 沙箱自动拉起闸门只看 guardian 旗标，与 desired 无关',
+    /inst\.guardian\s*===\s*true/.test(guardianCode) && !/\bdesired\b/.test(guardianCode), 'ok');
+
+  const gapsOf = (tbl) => Object.keys(tbl).filter((k) => tbl[k].source === 'derived' && !tbl[k].reader);
+  const violatingOf = (tbl) => Object.keys(tbl).filter((k) => tbl[k].source === 'derived' && tbl[k].reader);
+  const GAP_BASELINE = ['sandbox-instance'];
+  check('GD-8 已知缺陷面与登记集合相等（扩大即红；收口后须摘登记）',
+    gapsOf(SOURCES).join(',') === GAP_BASELINE.join(','), gapsOf(SOURCES).join(',') || '无');
+  check('GD-8 不存在「派生 desired 驱动决策」的违例（M-1 硬失败）',
+    violatingOf(SOURCES).length === 0, violatingOf(SOURCES).join(',') || 'ok');
+  // 反向：分类表判据必须有分辨力；reader 判定的对照样本取自真实源码（有心跳命中、无沙箱命中）。
+  check('GD-8 反向：派生源一旦有人读即命中违例集合',
+    violatingOf({ x: { source: 'derived', reader: true } }).length === 1
+      && gapsOf({ x: { source: 'derived', reader: true } }).length === 0, 'hit');
+  check('GD-8 反向：把沙箱来源改成意图源则缺陷面清空（判据跟着实盘变）',
+    gapsOf({ x: { source: 'intent', reader: false } }).length === 0, 'ok');
+}
+
+// ---------------------------------------------------------------------------
 // ML-2 / ML-3 应然写权 ratchet
 //
 // 判据对象：守卫核心层（src/app/**，**排除 src/app/control/**）里对 ManagedLifecycle 内部字段
@@ -354,7 +473,7 @@ const lanBranch = fnBody ? lanBranchOf(fnBody) : null;
   const LIFECYCLE_WRITE_RE = /\.\s*(?:_monitoring|desired|healthy|phase)\s*=(?!=)|_setPhase\s*\(/g;
   // 登记基线：rel -> { n: 处数上限, legal: 是否为 承认的合法出口 }
   const BASELINE = {
-    'src/app/domain-actions/router.js': { n: 12, legal: false },
+    'src/app/domain-actions/router.js': { n: 10, legal: false },
     'src/app/assembly/bootstrap.js': { n: 9, legal: false },
     'src/app/session/shutdown.js': { n: 2, legal: false },
     'src/app/daemons/supervise.js': { n: 1, legal: false },
