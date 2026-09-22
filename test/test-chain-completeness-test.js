@@ -62,7 +62,7 @@ function chainFiles() {
 
 /** 命名约定：`*-test.js` 为标准测试名。
  *   历史遗留两个**不带 -test 后缀**但在链中当测试跑的**门禁**（不改名，避免大范围改动）：
- *    - test/smoke.js        —— 启动冒烟（34 断言）
+ *    - test/smoke.js        —— 启动冒烟（场景 S1..S13）
  *    - test/ports-verify.js —— 端口纪律校验
  *    它们由 `IN_CHAIN_LEGACY` 显式承认，从而与"助手"区分开。 */
 const IN_CHAIN_LEGACY = ['smoke.js', 'ports-verify.js'];

@@ -180,8 +180,10 @@ function _startShellWatchdog(host) {
 function _registerFixedPorts(host) {
     // 端口来源以配置为准（healthUrl / command --port，normalize 已统一）。
     //   不做 pgrep 启发式猜端口：同一 bin 的其它实例/残留进程会劫持监管目标。
+    // supervisor-api 用 registerSole：本次 listen 前先把同 role 的历史残留清掉，
+    //   否则上一次避让留下的旧端口记录会与配置端口并存，而壳与内核各自可能读到不同的一条。
     ports.register('dsh-main', host.config.targetPort);
-    ports.register('supervisor-api', host.config.apiPort);
+    ports.registerSole('supervisor-api', host.config.apiPort);
 }
 
 function _bindNativeDshCommand(host) {

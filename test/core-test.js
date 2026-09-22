@@ -184,9 +184,17 @@ async function testApiSecurity() {
       ? 'UI 未构建（HTTP 503）—— 请先执行 bash release/scripts/build-ui.sh（或设 DSH_UI_DIR）'
       : String(r.headers['content-security-policy']));
   // AUDIT B-27：断言到**指令级**（旧断言长度>10 对任何字符串都绿，是「文档化门禁!=实际执行」同型）
-  check("CSP 含 frame-ancestors 'none'（面板点击劫持闸）",
-    /frame-ancestors\s+'none'/.test(String(r.headers['content-security-policy'] || '')),
-    String(r.headers['content-security-policy'] || '(缺失)'));
+  //   两面同时成立才算数：白名单逐个点名（面板由壳的内容 iframe 承载，挡住壳=面板空白），
+  //   且不放开 * / 不全禁（'none' 正是把壳一起挡掉的写法，通配则点击劫持洞重新打开）。
+  const fa = (String(r.headers['content-security-policy'] || '').match(/frame-ancestors([^;]*)/) || [])[1] || '';
+  const shellAncestors = ['tauri://localhost', 'http://tauri.localhost', 'https://tauri.localhost'];
+  const missingAncestors = shellAncestors.filter((o) => !fa.includes(o));
+  check('CSP frame-ancestors 逐个放行桌面壳的三种 origin 形态',
+    missingAncestors.length === 0, '缺失=' + missingAncestors.join(' '));
+  check("CSP frame-ancestors 无通配且非 'none'（点击劫持闸不降级、壳可用）",
+    fa !== '' && !/\*/.test(fa) && !/'none'/.test(fa), String(fa).trim());
+  check('CSP frame-ancestors 不含裸 tauri: 方案（只放行 localhost 主机名）',
+    !/(^|[\s;])tauri:(\/\/)?([\s;]|$)/.test(fa), String(fa).trim());
   check('nosniff 头存在', r.headers['x-content-type-options'] === 'nosniff',
     uiMissing ? '同上：UI 未构建，安全头未走到静态分支' : undefined);
 

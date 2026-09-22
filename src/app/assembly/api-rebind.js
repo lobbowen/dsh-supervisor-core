@@ -54,8 +54,8 @@ function _rebindApiHost(host, createServer) {
       server.listen(host.config.apiPort, host.config.apiHost, () => {
         bind._tries = 0;
         host.api = server;
-        // 重绑成功后同样登记实际端口（D3）。
-        try { portsShared.register('supervisor-api', host.config.apiPort); } catch (e) { host.logger.warn('ports.register(supervisor-api) 失败: ' + ((e && e.message) || e)); }
+        // 重绑成功后同样登记实际端口（D3），并清除同 role 的旧端口记录。
+        try { portsShared.registerSole('supervisor-api', host.config.apiPort); } catch (e) { host.logger.warn('ports.registerSole(supervisor-api) 失败: ' + ((e && e.message) || e)); }
         host.events.append('api_listening', { host: host.config.apiHost, port: host.config.apiPort });
         host.logger.info('api listening on ' + host.config.apiHost + ':' + host.config.apiPort);
       });
@@ -84,13 +84,13 @@ function startApi(host, createServer) {
       host.api = server;
       const prev = host.config.apiPort;
       if (port !== prev) {
-        // 释放旧端口登记：ports.json 留两条 supervisor-api 时壳取首条，会永远等已废弃的旧端口。
-        try { portsShared.release(prev, 'system:supervisor-api'); } catch {}
         host.config.apiPort = port;
         if (host.configPath) host.persistConfigPatch({ apiPort: port });
       }
       // 登记实际绑定端口：KERNEL-DAEMON-CONTRACT D3，壳的唯一就绪判据。
-      try { portsShared.register('supervisor-api', port); } catch (e) { host.logger.warn('ports.register(actual) 失败: ' + e.message); }
+      //   registerSole 而非 register：避让成功时旧端口的登记必须一并消失（ports.json 留两条
+      //   supervisor-api 时壳取最新一条，但内核自己的 ports.get(role) 与池统计都会看成两回事）。
+      try { portsShared.registerSole('supervisor-api', port); } catch (e) { host.logger.warn('ports.registerSole(supervisor-api) 失败: ' + e.message); }
       host.events.append('api_listening', { host: host.config.apiHost, port });
       host.logger.info('api listening on ' + host.config.apiHost + ':' + port);
     });

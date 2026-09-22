@@ -309,6 +309,129 @@ async function main() {
   await killDaemon(d12);
   try { ext12.kill('SIGKILL'); } catch {}
 
+  console.log('== S13: 启动链端到端（面板由这个端口发出 / 锁可归因 / 让位带原因 / 残留锁可回收）==');
+  // S1-S12 全部只问 /status，从没证明过真机坏掉的那三环：ports.json 里的**实际**端口、守卫锁、
+  //  面板文档本身。现场表现是「进面板 = 127.0.0.1 拒绝连接」，那就必须按壳的读法走一遍。
+  const LOCK13 = path.join(TMP, 's13-guard.lock');
+  // ports.json 与 stateFile 同目录（compose/domains.js 的 configureFile 规则），不是默认的
+  //  状态根目录——本场景全部配置都把 stateFile 放在 TMP，所以登记表就在 TMP。
+  const portsFile13 = path.join(TMP, 'ports.json');
+  const apiRecs13 = () => {
+    try {
+      return (JSON.parse(fs.readFileSync(portsFile13, 'utf8')).records || []).filter((r) => r.role === 'supervisor-api');
+    } catch { return []; }
+  };
+  const rawReq13 = (port, p) => new Promise((resolve) => {
+    const rq = http.request({ host: '127.0.0.1', port, path: p, method: 'GET', timeout: 3000 }, (res) => {
+      let b = '';
+      res.on('data', (d) => (b += d));
+      res.on('end', () => resolve({ code: res.statusCode, headers: res.headers, body: b }));
+    });
+    rq.on('error', () => resolve({ code: 0, headers: {}, body: '' }));
+    rq.end();
+  });
+  // 锁的三个阈值从 CLI 源码读出，本文件不抄写常量值：改 LOCK_STALE_MS 时判据自动跟随，
+  //  抄写则会在产品把陈旧窗口拉长后留下一条永远等不到、却以「产品缺陷」名义翻红的门禁。
+  const cliSrc13 = fs.readFileSync(path.join(ROOT, 'bin', 'dsh-supervisor'), 'utf8');
+  const HEARTBEAT13 = Number((cliSrc13.match(/const LOCK_HEARTBEAT_MS = (\d+)/) || [])[1]);
+  const STALE_MULT13 = Number((cliSrc13.match(/const LOCK_STALE_MS = LOCK_HEARTBEAT_MS \* (\d+)/) || [])[1]);
+  const TAKE_RETRY13 = Number((cliSrc13.match(/const LOCK_TAKE_RETRY_MS = (\d+)/) || [])[1]);
+  const STALE13 = HEARTBEAT13 * STALE_MULT13;
+  check('S13 前置：锁阈值常量可解析（判据不抄写产品常量）',
+    [HEARTBEAT13, STALE_MULT13, TAKE_RETRY13].every((n) => Number.isInteger(n) && n > 0),
+    'heartbeat=' + HEARTBEAT13 + ' staleMult=' + STALE_MULT13 + ' takeRetry=' + TAKE_RETRY13);
+  /** 等到「新守卫按产品自己的判据能接管」为止，返回判定依据。
+   *  POSIX 上强杀的守卫立刻 ESRCH；Windows 上 OpenProcess 可能仍对刚终止的 pid 报活，
+   *  此时唯一的证据只剩续约沉默超过 LOCK_STALE_MS —— 不等这一步就让下一步跑，
+   *  等于把产品的「保守让位」当成缺陷去断言。 */
+  async function waitReclaimable13(pid, cap = STALE13 + 20000) {
+    const end = Date.now() + cap;
+    for (;;) {
+      if (!fs.existsSync(LOCK13)) return '锁已释放';
+      let alive = true;
+      try { process.kill(pid, 0); } catch (e) { alive = e.code === 'EPERM'; }
+      if (!alive) return '持有 pid ' + pid + ' 已退出';
+      let silent = -1;
+      try { silent = Date.now() - fs.statSync(LOCK13).mtimeMs; } catch {}
+      if (silent >= STALE13) return '锁 ' + Math.round(silent / 1000) + 's 未续约';
+      if (Date.now() >= end) return 'timeout：pid 仍报活且锁仍在续约（' + silent + 'ms）';
+      await sleep(300);
+    }
+  }
+  /** 按壳的读法取号：ports.json 里本次启动写下的 supervisor-api 记录必须唯一，且那个端口
+   *  真的在应答。两个条件合起来才是「面板可达」——只看唯一性会拿到前任留下的、没人监听的
+   *  旧端口（登记表与 S1-S12 共用），那正是现场「127.0.0.1 拒绝连接」的形态。 */
+  async function servingPort13(sinceMs, ms = 20000) {
+    const end = Date.now() + ms;
+    for (;;) {
+      const recs = apiRecs13().filter((r) => Number(r.createdAt) >= sinceMs);
+      if (recs.length === 1) {
+        const p = Number(recs[0].port);
+        if (p > 0 && (await rawReq13(p, '/healthz')).code === 200) return p;
+      }
+      if (Date.now() > end) return -1;
+      await sleep(250);
+    }
+  }
+  const t13 = Date.now() - 1000;   // 减 1s：登记表用 Date.now()，同一毫秒内启动会把它自己的记录滤掉
+  const d13 = startDaemon(makeConfig(3930, 3931), { DSH_SUPERVISOR_LOCK_FILE: LOCK13 });
+  const p13 = await servingPort13(t13);
+  check('S13 就绪判据成立：登记表里那个端口 /healthz 真的 2xx', p13 > 0,
+    'cfgPort=3930 got=' + p13 + ' recs=' + JSON.stringify(apiRecs13()));
+  const panel13 = await rawReq13(p13 > 0 ? p13 : 3930, '/');
+  check('S13 面板文档真的由该端口发出（React 挂载点在 body 内）',
+    panel13.code === 200 && /<div id="root">/.test(panel13.body),
+    panel13.code === 503 ? 'UI 未构建：npm test 前须先跑 bash release/scripts/build-ui.sh'
+      : 'code=' + panel13.code + ' len=' + panel13.body.length);
+  const fa13 = (String(panel13.headers['content-security-policy'] || '').match(/frame-ancestors([^;]*)/) || [])[1] || '';
+  const miss13 = ['tauri://localhost', 'http://tauri.localhost', 'https://tauri.localhost'].filter((o) => !fa13.includes(o));
+  check('S13 面板能被桌面壳的内容 iframe 承载（壳 origin 逐个放行、非 none、无通配）',
+    miss13.length === 0 && !/'none'/.test(fa13) && !/\*/.test(fa13),
+    '缺失=' + miss13.join(' ') + ' 头=' + String(panel13.headers['content-security-policy'] || '(无 CSP 头)'));
+  let lock13 = null;
+  try { lock13 = JSON.parse(fs.readFileSync(LOCK13, 'utf8')); } catch {}
+  check('S13 守卫锁可归因（pid=本守卫、entry 指向本产品 CLI）',
+    !!lock13 && lock13.pid === d13.child.pid && /dsh-supervisor/.test(String(lock13.entry)), JSON.stringify(lock13));
+  const mt13 = fs.statSync(LOCK13).mtimeMs;
+  await sleep(HEARTBEAT13 * 1.5);
+  check('S13 守卫存活期间锁持续续约（mtime 前进，陈旧判定才有依据）',
+    fs.statSync(LOCK13).mtimeMs > mt13, mt13 + ' -> ' + fs.statSync(LOCK13).mtimeMs);
+  const d13b = startDaemon(makeConfig(3932, 3933), { DSH_SUPERVISOR_LOCK_FILE: LOCK13 });
+  const code13b = await Promise.race([
+    new Promise((r) => d13b.child.once('exit', (c) => r(c))),
+    sleep(TAKE_RETRY13 + 17000).then(() => 'timeout'),
+  ]);
+  check('S13 撞锁的第二实例退出非零（绝不双守卫并存）', code13b !== 'timeout' && code13b !== 0, 'exit=' + String(code13b));
+  check('S13 让位必须点名持有者（否则现场无从区分「确有守卫」与「残留锁」）',
+    String(d13b.out()).includes('持有 pid ' + d13.child.pid), d13b.out().trim().slice(-200));
+  check('S13 让位者不得改写登记表（面板地址仍指向活着的守卫）',
+    apiRecs13().length === 1 && Number(apiRecs13()[0].port) === p13, JSON.stringify(apiRecs13()));
+  await killDaemon(d13);
+  // Windows 上 SIGTERM 等于 TerminateProcess：exit 钩子根本不跑，锁残留是**该平台的既定语义**，
+  //  真正的保证落在下面「残留锁必须被回收」。两侧都断言，这条链在 Windows 上才算被走过。
+  const gracefulReleases = process.platform !== 'win32';
+  check('S13 ' + (gracefulReleases ? '优雅退出释放守卫锁' : 'SIGTERM 为强杀，锁残留交由回收链路兜底（win32 语义）'),
+    gracefulReleases ? !fs.existsSync(LOCK13) : fs.existsSync(LOCK13),
+    'lock exists=' + fs.existsSync(LOCK13));
+  const why13c = await waitReclaimable13(d13.child.pid);
+  const t13c = Date.now() - 1000;
+  const d13c = startDaemon(makeConfig(3930, 3931), { DSH_SUPERVISOR_LOCK_FILE: LOCK13 });
+  const p13c = await servingPort13(t13c, TAKE_RETRY13 + 15000);
+  check('S13 前任退出后新守卫接管、并重新声明自己的端口', p13c > 0,
+    '判据=' + why13c + ' got=' + p13c + ' recs=' + JSON.stringify(apiRecs13()));
+  // SIGKILL：exit 钩子不跑 -> 这正是 Windows「按命令行强杀」留下的形态。
+  try { process.kill(d13c.child.pid, 'SIGKILL'); } catch {}
+  await sleep(400);
+  check('S13 前置：强杀确实留下残留锁', fs.existsSync(LOCK13), '锁被回收了，场景失效');
+  const why13d = await waitReclaimable13(d13c.child.pid);
+  const t13d = Date.now() - 1000;
+  const d13d = startDaemon(makeConfig(3930, 3931), { DSH_SUPERVISOR_LOCK_FILE: LOCK13 });
+  check('S13 残留锁必须可回收（否则守卫永远起不来、面板永远拒绝连接）',
+    (await servingPort13(t13d, TAKE_RETRY13 + 15000)) > 0,
+    '判据=' + why13d + ' out=' + d13d.out().trim().slice(-200));
+  check('S13 回收残留锁必须留痕', /清理陈旧守卫锁/.test(d13d.out()), d13d.out().trim().slice(-200));
+  await killDaemon(d13d);
+
   // 清理残留 mock：先 SIGCONT（S3 场景 SIGSTOP 过的挂起进程不响应 SIGTERM，pkill 默认信号会漏杀
   // -> 残留 mock 占住 3900-3991 端口段，下一轮链序的 S1 会 adopt 而非 spawn，导致偶发 FAIL）；
   // 再用 SIGKILL（对任意态进程有效，含 T 态）。
