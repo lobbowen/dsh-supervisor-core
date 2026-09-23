@@ -200,6 +200,23 @@ if (process.platform === 'linux') {
     svc.isUnitActive('dsh-no-such-unit-xyz.service') === false, 'false');
 }
 
-const failed = results.filter((r) => !r);
-console.log(String.fromCharCode(10) + '结果: ' + (results.length - failed.length) + ' passed, ' + failed.length + ' failed');
-process.exit(failed.length ? 1 : 0);
+// -- A7：runAsync/runOutAsync 的「绝不 reject」契约必须覆盖 execFile 的**同步抛**--
+//   （Windows 上 npm.cmd 触发 Node EINVAL 缓解时 execFile 同步抛出；旧实现从 Promise
+//    执行器逃逸成 rejection，_recordManifest 异步化后第一次踩中——U2/U3 win-x64 红。）
+(async () => {
+  const r = await ex.runAsync(null, ['--version'], { timeoutMs: 2000 }).then((x) => x, (e) => ({ rejected: e.message }));
+  check('A7 runAsync 对 execFile 同步抛仍 resolve 失败结果（绝不 reject）',
+    r && r.rejected === undefined && r.ok === false, JSON.stringify(r && r.error));
+  const out = await ex.runOutAsync(null, ['--version'], { timeoutMs: 2000 }).then((x) => x, () => 'REJECTED');
+  check('A7 runOutAsync 同步抛口径 = resolve(null)', out === null, JSON.stringify(out));
+  // 反向：无 try/catch 的旧形态确实会 reject（证明上面判据能红，非空转）
+  const { execFile } = require('node:child_process');
+  const legacy = await new Promise((resolve) => {
+    new Promise((res) => { execFile(null, [], {}, () => res('cb')); }).then(() => resolve('resolved'), () => resolve('rejected'));
+  });
+  check('A7 反向：裸 execFile（无兜底）同步抛即 reject', legacy === 'rejected', legacy);
+
+  const failed = results.filter((x) => !x);
+  console.log(String.fromCharCode(10) + '结果: ' + (results.length - failed.length) + ' passed, ' + failed.length + ' failed');
+  process.exit(failed.length ? 1 : 0);
+})();
