@@ -317,6 +317,7 @@ const readDomain = (dir) => fs.readdirSync(path.join(ROOT, dir)).filter((f) => f
 //   内核若整份覆盖，会抹掉 catalog/probe/selected，削弱壳的镜像解析。
 {
   const dmSrc = readDomain('src/platform/distribution');
+  // 落盘实现已归 registry-config.js（配置所有权），判据对象是聚合源里的该函数体。
   const m = dmSrc.match(/function saveRegistryConfig\([\s\S]*?\n\}/);
   check('J-j 定位到 saveRegistryConfig', !!m, m ? 'ok' : '未找到');
   check('J-j 写前读回原文档（保留未知字段）', /readFileSync\(f, 'utf8'\)/.test(dmSrc), '有');

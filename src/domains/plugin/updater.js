@@ -6,6 +6,26 @@
 
 const { specType, isUpdateAvailable } = require('./policies');
 
+/** 目标版本 + 取不到时的原因（checkUpdates/update 共用一处，两处的负缓存口径必须一致）。
+ *  只在取到时写缓存：把「registry 不可达」写进去，等于负缓存 _updTTL 之久、此后一律显示「无更新」。
+ *  选版单源在 dist.fetchNpmLatest（latest 优先，缺失/非法才回落 versions 最高；取 registry 全量
+ *  最高会把他人杂 tag 当候选），本层不再判通道。 */
+async function latestCached(ctx, name, force) {
+  const c = ctx._updCache[name];
+  if (c && !force && (Date.now() - c.at) < ctx._updTTL) return { latest: c.latest, error: null };
+  let latest = null;
+  let error = '分发服务不可用';
+  if (ctx.dist) {
+    try {
+      const r = await ctx.dist.fetchNpmLatest(name);
+      latest = r && r.ok ? r.version : null;
+      error = r && r.ok ? null : ((r && r.error) || '未取到版本');
+    } catch (e) { error = (e && e.message) || String(e); }
+  }
+  if (latest !== null) ctx._updCache[name] = { latest, at: Date.now() };
+  return { latest, error };
+}
+
 /** 检测：聚合各目标已装插件，标出可更新项（npm 型查 registry 最高版）。 */
 async function checkUpdates(ctx, force) {
   const targets = [ctx._nativeTarget(), ...ctx._allSandboxTargets()];
@@ -15,16 +35,7 @@ async function checkUpdates(ctx, force) {
       if (meta.has(p.name)) continue;
       const st = specType(p.source);
       let latest = null;
-      const c = ctx._updCache[p.name];
-      if (c && !force && (Date.now() - c.at) < ctx._updTTL) latest = c.latest;
-      else {
-        // 插件均为第三方 npm 包：选版单源在 dist.fetchNpmLatest（latest 优先，缺失/非法才回落 versions
-        // 最高；取 registry 全量最高会把他人杂 tag 当候选）。
-        if (st === 'npm' && ctx.dist) { try { latest = await ctx.dist.fetchNpmLatest(p.name); } catch {} }
-        // 只在取到时写缓存：失败（latest=null）若写进去，等于把「registry 不可达」负缓存 _updTTL 之久，
-        // 此后 checkUpdates 一律显示「无更新」且不再重试。
-        if (latest !== null) ctx._updCache[p.name] = { latest, at: Date.now() };
-      }
+      if (st === 'npm' && ctx.dist) latest = (await latestCached(ctx, p.name, force)).latest;
       meta.set(p.name, { specType: st, latest });
     }
   }
@@ -53,15 +64,9 @@ async function update(ctx, name, targetStr) {
   if (!r.ok) return r;
   const targets = r.targets.filter((t) => ctx.installedOn(t).some((p) => p.name === name));
   if (!targets.length) { const desc = targetStr === 'all' ? '任何目标' : ('目标「' + (targetStr || 'native') + '」'); return { ok: false, error: desc + ' 未安装插件 ' + name }; }
-  let latest = null;
-  const c = ctx._updCache[name];
-  if (c && (Date.now() - c.at) < ctx._updTTL) latest = c.latest;
-  else {
-    if (ctx.dist) { try { latest = await ctx.dist.fetchNpmLatest(name); } catch {} }
-    // 与 checkUpdates 同一负缓存口径（本函数第二处写入点）：取不到不写缓存。
-    if (latest !== null) ctx._updCache[name] = { latest, at: Date.now() };
-  }
-  if (!latest) return { ok: false, error: '无法获取 ' + name + ' 的最新版本（registry 不可达），请检查网络后重试' };
+  const pick = await latestCached(ctx, name, false);
+  const latest = pick.latest;
+  if (!latest) return { ok: false, error: '无法获取 ' + name + ' 的最新版本（' + (pick.error || 'registry 不可达') + '），请检查网络后重试' };
   const job = ctx.jobs.createJob('update', name, targetStr || 'native', targets);
   if (ctx.events) ctx.events.append('plugin_update_started', { name, jobId: job.id, target: job.target, targets: targets.map((t) => t.name) });
   let idx = 0;

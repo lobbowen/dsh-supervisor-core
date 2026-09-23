@@ -41,9 +41,12 @@ function createAppsRegistryOps(deps) {
       const now = Date.now();
       if (!force && c.latest && c.checkedAt && (now - c.checkedAt) < (a.versionRefreshMs || 6 * 3600 * 1000)) { results[a.id] = c.latest; continue; }
       let ver = null;
-      try { if (dist) ver = await dist.fetchNpmLatest(a.registry); } catch {}
+      let why = '分发服务不可用';
+      try {
+        if (dist) { const r = await dist.fetchNpmLatest(a.registry); ver = r && r.ok ? r.version : null; why = r && r.ok ? null : ((r && r.error) || '未取到版本'); }
+      } catch (e) { why = (e && e.message) || String(e); }
       const prev = c.latest || null;
-      cache[a.id] = { pkg: a.registry, latest: ver, checkedAt: Date.now(), error: ver ? null : 'query failed' };
+      cache[a.id] = { pkg: a.registry, latest: ver, checkedAt: Date.now(), error: ver ? null : (why || 'query failed') };
       // 仅存在旧基线且版本真实变化才发事件（冷启动首查不视为新版本）
       if (ver && prev && ver !== prev && events) events.append('proxy_update_available', { appId: a.id, pkg: a.registry, from: prev, to: ver });
       results[a.id] = ver;

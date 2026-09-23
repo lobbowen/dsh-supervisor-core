@@ -10,7 +10,8 @@ function owns(pathname) {
 /** 盲 SSRF 收口：探测目标策略，返回错误文案，放行返回 null。
  *  1) 已配置镜像源（distribution 唯一事实源 effectiveOrigins）按 hostname 放行——操作者有意配置的内网镜像必须仍可测试；
  *  2) 其余只允许公网主机：拒回环/RFC1918/链路本地/CGNAT/保留段/localhost 与 .local .internal .home.arpa 后缀/全部 IPv6 字面量。
- *  重定向封堵在 platform/distribution/registry.js probeRegistry（redirect:'manual' + 非 2xx 即失败），302 到内网绕不过本策略。 */
+ *  跳转封堵在 platform/distribution/registry-ref.js 的 fetchRegistry：redirect:'manual' 且逐跳复验
+ *  目标主机，故 302 到内网绕不过本策略（健康的 302 型镜像仍可探测）。 */
 function probeTargetError(origin, sup) {
   let u = null;
   try { u = new URL(origin); } catch { return 'origin 不是合法 URL'; }

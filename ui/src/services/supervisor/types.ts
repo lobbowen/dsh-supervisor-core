@@ -423,7 +423,18 @@ export interface RegistryInfo {
   presets?: Array<{ label: string; origin: string }>;
   latencyMs?: number;
   checkedAt?: number;
-  probes?: Array<{ origin: string; ok: boolean; latencyMs: number }>;
+  probes?: Array<{ origin: string; ok: boolean; latencyMs: number | null; error?: string | null }>;
+  /** 消费顺延序列（primary 第一，其余按延迟） */
+  ordered?: string[];
+  /** 本次选择依据：shell（采用壳契约选择）| probe（自测速）| manual | unreachable */
+  source?: string;
+  /** 逐源形态判定与探测结论（非法基址也要指名，否则用户只看到「取不到版本」） */
+  registries?: Array<{
+    base: string; usable: boolean; violation: string | null;
+    reachable: boolean | null; latencyMs: number | null; error: string | null;
+  }>;
+  rejectedOrigins?: string[];
+  error?: string;
 }
 export interface SelfUpdateStatus {
   ok: boolean;

@@ -6,6 +6,37 @@
 
 ## [未发布]
 
+### 镜像源定义层单源：面板「取不到最新版本、也下载不了」的内核侧收口（P0-A）
+
+病根不是某个镜像挂了，而是同一句话在内核里被解释了两遍：壳的镜像目录**允许基址带路径**
+（华为云 `https://repo.huaweicloud.com/repository/npm`、腾讯云都是这个形态），而内核的合法性闸把
+「不得带 path」当成安全判据 —— 于是一批准许过的镜像在探测阶段判可达、在取字节阶段判非法，
+面板只会显示「无法获取最新版本」。跳转判据同样是反的：探测侧拒绝一切 302（健康的跳转型镜像被判死），
+取数据侧却用默认策略盲从跳转到任意主机。
+
+- `platform/distribution/registry-ref.js`（新增）成为「一个可用的镜像源到底是什么」的唯一所有者：
+  形态与安全分两层（`parseRegistryBase` 只堵凭证/查询/片段/空白与非 http(s)，主机维度另设
+  `hostViolation` 供写入口叠加私网闸），传输只有一个口 `fetchRegistry`（`redirect:'manual'` + **逐跳复验**
+  目标主机 + 状态码/字节/时长三重有界）。探测与消费走同一条路，不可能再给出两个答案。
+- 选源结果从「一个字符串」升级为结构化选择：`selectRegistry` 回 `{origin, ordered, source, manual, probes}`，
+  `ordered` 是消费阶段的顺延序列，`probes` 保留逐源结论（「不可达」必须能指名是哪个源、为什么）。
+  `manual` 的语义由「短路一切探测、只用这一个」改为「置顶这一个，仍测速、仍回退」——旧语义下面板一旦
+  固定成死源就再也拿不到任何诊断。
+- 取版本按候选镜像**顺延**并回传**给出该版本的那个源**：`fetchNpmLatest` 回 `{ok, version, origin, attempts, error}`，
+  安装/升级的下载源与目标版本同源，「显示一个源、下载另一个源」的分叉关掉。只回 null 时
+  「镜像源全挂」与「确实没有更新」无法区分，UI 会把前者显示成后者。
+- 9 处选源/取版本消费者迁移（app/native、instance 安装与升级、plugin cli/market/updater、router pkg-cache/proxy/apps-registry），
+  只要「本次用哪个源」的走 `registryOrigin`，需要顺延序列或失败原因的走 `selectRegistry`/`fetchNpmLatest`；
+  安装路径里手工拼 `npm_config_registry` 的死 env 清除，镜像注入只由 `runNpmInstall` 负责。
+- 面板响应只做加法：`/dist/registry` 新增 `ordered`/`source`/`registries`（逐源形态与判定），
+  `RegistryCard` 在无延迟处以 title 显示拒因（非法基址与不可达是两种处置）。
+- 按 DF-2（单文件 ≤300 行）把分发层再切两刀：`registry-config.js`（契约载入与「谁的字段谁写」的落盘）、
+  `version-check.js`（目标版本查询），与 `install.js`（npm 执行）各自单一职责。
+- 随迁的门禁判据只改锚点、不改判据语义：`round13` 的读入口重载判据接受 `config.` 限定形式，
+  `npm-resolution` 的「形态闸单源」判据改为要求 URL 解析只住在 `registry-ref.js`。未新增测试链条目。
+
+壳侧（契约 schema3、探测逐跳复验、两文件所有权）归 P0-C，跨仓且需发版；本批不依赖它即可解除症状。
+
 ## [0.1.6-BETA.7]（2026-09-24）
 
 本版是审计第三组的内核侧收口：门禁空转（判据写法上永远不可能判红）、文档失实，与零调用死链

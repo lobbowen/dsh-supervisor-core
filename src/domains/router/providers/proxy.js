@@ -42,7 +42,7 @@ class ProxyProvider extends withProcessPool(ProviderBase) {
 
   /** 解析启动命令（缓存优先 + fallback npx）：拼装委托 command.js；凭证剔除留在本层（纪律）。 */
   async _resolveLaunchCommand(app, port, key) {
-    const registry = this.dist ? await this.dist.selectRegistry(false).catch(() => null) : null;
+    const registry = this.dist ? await this.dist.registryOrigin(false).catch(() => null) : null;
     const cachedBin = this._cachedPkgBin(app.pkg);
     // npx 兜底必须成对 launcher 形态（node 直启 npx-cli.js 优先）：win32 无 shell spawn .cmd 必 EINVAL。
     const launch = buildCommand({ app, port, cachedBin, registry, launcher: npxLauncher(), execPath: process.execPath });

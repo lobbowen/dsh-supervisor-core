@@ -158,13 +158,37 @@ check("C-e 非 Windows 返回 'npx'", npxBin({ platform: 'linux' }) === 'npx', n
     /VERSION_RE\.test\(String\(o\.version\)\)/.test(dist), '有');
   check('C-f commandTemplate 替换后逐项过禁用字符集',
     /BAD_ARGV_CHAR_RE\.test\(String\(a\)\)/.test(dist), '有');
-  check('C-f registry 写入 npm_config_registry 前过纯 origin 闸',
-    /if \(!policies\.isValidOrigin\(o\.registry\)\)/.test(dist)
-      && dist.indexOf('if (!policies.isValidOrigin(o.registry))') < dist.indexOf('envVars.npm_config_registry = o.registry'), '有');
-  check('C-f fetchNpmLatest 拼接 URL 前过 origin + pkg 双闸',
-    /if \(!policies\.isValidOrigin\(base\)\) return null;[\s\S]{0,120}PKG_NAME_RE\.test\(pkg\)/.test(dist), '有');
-  check('C-f isValidOrigin 不再是 scheme-only（URL 解析 + 凭证/路径/片段拒绝）',
-    /new URL\(s\)/.test(dist) && /u\.username \|\| u\.password/.test(dist) && /u\.hash/.test(dist), '有');
+  // 「先过闸、再落敏感动作」这类时序判据必须在**同一份文件**内比序：聚合目录后跨文件顺序
+  //   天然成立（拆分把 install.js/registry-ref.js 固定成字母序），删掉闸门也照样判绿。
+  const execSrc = fs.readFileSync(path.join(distDir, 'install.js'), 'utf8');
+  const vcSrc = fs.readFileSync(path.join(distDir, 'version-check.js'), 'utf8');
+  check('C-f registry 写入 npm_config_registry 前过基址闸（单源 registry-ref，同文件比序）',
+    /ref\.parseRegistryBase\(o\.registry\)/.test(execSrc)
+      && execSrc.indexOf('ref.parseRegistryBase(o.registry)') < execSrc.indexOf('envVars.npm_config_registry'), '有');
+  // 语义 = 包名进 URL 前必须过白名单。参照物不能取「registryPackagePath 在文件中的首次出现」：
+  //   拼 URL 只发生在被闸保护的 versionFromOrigin 里，它在文件中天然靠前，整文件比序会必红。
+  //   改在 fetchNpmLatest 函数体内比序：闸早于对取版本函数的调用，且拼 URL 不许搬进这个函数。
+  const fnBody = (src, decl) => {
+    const s = src.indexOf(decl);
+    const e = s < 0 ? -1 : src.indexOf('\n}', s);
+    return e < 0 ? null : src.slice(s, e);
+  };
+  const fetchBody = fnBody(vcSrc, 'async function fetchNpmLatest(');
+  const probeBody = fnBody(vcSrc, 'async function versionFromOrigin(');
+  const gateAt = fetchBody === null ? -1 : fetchBody.indexOf('PKG_NAME_RE.test(pkg)');
+  const callAt = fetchBody === null ? -1 : fetchBody.indexOf('versionFromOrigin(');
+  check('C-f 取版本前先过包名白名单，再拼 registry URL（同函数体比序）',
+    gateAt >= 0 && callAt >= 0 && gateAt < callAt && probeBody !== null
+      && /registryPackagePath\(pkg\)/.test(probeBody)
+      && (fetchBody.match(/registryPackagePath\(/g) || []).length === 0,
+    'gate@' + gateAt + ' call@' + callAt);
+  // 镜像基址形态只有一把尺子：URL 解析/凭证/查询/片段判定必须只住在 registry-ref.js。
+  const REF_JS = path.join(ROOT, 'src', 'platform', 'distribution', 'registry-ref.js');
+  const refSrc = fs.readFileSync(REF_JS, 'utf8');
+  check('C-f 形态闸单源在 registry-ref（distribution 其余文件不得再解 URL）',
+    /function parseRegistryBase\(/.test(refSrc) && /u\.username \|\| u\.password/.test(refSrc)
+      && /u\.hash/.test(refSrc)
+      && dist.replace(refSrc, '').match(/new URL\(/g) === null, '唯一');
 
   // 行为面（无副作用：非法入参必须在 spawn **之前**被拒，故不会启动任何进程）。
   // 文件头是同步判定器 —— 异步断言收进 _asyncGates，末尾 await 后再结算。
@@ -179,21 +203,29 @@ check("C-e 非 Windows 返回 'npx'", npxBin({ platform: 'linux' }) === 'npx', n
     ]);
     check('C-f 行为：version 夹带 shell 元字符 → 拒（不 spawn）', !rs[0].ok && /非法版本/.test(rs[0].error), rs[0].error);
     check('C-f 行为：pkg 含空格 → 拒', !rs[1].ok && /非法包名/.test(rs[1].error), rs[1].error);
-    check('C-f 行为：registry file:// → 拒（不写 npm_config_registry）', !rs[2].ok && /registry origin/.test(rs[2].error), rs[2].error);
-    check('C-f 行为：registry 凭证夹带 → 拒', !rs[3].ok && /registry origin/.test(rs[3].error), rs[3].error);
+    check('C-f 行为：registry file:// → 拒（不写 npm_config_registry）', !rs[2].ok && /registry 基址/.test(rs[2].error), rs[2].error);
+    check('C-f 行为：registry 凭证夹带 → 拒', !rs[3].ok && /registry 基址/.test(rs[3].error), rs[3].error);
     check('C-f 行为：{prefix} 注入空白/元字符 → 替换后仍被拒', !rs[4].ok && /禁用字符/.test(rs[4].error), rs[4].error);
   });
 
   // 反向：旧判据/旧输入必须能被新闸识别
-  const pol = require(path.join(distDir, 'policies.js'));
-  check('C-f 反向：scheme-only 旧判据确实放过凭证/路径/片段夹带',
+  const refGate = require(path.join(distDir, 'registry-ref.js'));
+  const okBase = (s) => refGate.parseRegistryBase(s).ok;
+  check('C-f 反向：scheme-only 旧判据确实放过凭证/查询/片段夹带',
     /^https?:\/\//.test('https://u:pass@host/x#y') === true
-      && pol.isValidOrigin('https://u:pass@host/x#y') === false
-      && pol.isValidOrigin('https://a.b/path?q=1') === false
-      && pol.isValidOrigin('https://a.b/#x') === false, '已收紧');
-  check('C-f 反向：合法纯 origin 不被误杀（官方/镜像/带端口/IPv6/尾斜杠）',
-    pol.isValidOrigin('https://registry.npmjs.org') && pol.isValidOrigin('https://registry.npmjs.org/')
-      && pol.isValidOrigin('http://127.0.0.1:4873') && pol.isValidOrigin('https://[::1]:4873'), 'ok');
+      && okBase('https://u:pass@host/x#y') === false
+      && okBase('https://a.b/path?q=1') === false
+      && okBase('https://a.b/#x') === false, '已收紧');
+  // 带 path 的镜像基址（华为云/腾讯云常态）必须放行：把它判死就是「探测可达、下载判非法」的病根。
+  check('C-f 反向：合法基址不被误杀（官方/镜像/带端口/IPv6/尾斜杠/**带 path**）',
+    okBase('https://registry.npmjs.org') && okBase('https://registry.npmjs.org/')
+      && okBase('http://127.0.0.1:4873') && okBase('https://[::1]:4873')
+      && okBase('https://repo.huaweicloud.com/repository/npm/')
+      && refGate.parseRegistryBase('https://repo.huaweicloud.com/repository/npm/').base === 'https://repo.huaweicloud.com/repository/npm'
+      && refGate.registryUrl('https://repo.huaweicloud.com/repository/npm', '@a%2Fb') === 'https://repo.huaweicloud.com/repository/npm/@a%2Fb', 'ok');
+  check('C-f 反向：私网主机闸只在写入口（消费闸放行内网 Verdaccio）',
+    okBase('http://127.0.0.1:4873') === true
+      && require(path.join(distDir, 'policies.js')).registryOriginViolation('http://127.0.0.1:4873') !== null, '分工正确');
   check('C-f 反向：白名单不拦合法包名/semver（含 prerelease 与 scope）',
     inst.PKG_NAME_RE.test('@deepseek-ai/dsh') && inst.PKG_NAME_RE.test('dsh')
       && require(path.join(ROOT, 'src', 'shared', 'version.js')).VERSION_RE.test('0.1.5-BETA.10'), 'ok');
@@ -279,9 +311,165 @@ check("C-e 非 Windows 返回 'npx'", npxBin({ platform: 'linux' }) === 'npx', n
     check('C-g 行为：prefix 相对路径 → 拒', !rs[1].ok && /绝对路径/.test(rs[1].error), rs[1].error);
     check('C-g 行为：prefix 含 NUL → 拒', !rs[2].ok && /控制符/.test(rs[2].error), rs[2].error);
     check('C-g 行为：win 含空白前缀不被误杀（拦下的是 registry 闸）',
-      !rs[3].ok && /registry origin/.test(rs[3].error) && !/安装前缀/.test(rs[3].error), rs[3].error);
+      !rs[3].ok && /registry 基址/.test(rs[3].error) && !/安装前缀/.test(rs[3].error), rs[3].error);
     check('C-g 行为：posix 含空白前缀不被误杀（拦下的是 registry 闸）',
-      !rs[4].ok && /registry origin/.test(rs[4].error) && !/安装前缀/.test(rs[4].error), rs[4].error);
+      !rs[4].ok && /registry 基址/.test(rs[4].error) && !/安装前缀/.test(rs[4].error), rs[4].error);
+  });
+}
+
+// -- C-h：镜像传输口（registry-ref.fetchRegistry）与「带 path 的镜像」端到端行为 --
+//   面板症状「完全获取不到最新版本、也下载不了」的内核侧病根有两条，都必须可红：
+//   1) 内核把「基址不得带 path」当安全判据，而壳目录允许带 path（华为云/腾讯云常态）——
+//      于是同一批镜像在探测阶段可达、在取字节阶段判非法；
+//   2) 跳转判据两侧相反：探测拒绝一切 302（同主机改写 CDN 的健康镜像被判死），取数据却盲从跳转。
+//   修法是把形态与传输各收成一处（parseRegistryBase / fetchRegistry），故判据也只需盯这一处。
+//   全部只连 127.0.0.1 的假 registry，不发外部请求、不 spawn 进程。
+{
+  const http = require('node:http');
+  const os = require('node:os');
+  const distDir = path.join(ROOT, 'src', 'platform', 'distribution');
+  const refGate = require(path.join(distDir, 'registry-ref.js'));
+  const { DistributionManager } = require(path.join(distDir, 'index.js'));
+  const PKG = 'dsh-e2e-pkg';
+  const META = { name: PKG, 'dist-tags': { latest: '1.4.2' }, versions: { '1.4.2': {} } };
+
+  const routes = (req, res) => {
+    const p = decodeURIComponent(String(req.url || '').split('?')[0]);
+    const send = (code, body, type) => {
+      res.writeHead(code, { 'content-type': type || 'application/json' });
+      res.end(body);
+    };
+    const redirect = (loc) => { res.writeHead(302, { location: loc }); res.end(); };
+    if (p === '/same/-/ping' || p === '/a/-/ping' || p === '/b/-/ping') return send(200, '{}');
+    if (p === '/same') return redirect('/final');
+    if (p === '/final') return send(200, JSON.stringify({ hit: 'final' }));
+    if (p === '/cross-private') return redirect('http://169.254.169.254/meta');
+    if (p === '/loop') return redirect('/loop');
+    if (p === '/big') {
+      res.writeHead(200, { 'content-type': 'application/json' });
+      for (let i = 0; i < 8; i++) res.write('{"a":"' + 'x'.repeat(1024) + '"}');
+      return res.end();
+    }
+    if (p === '/not-json') return send(200, 'not json at all', 'text/plain');
+    if (p === '/missing') return send(404, '{}');
+    // 声明 200 字节、只发 7 字节便掐线：响应头已落 socket，故失败必然发生在「读体」而不是 fetch()。
+    if (p === '/truncated') {
+      res.writeHead(200, { 'content-type': 'application/json', 'content-length': 200 });
+      return res.write('{"a":"', () => { try { res.socket.destroy(); } catch { /* 已断 */ } });
+    }
+    // 带 path 的镜像基址（/a 与 /b 都是同一主机的不同目录）：/a 探测可达但取包 404，/b 正常给版本。
+    if (p === '/a/' + PKG) return send(404, '{}');
+    if (p === '/b/' + PKG) return send(200, JSON.stringify(META));
+    if (p === '/' + PKG) return send(200, JSON.stringify(META));
+    return send(404, '{}');
+  };
+  const server = http.createServer(routes);
+
+  _asyncGates.push(async () => {
+    await new Promise((r) => server.listen(0, '127.0.0.1', r));
+    const origin = 'http://127.0.0.1:' + server.address().port;
+    try {
+      const jump = await refGate.fetchRegistry(origin + '/same', { expect: 'json' });
+      check('C-h 同主机 302 被跟随并取到字节（旧探测形态把它判死）',
+        jump.ok === true && jump.json && jump.json.hit === 'final' && jump.hops.length === 2,
+        JSON.stringify({ ok: jump.ok, error: jump.error, hops: jump.hops.length }));
+      const cross = await refGate.fetchRegistry(origin + '/cross-private', { expect: 'json' });
+      check('C-h 跨主机跳到元数据地址被拒（逐跳复验，不是盲从）',
+        cross.ok === false && /私网|保留/.test(cross.error || '') && cross.hops.length === 1,
+        String(cross.error));
+      const loop = await refGate.fetchRegistry(origin + '/loop', { expect: 'json' });
+      check('C-h 自跳环在跳数上限处收口（不给 302 链当跳板）',
+        loop.ok === false && /跳转次数超过上限/.test(loop.error || ''), String(loop.error));
+      const big = await refGate.fetchRegistry(origin + '/big', { expect: 'json', maxBytes: 2048 });
+      check('C-h 响应体超上限即断，不猜内容', big.ok === false && /响应体超过上限/.test(big.error || ''), String(big.error));
+      const bad = await refGate.fetchRegistry(origin + '/not-json', { expect: 'json' });
+      check('C-h 非 JSON 响应如实判失败', bad.ok === false && /合法 JSON/.test(bad.error || ''), String(bad.error));
+      const gone = await refGate.fetchRegistry(origin + '/missing', { expect: 'json' });
+      check('C-h 非 2xx 带状态码回传（逐源原因要能指名 HTTP 404）',
+        gone.ok === false && gone.status === 404 && /HTTP 404/.test(gone.error || ''), String(gone.error));
+      // 读体阶段断流也要落成结构化失败：本口是「可达」的唯一判据源，抛出去等于逼每个调用方
+      // 各长一份 try/catch —— 那正是探测与消费两侧答案分叉的起点（旧实现市场侧就有这份 catch）。
+      let trunc = null;
+      let truncThrew = null;
+      try {
+        trunc = await refGate.fetchRegistry(origin + '/truncated', { expect: 'json' });
+      } catch (e) {
+        truncThrew = e;
+      }
+      check('C-h 响应体读到一半断流不外抛，落成结构化失败',
+        truncThrew === null && !!trunc && trunc.ok === false && /读取响应体中断/.test(String(trunc.error || '')),
+        truncThrew ? '抛出: ' + truncThrew.message : JSON.stringify({ ok: trunc && trunc.ok, error: trunc && trunc.error }));
+
+      // 症状本体：带 path 的镜像必须「探测可达 == 取到字节」，且死源不阻断顺延。
+      // base 一律取归一后的形态（registryOrigins 会剥尾斜杠），带尾斜杠的输入另留一条只当数据用。
+      const baseA = origin + '/a';
+      const baseB = origin + '/b';
+      const tmpFile = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'npmres-')), 'registry.json');
+      fs.writeFileSync(tmpFile, JSON.stringify({
+        schema: 1, mode: 'manual', origins: [baseA, baseB], manualOrigin: baseA,
+      }));
+      const dm = new DistributionManager({
+        registries: [baseA, baseB], registryFile: tmpFile,
+        logger: { warn() {}, info() {} },
+      });
+      const sel = await dm.selectRegistry(false);
+      check('C-h manual 语义＝置顶但仍测速（旧语义短路一切探测 → 延迟列全空、无任何诊断）',
+        sel.manual === true && sel.origin === baseA && sel.ordered[0] === baseA
+          && sel.ordered.indexOf(baseB) > 0 && sel.probes.length === 2,
+        JSON.stringify({ origin: sel.origin, ordered: sel.ordered.length, probes: sel.probes.length }));
+      const pick = await dm.fetchNpmLatest(PKG);
+      check('C-h 手动死源下仍能顺延取到版本，且 origin=真正给出该版本的源（下载同源）',
+        pick.ok === true && pick.version === '1.4.2' && pick.origin === baseB
+          && pick.attempts.length === 1 && pick.attempts[0].origin === baseA && /HTTP 404/.test(pick.attempts[0].error),
+        JSON.stringify({ version: pick.version, origin: pick.origin, attempts: pick.attempts }));
+      // 注入 npm 的基址闸：允许带 path（华为云/腾讯云常态），但仍必须在写入 env 前拦下夹带凭证的基址。
+      // 首项用必然不存在的程序 —— 证明「已过 registry 闸、走到了执行阶段」而不是靠真 spawn 判绿；
+      // 不用 echo/cmd 内建：Windows runner 上 spawn 不认 shell 内建，会把真绿判成红。
+      const NOEXEC = 'dsh-p0a-nonexistent-npm';
+      const slashed = await dm.runNpmInstall({ pkg: PKG, version: '1.4.2', registry: baseA + '/', commandTemplate: [NOEXEC], timeoutMs: 15000 });
+      check('C-h 带 path 的基址注入 npm 前不再被误杀（尾斜杠归一，仍过同一道闸）',
+        !!slashed.error && !/registry 基址/.test(slashed.error) && refGate.parseRegistryBase(baseA + '/').base === baseA,
+        JSON.stringify({ error: slashed.error, base: refGate.parseRegistryBase(baseA + '/').base }));
+      const credentialed = await dm.runNpmInstall({
+        pkg: PKG, version: '1.4.2', registry: origin.replace('http://', 'http://u:p@') + '/a', commandTemplate: [NOEXEC], timeoutMs: 15000,
+      });
+      check('C-h 反向：注入口仍拦得住凭证夹带（放宽 path 没有放宽攻击面）',
+        credentialed.ok === false && /registry 基址/.test(String(credentialed.error)), String(credentialed.error));
+      const rejected = await dm.setRegistryConfig({ mode: 'manual', manualOrigin: 'https://u:p@host/x' });
+      check('C-h 反向：凭证夹带的手动源不落盘（放宽 path 不等于放宽攻击面）',
+        !!rejected.error && /凭证|用户名|密码/.test(rejected.error), String(rejected.error));
+
+      // 结构面：探测与消费必须共用同一个传输口，且域内不留第二处裸 fetch。
+      const regSrc = fs.readFileSync(path.join(distDir, 'registry.js'), 'utf8');
+      const vcSrc = fs.readFileSync(path.join(distDir, 'version-check.js'), 'utf8');
+      const probeBody = regSrc.slice(regSrc.indexOf('async function probeRegistry('));
+      const metaBody = vcSrc.slice(vcSrc.indexOf('async function versionFromOrigin('));
+      check('C-h 探测与取字节共用 ref.fetchRegistry（两侧不可能再给出不同答案）',
+        /ref\.fetchRegistry\(/.test(probeBody.slice(0, 1400)) && /ref\.fetchRegistry\(/.test(metaBody.slice(0, 900)), '同一口');
+      // 镜像传输只允许一个出口：registry-ref.fetchRegistry。GitHub Releases 不是镜像，
+      // 允许在 version-check.js 里直连；豁免必须先定位到真实函数体并要求其中含 api.github.com，
+      // 否则「第二套可达判据」可以藏进任意一段代码里。
+      const ghStart = vcSrc.indexOf('async function fetchGithubLatest(');
+      const ghEnd = vcSrc.indexOf('/** 统一版本检查', ghStart);
+      const ghExempt = ghStart >= 0 && ghEnd > ghStart && /api\.github\.com/.test(vcSrc.slice(ghStart, ghEnd));
+      const bareFetches = (src) => (src.split('\n').filter((l) => !l.trim().startsWith('//')).join('\n').match(/[^.\w]fetch\(/g) || []).length;
+      const distFiles = fs.readdirSync(distDir).filter((f) => f.endsWith('.js'));
+      const offenders = distFiles.filter((f) => {
+        if (f === 'registry-ref.js') return false; // 唯一出口本体，下面单独钉次数
+        const src = f === 'version-check.js' && ghExempt ? vcSrc.slice(0, ghStart) + vcSrc.slice(ghEnd)
+          : fs.readFileSync(path.join(distDir, f), 'utf8');
+        return bareFetches(src) > 0;
+      });
+      const refGateSrc = fs.readFileSync(path.join(distDir, 'registry-ref.js'), 'utf8');
+      check('C-h distribution 内除 registry-ref 外无第二处裸 fetch（防长出第二套「可达」判据）',
+        ghExempt && distFiles.length >= 7 && offenders.length === 0 && bareFetches(refGateSrc) === 1,
+        offenders.join(', ') + ' / registry-ref=' + bareFetches(refGateSrc));
+      fs.rmSync(path.dirname(tmpFile), { recursive: true, force: true });
+    } finally {
+      // undici 会池化 keep-alive 套接字：只 close() 要等空闲超时，测试进程跟着挂住。
+      if (typeof server.closeAllConnections === 'function') server.closeAllConnections();
+      await new Promise((r) => server.close(r));
+    }
   });
 }
 

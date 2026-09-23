@@ -1,7 +1,7 @@
 'use strict';
 
-// npm 安装执行 + 端口健康验证 + 版本检查（IO）。
-// 全具名导出、显式收参（state 用于镜像选择/灰度事实），不碰跨文件 this。
+// npm 安装执行 + 端口健康验证（IO）。版本查询在 version-check.js，本文件只负责「把已定版本装上来」。
+// 全具名导出、显式收参，不碰跨文件 this。
 
 const net = require('node:net');
 const spawnOS = require('../os/spawn');
@@ -10,9 +10,7 @@ const execPath = require('../os/exec-path');
 const runtimeContract = require('../contract/runtime');
 const service = require('../os/service').current();
 const { VERSION_RE } = require('../../shared/version');
-const release = require('./release');
-const registry = require('./registry');
-const policies = require('./policies');
+const ref = require('./registry-ref');
 const input = require('../util/input');
 
 /** 字符集白名单尺子取自 platform/util/input 单源，此处仅同名转发导出
@@ -21,74 +19,6 @@ const input = require('../util/input');
 const PKG_NAME_RE = input.PKG_NAME_RE;
 const BAD_ARGV_CHAR_RE = input.ARGV_UNSAFE_RE;
 const WIN_DRIVE_ABS_RE = input.WIN_ABS_PATH_RE;
-
-/** npm registry 最新版（用选中镜像；失败回退候选；null 表示不可达）。 */
-async function fetchNpmLatest(state, pkg, opts) {
-  if (!pkg) return null;
-  const o = opts || {};
-  let origin = null;
-  if (o.authoritative) {
-    // 发布权威源解析：版本真相源 = 官方 npm registry。镜像同步有延迟，把「镜像未同步」
-    // 误判为「没有新版本」是真相源错误。优先级：配置里显式的官方源 > 注入的非官方列表 > 默认官方。
-    const list = registry.registryOrigins(state);
-    origin = list.find((x) => /registry\.npmjs\.org/.test(x)) || list[0] || 'https://registry.npmjs.org';
-  } else {
-    origin = await registry.selectRegistry(state, false);
-  }
-  if (!origin) return null; // 全部镜像不可达：明确失败（checkUpdate 据此报错而非误报最新）
-  // 拉元数据前过 origin 协议/形态闸与包名白名单：manualOrigin/契约 selected 等来路不经
-  // setRegistryConfig 校验，URL 拼接攻击面只能在这里堵。
-  const base = policies.normalizeOrigin(origin);
-  if (!policies.isValidOrigin(base)) return null;
-  if (!PKG_NAME_RE.test(pkg)) return null;
-  try {
-    // 拉包完整元数据（dist-tags + versions）；选版一律交 release.pickReleaseVersion，此处不定策略。
-    const res = await fetch(base + '/' + encodeURIComponent(pkg), { signal: AbortSignal.timeout(10000) });
-    if (!res.ok) return null;
-    const j = await res.json();
-    const picked = release.pickReleaseVersion(j, {
-      isOurs: release.isOurReleasePackage(pkg),
-      canary: policies.isInCanaryList(state), // 仅 isOurs 分支消费
-      isValid: (v) => typeof v === 'string' && VERSION_RE.test(v),
-    });
-    if (picked) return picked;
-    // 兜底：元数据里没有任何可用版本（例如仅 pkg/latest 端点有）——属「版本缺失」
-    // 而非「通道选择」，与选版算法无关，故留在调用点。
-    const lr = await fetch(base + '/' + encodeURIComponent(pkg) + '/latest', { signal: AbortSignal.timeout(8000) });
-    if (!lr.ok) return null;
-    const lj = await lr.json();
-    return (lj && typeof lj.version === 'string' && VERSION_RE.test(lj.version)) ? lj.version : null;
-  } catch (e) { return null; }
-}
-
-/** GitHub Releases 最新 tag（去除可选 v 前缀）。返回版本号。 */
-async function fetchGithubLatest(owner, repo) {
-  if (!owner || !repo) return null;
-  try {
-    const res = await fetch(
-      'https://api.github.com/repos/' + encodeURIComponent(owner) + '/' + encodeURIComponent(repo) + '/releases/latest',
-      { signal: AbortSignal.timeout(10000), headers: { 'User-Agent': 'dsh-supervisor' } }
-    );
-    if (!res.ok) return null;
-    const j = await res.json();
-    const tag = (j && typeof j.tag_name === 'string') ? j.tag_name : (j && typeof j.name === 'string' ? j.name : null);
-    if (!tag) return null;
-    return String(tag).replace(/^v/, '');
-  } catch (e) { return null; }
-}
-
-/** 统一版本检查：channel = 'npm' | 'github'。返回最新版本字符串或 null。
- *  @param {object} [opts] { authoritative?: boolean } */
-async function fetchLatestVersion(state, pkg, channel, opts) {
-  const ch = channel || 'npm';
-  const o = opts || {};
-  if (ch === 'github') {
-    const slash = String(pkg).split('/');
-    if (slash.length >= 2) return fetchGithubLatest(slash[0], slash.slice(1).join('/'));
-    return null;
-  }
-  return fetchNpmLatest(state, pkg, { authoritative: o.authoritative === true });
-}
 
 /** 在途 npm 安装句柄（D-10）。装/卸/升级全部经 runNpmInstall，故本集合就是「守卫内不可见的
  *  外部写入者」清单。子进程 detached（自成进程组），守卫退出后不会随之消亡——关停必须先中止它们。 */
@@ -158,12 +88,14 @@ function runNpmInstall(opts) {
   // 契约 PATH 注入（nodeBinDir 首位）：内核自身执行的 npm 也必须能找到 node。
   const envVars = runtimeContract.withPath(process.env);
   if (o.registry) {
-    // 镜像源只接受纯 http(s) origin（无凭证/路径夹带）：npm_config_registry 指向
-    // file:// 等协议同样是攻击面，非法值不写入 env。
-    if (!policies.isValidOrigin(o.registry)) {
-      return Promise.resolve({ ok: false, error: 'runNpmInstall: 非法 registry origin（须为纯 http(s) origin）: ' + String(o.registry).slice(0, 80), output: [] });
+    // 注入 npm 的镜像基址过同一道形态闸（ref.parseRegistryBase）：`file://`、凭证/查询/片段夹带
+    // 都是攻击面。**允许带 path** —— 华为云/腾讯云镜像就是这个形态，npm_config_registry 本就接受
+    // 完整基址；把它判死会让下载落到与选源不同的 registry。
+    const rv = ref.parseRegistryBase(o.registry);
+    if (!rv.ok) {
+      return Promise.resolve({ ok: false, error: 'runNpmInstall: 非法 registry 基址（' + rv.violation + '）: ' + String(o.registry).slice(0, 80), output: [] });
     }
-    envVars.npm_config_registry = o.registry; envVars.NPM_CONFIG_REGISTRY = o.registry;
+    envVars.npm_config_registry = rv.base; envVars.NPM_CONFIG_REGISTRY = rv.base;
   }
   return new Promise((resolve) => {
     let child;
@@ -274,9 +206,6 @@ module.exports = {
   PKG_NAME_RE,
   BAD_ARGV_CHAR_RE,
   WIN_DRIVE_ABS_RE,
-  fetchNpmLatest,
-  fetchGithubLatest,
-  fetchLatestVersion,
   runNpmInstall,
   waitPortHealthy,
   // 在途 npm 的记账/中止出口（关停路径经 platform/distribution 门面 re-export）

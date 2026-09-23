@@ -51,7 +51,8 @@ const check = (n, c, x) => {
   check('A 存在 TTL 常量', /CONTRACT_TTL_MS\s*=/.test(code), '有');
   check('A 存在重载入口 _reloadContractIfStale', /_reloadContractIfStale\(\)\s*\{/.test(code), '有');
   check('A selectRegistry 读入口调用重载', /async function selectRegistry[\s\S]{0,400}?reloadContractIfStale\s*\(/.test(code), '有');
-  check('A registryInfo 读入口调用重载', /async function registryInfo\([^)]*\)\s*\{\s*\n\s*reloadContractIfStale\(state\);/.test(code), '有');
+  // 判据允许 `x.reloadContractIfStale(state)` 限定形式：重载实现已按所有权归 registry-config.js。
+  check('A registryInfo 读入口调用重载', /async function registryInfo\([^)]*\)\s*\{\s*\n\s*(?:\w+\.)?reloadContractIfStale\(state\);/.test(code), '有');
 
   console.log('== B 行为：TTL 内不重载 / TTL 过后重载 ==');
   {

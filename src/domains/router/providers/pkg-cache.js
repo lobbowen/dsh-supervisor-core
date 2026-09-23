@@ -66,7 +66,7 @@ async function ensurePkgCached(provider, app) {
   if (!app || !app.pkg) return { ok: true };
   if (cachedPkgBin(app.pkg)) return { ok: true, cached: true };
   try {
-    const regOrigin = provider.dist ? await provider.dist.selectRegistry(false).catch(() => null) : null;
+    const regOrigin = provider.dist ? await provider.dist.registryOrigin(false).catch(() => null) : null;
     const env = Object.assign({}, process.env);
     if (regOrigin) { env.npm_config_registry = regOrigin; env.NPM_CONFIG_REGISTRY = regOrigin; }
     const launcher = npxLauncher();

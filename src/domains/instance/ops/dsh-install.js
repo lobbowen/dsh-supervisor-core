@@ -8,8 +8,7 @@ const sandbox = require('../sandbox');
 function createDshInstall(deps) {
   const { store, dist, tasks, logger, instancesRoot } = deps;
   const save = () => store.save();
-  let _latestDshVer = null;
-  let _latestDshVerAt = 0;
+  let _latestDsh = null; // 最近一次**成功**的目标版本查询结果（含给出该版本的镜像源）
 
   /** 10min 装配看护回调：超时先呈现 FAILED(用户可见)，npm 慢网成功后自愈拉回 INSTALLING。 */
   function installTimeoutWatchdog(inst, task) {
@@ -62,31 +61,26 @@ function createDshInstall(deps) {
       const pushLog = (txt) => pushInstallLog(inst, task, txt);
       if (task) { try { tasks.log(task.id, '目标目录：' + installDir); } catch {} }
       // 官方标准安装方式：npm install -g --prefix <沙箱目录> @deepseek-ai/dsh@<version>；必须显式携带
-      // 最高版本号（npm 默认装 latest tag，可能不是最高版本）。
-      const env = Object.assign({}, process.env);
-      let reg = null;
-      if (dist) {
-        try {
-          reg = await dist.selectRegistry(false);
-          if (reg) { env.npm_config_registry = reg; env.NPM_CONFIG_REGISTRY = reg; }
-        } catch (e) { logger.warn && logger.warn('sandbox registry select failed: ' + e.message); }
-      }
-      const latestVer = await latestDshVersion();
-      pushLog('安装目标版本：' + (latestVer || 'latest tag'));
-      if (!latestVer) {
-        inst.state.installOk = false; inst.state.installError = '无法获取最新版本'; save();
-        if (task) { try { tasks.fail(task.id, '无法获取最新版本'); } catch {} }
-        return { ok: false, error: '无法获取最新版本' };
-      }
+      // 最高版本号（npm 默认装 latest tag，可能不是最高版本）。镜像注入由 runNpmInstall 单点负责。
       if (!dist) {
         inst.state.installOk = false; inst.state.installError = 'dist 分发服务不可用'; save();
         if (task) { try { tasks.fail(task.id, 'dist 分发服务不可用'); } catch {} }
         return { ok: false, error: 'dist 分发服务不可用' };
       }
+      // 下载源 = 给出这个版本的那个源：分开选会让「显示一个源、下载另一个源」重新分叉。
+      const pick = await latestDsh();
+      pushLog('安装目标版本：' + (pick.version || '未知') + (pick.origin ? '（源 ' + pick.origin + '）' : ''));
+      if (!pick.version) {
+        const why = '无法获取最新版本：' + (pick.error || '未知原因');
+        inst.state.installOk = false; inst.state.installError = why; save();
+        if (task) { try { tasks.fail(task.id, why); } catch {} }
+        return { ok: false, error: why };
+      }
+      const latestVer = pick.version;
       const watchdog = setTimeout(() => installTimeoutWatchdog(inst, task), 10 * 60 * 1000);
       let res;
       try {
-        res = await dist.runNpmInstall({ pkg: '@deepseek-ai/dsh', version: latestVer, prefix: installDir, registry: reg, onLine: pushLog });
+        res = await dist.runNpmInstall({ pkg: '@deepseek-ai/dsh', version: latestVer, prefix: installDir, registry: pick.origin, onLine: pushLog });
       } finally {
         clearTimeout(watchdog);
       }
@@ -124,19 +118,27 @@ function createDshInstall(deps) {
     } catch { return null; }
   }
 
-  /** 查询 @deepseek-ai/dsh 的目标版本（第三方包语义：dist-tags.latest 优先，缺失/非法才回落
-   *  versions 最高；不套 rollback/canary）。带 30s 内存缓存。 */
-  async function latestDshVersion() {
-    if (_latestDshVer && Date.now() - _latestDshVerAt < 30000) return _latestDshVer;
-    let v = null;
-    try { if (dist) v = await dist.fetchNpmLatest('@deepseek-ai/dsh'); } catch {}
-    // 不取 registry 全量最高：会把他人杂 tag 当候选；第三方包 latest 优先语义单源在 dist.fetchNpmLatest。
-    _latestDshVer = v;
-    _latestDshVerAt = Date.now();
-    return v;
+  /** 查询 @deepseek-ai/dsh 的目标版本与给出该版本的镜像源（dist 侧候选顺延 + 逐源失败原因）。
+   *  只缓存**成功**结果：缓存失败会让面板在 TTL 内一直复述同一个错误结论。
+   *  不取 registry 全量最高：会把他人杂 tag 当候选；第三方包 latest 优先语义单源在 dist.fetchNpmLatest。 */
+  async function latestDsh() {
+    if (_latestDsh && Date.now() - _latestDsh.at < 30000) return _latestDsh;
+    let r = { ok: false, version: null, origin: null, attempts: [], error: 'dist 分发服务不可用' };
+    if (dist) {
+      try { r = await dist.fetchNpmLatest('@deepseek-ai/dsh'); }
+      catch (e) { r = { ok: false, version: null, origin: null, attempts: [], error: (e && e.message) || String(e) }; }
+    }
+    if (r.ok && r.version) _latestDsh = Object.assign({ at: Date.now() }, r);
+    return r;
   }
 
-  return { installSandbox, readInstalledVersion, latestDshVersion };
+  /** 目标版本字符串（视图与「有无更新」消费；要失败原因或下载源的走 latestDsh）。 */
+  async function latestDshVersion() {
+    const r = await latestDsh();
+    return r.version;
+  }
+
+  return { installSandbox, readInstalledVersion, latestDsh, latestDshVersion };
 }
 
 module.exports = { createDshInstall };

@@ -32,6 +32,7 @@ function createUpgrade(deps) {
 
   function installSandbox(inst) { return install.installSandbox(inst); }
   function readInstalledVersion(inst) { return install.readInstalledVersion(inst); }
+  async function latestDsh() { return install.latestDsh(); }
   async function latestDshVersion() { return install.latestDshVersion(); }
 
   /** 视图行所需的版本信息（纯读，供 ops.list 组装）。 */
@@ -64,8 +65,11 @@ function createUpgrade(deps) {
     let latest = (cached && cached.latest) || null;
     if (!latest || !cached || (Date.now() - cached.checkedAt) > _updTTL) {
       try {
-        latest = await dist.fetchNpmLatest('@deepseek-ai/dsh');
-        _updCache[id] = { latest, checkedAt: Date.now(), error: latest ? null : '查询失败' };
+        // 结构化查询：只有「确实取不到」才写失败，且把逐源原因带出去——只回「查询失败」时
+        // 用户与运维都无法区分「镜像源全挂」与「这个包真的没更新」。
+        const pick = await dist.fetchNpmLatest('@deepseek-ai/dsh');
+        latest = pick.ok ? pick.version : null;
+        _updCache[id] = { latest, checkedAt: Date.now(), error: pick.ok ? null : (pick.error || '查询失败') };
       } catch (e) {
         latest = null;
         _updCache[id] = { latest: null, checkedAt: Date.now(), error: e.message };
@@ -96,12 +100,6 @@ function createUpgrade(deps) {
     _updJobs[id] = nj;
     (async () => {
       const installDir = sandbox.installDir(instancesRoot, inst);
-      const env = Object.assign({}, process.env);
-      let reg = null;
-      try {
-        reg = await dist.selectRegistry(false);
-        if (reg) { env.npm_config_registry = reg; env.NPM_CONFIG_REGISTRY = reg; }
-      } catch {}
       let wasRunning = false;
       try { wasRunning = lifecycle.probe(inst).running; } catch {}
       // 1) 运行中先停（升级期间不跑旧版；tick 见 STOPPED 不干预）
@@ -114,9 +112,15 @@ function createUpgrade(deps) {
       // 2) 强制重装最新版（与首次安装同命令、同镜像源；npm 自会覆盖旧版本）。必须显式携带最高版本号。
       nj.step = 'installing';
       if (task) { const s = tasks.step(task.id, '安装最新版'); tasks.stepState(task.id, tasks.get(task.id).steps.indexOf(s), 'running'); }
-      const targetVer = await latestDshVersion();
-      if (task) tasks.log(task.id, '目标版本：' + (targetVer || 'latest tag'));
-      if (!targetVer) { nj.errors++; nj.error = '无法获取最新版本'; if (task) tasks.log(task.id, '无法获取最新版本'); }
+      // 下载源与回滚源都取「给出目标版本的那个源」：另选一次会让版本与字节来自两个不同镜像。
+      const pick = await latestDsh();
+      const targetVer = pick.version;
+      const reg = pick.origin;
+      if (task) tasks.log(task.id, '目标版本：' + (targetVer || '未知') + (reg ? '（源 ' + reg + '）' : ''));
+      if (!targetVer) {
+        const why = '无法获取最新版本：' + (pick.error || '未知原因');
+        nj.errors++; nj.error = why; if (task) tasks.log(task.id, why);
+      }
       else {
         if (!dist) { nj.errors++; nj.error = 'dist 分发服务不可用'; }
         else {
