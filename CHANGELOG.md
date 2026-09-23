@@ -6,6 +6,12 @@
 
 ## [未发布]
 
+## [0.1.6-BETA.7]（2026-09-24）
+
+本版是审计第三组的内核侧收口：门禁空转（判据写法上永远不可能判红）、文档失实，与零调用死链
+（PR #42）；加上上一版发布链暴露的 `published-smoke` 首跑判红（PR #41）。内核运行时依赖仍为 0；
+新判据一律并入既有门禁文件，未新增测试链条目。
+
 ### 修复：`published-smoke` 在包已上架的情况下判红（0.1.6-BETA.6 首跑暴露）
 
 发布后冒烟是 v0.1.6-BETA.6 首次真跑的，四平台全红，但线上四个子包当时都已发布成功 —— 红的是判据本身。
@@ -22,6 +28,49 @@
 - 门禁：`test/install-smoke-gate-test.js` 新增 `G4-registryCacheBust`（正向含绕缓存旗标、反向是常开该旗标的
   坏夹具）、`G3-l/G3-m`（重试窗口秒数须达 600 秒、失败须分类）与 `G3-n/G3-o/G3-p/G3-q` 反向样本；
   并纠正 `G3-i` 的归因注释 —— npm 上传实际发生在 build job 的发布步，`needs: release` 是传递性地等到它。
+
+### 门禁不再空转：四条判据改成「真能判红」，归档引用可核（PR #42）
+
+门禁这一族的毛病不是判错，而是**按写法根本判不到**——判据恒真，绿得没有任何含义。
+每条新判据都配反向夹具，即「把它退回旧形态必须判红」。
+
+- `all-platforms-test.js` **T2-f**：旧写法是「`ci-core.sh` 里不得出现某个短语」，而那个短语从未存在于
+  任何文件，于是恒真；改为对 `release/scripts` 与 `.github/workflows` 下的文件逐个剥整行注释后扫
+  `release-core`，要求零命中（真实调用行必须被抓到、整行历史说明不得算作调用）。
+- 同文件 **T2-j** 方向是反的：它要求 `publish-core.sh` 从 `_platforms.sh` 取平台矩阵，而该脚本的现行形态
+  是每个 runner 只发本机那一包。改为「不得自带平台矩阵」。
+- `test-chain-completeness-test.js` 新增 **N-g**：文档与 workflow 注释不得写死测试链的**条目数**——
+  数字只有门禁每次实跑打印才可信。同时清掉三处已失实或会失实的写法（`build.yml` 的文件数、
+  `ACCEPTANCE-STANDARD.md` 的硬编码条数、`kernel-daemon-contract-test.js` 的编号区间）。
+- `docs-reference-gate-test.js` 新增 **DR-4 / DR-5**：DR-4 要求文档写死的归档目录份数等于文件系统实测；
+  DR-5 要求指向归档目录内单个文档的引用**打得开**——过程文档收敛成主题卷并删除源文件之后，
+  仓内还留着五条打不开的指针，已按其去向改指到存活的 `_EXEC-FIX-HISTORY.md` 或就地写下结论。
+- **`ci/check-glibc.sh` 不再静默放行**：旧实现「提取不到 GLIBC 符号 → 警告 + 退出 0」把**静态链接**
+  （合法豁免）与**工具缺席 / 产物读不动**（只是看不见）合并成同一条通过路径——那种 runner 上本门禁
+  永远绿。现在版本比较器先自校（比不出 2.31/2.35/2.40 即 `exit 2`）、objdump 与 readelf 都不可用即
+  `exit 2`、工具读取失败即 `exit 2`，只有 `readelf -lW` 成功解析 ELF **且**确无 `PT_INTERP` 才算豁免。
+  `glibc-gate-test.js` 追加 R8：喂一个非 ELF 文件必须拿 `exit 2`（旧形态给 0）。
+
+### 零调用死链与契约漂移（PR #42，删前逐条做全仓引用取证）
+
+- **relay 的 `persist` hook 整链**：`ops.js` 的 `_saveAll()` 是唯一会调 `this.persist` 的地方，而它自己
+  无人调用 → 契约声明、`LanManager.persist`、`supervisor.js` 的注入点一并撤下；`CONTRACT_HOOKS.relay`
+  同步改为 `mainOf/tokenOf`，否则契约豁免表与 `contract.js` 再次漂移。
+- `managed.findManaged` / `LanManager._findManaged`、`host._writeDshMain` 挂载（唯一调用点就是上面那条
+  死 hook）、`ctl/facades.js` 的 `_makeCtlFacade`、`audit/orphan-scan` 的 host 兼容外壳（12 项惰性 deps
+  与 `collaborators.js` 同一语义维护两遍）、`providers/model.js` 与 `policies/freeze.js` 各一处恒假的
+  `selectedProxyKeyId` 读分支（`store.js` 那处是旧持久化数据的兼容迁移入口，保留）。
+- **`publish-core.sh` 的 `--all` 自递归发布块**：它在单个 runner 内把四平台各发一遍，与「所有发布仅 CI
+  各 runner」的硬标准直接矛盾，且没有任何调用方传该开关。
+- 取证推翻的一条审计结论：`_orphanAudit` 被标为死代码——**实现体不能删**（`control/scheduler.js` 是真实
+  消费点，且被 GD-6 钉住覆盖面），本批只删无人调用的兼容外壳。
+
+### 文档与注释失实
+
+`DOMAIN-STRUCTURE-DESIGN.md` 的「6085 行」是凭空数字，删；`README.md` 的归档份数按实测改写并注明由
+DR-4 核对；`release/scripts/build-ui.sh` 的注释称 CI 侧不设置 `DSH_UI_SKIP_INSTALL`，而 `ci-core.sh`
+恰恰先装好依赖再置该变量——注释与实际相反，按实改写；`main-store.js` 的两条日志前缀不再指向已删除的
+挂载名。
 
 ## [0.1.6-BETA.6]（2026-09-23）
 
