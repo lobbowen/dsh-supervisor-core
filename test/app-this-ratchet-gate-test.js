@@ -37,9 +37,13 @@ const APP = path.join(ROOT, 'src', 'app');
 
 // 基线（本轮实测，按 src/app 直接子目录；未列出的目录基线为 0）
 const BASELINE_BY_DIR = {
-  main: 0, control: 54, daemons: 30, facade: 0, settings: 8, native: 3, ctl: 0, self: 1, assembly: 1,
+  main: 0, control: 54, daemons: 31, facade: 0, settings: 8, native: 3, ctl: 0, self: 1, assembly: 1,
 };
-const BASELINE_TOTAL = 97; // = 上述各项之和（原文口径上界；剥注释实测 94，松弛量 2）
+const BASELINE_TOTAL = 98; // = 上述各项之和（原文口径上界；剥注释实测 94，松弛量 2）
+// 上调记录：daemons 30->31 —— 新增调用点唯一归属
+//   src/app/daemons/process.js:68 `return this._ctlOwnerPid() === pid;`
+//   （B1-5 判活 fail-open 收口：probeAlive 返回 unknown 时必须有第二条证据——ctl 端口属主
+//   正是该 pid——才认活；DaemonLifecycle 类自身实例方法，与其余 30 处同类）。总量 97->98。
 // 上调记录：daemons 29->30 —— 新增调用点唯一归属
 //   src/app/daemons/process.js:159 `if (this._stopping || this._exitIntended()) return { mode: 'stopping' }`
 //   （DaemonLifecycle 类自身实例方法，与其余 29 处同类，E-3 退出意图谓词钩子注入所需）。总量 96->97。
