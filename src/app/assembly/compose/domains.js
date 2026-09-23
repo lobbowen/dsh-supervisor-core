@@ -69,7 +69,7 @@ function composeDomains(host) {
         host.managedObjects.registerAdapter('sandbox-instance', { supervise: (entry) => host._sandboxSuperviseOnce(entry), tickEvery: 1 });
       }
       // B2-6e：governor 全花名册 decide 与监督同源、每心跳拍恰好一次（拍末钩子），
-      // 不再随逐实例 supervise 拍执行——N 个 RUNNING 实例把 decide 乘法放大的 O(N²) 消失。
+      // 不再随逐实例 supervise 拍执行——N 个 RUNNING 实例把 decide 乘法放大的 O(N^2) 消失。
       if (host.managedObjects) host.managedObjects.onBeatDone = () => host.instances.governSweep();
     } catch (e) { host.logger && host.logger.warn && host.logger.warn('managed registry init: ' + (e && e.message)); }
     // relay 在 daemon 模式唯一由独立 lan-daemon 承载，守卫只在非 daemon 经 get lan() 惰性创建

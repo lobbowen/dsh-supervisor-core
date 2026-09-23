@@ -247,10 +247,10 @@ const TMP = fs.mkdtempSync(path.join(os.tmpdir(), 'r13-'));
       /renameSync\(fp, slot\)/.test(tokenCode), '有');
   }
 
-  // -- ④ B2-5 实例启动预校验：配置端口被他进程（lan-daemon relay）登记 -> 显式 PORT_TAKEN:<by> --
+  // -- 4) B2-5 实例启动预校验：配置端口被他进程（lan-daemon relay）登记 -> 显式 PORT_TAKEN:<by> --
   //   静默端口（登记了但没有监听者）TCP 探测不可见，旧行为放任到 systemd 起舱后才以
   //   bind 失败暴露，面板无从定位。注册表是跨进程共享事实源，判据只在册不在听。
-  console.log('== ④ B2-5 启动预校验 PORT_TAKEN ==');
+  console.log('== 4) B2-5 启动预校验 PORT_TAKEN ==');
   {
     const { InstanceManager } = require(path.join(ROOT, 'src', 'domains', 'instance'));
     const ports = require(path.join(ROOT, 'src', 'platform', 'service', 'ports')).shared;

@@ -179,7 +179,7 @@ check('副作用经 deps.save 显式发出（非隐式 this）', saves > 0, 'sav
 
   // ---- 6g. B2-6d：手动拉起开新失败链 —— fail() 承诺的「由用户手动重试」成为真实通道 ----
   //   旧缺陷：attempts>20 后 restart() 瞬回 FAILED，清零只靠稳定 RUNNING>5min，
-  //   超限实例的手动重试通道实质封死（§4 的 21 次循环即达该状态）。
+  //   超限实例的手动重试通道实质封死（第 4 段的 21 次循环即达该状态）。
   {
     const mgr = mkMgr(fs.mkdtempSync(path.join(os.tmpdir(), 'b26d-')));
     const inst = mk('FAILED', { restartCount: 21, backoffLevel: 5, lastError: '重试超限(崩溃)', lastFailAt: Date.now() - 1000, backoffUntil: Date.now() - 1 });

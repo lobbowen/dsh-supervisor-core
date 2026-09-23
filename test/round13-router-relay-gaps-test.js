@@ -326,12 +326,12 @@ const runUpstream = (headers, chunks, chunkMs) => new Promise((resolve) => {
       Number.isFinite(CAP) && CAP >= 1024 * 1024 && CAP <= 16 * 1024 * 1024, 'CAP=' + CAP);
   }
 
-  // -- ⑥ B2-6b：OAuth 回调轮次解耦 --
+  // -- 6) B2-6b：OAuth 回调轮次解耦 --
   //   旧实现回调处理直接经 st._ccLoginResolve/Reject 决议：重新发起登录时，
   //   旧轮 server 上已在途的请求能通过旧 state 自查、把旧轮凭据注进新一轮 promise
   //   （凭据串轮），旧轮「浏览器已关闭」监视迟到时还会误杀新一轮登录。
   //   收口：server/浏览器监视闭包各带 roundId，决议前比对当前轮，旧轮迟到回调一律 410。
-  console.log('== ⑥ B2-6b OAuth 回调轮次解耦（旧轮迟到回调 410 且不触决议器）==');
+  console.log('== 6) B2-6b OAuth 回调轮次解耦（旧轮迟到回调 410 且不触决议器）==');
   await (async () => {
     const http = require('node:http');
     const { freePort } = require(path.join(__dirname, '_ports'));
@@ -381,7 +381,7 @@ const runUpstream = (headers, chunks, chunkMs) => new Promise((resolve) => {
     const w3 = await w3p;
     check('⑥ 旧轮浏览器监视迟到不误杀新轮（旧实现此处报「浏览器已关闭，登录已取消」）',
       w3.ok === true && w3.apiKey === 'K3', JSON.stringify(w3).slice(0, 100));
-  })().catch((e) => check('⑥ B2-6b 异步块无异常完成（含网络夹具）', false, e && e.message));
+  })().catch((e) => check('6) B2-6b 异步块无异常完成（含网络夹具）', false, e && e.message));
 
   const failed = results.concat(asyncResults).filter((r) => !r);
   const total = results.length + asyncResults.length;

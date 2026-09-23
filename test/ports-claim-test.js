@@ -189,7 +189,7 @@ const RANGE = { base: 28130, count: 50 };
     const XF = path.join(TMP, 'ports-xproc.json');
     const XB = 28310; // 避开 _ports.js 全部已登记段（28000+27*10-1=28269 以内）
     fs.rmSync(XF, { force: true });
-    // 子进程：构造注册表（此刻 A 尚未登记任何记录 => 真·陈旧快照），READY 后等 stdin 一发令即 claim。
+    // 子进程：构造注册表（此刻 A 尚未登记任何记录 => 真正陈旧的快照），READY 后等 stdin 一发令即 claim。
     const CHILD = [
       'const { PortRegistry } = require(' + JSON.stringify(path.join(ROOT, 'src', 'platform', 'service', 'ports', 'index.js')) + ');',
       'const reg = new PortRegistry({ file: process.argv[1] });',

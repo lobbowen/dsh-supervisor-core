@@ -178,7 +178,7 @@ function walkSrc(dir, out) {
   //   createEntry 曾按 DOMAIN_A_KINDS 对 dsh/sandbox-instance 物化 guardian 并随目录落盘，
   //   而该字段在全仓 src 内零读者——落盘副本与域记录之间只有分歧面，没有真相来源。
   //   现断言**任何 kind** 传入 guardian 都不落键（"不存在"而非"置 false"），
-  //   老目录残留经 load→createEntry 重建即自然消失，无需迁移脚本。
+  //   老目录残留经 load -> createEntry 重建即自然消失，无需迁移脚本。
   const { createEntry } = require(path.join(ROOT, 'src', 'app', 'control', 'registry.js'));
   for (const k of ['dsh', 'sandbox-instance', 'router-daemon', 'lan-daemon']) {
     const e = createEntry({ kind: k, id: 'gd1-' + k, desired: 'running', guardian: true });
@@ -367,7 +367,7 @@ const lanBranch = fnBody ? lanBranchOf(fnBody) : null;
 // GD-7 沙箱运行意图没有第二落点（ST-2c 收口后的硬禁，B2-1 字段废止）
 //
 // inst.state.desired 已整体废止：lifecycle 的 start/stop 写口、model 的老库种子、specs 的申报
-//   投影全部删除，意图 = guardian 开关 × 启停动作本身。src 内任何 `.state.desired =` 赋值
+//   投影全部删除，意图 = guardian 开关乘以启停动作本身。src 内任何 `.state.desired =` 赋值
 //   即第二个落点回潮，出现即红；旧观测路径的冻写旗标 keepDesired 同样零容忍。
 //   唯一合法触碰是 normalize 的一次性残留剔除（delete 形态），其处数由 model 侧单独钉。
 // ---------------------------------------------------------------------------
