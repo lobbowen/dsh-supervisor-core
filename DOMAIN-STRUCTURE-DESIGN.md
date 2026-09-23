@@ -1,7 +1,7 @@
 # 域内结构设计（DOMAIN-STRUCTURE-DESIGN）
 
 > **状态**：**执行中**（v1 定版 2026-09-17；同日进入 12+ 子代理并行施工，批 0–10）。本文件是**域内分层/拆分的唯一事实源（SSOT）**。U-2/U-3 由 test/standards-uniqueness-test.js 机器校验。
-> **来源**：12 份设计文档（`archive/design-notes/`，6085 行）+ 主代理裁决 R1–R12。
+> **来源**：定版时的 12 份设计文档（现归档于 `archive/design-notes/`）+ 主代理裁决 R1–R12。
 > **与前一份唯一事实源的关系**：`DIRECTORY-STRUCTURE-DESIGN.md` 管**跨层/跨域**（五层结构）；
 > 本文件管**域内**（每个域内部怎么切）。两者互补。
 

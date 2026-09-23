@@ -24,9 +24,10 @@
 //         余量已近枯竭。
 //        **纪律：今后新增判据必须并入既有门禁文件，不得新增链条目**；
 //        若确需新文件，必须先合并/退役一个旧条目，并同步本判据与 package.json#scripts.test。
-//        头部已评估「单一 runner + 参数列表」的替代方案（结论见 design-notes/_p3-b-gates.md）：
+//        头部评估过「单一 runner + 参数列表」的替代方案，结论就地记下（过程记录未留存主题卷）：
 //        既有测试结尾普遍 process.exit()，in-process 串联会提前终止，故本轮**不改造**。
 //   N-f  链中每个条目都真实存在（防链引用已删除文件，运行到该条才炸）
+//   N-g  文档与 workflow 注释不得把链条目数写死（数字只有本门禁打印才可信）
 // ---------------------------------------------------------------------------
 
 const fs = require('node:fs');
@@ -125,13 +126,13 @@ function isTestFile(name) {
 //   windows-latest 会报 "The command line is too long."，
 //   而 ubuntu-22.04 / macos-latest / macos-14 三个矩阵不受该上限约束。
 //   本判据把该平台差异固化为门禁，不再依赖 Windows CI 才发现。
-//   P3-B 入链三件（docs-reference / comment-pin / app-this-ratchet）后长度 7899，
-//   **余量仅 101 字符（约 2 个条目）** —— 增长空间基本用尽：
+//   链的当前长度与剩余余量由本判据每次实跑打印；注释里不复制这两个数字（复制出去必过期）。
+//   余量已枯竭，故：
 //     - 纪律：新增判据**并入既有门禁文件**，不得新增链条目；
 //     - 若确需新文件，必须先合并/退役一个旧条目（并同步本判据与 package.json#scripts.test）。
 {
   const len = require(path.join(ROOT, 'package.json')).scripts.test.length;
-  const LIMIT = 8000; // 8191 上限留余量；余量仅 101，任何入链新增都必须重新复核本判据
+  const LIMIT = 8000; // 8191 上限留余量；实际余量以本判据打印为准
   check('N-e scripts.test 长度 < 8000（Windows cmd 命令行 8191 上限）',
     len < LIMIT, len + ' 字符（余量 ' + (LIMIT - len) + '）');
   // 反向：判据非空转（构造超长样本必须被检出）
@@ -146,6 +147,27 @@ function isTestFile(name) {
   check('N-f scripts.test 链中每个文件都真实存在',
     missingFiles.length === 0,
     missingFiles.length ? ('链中死引用: ' + missingFiles.join(', ')) : (inChain.length + ' 条全部存在'));
+}
+
+// -- N-g：链条目数不得被文档/CI 注释写死 --
+//   条数随每次入链变化，文档里复制出去的字面数字没人回头改（会长期停在过期值）。
+//   真实条数由上面的 N-a/N-f 每次实跑打印，故文档只描述机制、不复制数字。
+{
+  const RE = /链[^。\n]{0,24}[0-9]{2,4}\s*个\s*(?:测试)?文件/;
+  const targets = fs.readdirSync(ROOT).filter((f) => f.endsWith('.md') && f !== 'CHANGELOG.md')
+    .concat(fs.readdirSync(path.join(ROOT, '.github', 'workflows'))
+      .map((f) => path.posix.join('.github/workflows', f)));
+  const hardcoded = [];
+  for (const rel of targets) {
+    fs.readFileSync(path.join(ROOT, rel), 'utf8').replace(/\r\n?/g, '\n').split('\n')
+      .forEach((l, i) => { if (RE.test(l)) hardcoded.push(rel + ':' + (i + 1)); });
+  }
+  check('N-g 文档与 workflow 注释不把链条目数写死（数字归本门禁打印）',
+    hardcoded.length === 0, hardcoded.join(', ') || targets.length + ' 个文件零命中');
+  check('N-g 反向：写死条数的合成样本被抓到',
+    RE.test('  4. `npm test` 链是 `&&` 串接的 129 个文件，首个红点即截断'), 'hit');
+  check('N-g 反向：只描述机制的句子不误报',
+    !RE.test('链是 && 串接的全部测试文件，条数由 N-a 打印'), 'miss');
 }
 
 const failed = results.filter((r) => !r);

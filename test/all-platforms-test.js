@@ -93,9 +93,26 @@ console.log('== T2 硬标准：本地无全平台构建/发布路径 ==');
   // release-core.sh 已删除（纯本地编排器）
   check('T2-e release-core.sh 已删除（不再有本地发布编排）',
     !fs.existsSync(path.join(ROOT, 'release', 'scripts', 'release-core.sh')), '已删除');
-  check('T2-f 无任何文件再引用 release-core',
-    !read('release/scripts/ci-core.sh').includes('release-core.sh 编排调用'),
-    'ok');
+  // 剩下的不变量是「执行面不再调用它」，
+  // 而历史说明允许留在注释里，所以判据必须先剥整行注释再扫可执行行。
+  // 旧判据写的是 `!ci-core.sh.includes('release-core.sh 编排调用')`——该短语从未存在于任何文件，
+  // 恒真即空转（名字宣称「无任何文件再引用」，判据只盯一个文件的一个不存在的短语）。
+  const execSurface = [];
+  for (const d of ['release/scripts', '.github/workflows']) {
+    for (const n of fs.readdirSync(path.join(ROOT, d))) {
+      if (/\.(sh|ya?ml)$/.test(n)) execSurface.push(path.posix.join(d, n));
+    }
+  }
+  const releaseCoreCalls = execSurface
+    .map((f) => ({ f, body: stripComments(read(f)) }))
+    .filter((x) => x.body.includes('release-core'))
+    .map((x) => x.f);
+  check('T2-f 执行面（构建/发布脚本与 workflow 的非注释行）不再调用 release-core',
+    releaseCoreCalls.length === 0, releaseCoreCalls.join(', ') || execSurface.length + ' 个文件零命中');
+  check('T2-f 反向：真实调用行会被判据抓到（合成）',
+    stripComments('set -e\nbash release/scripts/release-core.sh --publish\n').includes('release-core'), '抓到');
+  check('T2-f 反向：整行历史说明不计为调用（合成）',
+    !stripComments('# 原 release-core.sh 已删除\nset -e\n').includes('release-core'), '不计');
 
   // npm scripts：本地发布入口必须不存在；仅保留 CI 用的构建入口
   const gone = ['release:core', 'release:core:publish', 'release:core:all', 'release:core:all:publish', 'publish:core:all'];
@@ -107,7 +124,15 @@ console.log('== T2 硬标准：本地无全平台构建/发布路径 ==');
 
   // 平台清单一律来自 _platforms.sh，不得在别处硬编码平台列表
   check('T2-i build-launcher 从 _platforms.sh 取矩阵', /\. "\$ROOT\/release\/scripts\/_platforms\.sh"/.test(build), 'ok');
-  check('T2-j publish-core 从 _platforms.sh 取矩阵', /\. "\$ROOT\/release\/scripts\/_platforms\.sh"/.test(pub), 'ok');
+  // publish-core 刻意**不**取矩阵：每个 runner 只发本机那一包，平台由 runner + DSH_*_OVERRIDE 决定。
+  // 旧形态是这里自递归跑四平台（ALL=1 分支），与「发布仅 CI」硬标准矛盾，已删除；
+  // 判据随之反转：矩阵调用若回到 publish-core 即为旁路复活，必须判红。
+  const noOwnMatrix = (s) => /DSH_PLATFORM_OVERRIDE/.test(s) && /DSH_ARCH_OVERRIDE/.test(s)
+    && !/dsh_platform_matrix/.test(s);
+  check('T2-j publish-core 不自带平台矩阵（单平台=runner 本机，覆盖经 DSH_*_OVERRIDE）',
+    noOwnMatrix(pub), 'ok');
+  check('T2-j 反向：自带矩阵的样本判红（合成）',
+    !noOwnMatrix(pub + '\nMATRIX="$(dsh_platform_matrix_assert)"\n'), 'hit');
 }
 
 // -- T4 同源保证（构建期断言）--

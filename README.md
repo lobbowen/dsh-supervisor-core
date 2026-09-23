@@ -18,7 +18,7 @@ DeepSeek Harness 生命周期监管工具：独立于 Harness 运行的系统级
 | [DSH-TOKEN-CONTRACT.md](DSH-TOKEN-CONTRACT.md) | 规范（契约） | **令牌唯一事实源**：7 类令牌各自策略；令牌是基础组件非域；令牌恒存在、不驱动生命周期（TK-1..8 + 门禁） |
 | [RELEASE-CHANNEL-CONTRACT.md](RELEASE-CHANNEL-CONTRACT.md) | **规范（唯一事实源）** | **发布通道与选版唯一事实源**：canary/beta/rc/latest/rollback 五通道；选版算法冻结；紧急回退用显式 rollback 标签（铁律 `RC-*` 全集见该文件 §3「关键不变量」表，**本索引不抄编号与条数**）。由 `test/release-channel-gate-test.js` 机器校验（RC-G3/G4/G5；RC-G1/G2 在壳仓） |
 | [DIRECTORY-STRUCTURE-DESIGN.md](DIRECTORY-STRUCTURE-DESIGN.md) | **规范（唯一事实源）** | **目录结构与分层唯一事实源**：五层（shared/platform/domains/app/api）+ 依赖矩阵 + 完整目录树 + 12 条不变量（DS-1..DS-12）+ 门禁升级（DS-G1..G8）+ 10 步迁移计划 + 10 项决策记录。由四路审计 + 三路设计交叉验证后定版 |
-| [DOMAIN-STRUCTURE-DESIGN.md](DOMAIN-STRUCTURE-DESIGN.md) | **规范（唯一事实源）** | **域内结构唯一事实源**（与上一份互补）：域内分层判据 DF-1..DF-7（门面 ≤150 / 单文件 ≤300 / 零隐式 this / DAG）+ 三消解手法 + 五域与 app 的**逐文件目标结构** + R1..R12 裁决 + 10 批迁移计划 + DG-1..DG-16 门禁 + **迁移时须同步改的 10 处门禁**。由 12 份设计文档（archive/design-notes/，6085 行）合并定版。**状态：执行中（2026-09-17 起，12+ 子代理并行施工，批 0–10）** |
+| [DOMAIN-STRUCTURE-DESIGN.md](DOMAIN-STRUCTURE-DESIGN.md) | **规范（唯一事实源）** | **域内结构唯一事实源**（与上一份互补）：域内分层判据 DF-1..DF-7（门面 ≤150 / 单文件 ≤300 / 零隐式 this / DAG）+ 三消解手法 + 五域与 app 的**逐文件目标结构** + R1..R12 裁决 + 10 批迁移计划 + DG-1..DG-16 门禁 + **迁移时须同步改的 10 处门禁**。由定版时 12 份设计文档（现归档于 archive/design-notes/）合并定版。**状态：执行中（2026-09-17 起，12+ 子代理并行施工，批 0–10）** |
 | [ACCEPTANCE-STANDARD.md](ACCEPTANCE-STANDARD.md) | **规范（唯一事实源）** | **验收与测试唯一事实源**：`硬标准` —— **所有测试不得在本机执行，验收只能由推送后的 CI 四平台矩阵裁决**；本机不得产生发布产物。含 CI 实际执行步骤、四平台矩阵、“逻辑门禁与原生行为的边界”、禁止/允许事项、违规判定。由 test/acceptance-standard-gate-test.js 机器校验 |
 | [HANDOFF.md](HANDOFF.md) | 过程文档（交接） | **会话交接文档**：现状、未完成清单（提交与 CI / 注释精简 / 死代码普查 / 规范收敛 / 第三波缺陷）、硬约束、已知陷阱、建议接手顺序。**新会话接手先读此文件** |
 | [PROVIDER-GATEWAY-ARCHITECTURE.md](PROVIDER-GATEWAY-ARCHITECTURE.md) | **规范（唯一事实源）** | **供应商网关（原智能路由）架构唯一事实源**：正名与定位（不做跨供应商路由）、两类供应商本质不对称、四层职责、**有进程侧深度设计**（实例四态；进程起停时机/期望集见 PROXY-LIFECYCLE-STANDARD，热备池/双预算旧语义已随 W1 废止）、能力契约与 ctl 白名单（A1–A7 + B1–B7 决策记录）。由 `test/provider-gateway-gate-test.js` 机器校验（PG-1..PG-12）|
@@ -33,8 +33,9 @@ DeepSeek Harness 生命周期监管工具：独立于 Harness 运行的系统级
 | [CHANGELOG.md](CHANGELOG.md) | 记录 | 版本变更 |
 
 > 归档说明：历史与过程文档已移至 archive/，不再作为当前事实源。
-- archive/design-notes/：138 份设计文档（逐域设计、作业单、审计、FIX 工作笔记）
-- archive/history/：审计报告、事故复盘、结构复算报告（非放行依据）、执行契约、发布/更新机制论证
+> 下列条目数由 `test/docs-reference-gate-test.js` 的 DR-4 对着文件系统实算核对，新增/删除归档须同步这里。
+- archive/design-notes/：13 份设计文档（逐域设计、作业单、审计、FIX 工作笔记）
+- archive/history/：7 份过程记录（审计报告、事故复盘、结构复算报告（非放行依据）、执行契约、发布/更新机制论证）
 
 > 当前事实源 = 文档索引中列出的规范/契约/记录。archive/ 内文件为历史归档，仅供回溯参考。
 

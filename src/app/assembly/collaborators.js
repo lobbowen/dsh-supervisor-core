@@ -2,7 +2,7 @@
 
 // app/assembly/collaborators.js —— 具名协作方装配（真 ctor 注入）。
 // state/session/control 由工厂构造并自持实现，host 只保留旧方法名兼容外壳，公共面（api/测试）不变；
-// ctl/daemons/main/views/audit/ui 由 THIN_SPEC 声明为薄委托，转发到 host 上的既有实现。
+// ctl/daemons/main/views/ui 由 THIN_SPEC 声明为薄委托，转发到 host 上的既有实现；audit 是真 ctor 工厂。
 
 const { createStateStore } = require('../state/collaborator');
 const { createSession } = require('../session/machine');
@@ -46,7 +46,6 @@ const THIN_SPEC = {
     routerDaemonActive: 'routerDaemonActive', routerStatus: 'routerStatus',
     status: 'statusSummary',
   },
-  audit: { orphan: '_orphanAudit' },
   ui: { notify: 'notify' },
 };
 const THIN_NAMES = Object.keys(THIN_SPEC);
@@ -112,7 +111,6 @@ function installState(host) {
   host._registryFileName = () => state.registryFileName();
   host._readDshMain = () => state.readMainMeta();
   host._readDshMainFile = () => state.readMainMetaFile();
-  host._writeDshMain = (meta) => state.writeMainMeta(meta);
   host.writeState = (force) => state.write(force);
   host.loadState = () => state.loadState();
   host._migrateMainRecord = () => state.migrateMainRecord();
@@ -186,10 +184,10 @@ function installThin(host) {
   }
 }
 
-/** 安装 audit 协作方（真 ctor 工厂）：覆盖 installThin 的转发器，使 host.audit.orphan()
- *  直达工厂（唯一消费点 control/scheduler.js），不经 host._orphanAudit 转发；
- *  THIN_SPEC.audit 仍作接口声明与装配期校验出处。deps 全为惰性取值（装配期 host 未就绪），
- *  节流簿记字段经 get/set 钩子与 host 字段同源。 */
+/** 安装 audit 协作方（真 ctor 工厂）：host.audit.orphan() 直达工厂（唯一消费点 control/scheduler.js）。
+ *  audit 不进 THIN_SPEC —— 它没有 host 侧既有实现可转发，12 项惰性 deps 也只在此声明一处。
+ *  deps 全为惰性取值（装配期 host 尚未就绪），节流簿记仍落在 host._lastOrphanKey/_lastOrphanAt
+ *  （与 compose/core.js 的初始化点同源）。 */
 function installAuditFactory(host) {
   host.audit = createOrphanScan({
     getConfig: () => host.config,
@@ -227,7 +225,7 @@ function installCollaborators(host, options) {
   installSession(host);
   installControl(host);
   installThin(host);
-  // 工厂化切面：必须在 installThin 之后（要覆盖 ctl/audit 转发器）且 installState/Control 之后
+  // 工厂化切面：必须在 installThin 之后（要覆盖 ctl 转发器）且 installState/Control 之后
   //   （domain-actions 经 state/views/lifecycleManager 取事实）。
   installCtlFactory(host);
   installAuditFactory(host);

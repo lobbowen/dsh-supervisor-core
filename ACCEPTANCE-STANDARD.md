@@ -56,9 +56,11 @@
    pull_request、workflow_dispatch；
    ⚠ **推送非 master 分支不会触发 CI** —— 必须开 PR 或 workflow_dispatch；
 3. 以 CI 的**四平台矩阵**结果为准。
-4. `npm test` 链是 `&&` 串接的 129 个文件，**首个红点即截断** —— 因此「本轮只报 N 条红」
+4. `npm test` 链是 `&&` 串接的**全部**测试文件（条数/长度由 `test/test-chain-completeness-test.js`
+   的 N-a/N-e 每次实跑打印，本文不写死数字），**首个红点即截断** —— 因此「本轮只报 N 条红」
    不等于其后文件已绿。补推前：按红点文件在链中的位置取**未执行的那一段**，
    对其中属静态门禁（只读源码做判据）的文件做同口径只读复算，再推。
+   由 N-g 禁止任何文档/workflow 注释重新写死链条数。
 
 ### CI 实际执行的内容（.github/workflows/build.yml）
 

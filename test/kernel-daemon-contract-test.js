@@ -256,7 +256,7 @@ check('D-8 反向：当前实现不被误判', !kernelCreatesWatchdog(auto), 'ok
     console.log(String.fromCharCode(10) + '结果: ' + (results.length - failed.length) + ' passed, ' + failed.length + ' failed');
     process.exit(failed.length ? 1 : 0);
   };
-  // 块自身抛错也只吃一条 FAIL，不让它把链尾 #114–#129 一起带走（崩溃代价高于判红）
+  // 块自身抛错也只吃一条 FAIL，不让它把链尾后续条目一起带走（崩溃代价高于判红）
   run().then(finish, (e) => {
     check('C-9 D-9 块自身未抛错（require/驱动失败即判红）', false, String((e && e.stack) || e));
     finish();

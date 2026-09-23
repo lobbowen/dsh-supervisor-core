@@ -244,7 +244,6 @@ function reconcileLock(provider) {
   const usable = !!acc && acc.status === 'ready' && (typeof provider.isAccountUsable !== 'function' || provider.isAccountUsable(acc));
   if (!usable) {
     provider.selectedAccountKeyId = null;
-    if (provider.selectedProxyKeyId === lockedId) provider.selectedProxyKeyId = null;
   }
 }
 
