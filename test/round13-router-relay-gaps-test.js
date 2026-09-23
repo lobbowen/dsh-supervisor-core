@@ -326,6 +326,63 @@ const runUpstream = (headers, chunks, chunkMs) => new Promise((resolve) => {
       Number.isFinite(CAP) && CAP >= 1024 * 1024 && CAP <= 16 * 1024 * 1024, 'CAP=' + CAP);
   }
 
+  // -- ⑥ B2-6b：OAuth 回调轮次解耦 --
+  //   旧实现回调处理直接经 st._ccLoginResolve/Reject 决议：重新发起登录时，
+  //   旧轮 server 上已在途的请求能通过旧 state 自查、把旧轮凭据注进新一轮 promise
+  //   （凭据串轮），旧轮「浏览器已关闭」监视迟到时还会误杀新一轮登录。
+  //   收口：server/浏览器监视闭包各带 roundId，决议前比对当前轮，旧轮迟到回调一律 410。
+  console.log('== ⑥ B2-6b OAuth 回调轮次解耦（旧轮迟到回调 410 且不触决议器）==');
+  await (async () => {
+    const http = require('node:http');
+    const { freePort } = require(path.join(__dirname, '_ports'));
+    const { createOAuthOps } = require(path.join(ROOT, 'src', 'domains', 'router', 'ops', 'oauth.js'));
+    const oauthSrc = strip(read('src/domains/router/ops/oauth.js'));
+    check('⑥ 形态：handler 决议前比对轮次且旧轮回调回 410',
+      /st\._ccLoginRound !== roundId/.test(oauthSrc) && /writeHead\(410\)/.test(oauthSrc), '有');
+    const watchers = [];
+    const ops = createOAuthOps({
+      ports: { allocate: async () => freePort(), unregister: () => {}, allocateMark: () => {} },
+      openInBrowser: (url, onClose) => { watchers.push(onClose); return '/tmp/oauth-b26b-profile'; },
+    });
+    const cred = (state, key) => ({ apiKey: key, userId: 'u-' + key, userName: 'n', keyName: 'k', state });
+    const post = (port, body) => new Promise((resolve, reject) => {
+      const rq = http.request({ host: '127.0.0.1', port, path: '/callback', method: 'POST', headers: { 'Content-Type': 'application/json' } },
+        (res) => { let b = ''; res.on('data', (c) => { b += c; }); res.on('end', () => resolve({ status: res.statusCode, body: b })); });
+      rq.on('error', reject);
+      rq.end(JSON.stringify(body));
+    });
+
+    const s1 = await ops.commandcodeLoginStart();
+    check('⑥ 第一轮登录轮启动成功（前置）', s1.ok === true && !!s1.state, JSON.stringify(s1).slice(0, 100));
+    // 在途请求：连接与请求体已送达、未 end —— 复现「用户在浏览器里点了回调但守卫恰好重发登录」。
+    const inflight = http.request({ host: '127.0.0.1', port: s1.port, path: '/callback', method: 'POST', headers: { 'Content-Type': 'application/json' } });
+    inflight.on('error', () => {});
+    inflight.write(JSON.stringify(cred(s1.state, 'K1')));
+    await new Promise((r) => setTimeout(r, 30));
+    const s2 = await ops.commandcodeLoginStart();
+    check('⑥ 第二轮登录轮启动成功（前置）', s2.ok === true && s2.state !== s1.state, JSON.stringify({ p1: s1.port, p2: s2.port }));
+    inflight.end();
+    const r1 = await new Promise((resolve, reject) => {
+      inflight.on('response', (res) => { let b = ''; res.on('data', (c) => { b += c; }); res.on('end', () => resolve({ status: res.statusCode, body: b })); });
+      inflight.on('error', reject);
+    });
+    check('⑥ 旧轮在途迟到回调回 410（旧实现此处 200 且决议新轮 promise）', r1.status === 410, JSON.stringify(r1));
+    const w2p = ops.commandcodeLoginWait(4000);
+    const ok2 = await post(s2.port, cred(s2.state, 'K2'));
+    const w2 = await w2p;
+    check('⑥ 新轮仍以自身凭据正常决议（旧实现此处解析出 K1 串轮）',
+      ok2.status === 200 && w2.ok === true && w2.apiKey === 'K2', JSON.stringify(w2).slice(0, 100));
+    // 决议器同轮守卫：旧轮「浏览器已关闭」监视迟到触发，必须被丢弃。
+    const s3 = await ops.commandcodeLoginStart();
+    check('⑥ 第三轮登录轮启动成功（前置）', s3.ok === true, JSON.stringify(s3).slice(0, 100));
+    if (watchers[1]) watchers[1](); // 第二轮的浏览器监视在第三轮在期迟到触发
+    const w3p = ops.commandcodeLoginWait(4000);
+    await post(s3.port, cred(s3.state, 'K3'));
+    const w3 = await w3p;
+    check('⑥ 旧轮浏览器监视迟到不误杀新轮（旧实现此处报「浏览器已关闭，登录已取消」）',
+      w3.ok === true && w3.apiKey === 'K3', JSON.stringify(w3).slice(0, 100));
+  })().catch((e) => check('⑥ B2-6b 异步块无异常完成（含网络夹具）', false, e && e.message));
+
   const failed = results.concat(asyncResults).filter((r) => !r);
   const total = results.length + asyncResults.length;
   console.log('\n结果: ' + (total - failed.length) + ' passed, ' + failed.length + ' failed');

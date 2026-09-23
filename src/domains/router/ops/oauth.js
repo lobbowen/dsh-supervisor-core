@@ -12,11 +12,15 @@ function createOAuthOps(deps) {
   const d = deps || {};
   const ports = d.ports;
   const openInBrowser = d.openInBrowser;
-  const st = { _ccLogin: null, _ccLoginPromise: null, _ccLoginResolve: null, _ccLoginReject: null };
+  const st = { _ccLogin: null, _ccLoginPromise: null, _ccLoginResolve: null, _ccLoginReject: null, _ccLoginRound: 0 };
 
   async function commandcodeLoginStart() {
     const STUDIO_BASE = 'https://commandcode.ai';
     const state = crypto.randomBytes(32).toString('base64url');
+    // 轮次号：server 与浏览器监视闭包各带本轮 roundId，决议前比对（B2-6b）——
+    //   旧轮 server 的 keep-alive 迟到回调能通过旧 state 自查，不挡就会把旧凭据
+    //   注进新一轮 promise；close() 只挡新连接，挡不了在途请求。
+    const roundId = ++st._ccLoginRound;
     if (st._ccLogin && st._ccLogin.server) {
       const oldState = st._ccLogin.state;
       try { st._ccLogin.server.close(); } catch {}
@@ -47,6 +51,8 @@ function createOAuthOps(deps) {
           let b = '';
           req.on('data', (c) => { b += c; if (b.length > 10000) req.destroy(); });
           req.on('end', () => {
+            // B2-6b：非本轮的迟到回调一律 410 Gone，绝不触碰 st 上的决议器。
+            if (st._ccLoginRound !== roundId) { res.writeHead(410); res.end(callbackJson({ success: false, error: 'Stale login round' })); return; }
             try {
               const j = JSON.parse(b || '{}');
               if (j && typeof j === 'object' && 'error' in j) {
@@ -89,6 +95,8 @@ function createOAuthOps(deps) {
     promise.catch(() => {});
     st._ccLoginPromise = promise;
     const tmpProfile = openInBrowser(authUrl, () => {
+      // 旧轮浏览器的退出监视迟到时不得误杀新一轮登录。
+      if (st._ccLoginRound !== roundId) return;
       if (st._ccLoginReject) {
         const r = st._ccLoginReject;
         st._ccLoginReject = null;
