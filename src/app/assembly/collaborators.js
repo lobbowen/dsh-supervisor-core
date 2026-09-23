@@ -97,7 +97,6 @@ function installState(host) {
   host._mDesired = () => state.desired();
   host._mSetDesired = (v) => { state.setDesired(v); return host; };
   host._dshEntry = () => state.dshEntry();
-  host._mainFallbackEntry = () => state.fallbackEntry();
   host._persistCrashField = () => state.persistCrashField();
   host._mStore = () => state.store();
   host._mField = function (name, v) {

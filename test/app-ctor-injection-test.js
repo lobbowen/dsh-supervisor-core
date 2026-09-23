@@ -99,6 +99,55 @@ function fakeRegistry() {
 }
 
 // ---------------------------------------------------------------------------
+// M3（B2-3，审计 #26）：main-record fallback 是「目录未就绪期的暂存稿」，不是孤儿稿。
+//   随目录持久化的字段（崩溃窗/退避/重启计数）在 fallback 期写入，必须于真 entry 首见时
+//   一次性回填；目录侧带真实数据（非 createEntry 缺省）时草稿让位，绝不反向覆盖。
+//   顺带钉死：fallback entry 形态不含 guardian 键（与 B2-2 同批的红线收口）。
+// ---------------------------------------------------------------------------
+{
+  const t = fs.mkdtempSync(path.join(os.tmpdir(), 'm3-fallback-'));
+  const mk = (reg) => createStateStore({
+    getConfig: () => ({ stateFile: path.join(t, 'state.json') }),
+    getConfigPath: () => path.join(t, 'config.json'),
+    getLogger: () => ({ warn() {} }),
+    getEvents: () => null,
+    getManagedObjects: () => reg,
+    getInstances: () => null,
+    getViews: () => ({ status: () => ({ updatedAt: null }) }),
+    getIntents: () => null,
+    getHold: () => false, setHold() {}, getSince: () => null, setSince() {},
+    getCrashHalted: () => false, setCrashHalted() {},
+    getManualRestart: () => false, setManualRestart() {},
+    stopProcess() {}, tick() {},
+  });
+  check('M3a fallback entry 形态不含 guardian 键（B2-3 红线收口）',
+    !('guardian' in mk(fakeRegistry()).fallbackEntry()),
+    Object.keys(mk(fakeRegistry()).fallbackEntry()).join(','));
+
+  const reg = fakeRegistry();
+  const st = mk(reg);
+  st.field('restartCount', 5); st.field('backoffLevel', 2); st.field('backoffUntil', 999);
+  st.field('crashWindowStart', 1234); st.field('crashWindowRestarts', 4);
+  check('M3a 未就绪期草稿写读一致',
+    st.field('restartCount') === 5 && st.field('crashWindowStart') === 1234, 'fallback 直读');
+  // 真 entry 出现（计数=createEntry 缺省零值）→ 首见即回填（审计缺陷的正面反证）。
+  reg.register({ kind: 'dsh', id: 'main', desired: 'running',
+    restartCount: 0, backoffLevel: 0, backoffUntil: null, crashWindowStart: null, crashWindowRestarts: 0 });
+  const e = st.store();
+  check('M3b 真 entry 首见即回填（目录未就绪期计数不再静默丢失）',
+    e.restartCount === 5 && e.backoffLevel === 2 && e.backoffUntil === 999
+    && e.crashWindowStart === 1234 && e.crashWindowRestarts === 4,
+    'r=' + e.restartCount + ' bl=' + e.backoffLevel + ' bu=' + e.backoffUntil);
+  // 草稿让位盘上真实数据：entry 侧非缺省值（7）时回填绝不压制它。
+  const reg3 = fakeRegistry();
+  const st3 = mk(reg3);
+  st3.field('restartCount', 5);                                                // 草稿期写 5
+  reg3.register({ kind: 'dsh', id: 'main', desired: 'running', restartCount: 7 }); // 目录真实计数 7
+  check('M3c 目录侧真实计数优先（回填仅在缺省位，草稿不反向覆盖）',
+    st3.store().restartCount === 7, 'r=' + st3.store().restartCount);
+}
+
+// ---------------------------------------------------------------------------
 // config.json 读/解析失败 -> **拒绝写回**（fail-closed），
 //   原字节保留；仅 ENOENT（首启）照常写入。旧行为 catch{} 后以 cur={} 覆盖 -> 全键静默蒸发。
 // ---------------------------------------------------------------------------

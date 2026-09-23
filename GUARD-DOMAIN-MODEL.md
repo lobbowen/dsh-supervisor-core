@@ -168,7 +168,7 @@ ManagedRegistry（心跳驱动 —— 共用）
 | 驱动（启停动作） | `control/manager.js` 经 `start()/stop()/restart()` | `phase`/`desired`/`_monitoring`/`healthy`/`error`（对象自身迁移）|
 | 观测合成 | `control/projection.js`（`syncDshView` / `syncRouterView` / `syncInstancesView`）| 同上——但**只镜像观测**，不发起启停 |
 | 注册期能力 | `control/adapters.js`、`control/manager.js` | `_monitoring`（纳入/移出监督）|
-| main 域兜底出口 | `state/fields.js` 的 `setPhase`/`setDesired` | 目录不可用/条目非在册时才直写 entry（2 处，**合法**：这是守卫内 phase/desired 的唯一写口本体）|
+| main 域兜底出口 | `state/fields.js` 的 `setPhase`/`setDesired` | 目录不可用/条目非在册时才直写 entry（2 处，**合法**：这是守卫内 phase/desired 的唯一写口本体）。**B2-3**：fallback 只是目录未就绪期的暂存稿——持久计数（崩溃窗/退避/重启）首见真 entry 时一次性回填（盘上非缺省值优先），desired 经 `mainSpec` 在登记时读出合并，phase 按「boot 不继承」有意不回填。 |
 
 **规则**：`domain-actions/*`、`assembly/*`、`session/*`、`daemons/*` 等业务/装配层**不得**直写
 生命周期对象的 `phase`/`desired`/`_monitoring`/`healthy`——要改就经 `lifecycleManager` 发指令，
