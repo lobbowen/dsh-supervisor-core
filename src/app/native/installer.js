@@ -69,7 +69,9 @@ class NativeManager {
   checkEnvironment() { return npm.checkEnvironment(this); }
   _manifest() { return manifest.read(this); }
   _saveManifest(m) { return manifest.save(this, m); }
-  _recordManifest(version, dataPaths) { return manifest.record(this, version, dataPaths, this.npmRoot || npm.resolveNpmRoot(this)); }
+  async _recordManifest(version, dataPaths) {
+    return manifest.record(this, version, dataPaths, this.npmRoot || await npm.resolveNpmRoot(this));
+  }
   _claimDataPaths() { return manifest.claimDataPaths(this); }
   _runInstall(version, registry) { return npm.runInstall(this, version, registry); }
   _latestVersion() { return npm.latestVersion(this); }

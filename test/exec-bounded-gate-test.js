@@ -159,6 +159,31 @@ console.log('== G9-c/d 执行器保障 ==');
   check('G9-d 默认超时存在', /DEFAULT_TIMEOUT_MS\s*=\s*\d+/.test(exSrc), 'DEFAULT_TIMEOUT_MS');
 }
 
+// -- G9-e 事件循环敏感模块不得出现同步 exec 口径（B1-6 冻结收口） --
+//   执行器自称「同步版仅限守卫启动早期与 CLI 一次性命令」，但 HTTP 门面
+//   （envStatus / guardVersion* / checkEnvironment）长期用同步 runOut 系：
+//   每个探测最长冻结事件循环到自身超时（git 默认 15s、契约回读 20s），
+//   心跳与自愈全部停摆。本闸把该纪律落到具体的敏感模块清单上。
+console.log('== G9-e 敏感模块零同步 exec ==');
+{
+  const SENSITIVE = [
+    'src/app/settings/versions.js',
+    'src/app/settings/env.js',
+    'src/app/native/npm.js',
+  ];
+  const re = /\b(?:ex|exec)\.(runOut|run|runDetail)\s*\(/g;
+  const offenders = [];
+  for (const rel of SENSITIVE) {
+    const code = stripComments(fs.readFileSync(path.join(ROOT, rel), 'utf8'));
+    let m;
+    while ((m = re.exec(code))) offenders.push(rel + ' ' + m[0]);
+  }
+  check('G9-e settings/native HTTP 门面模块零 ex.runOut/run/runDetail（同步绕过 runOutAsync）',
+    offenders.length === 0, offenders.length ? offenders.slice(0, 4).join(' | ') : 'ok');
+  check('G9-e 反向：同步形态会被识别（判据非空转）',
+    re.test("const out = ex.runOut('git', ['-C', root]);"), 'hit');
+}
+
 const failed = results.filter((r) => !r);
 console.log(String.fromCharCode(10) + '结果: ' + (results.length - failed.length) + ' passed, ' + failed.length + ' failed');
 process.exit(failed.length ? 1 : 0);

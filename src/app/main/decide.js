@@ -6,6 +6,12 @@
 // 故其内部经模块内纯函数 decideCrashRestart() 协作、绝不触碰 deps；其余事实经 depsOf(host) 惰性缓存取得。
 const pidlook = require('../../platform/os/pidlookup');
 
+// STARTING 超时唯一判据：deadline 缺失（守卫从盘恢复、本字段不持久化）视为「未到期」，
+// 由 controller 首拍重derive宽限——真实 tick 与影子共用本函数，禁止第二份写法。
+function startDeadlinePassed(deadline, now) {
+  return !!(deadline && now > deadline);
+}
+
 const DEPS = new WeakMap();
 function depsOf(host) {
   let d = DEPS.get(host);
@@ -61,7 +67,7 @@ module.exports = {
       upgradeHold: d.upgradeHold() === true,
       manualRestart: d.manualRestart() === true,
       spawnBlocked: !!(d.mSpawnBlockedUntil() && now < d.mSpawnBlockedUntil()),
-      startDeadlinePassed: !!(d.mStartDeadline() && now > d.mStartDeadline()),
+      startDeadlinePassed: startDeadlinePassed(d.mStartDeadline(), now),
       restartDue: d.mRestartAt() === null || now >= d.mRestartAt(),
       backoffDue: d.mBackoffUntil() === null || now >= d.mBackoffUntil(),
       // `_shouldRun()` 有两个否决位，快照必须建模（crashHalted/sessionHalting），否则影子每拍
@@ -145,4 +151,6 @@ module.exports = {
     return decideCrashRestart(reason);
   }
   },
+  // 非 host 方法：纯谓词导出，controller 与本文件快照判据共用（facets 只安装 methods）。
+  startDeadlinePassed,
 };

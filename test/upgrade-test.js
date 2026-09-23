@@ -265,6 +265,19 @@ async function main() {
     const OLD = 'async function handleUpgradeFailure(host){ const rb = await rollbackAfterFailure(host); if (!rb.ok) return; if (host.hooks.resumeAfterUpgrade) host.hooks.resumeAfterUpgrade(); }';
     check('B22 反向：判据能识别「if (!rb.ok) return」早退 + 内联 resume 旧形态',
       /if \(!rb\.ok\) return/.test(OLD) && resumeCount(OLD) === 1, 'ok');
+    // B1-4：rolledBack 只描述事实——回滚真的成功才置位。先置位再回滚会把「回滚失败」
+    //   谎报成「已回滚」（brief/CLI 文案直接消费此位）。
+    const rbFV = between('async function rollbackAfterFailedVerify', '/** 自动回滚');
+    check('B1-4 failedVerify 按 rb.ok 置位（无预先 true）',
+      rbFV.length > 100 && /host\.rolledBack = rb\.ok === true;/.test(rbFV) && !/host\.rolledBack = true;/.test(rbFV), 'ok');
+    check('B1-4 rollbackAfterFailure 成功路径才置位（失败分支先于置位点 return）',
+      rbAF.indexOf('return { ok: false }') >= 0 && rbAF.indexOf('host.rolledBack = true') > rbAF.indexOf('return { ok: false }'),
+      'set@' + rbAF.indexOf('host.rolledBack = true') + ' failReturn@' + rbAF.indexOf('return { ok: false }'));
+    check('B1-4 反向：旧「开头预置 true」形态会被位置判据识破',
+      (() => {
+        const OLD4 = 'async function rollbackAfterFailure(host){ host.rolledBack = true; if (!res.ok) { return { ok: false }; } return { ok: true }; }';
+        return OLD4.indexOf('host.rolledBack = true') < OLD4.indexOf('return { ok: false }');
+      })(), 'hit');
   }
 
   console.log('\n==============================');

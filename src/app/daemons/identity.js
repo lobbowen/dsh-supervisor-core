@@ -6,6 +6,7 @@
 
 const fs = require('node:fs');
 const path = require('node:path');
+const { isAlive } = require('../../platform/os/pidlookup');
 
 // 管理锁与守卫单实例锁（bin/dsh-supervisor 的 acquireLock/releaseLock）同一范式：'wx' 原子创建 +
 // 持有者存活检测（ESRCH 清残留 / EPERM 视为存活）+ 释放只删自己的锁。裸覆盖写会让两个守卫并存时
@@ -21,11 +22,9 @@ function lockPid(p) {
   } catch { return null; }
 }
 
-/** 进程是否存活：kill(pid,0) —— EPERM = 存在但无权（视为存活），其余异常视为已死。 */
+/** 进程是否存活：判活单源在 platform/os/pidlookup（EPERM=视为存活，其余异常=已死）。 */
 function pidAlive(pid) {
-  if (!Number.isInteger(pid) || pid <= 0) return false;
-  try { process.kill(pid, 0); return true; }
-  catch (e) { return !!(e && e.code === 'EPERM'); }
+  return isAlive(pid);
 }
 
 /** 原子取锁：已存在且持有者存活则不抢（返回 false）；持有者已死/内容不可解析 -> 清残留重试一次。 */

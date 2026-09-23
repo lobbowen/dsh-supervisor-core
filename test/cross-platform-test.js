@@ -155,7 +155,7 @@ const check = (n, c, x) => { results.push(!!c); console.log((c ? 'PASS' : 'FAIL'
   // -- A1 断点修复：能力矩阵接线（后端暴露 -> 前端类型 -> UI 呈现）--
   console.log('== A1 能力矩阵接线 ==');
   {
-    const env = s.envStatus();
+    const env = await s.envStatus();
     check('A1-a envStatus 暴露 capabilities', env.capabilities && typeof env.capabilities === 'object', JSON.stringify(env.capabilities));
     const c = env.capabilities || {};
     check('A1-b capabilities 含平台/能力字段',
@@ -226,7 +226,7 @@ const check = (n, c, x) => { results.push(!!c); console.log((c ? 'PASS' : 'FAIL'
       npm: { path: TC_NODE, args: [TC_NPM_CLI], version: '10.9.2' },
     }), null, 2);
 
-    const env = s.envStatus();
+    const env = await s.envStatus();
     check('A5-a npm 与 node 同构三段（detected/runtime/path）',
       ['detected', 'runtime', 'path'].every((k) => k in env.npm) && ['detected', 'runtime', 'path'].every((k) => k in env.node),
       JSON.stringify(env.npm));
@@ -242,7 +242,7 @@ const check = (n, c, x) => { results.push(!!c); console.log((c ? 'PASS' : 'FAIL'
 
     // 反向：契约缺席时 runtime/path 必须是 null（不编造、不拿 node 版本或占位文案顶上）。
     fs.unlinkSync(rc.file());
-    const bareEnv = s.envStatus();
+    const bareEnv = await s.envStatus();
     check('A5-f 无契约时 npm/node 的 runtime 与 path 均为 null',
       bareEnv.npm.runtime === null && bareEnv.npm.path === null && bareEnv.node.runtime === null,
       JSON.stringify(bareEnv.npm));

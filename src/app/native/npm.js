@@ -20,21 +20,26 @@ function npmLaunch(host) {
 }
 
 /** 优先注入值（测试）。 */
-function resolveNpmRoot(host) {
+/** npm 全局根（异步：HTTP/安装路径都在事件循环上，同步 root -g 最长冻结 15s）。 */
+async function resolveNpmRoot(host) {
   if (host.npmRoot) return host.npmRoot;
   const l = npmLaunch(host);
-  const r = ex.runOut(l.program, l.args.concat(['root', '-g']));
+  const r = await ex.runOutAsync(l.program, l.args.concat(['root', '-g']));
   return r ? r.trim() : null;
 }
 
-function checkEnvironment(host) {
+/** 环境检查（异步并行探测）：三个子进程各自有界、互不串行叠加。 */
+async function checkEnvironment(host) {
   const errors = [];
-  const nv = ex.runOut('node', ['--version']);
-  if (!nv || !nv.trim()) errors.push('node 未安装或不可执行');
   const l = npmLaunch(host);
-  const npmv = ex.runOut(l.program, l.args.concat(['--version']));
+  const [nv, npmv, npmRoot] = await Promise.all([
+    ex.runOutAsync('node', ['--version']),
+    ex.runOutAsync(l.program, l.args.concat(['--version'])),
+    resolveNpmRoot(host),
+  ]);
+  if (!nv || !nv.trim()) errors.push('node 未安装或不可执行');
   if (!npmv || !npmv.trim()) errors.push('npm 未安装或不可执行');
-  return { ok: errors.length === 0, errors, npmRoot: resolveNpmRoot(host) };
+  return { ok: errors.length === 0, errors, npmRoot };
 }
 
 /** 最新版本（统一分发通道）。第三方包语义：latest 通道优先，缺失/非法才回落 versions

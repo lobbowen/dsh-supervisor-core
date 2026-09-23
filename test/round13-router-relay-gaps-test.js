@@ -94,6 +94,18 @@ console.log('== ① 远程控制 wan 安全闸收口 ==');
   const lan = actions.setRemoteMode('main', 'lan');
   check('① 行为：lan 模式无令牌前置（局域网侧有来源闸），正常落盘',
     lan && lan.ok === true && written.length === 1 && written[0].remoteMode === 'lan', JSON.stringify(written));
+  // B1-2：mode/token 必须显式给出——缺省曾被归成 'off'/清除，漏字段请求=静默关远程控制/清凭据。
+  const noMode = actions.setRemoteMode('main');
+  check('① 行为：缺 mode → 拒（不再隐式归 off）', noMode && noMode.ok === false, JSON.stringify(noMode));
+  const bogusMode = actions.setRemoteMode('main', 'WAN');
+  check('① 行为：非法 mode（大小写不符）→ 拒', bogusMode && bogusMode.ok === false, JSON.stringify(bogusMode));
+  const noTok = actions.setRemoteToken('main');
+  check('① 行为：缺 token → 拒（不当作清除）', noTok && noTok.ok === false, JSON.stringify(noTok));
+  const clr = actions.setRemoteToken('main', '');
+  check('① 行为：空串仍是显式清除（ok 且落盘 remoteToken=""）',
+    clr && clr.ok === true && meta.remoteToken === '', JSON.stringify(clr));
+  check('① 行为：显式拒绝路径均不落盘（上面三次非法调用零写入）',
+    written.length === 2 && written[1].remoteToken === '', String(written.length));
   // 弱令牌在**写入口**即拒（与 wan 闸同一强度下限；此前设置面仅 '非空白' 一票闸）
   const wBefore = written.length;
   const weak = actions.setRemoteToken('main', 'tok');

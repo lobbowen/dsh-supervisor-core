@@ -15,25 +15,43 @@ function whichVersion(bin, args) {
   return v ? (v.trim() || null) : null;
 }
 
+/** 异步版探测：HTTP 处理路径（envStatus）必须走这条——同步 execFileSync 会在每个
+ *  条目上冻结事件循环最长 3s，守卫心跳/自愈停摆（exec.js 同步仅限启动早期与 CLI）。 */
+function whichVersionAsync(bin, args) {
+  return ex.runOutAsync(bin, (Array.isArray(args) ? args : []).concat(['--version']), { timeoutMs: 3000 })
+    .then((v) => (v ? (v.trim() || null) : null));
+}
+
 // 版本探测缓存（TTL 10s）：envStatus 的 probe + summary 单次调用内重复探测 3+ 次，
 // 每次都是同步 execFileSync，占进程/磁盘且阻塞事件循环。键必须带上 args：
 // 同一程序配不同前缀参数是两个不同的被探测物。
 const _verCache = new Map();
 const CACHE_TTL = 10000;
-function cachedWhichVersion(bin, args) {
+function cacheKey(bin, args) {
   const a = Array.isArray(args) ? args : [];
-  const key = bin + '\u0000' + a.join('\u0000');
-  const hit = _verCache.get(key);
-  const now = Date.now();
-  if (hit && now - hit.at < CACHE_TTL) return hit.v;
-  const v = whichVersion(bin, a);
-  _verCache.set(key, { at: now, v });
+  return bin + '\u0000' + a.join('\u0000');
+}
+function cacheSet(key, v) {
+  _verCache.set(key, { at: Date.now(), v });
   if (_verCache.size > 16) { // 有界：清最旧
     let oldest = null;
     for (const [k, e] of _verCache) if (!oldest || e.at < oldest.at) oldest = { k, at: e.at };
     if (oldest) _verCache.delete(oldest.k);
   }
   return v;
+}
+function cachedWhichVersion(bin, args) {
+  const key = cacheKey(bin, args);
+  const hit = _verCache.get(key);
+  const now = Date.now();
+  if (hit && now - hit.at < CACHE_TTL) return hit.v;
+  return cacheSet(key, whichVersion(bin, args));
+}
+function cachedWhichVersionAsync(bin, args) {
+  const key = cacheKey(bin, args);
+  const hit = _verCache.get(key);
+  if (hit && Date.now() - hit.at < CACHE_TTL) return Promise.resolve(hit.v);
+  return whichVersionAsync(bin, args).then((v) => cacheSet(key, v));
 }
 
 /** Node 最低版本门槛兜底（契约不可用时）。必须与壳的 node.rs MIN_NODE 一致，否则面板说
@@ -69,15 +87,21 @@ function verAtLeast(a, b) {
   return true;
 }
 
-/** Node 探测：不仅要能执行，还要达到最低门槛（低于门槛判 outdated，壳会拒绝启动该内核）。 */
-function probeNode() {
-  const v = cachedWhichVersion('node');
+/** Node 门槛判定：不仅要能执行，还要达到最低门槛（低于门槛判 outdated，壳会拒绝启动该内核）。
+ *  同步/异步两条探测路径共用本判定（分叉=两份口径）。 */
+function nodeVerdict(v) {
   if (!v) return null;
   // `node --version` 输出形如 v22.12.0；取第一个 vX.Y.Z 片段。
   const m = /v?(\d+\.\d+\.\d+)/.exec(String(v));
   const ver = m ? m[1] : String(v).trim();
   const min = String(runtimeMeta().minNode || MIN_NODE_DEFAULT);
   return { version: 'v' + ver, min, meets: verAtLeast(ver, min) };
+}
+function probeNode() {
+  return nodeVerdict(cachedWhichVersion('node'));
+}
+function probeNodeAsync() {
+  return cachedWhichVersionAsync('node').then(nodeVerdict);
 }
 
 /** npm 探测：只经统一启动形态解析口（契约优先，缺席退回 os/exec-path 的 PATHEXT 解析）。
@@ -87,35 +111,52 @@ function probeNpm() {
   const l = runtime.npmLauncher();
   return cachedWhichVersion(l.program, l.args);
 }
+function probeNpmAsync() {
+  const l = runtime.npmLauncher();
+  return cachedWhichVersionAsync(l.program, l.args);
+}
 
-/** 系统环境条目（Node/npm 为 DSH 与反代更新的执行器；git 可选）。 */
+/** 系统环境条目（Node/npm 为 DSH 与反代更新的执行器；git 可选）。probe=同步口径（启动早期/CLI），
+ *  probeAsync=事件循环敏感路径口径；两条必须同语义（同一判定/解析口）。 */
 const SYSTEM_ENTRIES = {
-  node: { label: 'Node.js', required: true, probe: probeNode },
-  npm:  { label: 'npm',     required: true, probe: probeNpm },
-  git:  { label: 'git',     required: false, probe: () => cachedWhichVersion('git') },
+  node: { label: 'Node.js', required: true, probe: probeNode, probeAsync: probeNodeAsync },
+  npm:  { label: 'npm',     required: true, probe: probeNpm, probeAsync: probeNpmAsync },
+  git:  { label: 'git',     required: false, probe: () => cachedWhichVersion('git'), probeAsync: () => cachedWhichVersionAsync('git') },
 };
+
+/** 探测值 -> 条目视图。state 三态：ok = 存在且满足门槛（Node 需 >= 壳投放的 minNode）；
+ *  outdated = 存在但低于门槛；missing = 不存在。
+ *  兼容：detail 保持字符串，新增字段（version/min/meets）放 detail 之外，不破坏既有契约。 */
+function entryView(id, e, v) {
+  if (v && typeof v === 'object' && typeof v.meets === 'boolean') {
+    return {
+      label: e.label, required: e.required,
+      state: v.meets ? 'ok' : 'outdated',
+      version: v.version, min: v.min, meets: v.meets,
+      detail: v.meets ? v.version : (v.version + '（低于最低要求 ' + v.min + '）'),
+    };
+  }
+  return { label: e.label, required: e.required, state: v ? 'ok' : 'missing', detail: v };
+}
 
 class EnvCatalog {
   constructor(config) { this.config = config || {}; }
 
-/** 系统二进制条目探测：{ id: { label, required, state, detail } }。state 三态：
- *  ok = 存在且满足门槛（Node 需 >= 壳投放的 minNode）；outdated = 存在但低于门槛；missing = 不存在。
- *  兼容：detail 保持字符串，新增字段（version/min/meets）放 detail 之外，不破坏既有契约。 */
+  /** 系统二进制条目探测（同步口径）：{ id: 条目视图 }。仅限启动早期/CLI；HTTP 路径用 probeAsync。 */
   probe() {
     const out = {};
     for (const [id, e] of Object.entries(SYSTEM_ENTRIES)) {
-      const v = e.probe() || null;
-      if (v && typeof v === 'object' && typeof v.meets === 'boolean') {
-        out[id] = {
-          label: e.label, required: e.required,
-          state: v.meets ? 'ok' : 'outdated',
-          version: v.version, min: v.min, meets: v.meets,
-          detail: v.meets ? v.version : (v.version + '（低于最低要求 ' + v.min + '）'),
-        };
-      } else {
-        out[id] = { label: e.label, required: e.required, state: v ? 'ok' : 'missing', detail: v };
-      }
+      out[id] = entryView(id, e, e.probe() || null);
     }
+    return out;
+  }
+
+  /** 异步口径：条目并行探测（最坏 3s x N 的串行冻结 -> 全程不阻塞事件循环）。 */
+  async probeAsync() {
+    const entries = Object.entries(SYSTEM_ENTRIES);
+    const vals = await Promise.all(entries.map(([, e]) => e.probeAsync()));
+    const out = {};
+    entries.forEach(([id, e], i) => { out[id] = entryView(id, e, vals[i] || null); });
     return out;
   }
 

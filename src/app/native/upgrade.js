@@ -71,7 +71,7 @@ async function installTarget(host, oldV, target, task) {
   if (!res.ok) throw new Error(res.error || 'install failed');
   const newV = host.installedVersion();
   if (newV !== target) throw new Error('安装后版本校验失败：期望 ' + target + '，实际 ' + newV);
-  host._recordManifest(newV || target);
+  await host._recordManifest(newV || target);
   if (host.events) host.events.append('upgrade_installed', { from: oldV, to: target });
   log(host, '安装完成，磁盘版本 ' + newV);
   if (task) { host.tasks.log(task.id, '安装完成，磁盘版本 ' + newV); doneLastStep(host, task); }
@@ -135,9 +135,10 @@ async function verifyAndFinalize(host, oldV, target, task) {
 async function rollbackAfterFailedVerify(host, oldV, task, healthy) {
   log(host, '健康验证失败（' + healthy.reason + '）');
   if (task) host.tasks.log(task.id, '健康验证失败（' + healthy.reason + '）');
-  host.rolledBack = true;
   host.upgradeState = 'rolling_back';
   const rb = await rollbackNative(host, oldV, task);
+  // rolledBack 只描述事实：回滚成功才算已回滚（brief/CLI 文案直接消费此位）。
+  host.rolledBack = rb.ok === true;
   host.upgradeError = rb.ok ? ('升级失败，已回滚到 ' + oldV) : ('升级失败且回滚失败：' + (rb.error || ''));
   host.upgradeState = 'failed';
   host.upgradeFinishedAt = new Date().toISOString();
@@ -161,7 +162,7 @@ async function rollbackNative(host, oldVersion, task) {
     return { ok: false, error: res.error || 'rollback install failed' };
   }
   tlog('回滚完成，磁盘版本 ' + oldVersion);
-  try { host._recordManifest(oldVersion); } catch (e2) { tlog('manifest 更新失败: ' + e2.message); }
+  try { await host._recordManifest(oldVersion); } catch (e2) { tlog('manifest 更新失败: ' + e2.message); }
   if (host.hooks.resumeAfterUpgrade) host.hooks.resumeAfterUpgrade();
   const port = host._targetPort();
   if (port) {
@@ -175,7 +176,6 @@ async function rollbackNative(host, oldVersion, task) {
 /** 异常路径回滚（handleUpgradeFailure 用）。返回 { ok }；失败路径已自行通知并恢复。 */
 async function rollbackAfterFailure(host) {
   host.upgradeState = 'rolling_back';
-  host.rolledBack = true;
   if (host.events) host.events.append('upgrade_rollback_started', { to: host.oldVersion });
   log(host, '回滚到 ' + host.oldVersion + '…');
   const registry = await host._selectRegistry();
@@ -195,7 +195,8 @@ async function rollbackAfterFailure(host) {
     return { ok: false };
   }
   log(host, '回滚完成。');
-  try { host._recordManifest(host.oldVersion); } catch (e2) { log(host, 'manifest 更新失败: ' + e2.message); }
+  host.rolledBack = true; // 装回+版本核验通过后才宣告已回滚
+  try { await host._recordManifest(host.oldVersion); } catch (e2) { log(host, 'manifest 更新失败: ' + e2.message); }
   host.upgradeState = 'failed';
   host.upgradeFinishedAt = new Date().toISOString();
   if (host.events) host.events.append('upgrade_failed', { error: host.upgradeError || '升级失败', rolledBack: true, rolledBackTo: host.oldVersion });

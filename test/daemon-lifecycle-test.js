@@ -211,3 +211,34 @@ const waitCtl = async (ms = 8000) => { const t0 = Date.now(); while (Date.now() 
     /fs\.openSync\(p, 'wx'\)/.test(idSrc) && /openSync\(LOCK_FILE, 'wx'\)/.test(fs.readFileSync(path.join(ROOT, 'bin', 'dsh-supervisor'), 'utf8')), 'wx');
 }
 
+// -- B1-5：判活三态（alive/dead/unknown）——「探测异常」不得被折叠成任何一侧 --
+// 旧实现把非 EPERM 的 kill 异常当死（fail-open 面）：锁主进程仍在但探测抖动时，
+// 守卫会误删他主锁 / 误认领死 pid。三态源 probeAlive 与布尔门面 isAlive 分离。
+{
+  const pidlook = require(path.join(ROOT, 'src', 'platform', 'os', 'pidlookup'));
+  check('B1-5 probeAlive 具名导出（三态）且 isAlive 仍为布尔门面',
+    typeof pidlook.probeAlive === 'function' && pidlook.isAlive(process.pid) === true, 'ok');
+  check('B1-5 非正整数 pid 一律 dead（不触碰 kill）',
+    pidlook.probeAlive(0) === 'dead' && pidlook.probeAlive(-1) === 'dead' &&
+    pidlook.probeAlive(NaN) === 'dead' && pidlook.probeAlive(1.5) === 'dead', 'dead');
+  const realKill = process.kill;
+  try {
+    process.kill = () => { const e = new Error('ep'); e.code = 'EPERM'; throw e; };
+    check('B1-5 EPERM → alive（存在但无权，不得判死）', pidlook.probeAlive(4321) === 'alive', 'alive');
+    process.kill = () => { const e = new Error('es'); e.code = 'ESRCH'; throw e; };
+    check('B1-5 ESRCH → dead', pidlook.probeAlive(4321) === 'dead', 'dead');
+    process.kill = () => { const e = new Error('ei'); e.code = 'EINVAL'; throw e; };
+    check('B1-5 其它错误码 → unknown（既不判活也不判死）', pidlook.probeAlive(4321) === 'unknown', 'unknown');
+    // _pidAlive 的 unknown 分支必须回落到所有权判定（只有登记过的主人才算活）。
+    const { DaemonLifecycle } = require(path.join(ROOT, 'src', 'app', 'daemons', 'process'));
+    const probeHost = Object.create(DaemonLifecycle.prototype);
+    probeHost._ctlOwnerPid = () => 4321;
+    check('B1-5 _pidAlive: unknown + 是登记主人 → true；非主人 → false',
+      probeHost._pidAlive(4321) === true && probeHost._pidAlive(9999) === false, 'owner-fallback');
+    process.kill = () => { const e = new Error('es'); e.code = 'ESRCH'; throw e; };
+    check('B1-5 _pidAlive: ESRCH 时即便是登记主人也判死', probeHost._pidAlive(4321) === false, 'dead');
+    check('B1-5 _pidAlive: 无 pid 入参直接 false', probeHost._pidAlive(null) === false, 'false');
+  } finally { process.kill = realKill; }
+  check('B1-5 反向：真实 kill 已恢复（process.kill(self) 判活）', pidlook.probeAlive(process.pid) === 'alive', 'alive');
+}
+

@@ -57,9 +57,15 @@ class DaemonLifecycle {
   }
   _clearIdentity() { try { fs.unlinkSync(this.identityFile); } catch {} }
 
+  /** 判活（platform/pidlookup.probeAlive 单源）：unknown 不 fail-open——必须有第二条证据
+   *  （ctl 端口属主正是该 pid 且 cmdline 匹配本服务）才认活，否则按死走 reclaim/spawn。
+   *  fail-open 会让已死 daemon 被判活，此后既不接管也不拉起，永不自愈。 */
   _pidAlive(pid) {
     if (!pid) return false;
-    try { return pidlook.isAlive ? !!pidlook.isAlive(pid) : true; } catch { return true; }
+    const st = pidlook.probeAlive(pid);
+    if (st === 'alive') return true;
+    if (st === 'dead') return false;
+    return this._ctlOwnerPid() === pid;
   }
 
   /** ctl 端口的监听者是否就是本服务进程（cmdline 匹配）。 */

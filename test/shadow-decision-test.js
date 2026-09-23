@@ -88,6 +88,24 @@ const base = () => ({
   check('无否决位 + probeOk → adopt（原有分支未被破坏）', r.action === 'adopt', JSON.stringify(r));
 }
 
+// -- B1-3：STARTING 超时判据单源（纯谓词 + 影子决策消费同一条）--
+{
+  const f = decideMod.startDeadlinePassed;
+  check('B1-3 startDeadlinePassed 以模块级纯函数导出（controller/快照共用）', typeof f === 'function', String(typeof f));
+  check('B1-3 deadline 缺失一律未到期（从盘恢复不得当场杀在途启动）',
+    f(null, Date.now() + 1e9) === false && f(undefined, 0) === false, 'null/undefined');
+  check('B1-3 now 严格大于 deadline 才判到期',
+    f(1000, 1001) === true && f(1000, 1000) === false, '边界');
+  const s = base(); s.phase = 'STARTING'; s.startDeadlinePassed = true;
+  const r = decide(s);
+  check('B1-3 STARTING + 判据到期 → restart(start_timeout, countCrash)',
+    r.action === 'restart' && r.reason === 'start_timeout' && r.countCrash === true, JSON.stringify(r));
+  const s2 = base(); s2.phase = 'STARTING';
+  const r2 = decide(s2);
+  check('B1-3 STARTING + 未到期 → starting_wait（不误计崩溃）',
+    r2.action === 'none' && /starting_wait/.test(String(r2.reason)), JSON.stringify(r2));
+}
+
 const failed = results.filter((r) => !r);
 console.log(String.fromCharCode(10) + '结果: ' + (results.length - failed.length) + ' passed, ' + failed.length + ' failed');
 process.exit(failed.length ? 1 : 0);

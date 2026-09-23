@@ -85,6 +85,17 @@ check('SW-5 CLI apply 不 POST /self-update/apply', !/apiOne\('POST', '\/self-up
 check('SW-5 CLI apply 给指引并退出码 2', /内核更新由桌面壳执行/.test(cli) && /process\.exit\(2\)/.test(cli), 'ok');
 check('SW-5 CLI 用法只剩 check', /self-update \[check\]/.test(cli), 'ok');
 
+// -- B1-1：CLI 对 daemon 的 HTTP 调用必须有请求级超时（同源单口） --
+//   旧形态三套 helper、无 req timeout：daemon 挂起时 CLI 在 TCP 层无限等，
+//   用户看到的不是错误文案而是卡死——「守卫无响应」无法与「CLI 无超时」区分。
+check('B1-1 CLI HTTP 出口唯一（apiRaw 一份，helper 分叉=超时口径漂移）',
+  (cli.match(/http\.request\(/g) || []).length === 1 && /function apiRaw\(/.test(cli), 'ok');
+check('B1-1 apiRaw 带 5s 请求级超时且 destroy 收口为可读错误',
+  /timeout: 5000/.test(cli) && /req\.on\('timeout', \(\) => req\.destroy\(new Error\('api-timeout'\)\)/.test(cli)
+    && /api-timeout/.test(cli), 'ok');
+check('B1-1 反向：无超时 hook 的旧形态会被识别',
+  !/req\.on\('timeout'/.test("const req = http.request(o, cb); req.end();"), 'hit');
+
 // -- SW-6：面板经消息桥请壳代执行 --
 const bridge = read('ui/src/services/supervisor/kernelUpdateBridge.ts');
 check('SW-6 桥协议版本 = 1', /BRIDGE_PROTOCOL_VERSION = 1/.test(bridge), 'ok');

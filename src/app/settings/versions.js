@@ -68,15 +68,16 @@ module.exports = {
       } catch (e) { return { ok: false, error: e.message }; }
     },
 
-    /** 读磁盘上运行位的自报版本：spawn --version，解析版本行。
+    /** 读磁盘上运行位的自报版本：spawn --version，解析版本行（异步：20s 上限的同步 exec
+     *  在 HTTP 路径上会冻结守卫整条事件循环，判据不变）。
      *  条件是 updatable（sea-binary 或 launcher）：launcher 的 bin 入口同样可执行，
      *  若只认 sea-binary 则发布态永远读不到磁盘实况，updatePending 恒 false。
      *  source-shell 不支持：其 --version 报的是开发目录版本，与 npm 安装无关。 */
-    _readBinarySelfVersion() {
+    async _readBinarySelfVersion() {
       const dep = deploy.detect();
       if (!dep.updatable || !dep.runningTarget) return null;
       try {
-        const out = ex.runOut(dep.runningTarget, ['--version'], { timeoutMs: 20000 });
+        const out = await ex.runOutAsync(dep.runningTarget, ['--version'], { timeoutMs: 20000 });
         // 字符类必须是 [^\s]：写成 [^s]（字母 s）会在版本串含 s 时截断，
         //   且不排除 \n 会跨行吞字符，污染 verified 判定。
         const m = /dsh-supervisor v([^\s]+)/.exec(out);
@@ -100,17 +101,18 @@ module.exports = {
       return dir; // 无外层仓：回退自身（嵌套仓/部署态）
     },
 
-    /** 本地视角（无网络 I/O，同步安全）：commit + 是否配了 upstream。 */
-    guardVersionLocal() {
+    /** 本地视角（无网络 I/O；git 子进程异步执行——同步 spawn 会冻结事件循环，
+     *  消费方含 HTTP 路径，见 exec.js 同步仅限启动早期/CLI 的纪律）。 */
+    async guardVersionLocal() {
       const d = depsOf(this);
       const root = d.vcsRoot();
-      let commit = null;
-      commit = (ex.runOut('git', ['-C', root, 'rev-parse', '--short', 'HEAD']) || '').trim() || null;
+      const [rawCommit, rawUp] = await Promise.all([
+        ex.runOutAsync('git', ['-C', root, 'rev-parse', '--short', 'HEAD']),
+        ex.runOutAsync('git', ['-C', root, 'rev-parse', '--abbrev-ref', '@{u}']),
+      ]);
+      const commit = (rawCommit || '').trim() || null;
       let upstream = 'local';
-      try {
-        const up = (ex.runOut('git', ['-C', root, 'rev-parse', '--abbrev-ref', '@{u}']) || '').trim();
-        if (up) upstream = 'git-repo';
-      } catch {}
+      if ((rawUp || '').trim()) upstream = 'git-repo';
       // version = 进程运行版本（启动时固化，打包态为编译期常量）。
       // 磁盘实况版本（runningVersion vs diskVersion 的 updatePending 判定）在 async guardVersionCheck。
       return { version: d.guardVersion(), runningVersion: d.guardVersion(), commit, updateAvailable: false, upstream, latest: d.guardVersion() };
@@ -121,21 +123,19 @@ module.exports = {
      *  fetch 失败/超时只降级为「本地视图」，不抛错。 */
     async guardVersionCheck() {
       const d = depsOf(this);
-      const base = d.guardVersionLocal();
+      const base = await d.guardVersionLocal();
       if (base.upstream !== 'git-repo') return base;
       const root = d.vcsRoot();
       const fetchOk = (await ex.runOutAsync('git', ['-C', root, 'fetch', '--quiet'], { timeoutMs: 10000 })) !== null;
       if (!fetchOk) return base; // fetch 失败：保持本地视图，不误报
       let updateAvailable = false;
-      try {
-        // git 可能因网络盘/凭证助手挂起，同步调用也必须有界。
-        const ahead = (ex.runOut('git', ['-C', root, 'rev-list', '--count', 'HEAD..@{u}']) || '').trim();
-        updateAvailable = parseInt(ahead, 10) > 0;
-      } catch {}
+      // git 可能因网络盘/凭证助手挂起，调用也必须有界（runOutAsync 超时返回 null）。
+      const ahead = ((await ex.runOutAsync('git', ['-C', root, 'rev-list', '--count', 'HEAD..@{u}'], { timeoutMs: 10000 })) || '').trim();
+      updateAvailable = parseInt(ahead, 10) > 0;
       // 磁盘运行位实况版本 vs 进程运行版本：不一致 = 「更新已安装、待重启生效」
       const dep = deploy.detect();
       let diskVersion = null;
-      if (dep.updatable) diskVersion = d.readBinarySelfVersion();
+      if (dep.updatable) diskVersion = await d.readBinarySelfVersion();
       const updatePending = !!(diskVersion && diskVersion !== d.guardVersion());
       return { ...base, diskVersion, updatePending };
     },
