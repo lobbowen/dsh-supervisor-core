@@ -142,36 +142,39 @@ check('副作用经 deps.save 显式发出（非隐式 this）', saves > 0, 'sav
     check('B15 反向：守护开 FAILED+installOk → 兜底拉起', svcCalls.includes('startTransient') && inst.state.phase === 'STARTING', inst.state.phase + ' ' + svcCalls.join(','));
   }
 
-  // ---- 6e/6f. ST-2c 运行意图落点：谁发起的停决定抹不抹意图 ----
-  //   意图只在实例自己的 state.desired 上写；升级收尾/插件生效的临时停必须保留用户意图，
-  //   否则一次长安装窗口就把「要它在跑」抹成 stopped 且无人恢复。
+  // ---- 6e/6f. B2-1 运行意图没有第二落点：start/stop 只动相位，旧库残留字段一次性清理 ----
+  //   自动拉起只认 guardian 开关（B15 段已验），用户启停就是动作本身；曾经的第二落点
+  //   inst.state.desired 已废止——这里钉「形状里不再出现该键」与迁移清理。
   {
     const mgr = mkMgr(fs.mkdtempSync(path.join(os.tmpdir(), 'b15-intent-')));
     const inst = mk('STOPPED');
     mgr.instances = [inst];
     seedEntry(mgr, inst);
     const r0 = await mgr.startInstance('b15', { fromUpgrade: true });
-    check('IN-1 start 走到拉起 → 意图落 running', r0.ok === true && inst.state.desired === 'running',
-      'ok=' + r0.ok + ' desired=' + inst.state.desired);
-    const r1 = mgr.stopInstance('b15', { intent: 'transient' });
-    check('IN-2 自动来源的停 → 相位 STOPPED 但意图留 running',
-      r1.ok === true && inst.state.phase === 'STOPPED' && inst.state.desired === 'running',
-      'phase=' + inst.state.phase + ' desired=' + inst.state.desired);
-    const r2 = mgr.stopInstance('b15');
-    check('IN-3 用户来源的停 → 意图落 stopped', r2.ok === true && inst.state.desired === 'stopped',
-      'desired=' + inst.state.desired);
-    const r3 = await mgr.startInstance('b15', { fromUpgrade: true });
-    check('IN-4 反向：再 start 把意图翻回 running（分档不是单向棘轮）',
-      r3.ok === true && inst.state.desired === 'running', 'desired=' + inst.state.desired);
+    check('IN-1 start 走到拉起 → 相位 STARTING 且不写任何意图字段',
+      r0.ok === true && inst.state.phase === 'STARTING' && !('desired' in inst.state),
+      'ok=' + r0.ok + ' phase=' + inst.state.phase + ' desired=' + inst.state.desired);
+    const r1 = mgr.stopInstance('b15');
+    check('IN-2 停 → 相位 STOPPED，state 形状自始至终无 desired 键',
+      r1.ok === true && inst.state.phase === 'STOPPED' && !('desired' in inst.state),
+      'phase=' + inst.state.phase + ' keys=' + Object.keys(inst.state).join(','));
+    const model = require(path.join(ROOT, 'src', 'domains', 'instance', 'model'));
+    const migrated = model.normalizeInstance({ id: 'x', name: 'x', port: 1, state: { phase: 'RUNNING', desired: 'running', restartCount: 0 } });
+    check('IN-3 老库残留 desired 被 normalize 一次性剔除（其余字段不误伤）',
+      !('desired' in migrated.state) && migrated.state.phase === 'RUNNING' && migrated.state.restartCount === 0,
+      JSON.stringify(migrated.state));
+    check('IN-4 反向：createRecord 不再种 desired（新记录无第二落点）',
+      !('desired' in model.createRecord({ port: 3901 }, 'c1').state),
+      JSON.stringify(model.createRecord({ port: 3901 }, 'c1').state));
   }
   {
     const mgr = mkMgr(fs.mkdtempSync(path.join(os.tmpdir(), 'b15-intent-unconfirmed-')), { stopUnit() { return false; } });
-    const inst = mk('RUNNING', { desired: 'running' });
+    const inst = mk('RUNNING');
     mgr.instances = [inst];
     const r = mgr.stopInstance('b15');
-    check('IN-5 反向：停止未确认 → ok:false 且相位/意图都不动（不谎报已停、不顺手抹意图）',
-      r.ok === false && inst.state.phase === 'RUNNING' && inst.state.desired === 'running',
-      'ok=' + r.ok + ' phase=' + inst.state.phase + ' desired=' + inst.state.desired);
+    check('IN-5 反向：停止未确认 → ok:false 且相位不动（不谎报已停）',
+      r.ok === false && inst.state.phase === 'RUNNING' && !('desired' in inst.state),
+      'ok=' + r.ok + ' phase=' + inst.state.phase);
   }
 
   // ---- 7. W2 控制面监督拍（govern tick + 准入）：观测(假 resstats)->决策(真 governor+假机器事实)

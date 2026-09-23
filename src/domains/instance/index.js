@@ -85,7 +85,7 @@ class InstanceManager {
   removeInstance(id) { return this._ops.removeInstance(id); }
   updateInstance(id, patch) { return this._ops.updateInstance(id, patch); }
   startInstance(id, opts) { return this._lifecycle.start(id, opts); }
-  stopInstance(id, opts) { return this._lifecycle.stop(id, opts); }
+  stopInstance(id) { return this._lifecycle.stop(id); }
   supervise(id) { return this._lifecycle.supervise(id); }
   probeInstance(id) { return this._lifecycle.probeInstance(id); }
   /** 资源预算总览（/env/status 观测面，W2）：当前占用/剩余/下一份保底/可容纳实例数。 */

@@ -52,8 +52,8 @@ module.exports = {
       return { ok: running, error: running ? null : '沙箱实例未运行' };
     },
     /** 目录项 <- 实例域状态对齐（监督拍后调用）：实例已删 -> 注销（防死登记）；存在 -> 经
-     *  sandboxSpec 同步 name/guardian/ownership + phase 落目录词表。desired 走的是实例意图字段的
-     *  投影（不是 phase 推导），所以观测路径写它不会改写任何意图（契约 M-1）。 */
+     *  sandboxSpec 同步 name/guardian/ownership + phase 落目录词表。沙箱不申报 desired
+     *  （运行意图无第二落点，B2-1），观测路径因此不可能改写任何意图。 */
     _syncSandboxRegistryEntry(entry) {
       const d = depsOf(this);
       if (!entry || !d.managedObjects() || !d.instances()) return;

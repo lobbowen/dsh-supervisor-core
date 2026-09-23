@@ -32,8 +32,8 @@ function createSpecs(deps) {
     };
   }
 
-  /** 单个沙箱实例申报。desired 取实例自己的运行意图（落点 inst.state.desired，
-   *  由 lifecycle 的 start/stop 写），相位不进应然面。 */
+  /** 单个沙箱实例申报。不申报 desired（B2-1）：沙箱的运行意图没有第二落点，自动拉起
+   *  只认 guardian 开关，目录项 desired 保持 createEntry 缺省；相位不进应然面。 */
   function sandboxSpec(inst) {
     if (!inst || !inst.id) return null;
     let rootPath = null;
@@ -41,7 +41,6 @@ function createSpecs(deps) {
     try { if (im && typeof im.sandboxRoot === 'function') rootPath = im.sandboxRoot(inst); } catch {}
     return {
       kind: 'sandbox-instance', id: inst.id, name: String(inst.name || inst.id),
-      desired: (inst.state && inst.state.desired === 'stopped') ? 'stopped' : 'running',
       guardian: inst.guardian === true,
       ownership: {
         ports: [{ role: 'inst', port: Number(inst.port) }],
@@ -52,9 +51,9 @@ function createSpecs(deps) {
     };
   }
 
-  /** 申报或更新（存在->update 应然；否则 register）。spec.desired 必须是意图源的投影
-   *  （main=state.desired、沙箱=inst.state.desired、域 B=config 业务条件），不得由 phase 推导：
-   *  观测到崩溃/退避不等于「用户想停」（契约 M-1），实然面另由 setPhase 落。 */
+  /** 申报或更新（存在->update 应然；否则 register）。spec.desired 若给出必须是意图源的投影
+   *  （main=state.desired、域 B=config 业务条件），不得由 phase 推导（契约 M-1）；
+   *  沙箱实例有意不申报 desired——update 见 undefined 即跳过，目录项不落第二意图源。 */
   function upsert(spec) {
     const m = reg();
     if (!m || !spec) return;

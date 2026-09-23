@@ -33,7 +33,7 @@ async function applyPluginChange(ctx, target, kind, onLog) {
       if (!targetRunning(ctx, target)) { log('实例未运行：插件变更将在下次启动时生效'); return false; }
       log('重启实例「' + (target.name || target.id) + '」使插件变更生效…');
       if (ctx.events) ctx.events.append('plugin_restart_started', { name: target.name || target.id, target: target.id, kind });
-      try { ctx.instances.stopInstance(target.id, { intent: 'transient' }); } catch (e) { log('停止实例失败: ' + e.message); }
+      try { ctx.instances.stopInstance(target.id); } catch (e) { log('停止实例失败: ' + e.message); }
       // start 带重试：systemd stop 后端口释放通常瞬发，偶发占用则重试
       let res = null;
       for (let i = 0; i < 6; i++) {

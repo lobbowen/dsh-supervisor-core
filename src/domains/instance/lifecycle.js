@@ -125,9 +125,8 @@ function createLifecycle(deps) {
           return { ok: false, error: adm.error };
         }
       }
-      // 运行意图落点（写口之一）：走到真正要拉起/安装才记「要它在跑」，被拒的 start（作业在飞、
-      //  预算已满）不留意图。升级收尾与插件生效的重启同样经此表达「要它在跑」。
-      if (inst.state.desired !== 'running') { inst.state.desired = 'running'; store.save(); }
+      // 运行意图不设第二落点（B2-1）：自动拉起只认 guardian，用户启停就是动作本身；
+      //  被拒的 start（作业在飞、预算已满）不留任何状态，重试语义由准入拒绝本身表达。
       store.ensureDirs(inst);
       const dshEntry = sandbox.dshEntry(instancesRoot, inst);
       if (!fs.existsSync(dshEntry)) {
@@ -138,10 +137,9 @@ function createLifecycle(deps) {
     }
     return _systemdStart(inst);
   }
-  /** 停止实例。opts.intent 分两档：默认 'user' 才把运行意图落库为 stopped；
-   *  'transient' = 升级/插件生效这类自动来源的临时停，只停这一次，不抹用户意图。 */
-  function stop(id, opts) {
-    const transient = !!(opts && opts.intent === 'transient');
+  /** 停止实例。自动来源（升级、插件生效重启）与用户停走同一路径：意图没有第二落点，
+   *  恢复由调用方的后续 start（升级收尾重拉）表达。 */
+  function stop(id) {
     const inst = store.instances.find((i) => i.id === id);
     if (!inst) return { ok: false, error: '实例不存在' };
     if (!isSandboxSupported()) return { ok: false, error: '当前平台不支持沙箱实例（能力矩阵见 GET /env/status 的 capabilities.sandboxLaunch；限额执行档位见 capabilities.sandboxEnforcement）' };
@@ -160,9 +158,6 @@ function createLifecycle(deps) {
     }
     inst.state.phase = 'STOPPED';
     inst.state.usage = null; // 用户显式停止同样清观测（与 RUNNING 分支同源语义）
-    // 只有用户来源的停才落「不再要它跑」；自动来源（升级、插件生效重启）保留意图，
-    // 否则长安装窗口或重试全败会把用户的 running 抹成 stopped 且无人恢复。
-    if (!transient) inst.state.desired = 'stopped';
     runtime.delete(inst.id);
     store.save();
     if (inst.port && hooks.onInstanceStop) hooks.onInstanceStop(inst);
