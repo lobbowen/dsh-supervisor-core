@@ -42,9 +42,10 @@ function handle(ctx) {
         return send(404, { error: 'changelog not found' });
       }
     }
-    // 管家自身版本（设置页展示）：GET=本地视图（无网络 I/O，同步安全）；POST=完整检查（异步 fetch）
+    // 管家自身版本（设置页展示）：GET=本地视图（无网络 I/O；git 探测异步执行不冻结事件循环）；
+    //   POST=完整检查（异步 fetch）。
     if (req.method === 'GET' && pathname === '/guard/version') {
-      return send(200, sup.guardVersionLocal());
+      return Promise.resolve(sup.guardVersionLocal()).then((r) => send(200, r)).catch((e) => send(500, { ok: false, error: e.message }));
     }
     if (req.method === 'POST' && pathname === '/guard/version/check') {
       req.resume();
@@ -167,7 +168,7 @@ function handle(ctx) {
     }
     if (req.method === 'GET' && pathname === '/env/status') {
       if (!originAllowed(req, sup.config.apiPort)) { req.resume(); return send(403, {}); }
-      return send(200, sup.envStatus());
+      return Promise.resolve(sup.envStatus()).then((r) => send(200, r)).catch((e) => send(500, { ok: false, error: e.message }));
     }
     if (req.method === 'GET' && pathname === '/env/node-lts') {
       // Node LTS 本地判定（偶数主版本~LTS；6h 缓存，无远端查询，见 supervisor.nodeLtsStatus）

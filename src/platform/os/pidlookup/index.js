@@ -8,7 +8,7 @@ const {
   parseWmicCommandLine, parsePowerShellCommandLine, normCmdline,
 } = require('./norm');
 const {
-  linuxFind, linuxFindSs, macFind, winFind, readCmdline, pgrepList, isAlive, isZombie,
+  linuxFind, linuxFindSs, macFind, winFind, readCmdline, pgrepList, isAlive, probeAlive, isZombie,
 } = require('./probe');
 
 const isLinux = process.platform === 'linux';
@@ -34,7 +34,7 @@ function isDshCmdline(pid) {
 }
 
 module.exports = {
-  findListeningPid, isAlive, isZombie, readCmdline, normCmdline, isDshCmdline, pgrepList,
+  findListeningPid, isAlive, probeAlive, isZombie, readCmdline, normCmdline, isDshCmdline, pgrepList,
   parseProcNetTcpInodes, parseLsofPid, parseNetstatPid, parseSsPid,
   parseWmicCommandLine, parsePowerShellCommandLine,
 };

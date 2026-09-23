@@ -70,16 +70,18 @@ function beginTask(host, action, meta) {
 /** 安装执行（安装/升级/回滚共用 _runInstall 核心）。 */
 async function install(host, version) {
   if (!policies.isValidVersion(version)) return { ok: false, error: '非法版本号: ' + version };
-  const env = host.checkEnvironment();
-  if (!env.ok) return { ok: false, error: '环境检查失败: ' + env.errors.join('; ') };
   // 并发锁必须在任何 await 之前置位（否则并发 POST 会在 await 间隙同时通过检查）。
+  //   环境检查已改异步（exec 冻结收口），故排在锁之后、进临界区，由 finally 统一释放。
   host.installing = true;
   host.installLog = [];
-  const task = beginTask(host, 'install', { to: version || null, createdBy: 'user' });
-  let target = version;
   // 锁释放统一走 finally：锁一旦滞留，startInstall/startUninstall 与升级的并发闸
   //   会永久拒绝全部安装类操作。分支内的显式置 null 只是冗余保险，权威释放点是 finally。
+  let task = null;
   try {
+    const env = await host.checkEnvironment();
+    if (!env.ok) return { ok: false, error: '环境检查失败: ' + env.errors.join('; ') };
+    task = beginTask(host, 'install', { to: version || null, createdBy: 'user' });
+    let target = version;
     if (!target) {
       target = await host._latestVersion().catch(() => null);
       if (!target) {
@@ -105,7 +107,7 @@ async function install(host, version) {
     // 升级/重装绝不能传 []：manifest.record 的继承分支判据是「未显式传 dataPaths」，
     //   传空数组会把上一代认领记录抹成 []，卸载清理从此静默失效、目录永久残留。
     const isFirstInstall = !host._manifest();
-    host._recordManifest(target, isFirstInstall ? host._claimDataPaths() : undefined);
+    await host._recordManifest(target, isFirstInstall ? host._claimDataPaths() : undefined);
     // 安装成功后立即复跑「检测 -> 绑定」：裸 config.command 首装后若不绑定，
     //   DSH 永不起、冷静期无限循环，直到守卫重启。
     try { if (typeof host._bindNativeDshCommand === 'function') host._bindNativeDshCommand(); }
@@ -122,14 +124,14 @@ async function install(host, version) {
   }
 }
 
-/** 启动安装（API 用）：同步前置检查，通过则后台执行并立即返回（进度经 status 轮询）。 */
+/** 启动安装（API 用）：同步前置检查，通过则后台执行并立即返回（进度经 status 轮询）。
+ *  环境检查是异步探测，已移入 install() 锁内第一步：环境失败不再同步返回，
+ *  而经 status 的 lastInstall 呈现——返回时序变了，能力不减。 */
 function startInstall(host, version) {
   if (host.installing) return { ok: false, error: '安装已在进行中' };
   if (host.uninstalling) return { ok: false, error: '卸载进行中，请稍后再装' };
   if (policies.busy(host)) return { ok: false, error: '升级进行中，请稍后再装（state=' + host.upgradeState + '）' };
   if (!policies.isValidVersion(version)) return { ok: false, error: '非法版本号: ' + version };
-  const env = host.checkEnvironment();
-  if (!env.ok) return { ok: false, error: '环境检查失败: ' + env.errors.join('; ') };
   install(host, version).then(() => {}).catch((e) => {
     // 后台任务意外抛错：复位标志并兜底任务注册表（防任务永久 running 占锁）。
     host.installing = null;

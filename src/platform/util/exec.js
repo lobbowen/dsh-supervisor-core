@@ -65,11 +65,7 @@ function runOut(bin, args, opts) {
 function runAsync(bin, args, opts) {
   const o = opts || {};
   return new Promise((resolve) => {
-    execFile(bin, args, Object.assign({}, options(o), { encoding: 'utf8' }), (err, stdout, stderr) => {
-      if (!err) {
-        resolve({ ok: true, code: '0', stdout: String(stdout == null ? '' : stdout), stderr: String(stderr == null ? '' : stderr), timedOut: false, error: null });
-        return;
-      }
+    const fail = (err) => {
       if (o.logger && o.logger.warn) {
         try {
           o.logger.warn('[exec] (async) ' + bin + ' ' + (args || []).join(' ').slice(0, 80) +
@@ -81,12 +77,24 @@ function runAsync(bin, args, opts) {
       resolve({
         ok: false,
         code: err.status != null ? String(err.status) : null,
-        stdout: String(stdout == null ? (err.stdout || '') : stdout),
-        stderr: String(stderr == null ? (err.stderr || '') : stderr),
+        stdout: String(err.stdout || ''),
+        stderr: String(err.stderr || ''),
         timedOut,
         error: (err && err.message) ? String(err.message) : String(err),
       });
-    });
+    };
+    // execFile 对不可执行文件（如 Windows .cmd 的 EINVAL 缓解）会同步抛出——
+    //   必须并进失败结果，否则「绝不 reject」契约被打破（同步版 run() 的 catch 同语义）。
+    try {
+      execFile(bin, args, Object.assign({}, options(o), { encoding: 'utf8' }), (err, stdout, stderr) => {
+        if (!err) {
+          resolve({ ok: true, code: '0', stdout: String(stdout == null ? '' : stdout), stderr: String(stderr == null ? '' : stderr), timedOut: false, error: null });
+          return;
+        }
+        err.stdout = stdout; err.stderr = stderr;
+        fail(err);
+      });
+    } catch (e) { fail(e); }
   });
 }
 

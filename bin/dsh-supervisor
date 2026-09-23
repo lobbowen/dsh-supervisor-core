@@ -148,26 +148,45 @@ function printSelfVersion() {
 }
 
 // ---- HTTP API 调用 ----
-function apiRequest(method, apiPath) {
+// timeout 选项只发事件不销毁 socket：daemon 接受连接但不响应（handler 挂死）时，
+// 无 'timeout' 监听会让 CLI 永久挂起 —— 必须 destroy 后统一按错误 resolve。
+function apiRaw(method, apiPath, body) {
   return new Promise((resolve) => {
     const addr = readApiAddress();
     const req = http.request(
-      { hostname: addr.host, port: addr.port, path: apiPath, method, timeout: 5000 },
+      {
+        hostname: addr.host,
+        port: addr.port,
+        path: apiPath,
+        method,
+        timeout: 5000,
+        headers: body ? { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) } : {},
+      },
       (res) => {
-        let body = '';
-        res.on('data', (d) => (body += d));
-        res.on('end', () => {
-          try {
-            resolve(JSON.parse(body));
-          } catch {
-            resolve({ error: 'parse error', raw: body });
-          }
-        });
-        res.on('error', () => resolve({ error: 'response error' }));
+        let text = '';
+        res.setEncoding('utf8');
+        res.on('data', (d) => (text += d));
+        res.on('end', () => resolve({ status: res.statusCode, text }));
+        res.on('error', (e) => resolve({ status: 0, text: '', error: e.message }));
       }
     );
-    req.on('error', () => resolve({ error: 'daemon 未运行或连接失败' }));
+    req.on('timeout', () => req.destroy(new Error('api-timeout')));
+    req.on('error', (e) =>
+      resolve({ status: 0, text: '', error: e && e.message === 'api-timeout' ? 'daemon 响应超时（5s）' : 'daemon 未运行或连接失败' })
+    );
+    if (body) req.write(body);
     req.end();
+  });
+}
+
+function apiRequest(method, apiPath) {
+  return apiRaw(method, apiPath).then(({ status, text, error }) => {
+    if (error) return { error };
+    try {
+      return JSON.parse(text);
+    } catch {
+      return { error: 'parse error', raw: text };
+    }
   });
 }
 
@@ -551,19 +570,9 @@ function cmdVersion() {
 }
 
 function cmdSelfUpdate(action) {
-  const addr = readApiAddress();
-  const apiOne = (method, p, body) =>
-    new Promise((resolve) => {
-      const req = http.request({ hostname: addr.host, port: addr.port, path: p, method, timeout: 5000, headers: body ? { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) } : {} }, (res) => {
-        let b = ''; res.on('data', (d) => (b += d)); res.on('end', () => { try { resolve(JSON.parse(b)); } catch { resolve({ error: 'parse error', raw: b }); } });
-      });
-      req.on('error', () => resolve({ error: 'daemon 未运行或连接失败' }));
-      if (body) req.write(body);
-      req.end();
-    });
   (async () => {
     if (action === 'check' || !action) {
-      const s = await apiOne('GET', '/self-update/status');
+      const s = await apiRequest('GET', '/self-update/status');
       if (s.error) return console.log('检查失败: ' + s.error);
       if (s.ok) {
         console.log('守卫当前版本: ' + s.installed);
@@ -584,33 +593,14 @@ function cmdSelfUpdate(action) {
 }
 
 function cmdUpgrade(requested) {
-  const post = () =>
-    new Promise((resolve) => {
-      const addr = readApiAddress();
-      const body = requested ? JSON.stringify({ version: requested }) : undefined;
-      const req = http.request(
-        {
-          hostname: addr.host,
-          port: addr.port,
-          path: '/native/upgrade',
-          method: 'POST',
-          timeout: 5000,
-          headers: body ? { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) } : {},
-        },
-        (res) => {
-          let b = '';
-          res.on('data', (d) => (b += d));
-          res.on('end', () => resolve({ code: res.statusCode, body: b }));
-        }
-      );
-      req.on('error', () => resolve({ code: 0, body: '' }));
-      if (body) req.write(body);
-      req.end();
-    });
+  const body = requested ? JSON.stringify({ version: requested }) : undefined;
+  const post = () => apiRaw('POST', '/native/upgrade', body);
 
-  post().then(({ code, body }) => {
+  post().then(({ status, text, error }) => {
+    const code = error ? 0 : status;
+    const outText = error ? '' : text;
     if (code !== 202) {
-      console.log('升级未被接受:', body || 'HTTP ' + code);
+      console.log('升级未被接受:', outText || 'HTTP ' + code);
       process.exit(1);
     }
     console.log('升级已开始，跟踪进度（先停 DSH → 安装 → 自动拉起，需数分钟）…');

@@ -82,10 +82,22 @@ function linuxFindSs(port) {
   return null;
 }
 
+/** 三态判活唯一原语：'alive' | 'dead' | 'unknown'。
+ *  EPERM=pid 存在但无权（视为活）；ESRCH=已死；其余错误码无法证生也证不了死——
+ *  消费方必须显式处理 unknown，禁止拿它做 fail-open（否则已死进程被判活、永不自愈）。 */
+function probeAlive(pid) {
+  if (!Number.isInteger(pid) || pid <= 0) return 'dead';
+  try { process.kill(pid, 0); return 'alive'; }
+  catch (e) {
+    const code = e && e.code;
+    if (code === 'EPERM') return 'alive';
+    if (code === 'ESRCH') return 'dead';
+    return 'unknown';
+  }
+}
+
 function isAlive(pid) {
-  if (!Number.isInteger(pid) || pid <= 0) return false;
-  try { process.kill(pid, 0); return true; }
-  catch (e) { return !!e && e.code === 'EPERM'; }
+  return probeAlive(pid) === 'alive';
 }
 
 /** zombie（已退出未回收）判定：kill(pid,0) 对 zombie 仍为 true，端口/stdio 却已释放，停服等待须能区分。
@@ -180,5 +192,5 @@ function pgrepList(pattern) {
 
 module.exports = {
   linuxListeningInodes, linuxFind, macFind, winFind, linuxFindSs,
-  readCmdline, pgrepList, isAlive, isZombie,
+  readCmdline, pgrepList, isAlive, probeAlive, isZombie,
 };

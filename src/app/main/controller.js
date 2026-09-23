@@ -6,6 +6,7 @@
 // 事实经 depsOf(host) 的按 host 惰性缓存取得，方法体保持零 this 调用。
 const pidlook = require('../../platform/os/pidlookup');
 const monitor = require('../../platform/service/monitor');
+const { startDeadlinePassed } = require('./decide');
 
 const DEPS = new WeakMap();
 function depsOf(host) {
@@ -43,6 +44,7 @@ function depsOf(host) {
       mObservedOnly() { return host._mObservedOnly(); },
       mSpawnBlockedUntil() { return host._mSpawnBlockedUntil(); },
       mStartDeadline() { return host._mStartDeadline(); },
+      mSetStartDeadline(v) { return host._mSetStartDeadline(v); },
       mRestartAt() { return host._mRestartAt(); },
       mBackoffUntil() { return host._mBackoffUntil(); },
       mSetLastProbeAt(v) { return host._mSetLastProbeAt(v); },
@@ -197,7 +199,12 @@ module.exports = {
         }
         case 'STARTING': {
           if (portUp && healthOk) d.main().enterRunning();
-          else if (Date.now() > d.mStartDeadline()) d.main().beginRestart('start_timeout', { countCrash: true });
+          else if (d.mStartDeadline() === null) {
+            // 守卫从盘恢复且 phase=STARTING：startDeadline 是运行期字段不持久化，恢复后为空。
+            // 判据与影子同源（缺 deadline=未到期），首拍重derive宽限，不当场杀在途启动、不误计崩溃。
+            d.mSetStartDeadline(Date.now() + d.config().startTimeoutMs);
+          }
+          else if (startDeadlinePassed(d.mStartDeadline(), Date.now())) d.main().beginRestart('start_timeout', { countCrash: true });
           break;
         }
         case 'RUNNING': {

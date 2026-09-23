@@ -62,25 +62,33 @@ function createLanActions(deps) {
 
   return {
 
-    /** 远程控制模式唯一写入口（off|lan|wan）。wan 前置闸：必须先有合规访问令牌。 */
+    /** 远程控制模式唯一写入口（off|lan|wan）。mode 必须显式给出——缺省归 'off' 会让
+     *  漏字段的请求静默关闭远程控制。wan 前置闸：必须先有合规访问令牌。 */
     setRemoteMode(id, mode) {
-      const want = mode === 'lan' || mode === 'wan' ? mode : 'off';
+      if (mode !== 'off' && mode !== 'lan' && mode !== 'wan') {
+        return { ok: false, error: 'mode 必须显式给出（off|lan|wan）' };
+      }
       const target = resolveTarget(id);
       if (!target) return { ok: false, error: '实例不存在' };
-      if (want === 'wan') {
+      if (mode === 'wan') {
         const v = validateWanAccess({ remoteToken: target.remoteToken });
         if (!v.ok) return { ok: false, error: v.error };
       }
       if (target.kind === 'main') {
-        if (target.mode !== want) applyMainIntent({ remoteMode: want }, { id: 'main', name: '原生 DSH', mode: want });
+        if (target.mode !== mode) applyMainIntent({ remoteMode: mode }, { id: 'main', name: '原生 DSH', mode });
         return { ok: true };
       }
-      return g.getInstances().updateInstance(id, { remoteMode: want });
+      return g.getInstances().updateInstance(id, { remoteMode: mode });
     },
 
-    /** 访问令牌唯一写入口（空串=清除；lan 模式可无令牌，wan 模式的守门由执行边界闸兜住）。 */
+    /** 访问令牌唯一写入口。token 必须是字符串：空串=显式清除；缺字段/非字符串=请求方缺陷，
+     *  拒绝而非当作清除（漏 token 字段清掉访问凭据是事故，不是语义）。lan 模式可无令牌，
+     *  wan 模式的守门由执行边界闸兜住。 */
     setRemoteToken(id, token) {
-      const next = String(token || '');
+      if (typeof token !== 'string') {
+        return { ok: false, error: 'token 必须显式给出（空串=清除）' };
+      }
+      const next = token;
       if (next && !remoteTokenStrength(next).ok) {
         return { ok: false, error: '远程访问令牌（remoteToken）至少 8 位' };
       }

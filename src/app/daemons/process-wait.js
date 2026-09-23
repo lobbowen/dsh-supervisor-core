@@ -10,9 +10,7 @@ const pidlook = require('../../platform/os/pidlookup');
 async function waitProcessExit(pid, timeoutMs) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
-    let alive = false;
-    try { alive = pidlook.isAlive ? pidlook.isAlive(pid) : true; } catch { alive = false; }
-    if (!alive) return true;
+    if (!pidlook.isAlive(pid)) return true;
     await new Promise((r) => setTimeout(r, 200));
   }
   return false;
