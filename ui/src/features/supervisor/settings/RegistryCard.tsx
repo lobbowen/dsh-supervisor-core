@@ -68,6 +68,14 @@ export function RegistryCard() {
     const p = (reg?.probes ?? []).find((x) => x.origin === origin);
     return p && p.ok ? p.latencyMs : null;
   };
+  // 取不到延迟时必须说清为什么：非法基址与探测失败是两种完全不同的处置（改配置 / 换网络）。
+  const reasonOf = (origin: string): string => {
+    const r = (reg?.registries ?? []).find((x) => x.base === origin);
+    if (r && !r.usable) return "形态非法：" + (r.violation || "未知");
+    const p = (reg?.probes ?? []).find((x) => x.origin === origin);
+    if (p && !p.ok) return "不可达：" + (p.error || "未知");
+    return "未探测";
+  };
 
   return (
     <Card>
@@ -124,7 +132,7 @@ export function RegistryCard() {
                         {latencyOf(o)}<span className="text-muted-foreground/60">ms</span>
                       </span>
                     ) : (
-                      <span className="text-xs text-muted-foreground/50">—</span>
+                      <span className="text-xs text-muted-foreground/50" title={reasonOf(o)}>—</span>
                     )}
                     <Button size="chip" variant="ghost" onClick={() => setCandidates((c) => c.filter((x) => x !== o))} title="移除该候选镜像"><Trash2 className="size-3.5 text-destructive" /></Button>
                   </div>

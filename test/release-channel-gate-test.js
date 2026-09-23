@@ -267,23 +267,28 @@ async function main() {
   {
     const fake = await startFakeRegistry();
     try {
+      // authoritative 查询只走官方/注入的候选列表，不经测速选源（镜像延迟会把新版本判成「无更新」）。
       const dist = new DistributionManager({ registries: [fake.origin], registryFile: null, logger: { warn() {} } });
-      dist._reloadContractIfStale = () => {};
-      dist.selectRegistry = async () => fake.origin;
-      dist.selectedRegistry = {
-        origin: fake.origin, latencyMs: 1, checkedAt: Date.now(), manual: false, probes: [],
-      };
 
       fake.set(META_A);
       const gotA = await dist.fetchNpmLatest(META_A.name, { authoritative: true });
       check('RC-G3-e 行为：latest=RC 时返回 latest（BETA 数字更高不得压过）',
-        gotA === META_A['dist-tags'].latest,
-        '返回 ' + String(gotA) + '（契约 §3③ 期望 ' + META_A['dist-tags'].latest + '）');
+        gotA.ok === true && gotA.version === META_A['dist-tags'].latest,
+        '返回 ' + JSON.stringify({ ok: gotA.ok, version: gotA.version, error: gotA.error }) + '（契约 §3③ 期望 ' + META_A['dist-tags'].latest + '）');
+      check('RC-G3-e2 行为：origin 回传给出该版本的源（下载必须同源，否则显示与下载分叉）',
+        gotA.origin === fake.origin, String(gotA.origin));
 
       fake.set(META_B);
       const gotB = await dist.fetchNpmLatest(META_B.name, { authoritative: true });
       check('RC-G3-f 行为：latest=1.0.0 / max=9.9.9 → 仍返回 latest（不得猜最高）',
-        gotB === '1.0.0', '返回 ' + String(gotB) + '（契约 §3③ 期望 1.0.0）');
+        gotB.ok === true && gotB.version === '1.0.0', '返回 ' + JSON.stringify({ ok: gotB.ok, version: gotB.version }) + '（契约 §3③ 期望 1.0.0）');
+
+      // 取不到时必须回传结构化失败 + 逐源原因，而不是 null（null 会让 UI 把「取不到」显示成「已是最新」）。
+      const gotNone = await dist.fetchNpmLatest('@dsh-sup/not-published-at-all', { authoritative: true });
+      check('RC-G3-g 行为：包不存在 → ok:false + version:null + 指名源与原因',
+        gotNone.ok === false && gotNone.version === null && gotNone.attempts.length === 1
+          && gotNone.attempts[0].origin === fake.origin && /HTTP 404/.test(gotNone.attempts[0].error),
+        JSON.stringify(gotNone.attempts) + ' error=' + String(gotNone.error));
     } finally {
       await fake.close();
     }

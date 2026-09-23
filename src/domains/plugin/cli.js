@@ -15,9 +15,9 @@ const { assertSafeCliArgs, cliArgv } = require('./policies');
 const CLI_TIMEOUT_MS = 180000;
 const DEFAULT_REGISTRY = 'https://registry.npmjs.org';
 
-/** 经 dist 统一镜像源选择 registry origin（不可达降级官方源）。 */
+/** 经 dist 统一镜像源选择 registry 基址（不可达降级官方源）。 */
 async function registryOrigin(dist) {
-  if (dist) { try { return dist.selectRegistry(false); } catch {} }
+  if (dist) { try { return await dist.registryOrigin(false); } catch {} }
   return DEFAULT_REGISTRY;
 }
 

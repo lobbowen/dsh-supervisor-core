@@ -2,7 +2,8 @@
 
 // 外部输入的统一字符集 / 形态闸：version / unit 名 / 包名 / argv 项 / 安装前缀 / 账本键白名单 regex 的唯一存放处。
 // 边界：这里只做字符集 / 形态判定；语义级校验留在各自的域且不得反向依赖本文件：
-//   URL 可达性/SSRF -> distribution/policies.js（isValidOrigin）与 api 层闸；版本语义 -> app/native/policies.js + shared/version.js。
+//   URL 可达性/SSRF -> distribution/registry-ref.js（形态闸）+ policies.js（写入口叠加私网主机闸）与 api 层闸；
+//   版本语义 -> app/native/policies.js + shared/version.js。
 
 /** npm 包名（含 scope）：`dsh` / `@deepseek-ai/dsh`。字符集从严，宁误杀不漏放。 */
 const PKG_NAME_RE = /^(@[a-zA-Z0-9._-]+\/)?[a-zA-Z0-9._-]+$/;

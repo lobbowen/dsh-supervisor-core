@@ -50,10 +50,10 @@ async function latestVersion(host) {
   return host.dist.fetchLatestVersion(host.config.packageName, channel);
 }
 
-/** 选最快可达镜像（网络环境自适应）。 */
+/** 选最快可达镜像（网络环境自适应）。只要本次用的那一个源；顺延序列在 dist 侧。 */
 async function selectRegistry(host) {
   if (!host.dist) return null;
-  try { return await host.dist.selectRegistry(true); } catch { return null; }
+  try { return await host.dist.registryOrigin(true); } catch { return null; }
 }
 
 /** 安装执行（唯一入口 = dist.runNpmInstall）；行日志回写升级日志 +（安装中）安装日志。 */

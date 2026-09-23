@@ -199,11 +199,11 @@ class PluginMarket {
     }
     return out;
   }
-  /** npm 镜像源 origin（经 dist 统一选择；dist 不可达降级官方源）。 */
+  /** npm 镜像源基址（经 dist 统一选择；dist 不可达降级官方源）。尾斜杠归一交给 registry-ref。 */
   async _npmOrigin() {
     let origin = null;
-    if (this.dist) { try { origin = await this.dist.selectRegistry(false); } catch {} }
-    return (origin || REGISTRY).replace(/\/+$/, '');
+    if (this.dist) { try { origin = await this.dist.registryOrigin(false); } catch {} }
+    return origin || REGISTRY;
   }
 
   /** npm 最新版元数据查询（镜像源选择见 _npmOrigin）。 */

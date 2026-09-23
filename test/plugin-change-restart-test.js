@@ -70,7 +70,12 @@ function makePM(opts = {}) {
     onNativeRestart: opts.nativeRestart || (() => { instances.calls.push('native-restart'); return { ok: true }; }),
     // 默认未退出；O 组用例注入 () => true 验证退出门。
     exitIntended: opts.exitIntended || (() => false),
-    dist: { fetchNpmLatest: async (n) => (opts.distLatest !== undefined ? opts.distLatest[n] : '2.0.0') },
+    // dist 的取版本口回结构化结果（{ok,version,...}）：桩按包名给版本，缺键即「取不到」。
+    dist: { fetchNpmLatest: async (n) => {
+      const v = opts.distLatest !== undefined ? opts.distLatest[n] : '2.0.0';
+      return v ? { ok: true, version: v, origin: 'https://fake.registry', attempts: [], error: null }
+        : { ok: false, version: null, origin: null, attempts: [{ origin: 'https://fake.registry', error: '桩：无该包' }], error: '桩：无该包' };
+    } },
   });
   pm.instances = instances;
   pm._allSandboxTargets = () => [A];

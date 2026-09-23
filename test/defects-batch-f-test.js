@@ -414,9 +414,11 @@ console.log('== 批4 C-8 isPrivateHostLiteral（SSRF 主机分级单一事实源
     check('C-8 isPrivateHostLiteral ' + h + ' → ' + want, got === want, String(got));
   }
   const policies = require(path.join(ROOT, 'src', 'platform', 'distribution', 'policies.js'));
+  // 带 path 的基址是华为云/腾讯云镜像的常态形态，写入口放行；私网字面量仍拒。
   const vcases = [
     ['http://127.0.0.1:4873', true], ['http://169.254.169.254', true],
-    ['https://registry.npmjs.org', false], ['https://registry.npmjs.org/path', true],
+    ['https://registry.npmjs.org', false], ['https://registry.npmjs.org/path', false],
+    ['https://repo.huaweicloud.com/repository/npm', false],
     ['ftp://a.example.com', true], ['http://u:p@a.example.com', true], ['https://x.test', false],
   ];
   for (const [o, wantReject] of vcases) {
