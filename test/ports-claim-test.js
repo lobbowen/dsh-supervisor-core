@@ -233,18 +233,29 @@ const RANGE = { base: 28130, count: 50 };
   {
     const { stripComments } = require('./_strip');
     const daemonSrc = stripComments(fs.readFileSync(path.join(ROOT, 'src', 'domains', 'relay', 'daemon.js'), 'utf8'));
+    // 判据函数化：三条款缺一即不过（旧实现把 migrate 条款写成 [^)]* —— 跨不过 path.join 的右括号，恒假误红）。
+    const lanRetired = (src) => {
+      if (/configureFile\([^)]*ports-lan/.test(src)) return false;
+      if (!/configureFile\([^)]*'ports\.json'/.test(src)) return false;
+      const args = (/migrateByOwnerPrefix\(([\s\S]*?)\);/.exec(src) || ['', ''])[1];
+      return args.indexOf("'ports-lan.json'") >= 0
+        && args.indexOf("'ports-lan.json'") < args.indexOf("'ports.json'")
+        && /'relay:'/.test(args);
+    };
     check('B2-5 源码层：lan-daemon 不再把注册表指到 ports-lan.json，且 ports.json 为唯一落点',
-      !/configureFile\([^)]*ports-lan/.test(daemonSrc)
-      && /configureFile\([^)]*'ports\.json'/.test(daemonSrc)
-      && /migrateByOwnerPrefix\([^)]*ports-lan\.json[^)]*'relay:'/.test(daemonSrc), 'ok');
+      lanRetired(daemonSrc), 'ok');
     const facadeSrc = stripComments(fs.readFileSync(path.join(ROOT, 'src', 'app', 'facade', 'ports.js'), 'utf8'));
     check('B2-5 源码层：守卫聚合面 SIBLING_REGISTRIES 不含 ports-lan.json（router 侧仍为姊妹账）',
       /SIBLING_REGISTRIES\s*=\s*\[[^\]]*\]/.test(facadeSrc)
       && !/SIBLING_REGISTRIES\s*=\s*\[[^\]]*ports-lan\.json[^\]]*\]/.test(facadeSrc)
       && /SIBLING_REGISTRIES\s*=\s*\[[^\]]*ports-router\.json[^\]]*\]/.test(facadeSrc), 'ok');
-    // 反向（判据非空转）：旧形态「configureFile(ports-lan.json)」必须被上面第一条命中
-    check('B2-5 源码层反向：旧形态 configureFile(ports-lan) 样本确会被判据识别',
-      /configureFile\([^)]*ports-lan/.test("try { ports.configureFile(path.join(swDir, 'ports-lan.json')); } catch {}"), 'hit');
+    // 反向（判据非空转）：旧形态 configureFile(ports-lan) 命中、缺 ports.json 落点命中、
+    //   缺迁移条款命中；完整正形态必须过（防判据写成恒假）。
+    check('B2-5 源码层反向：三档违例形态各被识别且合成正形态通过（非空转、非恒假）',
+      !lanRetired("ports.configureFile(path.join(swDir, 'ports-lan.json'));")
+      && !lanRetired("ports.migrateByOwnerPrefix(path.join(swDir, 'ports-lan.json'), path.join(swDir, 'ports.json'), ['relay:']);")
+      && !lanRetired("ports.configureFile(path.join(swDir, 'ports.json'));")
+      && lanRetired("ports.migrateByOwnerPrefix(path.join(swDir, 'ports-lan.json'), path.join(swDir, 'ports.json'), ['relay:']); ports.configureFile(path.join(swDir, 'ports.json'));"), 'hit');
   }
 
   const failed = results.filter((r) => !r);
