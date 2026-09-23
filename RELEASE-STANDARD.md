@@ -66,7 +66,7 @@
 | S6 | CI 四平台构建 | 自动（`build` job，4 runner 矩阵）| ✅ | 看该平台日志 |
 | S6b | CI 四平台安装包冒烟（构建产物）| 自动（`build` job 步骤 `install-smoke-core.sh --pkg ./dist/npm/@dsh-sup/dsh-core-<os>-<arch>`）| ✅ | 看该平台日志（push/PR/tag 都跑）|
 | S7 | CI 四平台发布 | 自动（`build` job 内**单独发布步骤** `ci-core.sh --publish-only`；验证步骤不带令牌 —— A3-a）| ✅ | npm 同版本不可重发 → 提版本重来 |
-| S7b | 发布后安装包冒烟（公开 registry）| 自动（`published-smoke` job，4 平台矩阵，`install-smoke-core.sh --pkg '@dsh-sup/dsh-core-<os>-<arch>@<ver>'`）| ✅ | registry 传播延迟→按轮重试；末轮仍红查发布是否成功 |
+| S7b | 发布后安装包冒烟（公开 registry）| 自动（`published-smoke` job，4 平台矩阵，`install-smoke-core.sh --pkg '@dsh-sup/dsh-core-<os>-<arch>@<ver>'`）| ✅ | 末轮仍红：先查 npm 上该版本是否真在架（`registry.npmjs.org/@dsh-sup%2Fdsh-core-<plat>` 的 `versions`），再判冒烟本身 |
 | S8 | 发布后验证 | 见 §5 | ✅ | 立即处置（见 §6）|
 
 > **本地只完成 S0–S3**（凭据 / 版本 / 前端产物）；**S4（全量回归）由推送后的 CI test job 执行**，**S5 起全部在 CI 内完成**（见 ACCEPTANCE-STANDARD：本机不得执行任何测试）。
@@ -76,7 +76,8 @@
 把已产出的 npm 子包**真正 `npm i -g` 装成全局命令**，只跑装出来的那条命令（不碰源码树）。判据链：
 装全局命令可解析 → `--version` 自报 = `<ver>` → `self-check: OK` 且 `guardVersion=<ver>` → 隔离状态根起守卫（`daemon`）→ `/healthz` 2xx → `ports.json` 里 `supervisor-api` **唯一一条** 且其端口与 healthz 实际应答端口一致 → `npm rm -g` 收尾。
 - **S6b 是构建半边**：`build` job 内、dry-run 之后、发布之前，对本地 `dist/npm/@dsh-sup/dsh-core-<os>-<arch>` 目录跑，push/PR/tag 四平台都跑。
-- **S7b 是发布后半（`published-smoke` job）**：`needs: [precheck, build, release]` —— npm 发布动作在 `release` job 内，冒烟**必须等它**，否则同一 run 里抢先起跑、包尚未上架就 404 到耗尽重试。触发条件 `always() && (workflow_dispatch || (tag && needs.release.result == 'success'))`：tag 运行只在发布真成功后跑，`always()` 是为手动 `workflow_dispatch(ver=…)` 补跑历史版本留通道（非 tag 运行里 `release` 是 skipped，不写 `always()` 本 job 会被连带跳过 = 假绿）。从**公开 registry** 按 `@dsh-sup/dsh-core-<os>-<arch>@<ver>` 装已发布包（不读 `dist/`、不需 `NPM_TOKEN`）；registry/unpkg 传播有分钟级延迟，故重试 6 轮，**只有末轮失败才判红**。
+- **S7b 是发布后半（`published-smoke` job）**：`needs: [precheck, build, release]` —— npm 上传发生在 `build` job 的发布步（见 S7），`release` 又 needs 四条 build 腿，故带上 `release` 才传递性地等到四平台上传全部结束。触发条件 `always() && (workflow_dispatch || (tag && needs.release.result == 'success'))`：tag 运行只在发布真成功后跑，`always()` 是为手动 `workflow_dispatch(ver=…)` 补跑历史版本留通道（非 tag 运行里 `release` 是 skipped，不写 `always()` 本 job 会被连带跳过 = 假绿）。从**公开 registry** 按 `@dsh-sup/dsh-core-<os>-<arch>@<ver>` 装已发布包（不读 `dist/`、不需 `NPM_TOKEN`）。
+  **排在发布之后仍读不到包，卡的是可见性不是顺序**：packument 在 npm 本地缓存与 registry 前置缓存里都按 `max-age=300` 复用，故装命令带 `--prefer-online`（绕开两层缓存；本地目录形态不带），且重试预算要长过缓存生命周期 —— `ATTEMPTS=10 x SLEEP_SEC=75`，**只有末轮的 rc 决定判据**；中间轮只对「看不到该版本」这一类失败重试，挂在 self-check / healthz 的真缺陷立即定判。这四条各由 `install-smoke-gate-test.js` 的 `G4-registryCacheBust` / `G3-l` / `G3-m` 钉住，首跑的教训见该测试文件头注。
 - **darwin-x64 腿的宿主是 arm64**（macos-14 矩阵只有 arm64 机）：npm 按当前宿主拒装 os/cpu 不匹配的包（`EBADPLATFORM`）。
   子包运行时依赖为 0、纯 JS，os/cpu 只是分发选型元数据，故脚本**仅在撞上这一条时**带 `--force` 重装一次并留日志；
   其余安装失败一律判红 —— 常开 `--force` 会把真装不上的包也放行（判据 `G4-crossArchInstall` + 坏夹具钉住）。

@@ -6,6 +6,23 @@
 
 ## [未发布]
 
+### 修复：`published-smoke` 在包已上架的情况下判红（0.1.6-BETA.6 首跑暴露）
+
+发布后冒烟是 v0.1.6-BETA.6 首次真跑的，四平台全红，但线上四个子包当时都已发布成功 —— 红的是判据本身。
+取证：`release` job 结束于 09:47:13Z，npm 侧记录该版本的摄取时间是 09:48:04Z，而六轮重试（45 秒一拍）
+从 09:47:27Z 跑到 09:51:21Z 始终读到 `ETARGET`。真正卡住的是**可见性**而非执行顺序：packument 在 npm
+本地缓存与 registry 前置缓存里都按 `max-age=300` 复用，于是每一轮重试都读回首那份「尚无此版本」的元数据，
+重试预算等于空转（末轮从起 npm 到报错只用了约 0.2 秒，即缓存命中的直接证据）。
+
+- `release/scripts/install-smoke-core.sh`：registry 形态的装命令带 `--prefer-online`（实测该旗标会让请求
+  绕过前置缓存，`cf-cache-status` 由 HIT 转 MISS）；本地目录形态不带，避免把无谓的网络往返塞进 build job 的冒烟。
+- `.github/workflows/build.yml` 的 `published-smoke`：重试窗口由 6 轮 x 45 秒（270 秒，短于缓存生命周期）
+  改为 10 轮 x 75 秒（750 秒）；且**只对「registry 看不到该版本」这一类失败重试**，装上了却挂在
+  self-check / healthz 的真缺陷立即定判，不再把同一条缺陷抄满预算。判定口径不变：只有末轮的 rc 决定结果。
+- 门禁：`test/install-smoke-gate-test.js` 新增 `G4-registryCacheBust`（正向含绕缓存旗标、反向是常开该旗标的
+  坏夹具）、`G3-l/G3-m`（重试窗口秒数须达 600 秒、失败须分类）与 `G3-n/G3-o/G3-p/G3-q` 反向样本；
+  并纠正 `G3-i` 的归因注释 —— npm 上传实际发生在 build job 的发布步，`needs: release` 是传递性地等到它。
+
 ## [0.1.6-BETA.6]（2026-09-23）
 
 本版为全仓审计修复批的前三组收口：安装包冒烟执法（PR #37）、B1 运行期 P1 缺陷（PR #38）、

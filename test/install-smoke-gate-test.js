@@ -10,8 +10,10 @@
 // 锁定不变量：
 //   G1 脚本存在且 bash 形态（shebang + set -euo pipefail）
 //   G2 build.yml 引用脚本；build job 内的冒烟步在所有触发下都跑（无 tag-only if、无 continue-on-error）
-//   G3 published-smoke job 存在、needs 到 release（不抢发布）、tag 成功或 dispatch、从公开 registry 装（@dsh-sup/dsh-core-…@ver）而非 dist/
-//   G4 脚本含真判据：--version 相等 / self-check: OK / healthz 轮询 / supervisor-api 唯一记录 / 卸载 trap / daemon 用装出来的命令
+//   G3 published-smoke job 存在、needs 到 release（不抢发布）、tag 成功或 dispatch、从公开 registry 装（@dsh-sup/dsh-core-…@ver）而非 dist/；
+//      重试窗口的秒数要盖过 registry 前置缓存，且只对「看不到该版本」这一类失败重试
+//   G4 脚本含真判据：--version 相等 / self-check: OK / healthz 轮询 / supervisor-api 唯一记录 / 卸载 trap / daemon 用装出来的命令；
+//      registry 形态的装命令必须绕开 packument 缓存（本地目录装不带该旗标）
 //   G5 真判据所在行不得用 || true 兜空
 //   每条判据配反向样本：坏夹具必须让判据返回 false（证明判据有牙、非恒真）。
 
@@ -46,7 +48,21 @@ const judges = {
   // arm64 腿产 darwin-x64：npm 按当前宿主拒装（EBADPLATFORM）。只允许撞上这一条才带 --force 重装，
   // 裸装命令自己不得常开 --force —— 那会把真装不上的包放行成假绿。
   crossArchInstall: (t) => /grep -q EBADPLATFORM/.test(t)
-    && /npm i -g "\$PKG" --no-audit --no-fund >/.test(t) && /--force/.test(t),
+    && /npm i -g "\$PKG" --no-audit --no-fund \$NPM_RESOLVE_OPT >/.test(t) && /--force \$NPM_RESOLVE_OPT/.test(t),
+  // registry spec 才需要绕缓存：packument 在 npm 本地缓存与 registry 前置缓存里都按 max-age=300 复用，
+  // 不绕开则每一轮都读回首份「尚无此版本」的元数据。本地目录装不经 registry，带上就是无谓的网络往返。
+  registryCacheBust: (t) => /\[ -d "\$PKG" \] \|\| NPM_RESOLVE_OPT="--prefer-online"/.test(t)
+    && /npm i -g "\$PKG" --no-audit --no-fund \$NPM_RESOLVE_OPT/.test(t) && /--force \$NPM_RESOLVE_OPT/.test(t),
+};
+
+// 重试预算的两条形状判据（对反向样本可复用）。
+const retryWindowOk = (t) => {
+  const m = t.match(/ATTEMPTS=(\d+)[\s\S]*?SLEEP_SEC=(\d+)/);
+  return !!m && Number(m[1]) * Number(m[2]) >= 600;
+};
+const retryClassified = (t) => {
+  const g = t.match(/if ! grep -Eq '[^']*ETARGET[^']*' "\$ROUND_LOG"; then([\s\S]*?)fi/);
+  return !!g && /break/.test(g[1]) && /sleep "\$SLEEP_SEC"/.test(t);
 };
 
 // -- G1 脚本本体 --
@@ -87,8 +103,8 @@ console.log('== G3 published-smoke job ==');
   check('G3-e 冒烟公开包不挂载 NPM_TOKEN', !/NPM_TOKEN/.test(sec), 'ok');
   check('G3-f 重试有延迟且只有末轮决定判据（break 于成功、末轮失败才 exit）',
     /sleep/.test(sec) && /break/.test(sec) && /exit "\$rc"/.test(sec), 'ok');
-  // G3-i/G3-j：发布后半必须等**同一 run 的发布动作**完成。npm 发布在 release job 里，
-  //   只 needs build 会抢先起跑（线上已发好、冒烟却因 404 耗尽预算判红）；
+  // G3-i/G3-j：发布后半必须等**发布动作**完成。npm 上传在 build job 的发布步里，release 又 needs 四条
+  //   build 腿，故 needs 带上 release 才传递性地等到上传全部结束；
   //   而少了 always()，非 tag 运行里 release=skipped 会把本 job 连带跳过（假绿，比红更坏）。
   check('G3-i 依赖 release（发布后冒烟不得与发布动作赛跑）',
     /needs:\s*\[[^\]]*\brelease\b[^\]]*\]/.test(sec), (sec.match(/needs:.*/) || ['(无 needs)'])[0]);
@@ -104,6 +120,27 @@ console.log('== G3 published-smoke job ==');
     const race = "  needs: [precheck, build]\n    if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'";
     check('G3-k 反向：识别「抢先于发布」的坏 needs 与漏 always() 的坏 if',
       !/needs:\s*\[[^\]]*\brelease\b[^\]]*\]/.test(race) && !/always\(\)/.test(race), 'hit');
+  }
+  // G3-l..G3-q：重试预算的**形状**。排在发布之后仍读不到包，卡的是可见性而不是顺序，
+  //   所以窗口必须长到能盖过 registry 前置缓存，且不能把真缺陷也重试满预算。
+  //   判据跑在剥注释后的 job 段上——本 job 的说明文字里就带着 ETARGET 等关键词，不剥则判据空转。
+  {
+    const loop = stripComments(sec);
+    const win = loop.match(/ATTEMPTS=(\d+)[\s\S]*?SLEEP_SEC=(\d+)/) || [];
+    check('G3-l 重试窗口至少 600 秒（盖过 registry 缓存 max-age=300 的两倍）',
+      retryWindowOk(loop), (win[1] || '?') + ' 轮 x ' + (win[2] || '?') + ' 秒 = ' + Number(win[1] || 0) * Number(win[2] || 0) + ' 秒');
+    check('G3-m 只重试「registry 看不到该版本」，非传播类失败立即定判', retryClassified(loop), 'ok');
+    // 反向：短窗口（首跑那份 6 轮 x 45 秒）与不分类的重试循环都必须判 false。
+    const shortWin = 'ATTEMPTS=6\nSLEEP_SEC=45';
+    const blindRetry = 'ATTEMPTS=10\nSLEEP_SEC=75\n            else\n              rc=$?\n              sleep "$SLEEP_SEC"\n            fi';
+    check('G3-n 反向：识别「窗口短于缓存生命周期」的坏预算',
+      !retryWindowOk(shortWin) && retryWindowOk(loop), 'hit');
+    check('G3-o 反向：识别「不分失败类别一律重试」的坏循环',
+      !retryClassified(blindRetry) && !retryClassified(shortWin), 'hit');
+    check('G3-p 判据只看可执行行（job 段里的注释已被剥除，关键词藏不进注释）',
+      !/max-age/.test(sec) && /grep -Eq/.test(sec), 'ok');
+    check('G3-q 末轮定判：中间轮的 rc 不累加进最终判据',
+      /rc=0/.test(loop) && !/fails\+=|FAILS=/.test(loop), 'ok');
   }
 }
 
@@ -126,6 +163,8 @@ console.log('== G4 反向：坏夹具让判据返回 false ==');
     configBusinessKeys: "printf '{\"apiPort\":%d}\\n' \"$CONFIG_PORT\" > \"$SMOKE_HOME/supervisor/config.json\"",
     // 常开 --force 的裸装：平台校验被彻底关掉，真装不上也会一路往下跑 —— 必须判 false。
     crossArchInstall: 'npm i -g "$PKG" --no-audit --no-fund --force || fail "npm i -g 失败: $PKG"',
+    // 常开 --prefer-online：绕缓存这条不变量只属于 registry 形态，目录装带上就是无谓的网络往返。
+    registryCacheBust: 'npm i -g "$PKG" --no-audit --no-fund --prefer-online',
   };
   const bad = Object.entries(rev).filter(([k, s]) => judges[k](s));
   check('G4-rev 每条坏夹具都不被误判为通过', bad.length === 0, bad.map((x) => x[0]).join(', ') || '全部判 false');
