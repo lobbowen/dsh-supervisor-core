@@ -6,6 +6,11 @@
 
 ## [未发布]
 
+## [0.1.6-BETA.6]（2026-09-23）
+
+本版为全仓审计修复批的前三组收口：安装包冒烟执法（PR #37）、B1 运行期 P1 缺陷（PR #38）、
+B2 状态与意图单源（PR #39）。内核运行时依赖仍为 0；验证全部折进既有测试链，未新增测试文件。
+
 ### 补齐缺失的验证：CI 四平台「安装包冒烟」
 
 1.2.3 以来两仓都声明了安装包冒烟、却从无 CI 任务实现它 —— 内核发布物是全局安装的 npm 子包，
@@ -28,6 +33,49 @@
   （macOS bash 3.2 把全角字符首字节并进变量名）；darwin-x64 腿的宿主是 arm64，npm 按宿主拒装（`EBADPLATFORM`），
   改为仅在撞上这一条时按目标平台重装一次。三条各补判据（`G4-configBusinessKeys` / `G4-crossArchInstall`），
   反向夹具就是这次失败的那几行原文。
+
+### B1 运行期 P1 缺陷收口 —— HTTP 路径不再同步 exec，判据/校验五处单源（PR #38）
+
+审计真机现场：一次 5s 超时的同步 exec 能把单线程守卫冻结整拍，面板与心跳一起失联。
+
+- **同步 exec 冻结收口**：envStatus/versions/npm/checkEnvironment 全链路改异步探测（EnvCatalog
+  `probeAsync` 双口径；exec 同步版退守启动早期/CLI），api 域 `/env/status` 与 `/guard/version`
+  改 Promise 包装，`install()` 锁内首步异步环境检查；`runAsync` 兜住 `execFile` 的同步抛，
+  「绝不 reject」契约在 win 平台也成立。新增 G9-e 敏感路径同步 exec 门禁（执法）。
+- **CLI 不再永挂**：bin 的 `apiRequest`/`cmdUpgrade` 收敛到单一 `apiRaw`（5s 超时可报错退出）。
+- **远程开关不再静默变更**：`setRemoteMode` 必须显式 `off|lan|wan`，`setRemoteToken` 必须显式
+  字符串（空串=清除）——漏字段不再被当成「关闭远程控制 / 清空凭据」。
+- **STARTING 超时判据单源**：唯一判据 `startDeadlinePassed`（decide 纯段导出、controller 复用）；
+  从盘恢复无 deadline 时首拍重 derive 宽限，不误杀在途启动。
+- **rolledBack 只描述事实**：仅在回滚实据（`rb.ok` / 装回+核验通过）后置位，brief/CLI 文案不再虚报。
+- **判活 fail-open 收口**：`probeAlive` 三态化（EPERM=存活 / ESRCH=已亡 / 未知码保守），daemon
+  `_pidAlive` 未知态回落 ctl 端口属主 `ownerPid` 比对作第二证据，`waitProcessExit` 去掉 fail-open；
+  AT-1 判活基线 30->31 注明归属。
+
+### B2 状态与意图单源收口 —— 第二落点/第二本账废止，治理每拍恰一次（PR #39）
+
+审计的核心错位：同一事实存在两处落点（意图、端口账、退避计数），两边都能「对一半」，
+而治理决策还按实例数乘法放大。
+
+- **B2-1 沙箱运行意图第二落点废止**：`inst.state.desired` 整体退役（意图 = guardian 旗标 ×
+  启停动作本身），`.state.desired` 写口全域清零（GD-7 执法），model 仅留 `delete` 一次性残留剔除口。
+- **B2-2 guardian 退出目录面**：申报不带、`createEntry` 不物化、目录面三文件去注释零 guardian token
+  （GD-1 申报/运行期/源码三层）；权威只在 `dsh-main.json` / `inst.guardian`，消费者直读源。
+- **B2-3 fallback 暂存稿不再静默蒸发**：目录未就绪期的崩溃计数在真 entry 首见时回填；
+  fields.js 生命周期字段直写并入 `record.fieldOf` 唯一写口（ML-2 基线钉 0，回潮即红）。
+- **B2-4 config 写口归一**：lan-panel 自带 fs/writeAtomic 直写退场，持久化唯一入口
+  `state.persistConfigPatch`（fail-closed 保留原字节）+ `verifyPersisted` 写后读回核验；
+  旧键清理由别名字典驱动（`getConfigAliases`），仅当新旧键都在盘上才删旧键。
+- **B2-5 端口第二本账退场**：`ports-lan.json` 废止并入 `ports.json` 单本账（启动期按 owner 前缀
+  一次性迁移 `relay:*`，幂等）；注册表写口/冲突判读口按 mtime+size 指纹自动对时（分配锁内再对一次），
+  陈旧快照不再抢注「已配置但当前停止」的静默端口、全量覆盖不再丢写（ports-claim 补真跨进程夹具）；
+  实例启动对配置端口被他方登记即时显式拒绝 `PORT_TAKEN:<by>`，不等 systemd bind 失败。
+- **B2-6 五项小收口**：journal 令牌回填加 `_attachGen` 世代守卫（迟到死令牌不再在 detach 后回灌）；
+  OAuth 回调/浏览器监视按 `_ccLoginRound` 轮次比对，旧轮迟到回调一律 410（旧凭据绝不注入新轮）；
+  市场构建预算入 per-build `bctx`（叠建不再互踩 deadline，最坏数十分钟的挂请求消失）；
+  `act=start` 带 `opts.manual`，`_systemdStart` 成功即作废旧退避链（「重试超限」不再封死手动重试通道）；
+  governor 全花名册 `decide` 从逐实例监督拍移入心跳拍末钩子 `onBeatDone` -> `governSweep`
+  （每拍恰一次、同拍违规一起处置，N 实例 O(N²) 放大消失；ManagedRegistry 不可用时 startTimer 兜底同语义）。
 
 ## [0.1.6-BETA.5]（2026-09-23）
 
