@@ -190,7 +190,8 @@ function handle(ctx) {
           // 域动作的 {ok:false} 一律映射为非 2xx：恒 200 会让面板显示「已删除/已停止/已启动」而实际未生效。
           if (act === 'remove' && j.id) { const r = sup.instances.removeInstance(j.id); return send(r && r.ok ? 200 : 400, r); }
           if (act === 'update' && j.id) { const r = sup.instances.updateInstance(j.id, j); return send(r && r.ok ? 200 : 400, r); }
-          if (act === 'start' && j.id) return Promise.resolve(sup.instances.startInstance(j.id))
+          // 面板「启动/重试」= 用户显式动作：opts.manual 开新失败链（B2-6d，退避计数清零归监督拍累加）。
+          if (act === 'start' && j.id) return Promise.resolve(sup.instances.startInstance(j.id, { manual: true }))
             .then((r) => send(r && r.ok ? 200 : 400, r))
             .catch((e) => send(500, { ok: false, error: e.message }));
           if (act === 'stop' && j.id) { const r = sup.instances.stopInstance(j.id); return send(r && r.ok ? 200 : 400, r); }

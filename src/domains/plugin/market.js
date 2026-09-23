@@ -49,9 +49,6 @@ class PluginMarket {
     // 整体构建预算（默认 4 分钟）：社区源候选约 2468 个，8 并发分批最坏可达数十分钟，
     // 而 GET /plugins/market 会阻塞到构建完成。到点即停止发起新批次，用已采集部分构建索引。
     this.buildBudgetMs = opts.buildBudgetMs || 240000;
-    this._deadline = 0;
-    // 记录本次构建被预算截断的源：部分结果不得替换完整缓存（见 _buildIndexInner）。
-    this._truncatedSources = new Set();
     this.loadFromDisk();
   }
 
@@ -98,17 +95,17 @@ class PluginMarket {
 
   async buildIndex() {
     const start = Date.now();
-    // 构建期间置 deadline（各源可观察），finally 清零。
-    this._deadline = Date.now() + this.buildBudgetMs;
-    this._truncatedSources = new Set();
-    try { return await this._buildIndexInner(start); }
-    finally { this._deadline = 0; }
+    // B2-6c：预算归一次构建所有，不归实例——叠建（直接 buildIndex / 去重窗口外的竞拍）时
+    //   实例级 deadline 互踩：先结束者在 finally 清零，后启动者预算上限整个失效。
+    const bctx = { deadline: start + this.buildBudgetMs, truncated: new Set() };
+    try { return await this._buildIndexInner(start, bctx); }
+    finally { bctx.deadline = 0; } // 只清自己的；bctx 随本次构建销毁
   }
 
-  /** 预算是否已耗尽（供各源的批次循环调用）。 */
-  _budgetExhausted() { return this._deadline > 0 && Date.now() >= this._deadline; }
+  /** 预算是否已耗尽（供各源的批次循环调用；无 ctx = 单源直调，不设预算）。 */
+  _budgetExhausted(bctx) { return !!bctx && bctx.deadline > 0 && Date.now() >= bctx.deadline; }
 
-  async _buildIndexInner(start) {
+  async _buildIndexInner(start, bctx) {
     const plugins = [];
     const seen = new Set();
     const add = (p) => {
@@ -117,13 +114,13 @@ class PluginMarket {
       plugins.push(p);
     };
 
-    const npm = await this.indexNpm();
+    const npm = await this.indexNpm(bctx);
     npm.forEach(add);
 
-    const gh = await this.indexGithub();
+    const gh = await this.indexGithub(bctx);
     gh.forEach(add);
 
-    const community = await this.indexCommunity();
+    const community = await this.indexCommunity(bctx);
     community.forEach(add);
 
     for (const p of plugins) {
@@ -136,7 +133,7 @@ class PluginMarket {
 
     // 保护 A：被预算截断的源仍出现在结果里（只是不完整），不会触发保护 B，故与旧缓存按 source 取并集、
     // 不受 50% 比例约束（「截断」与「整源失败」语义不同，不能共用判据；否则会把完整列表换成缩水版）。
-    const truncated = this._truncatedSources || new Set();
+    const truncated = bctx.truncated;
     if (prev && prev.plugins && prev.plugins.length > 0 && truncated.size > 0) {
       const freshNames = new Set(plugins.map((pp) => pp.name));
       const kept = prev.plugins.filter((pp) => truncated.has(pp.source) && !freshNames.has(pp.name));
@@ -168,8 +165,8 @@ class PluginMarket {
     return this._cache;
   }
 
-  /** npm 源：搜 deepseek-harness 受限 dsh，逐个检测 dsh.bundle。 */
-  async indexNpm() {
+  /** npm 源：搜 deepseek-harness 受限 dsh，逐个检测 dsh.bundle。bctx 为本次构建的预算上下文（见 buildIndex）。 */
+  async indexNpm(bctx) {
     const out = [];
     const queries = ['keywords:deepseek-harness', 'keywords:dsh-bundle', 'keywords:dsh-plugin'];
     const allNames = new Set();
@@ -191,7 +188,7 @@ class PluginMarket {
     const batch = 8;
     for (let i = 0; i < names.length; i += batch) {
       // 预算耗尽即停止发起新批次（已采集部分照常返回）。
-      if (this._budgetExhausted()) { this._truncatedSources.add("npm"); this.logger.warn && this.logger.warn("market: npm 源预算耗尽，已处理 " + i + "/" + names.length + " 个候选"); break; }
+      if (this._budgetExhausted(bctx)) { bctx.truncated.add("npm"); this.logger.warn && this.logger.warn("market: npm 源预算耗尽，已处理 " + i + "/" + names.length + " 个候选"); break; }
       const slice = names.slice(i, i + batch);
       await Promise.all(slice.map(async (name) => {
         const meta = await this.safeFetchLatest(name);
@@ -215,7 +212,7 @@ class PluginMarket {
   }
 
   /** GitHub 源：搜 topic:dsh-plugin + deepseek-harness，逐个验证 dsh.bundle。 */
-  async indexGithub() {
+  async indexGithub(bctx) {
     const out = [];
     const topics = ['dsh-plugin', 'deepseek-harness'];
     const seen = new Set();
@@ -246,7 +243,7 @@ class PluginMarket {
   }
 
   /** 社区列表：抓 awesome-dsh-plugin README 白名单（官方社区维护的精选）。 */
-  async indexCommunity() {
+  async indexCommunity(bctx) {
     const out = [];
     try {
       const md = await rawGet('awesome-dsh-plugin/awesome-dsh-plugin/main/README.md', false, 30000);
@@ -259,7 +256,7 @@ class PluginMarket {
       const seenName = new Set();
       for (let i = 0; i < links.length; i += 8) {
         // 预算耗尽即停止（社区源候选最多，最易超时）。
-        if (this._budgetExhausted()) { this._truncatedSources.add("community"); this.logger.warn && this.logger.warn("market: community 源预算耗尽，已处理 " + i + "/" + links.length + " 个候选"); break; }
+        if (this._budgetExhausted(bctx)) { bctx.truncated.add("community"); this.logger.warn && this.logger.warn("market: community 源预算耗尽，已处理 " + i + "/" + links.length + " 个候选"); break; }
         const slice = links.slice(i, i + 8);
         await Promise.all(slice.map((link) => addCommunityLink(this, link, out, seenName)));
       }

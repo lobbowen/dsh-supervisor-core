@@ -68,9 +68,13 @@ function composeDomains(host) {
         // 目录应然/相位同步）；域业务（CRUD/安装/装配/systemd/持久化）仍在 InstanceManager。
         host.managedObjects.registerAdapter('sandbox-instance', { supervise: (entry) => host._sandboxSuperviseOnce(entry), tickEvery: 1 });
       }
+      // B2-6e：governor 全花名册 decide 与监督同源、每心跳拍恰好一次（拍末钩子），
+      // 不再随逐实例 supervise 拍执行——N 个 RUNNING 实例把 decide 乘法放大的 O(N^2) 消失。
+      if (host.managedObjects) host.managedObjects.onBeatDone = () => host.instances.governSweep();
     } catch (e) { host.logger && host.logger.warn && host.logger.warn('managed registry init: ' + (e && e.message)); }
-    // relay 在 daemon 模式唯一由独立 lan-daemon 承载（独占 ports-lan），守卫只在非 daemon
-    //   经 get lan() 惰性创建本地实例；无条件 new 会让漏网调用把 relay 写进 ports.json。
+    // relay 在 daemon 模式唯一由独立 lan-daemon 承载，守卫只在非 daemon 经 get lan() 惰性创建
+    //   本地实例；两种模式同写 ports.json（B2-5 单源），漏网 new 不再分裂出第二本账，
+    //   但本地/daemon 双载体仍会互相抢 relay 绑定，故按模式收敛创建点。
     host._lan = null;
     host.pluginMarket = new PluginMarket({
       stateFile: host.config.stateFile,

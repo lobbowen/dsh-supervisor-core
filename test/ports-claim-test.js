@@ -67,20 +67,26 @@ const RANGE = { base: 28130, count: 50 };
   const recMain = ports.list().find((r) => r.owner === 'relay:main');
   check('main 已迁移并登记新端口', !!recMain && recMain.port === mig.port && recMain.port !== RANGE.base, JSON.stringify(recMain));
 
-  // reload 契约（阶段三）：读路径以权威文件为准——外部进程新增记录后 reload 可见；
-  // 内存未落盘记录 reload 后丢弃（以文件为 truth 的语义）。
+  // B2-5 契约：注册表是多进程共享事实源（守卫 + lan-daemon 同写 ports.json）。
+  //   写口/冲突判读口进入前按指纹（mtime+size）自动对时——「阶段三」手动 reload 前的
+  //   陈旧快照语义**已废止**；「以文件为 truth、未落盘内存记录丢弃」保留。
   {
-    const p2 = new PortRegistry({ file: path.join(TMP, 'ports-reload.json') });
+    const p2 = new PortRegistry({ file: path.join(TMP, 'ports-resync.json') });
     await p2.claimSlot('relay', 'owner-A', { range: RANGE });
     const pA = p2.byOwner('owner-A');
     // 模拟另一进程（独立实例）向同一文件写入新记录
-    const pOther = new PortRegistry({ file: path.join(TMP, 'ports-reload.json') });
+    const pOther = new PortRegistry({ file: path.join(TMP, 'ports-resync.json') });
     const slotB = await pOther.claimSlot('relay', 'owner-B', { range: RANGE });
-    check('R-reload-1 外部新增记录文件已含 owner-B', !!slotB && slotB.port > 0, String(slotB && slotB.port));
-    check('R-reload-2 reload 前内存不见 owner-B（陈旧快照）', p2.byOwner('owner-B') === null, String(p2.byOwner('owner-B')));
-    p2.reload();
-    check('R-reload-3 reload 后 owner-B 可见（以文件为准）', p2.byOwner('owner-B') === slotB.port, String(p2.byOwner('owner-B')));
-    check('R-reload-4 reload 后 owner-A 绑定保留', p2.byOwner('owner-A') === pA, String(p2.byOwner('owner-A')));
+    check('RS-auto-1 外部进程新增记录无需手动 reload 即可见（B2-5 自动对时）',
+      !!slotB && p2.byOwner('owner-B') === slotB.port, String(p2.byOwner('owner-B')));
+    check('RS-auto-2 对时后既有绑定不丢', p2.byOwner('owner-A') === pA, String(p2.byOwner('owner-A')));
+    // 反向（判据非空转）：只改内存不落盘 -> 对时后仍被丢弃（文件 truth 语义未被削弱）
+    p2._records.set(RANGE.base + 45, { port: RANGE.base + 45, role: 'relay', owner: 'owner-ghost', createdAt: Date.now() });
+    await pOther.claimSlot('relay', 'owner-C', { range: RANGE }); // 外部再写一版文件
+    check('RS-auto-3 反向：未落盘的内存注入对时后丢弃（以文件为准）',
+      p2.byOwner('owner-ghost') === null, String(p2.byOwner('owner-ghost')));
+    check('RS-auto-4 显式 reload() 仍作为强制重载 API 可用',
+      (p2.reload(), p2.byOwner('owner-B') === slotB.port), 'ok');
   }
 
   // -- B14：IPv6-only 监听不再漏判 + 跨进程分配锁 + 登记后复检 --
@@ -173,6 +179,83 @@ const RANGE = { base: 28130, count: 50 };
     sz.registerSole(SOLE, pNew);
     check('KI1 registerSole 能把老版本留下的僵尸记录清掉（升级后自愈）',
       sz.list().filter((r) => r.role === SOLE).length === 1 && sz.get(SOLE) === pNew, JSON.stringify(sz.list()));
+  }
+
+  // == B2-5 跨进程夹具：两个真 node 进程共写同一 ports.json，B（常驻方）不得抢注/丢写
+  //    A 侧「已配置但停止」的端口（静默端口 TCP 探测不可见，注册表是唯一可见性来源）。
+  //    双本账（ports-lan.json）与陈旧快照语义下此夹具必红——本段即该缺陷的牙齿。 ==
+  {
+    const { spawn } = require('node:child_process');
+    const XF = path.join(TMP, 'ports-xproc.json');
+    const XB = 28310; // 避开 _ports.js 全部已登记段（28000+27*10-1=28269 以内）
+    fs.rmSync(XF, { force: true });
+    // 子进程：构造注册表（此刻 A 尚未登记任何记录 => 真正陈旧的快照），READY 后等 stdin 一发令即 claim。
+    const CHILD = [
+      'const { PortRegistry } = require(' + JSON.stringify(path.join(ROOT, 'src', 'platform', 'service', 'ports', 'index.js')) + ');',
+      'const reg = new PortRegistry({ file: process.argv[1] });',
+      'console.log("READY");',
+      'process.stdin.once("data", async () => {',
+      '  const r = await reg.claimSlot("relay", "relay:longlive", { range: { base: ' + XB + ', count: 5 } });',
+      '  console.log("RESULT:" + JSON.stringify(r));',
+      '  process.exit(0);',
+      '});',
+    ].join('\n');
+    const child = spawn(process.execPath, ['-e', CHILD, XF], { stdio: ['pipe', 'pipe', 'pipe'] });
+    let out = '';
+    child.stdout.on('data', (c) => { out += c; });
+    const deadline = Date.now() + 15000;
+    while (out.indexOf('READY') < 0 && Date.now() < deadline) await new Promise((r) => setTimeout(r, 50));
+    check('B2-5 夹具启动：B 侧进程就绪（其注册表快照早于 A 侧登记）', out.indexOf('READY') >= 0, out.slice(0, 80));
+    // A 进程：登记「配置端口但实例停止」——只落注册表，无任何监听。
+    const regA = new PortRegistry({ file: XF });
+    regA.registerUser(XB, 'inst:stopped');
+    child.stdin.on('error', () => { /* 子进程已亡：由下面的有界 exit 断言如实报红 */ });
+    child.stdin.write('GO\n');
+    // 有界等待：子进程卡死（探针/锁异常）也必须让本套件如实报红，绝不吊死 CI 链
+    const exitCode = await new Promise((res) => {
+      const t = setTimeout(() => { try { child.kill('SIGKILL'); } catch {} res('timeout'); }, 20000);
+      child.once('exit', (c) => { clearTimeout(t); res(c); });
+    });
+    const line = (out.split('RESULT:')[1] || '').split('\n')[0];
+    let bRes = null;
+    try { bRes = JSON.parse(line); } catch { /* 保留 null 让断言如实报红 */ }
+    check('B2-5 跨进程：B 侧 claim 绕开 A 侧已登记的静默端口 ' + XB + '（陈旧快照不得抢注）',
+      exitCode === 0 && !!bRes && !bRes.conflict && bRes.port > 0 && bRes.port !== XB,
+      'exit=' + exitCode + ' bRes=' + line);
+    const fileRecs = JSON.parse(fs.readFileSync(XF, 'utf8')).records;
+    check('B2-5 跨进程：B 侧落盘不丢写——ports.json 仍含 A 侧 inst:stopped@' + XB + '（全量覆盖=丢更新）',
+      fileRecs.some((r) => r.port === XB && r.owner === 'inst:stopped'), JSON.stringify(fileRecs));
+    check('B2-5 跨进程：B 侧自己的绑定也在册（对时是合并视野而非失忆）',
+      fileRecs.some((r) => r.owner === 'relay:longlive'), JSON.stringify(fileRecs.map((r) => r.owner)));
+  }
+
+  // == B2-5 源码层：第二本账 ports-lan.json 已退场（剥注释判据，防注释自证）==
+  {
+    const { stripComments } = require('./_strip');
+    const daemonSrc = stripComments(fs.readFileSync(path.join(ROOT, 'src', 'domains', 'relay', 'daemon.js'), 'utf8'));
+    // 判据函数化：三条款缺一即不过（旧实现把 migrate 条款写成 [^)]* —— 跨不过 path.join 的右括号，恒假误红）。
+    const lanRetired = (src) => {
+      if (/configureFile\([^)]*ports-lan/.test(src)) return false;
+      if (!/configureFile\([^)]*'ports\.json'/.test(src)) return false;
+      const args = (/migrateByOwnerPrefix\(([\s\S]*?)\);/.exec(src) || ['', ''])[1];
+      return args.indexOf("'ports-lan.json'") >= 0
+        && args.indexOf("'ports-lan.json'") < args.indexOf("'ports.json'")
+        && /'relay:'/.test(args);
+    };
+    check('B2-5 源码层：lan-daemon 不再把注册表指到 ports-lan.json，且 ports.json 为唯一落点',
+      lanRetired(daemonSrc), 'ok');
+    const facadeSrc = stripComments(fs.readFileSync(path.join(ROOT, 'src', 'app', 'facade', 'ports.js'), 'utf8'));
+    check('B2-5 源码层：守卫聚合面 SIBLING_REGISTRIES 不含 ports-lan.json（router 侧仍为姊妹账）',
+      /SIBLING_REGISTRIES\s*=\s*\[[^\]]*\]/.test(facadeSrc)
+      && !/SIBLING_REGISTRIES\s*=\s*\[[^\]]*ports-lan\.json[^\]]*\]/.test(facadeSrc)
+      && /SIBLING_REGISTRIES\s*=\s*\[[^\]]*ports-router\.json[^\]]*\]/.test(facadeSrc), 'ok');
+    // 反向（判据非空转）：旧形态 configureFile(ports-lan) 命中、缺 ports.json 落点命中、
+    //   缺迁移条款命中；完整正形态必须过（防判据写成恒假）。
+    check('B2-5 源码层反向：三档违例形态各被识别且合成正形态通过（非空转、非恒假）',
+      !lanRetired("ports.configureFile(path.join(swDir, 'ports-lan.json'));")
+      && !lanRetired("ports.migrateByOwnerPrefix(path.join(swDir, 'ports-lan.json'), path.join(swDir, 'ports.json'), ['relay:']);")
+      && !lanRetired("ports.configureFile(path.join(swDir, 'ports.json'));")
+      && lanRetired("ports.migrateByOwnerPrefix(path.join(swDir, 'ports-lan.json'), path.join(swDir, 'ports.json'), ['relay:']); ports.configureFile(path.join(swDir, 'ports.json'));"), 'hit');
   }
 
   const failed = results.filter((r) => !r);

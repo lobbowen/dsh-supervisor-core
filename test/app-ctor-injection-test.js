@@ -35,8 +35,9 @@ function fakeRegistry() {
     get: (id) => entries.get(id),
     list: () => [...entries.values()],
     setPhase(id, ph) { const e = entries.get(id); if (e) { e.phase = ph; e.lastTransitionAt = 't'; } },
-    // 与真实 registry.update 同源的关键语义：**值为 undefined 的键不改写**（域 B 申报不带 guardian，
-    //   靠这一点不被写成 undefined；用裸 Object.assign 会抹掉，假件反而比实现更严）。
+    // 与真实 registry.update 同源的关键语义：**值为 undefined 的键不改写**（沙箱申报不带
+    //   desired/guardian（B2-1/B2-2），靠这一点不会把目录已有键抹成 undefined；
+    //   用裸 Object.assign 会抹掉，假件反而比实现更严）。
     update(id, patch) {
       const e = entries.get(id);
       if (!e) return { ok: false, error: '未注册: ' + id };
@@ -98,6 +99,55 @@ function fakeRegistry() {
 }
 
 // ---------------------------------------------------------------------------
+// M3（B2-3，审计 #26）：main-record fallback 是「目录未就绪期的暂存稿」，不是孤儿稿。
+//   随目录持久化的字段（崩溃窗/退避/重启计数）在 fallback 期写入，必须于真 entry 首见时
+//   一次性回填；目录侧带真实数据（非 createEntry 缺省）时草稿让位，绝不反向覆盖。
+//   顺带钉死：fallback entry 形态不含 guardian 键（与 B2-2 同批的红线收口）。
+// ---------------------------------------------------------------------------
+{
+  const t = fs.mkdtempSync(path.join(os.tmpdir(), 'm3-fallback-'));
+  const mk = (reg) => createStateStore({
+    getConfig: () => ({ stateFile: path.join(t, 'state.json') }),
+    getConfigPath: () => path.join(t, 'config.json'),
+    getLogger: () => ({ warn() {} }),
+    getEvents: () => null,
+    getManagedObjects: () => reg,
+    getInstances: () => null,
+    getViews: () => ({ status: () => ({ updatedAt: null }) }),
+    getIntents: () => null,
+    getHold: () => false, setHold() {}, getSince: () => null, setSince() {},
+    getCrashHalted: () => false, setCrashHalted() {},
+    getManualRestart: () => false, setManualRestart() {},
+    stopProcess() {}, tick() {},
+  });
+  check('M3a fallback entry 形态不含 guardian 键（B2-3 红线收口）',
+    !('guardian' in mk(fakeRegistry()).fallbackEntry()),
+    Object.keys(mk(fakeRegistry()).fallbackEntry()).join(','));
+
+  const reg = fakeRegistry();
+  const st = mk(reg);
+  st.field('restartCount', 5); st.field('backoffLevel', 2); st.field('backoffUntil', 999);
+  st.field('crashWindowStart', 1234); st.field('crashWindowRestarts', 4);
+  check('M3a 未就绪期草稿写读一致',
+    st.field('restartCount') === 5 && st.field('crashWindowStart') === 1234, 'fallback 直读');
+  // 真 entry 出现（计数=createEntry 缺省零值）-> 首见即回填（审计缺陷的正面反证）。
+  reg.register({ kind: 'dsh', id: 'main', desired: 'running',
+    restartCount: 0, backoffLevel: 0, backoffUntil: null, crashWindowStart: null, crashWindowRestarts: 0 });
+  const e = st.store();
+  check('M3b 真 entry 首见即回填（目录未就绪期计数不再静默丢失）',
+    e.restartCount === 5 && e.backoffLevel === 2 && e.backoffUntil === 999
+    && e.crashWindowStart === 1234 && e.crashWindowRestarts === 4,
+    'r=' + e.restartCount + ' bl=' + e.backoffLevel + ' bu=' + e.backoffUntil);
+  // 草稿让位盘上真实数据：entry 侧非缺省值（7）时回填绝不压制它。
+  const reg3 = fakeRegistry();
+  const st3 = mk(reg3);
+  st3.field('restartCount', 5);                                                // 草稿期写 5
+  reg3.register({ kind: 'dsh', id: 'main', desired: 'running', restartCount: 7 }); // 目录真实计数 7
+  check('M3c 目录侧真实计数优先（回填仅在缺省位，草稿不反向覆盖）',
+    st3.store().restartCount === 7, 'r=' + st3.store().restartCount);
+}
+
+// ---------------------------------------------------------------------------
 // config.json 读/解析失败 -> **拒绝写回**（fail-closed），
 //   原字节保留；仅 ENOENT（首启）照常写入。旧行为 catch{} 后以 cur={} 覆盖 -> 全键静默蒸发。
 // ---------------------------------------------------------------------------
@@ -108,6 +158,7 @@ function fakeRegistry() {
   const warns = []; const evs = [];
   const d = createDesired({
     getConfigPath: () => cf,
+    getConfigAliases: () => [['switcherAutoStart', 'routerAutostart']],
     getLogger: () => ({ warn: (m) => warns.push(String(m)) }),
     getEvents: () => ({ append: (e) => evs.push(e) }),
     fields: {}, store: {},
@@ -128,6 +179,17 @@ function fakeRegistry() {
   check('A1a 不静默：warn 日志 + config_persist_aborted 事件都在',
     warns.some((w) => /fail-closed/.test(w)) && evs.filter((e) => e === 'config_persist_aborted').length >= 3,
     JSON.stringify(evs));
+
+  // -- B2-4：legacy 键清理由别名字典驱动（与 domain-config 声明同源，不再硬编码键名）--
+  fs.rmSync(cf);
+  fs.writeFileSync(cf, JSON.stringify({ switcherAutoStart: true }));
+  d.persistConfigPatch({ apiPort: 6001 });
+  check('B2-4 新键未落盘时旧键保留（旧键可能是唯一意图，预删=静默丢失）',
+    JSON.parse(fs.readFileSync(cf, 'utf8')).switcherAutoStart === true, 'ok');
+  d.persistConfigPatch({ routerAutostart: true });
+  const conv = JSON.parse(fs.readFileSync(cf, 'utf8'));
+  check('B2-4 新旧键并存的瞬间之后即收敛（字典驱动，非键名硬编码）',
+    conv.routerAutostart === true && !('switcherAutoStart' in conv), JSON.stringify(conv));
 }
 
 // ---------------------------------------------------------------------------
@@ -159,6 +221,59 @@ function fakeRegistry() {
     JSON.parse(fs.readFileSync(mf, 'utf8')).remoteToken === 'TK-RESET', fs.readFileSync(mf, 'utf8').slice(0, 60));
   ms.writeDshMain({ guardian: true });
   check('A1b 解锁后普通写恢复', JSON.parse(fs.readFileSync(mf, 'utf8')).guardian === true, 'ok');
+}
+
+// ---------------------------------------------------------------------------
+// B2-4 lan-panel 写口归一：setLanPanel 不再自拼 read-merge-write，
+//   与 access.js 同口径 = state.persistConfigPatch（唯一入口）+ verifyPersisted（写后读回）。
+//   判红点：配置损坏时经单源 fail-closed **原字节保留**且如实回 ok:false。
+// ---------------------------------------------------------------------------
+{
+  const t = fs.mkdtempSync(path.join(os.tmpdir(), 'b24-lanpanel-'));
+  const cf = path.join(t, 'config.json');
+  const { createDesired } = require(path.join(ROOT, 'src', 'app', 'state', 'desired.js'));
+  const lpMethods = require(path.join(ROOT, 'src', 'app', 'settings', 'lan-panel.js')).methods;
+  const mk = () => {
+    const evs = [];
+    const state = createDesired({
+      getConfigPath: () => cf,
+      getLogger: () => ({ warn() {} }),
+      getEvents: () => ({ append: (e) => evs.push(e) }),
+      fields: {}, store: {},
+    });
+    const host = Object.assign({}, lpMethods, {
+      config: { apiHost: '0.0.0.0', apiPort: 3080, apiAccessKey: 'k' },
+      configPath: cf, logger: { warn() {}, info() {}, error() {} },
+      events: { append: (e) => evs.push(e) }, state,
+      // 重绑门控是「changed && api().close 存在」（lan-panel.js:79）：夹具不挂 api 则该分支永不走。
+      api: { close() {} },
+      _apiRebind() { host.__rebound = (host.__rebound || 0) + 1; },
+    });
+    return { host, evs };
+  };
+  fs.writeFileSync(cf, JSON.stringify({ apiHost: '0.0.0.0', apiPort: 3080 }));
+  {
+    const { host } = mk();
+    const r = host.setLanPanel(false); // 0.0.0.0 -> 127.0.0.1
+    const doc = JSON.parse(fs.readFileSync(cf, 'utf8'));
+    check('B2-4 setLanPanel 经单源写口落盘 + 内存同步 + 触发重绑',
+      r.ok === true && doc.apiHost === '127.0.0.1' && host.config.apiHost === '127.0.0.1' && host.__rebound === 1,
+      JSON.stringify({ ok: r.ok, doc }));
+  }
+  {
+    fs.writeFileSync(cf, '{"apiAccessKey":"SECRET","swit'); // 半截 JSON
+    const { host, evs } = mk();
+    const r = host.setLanPanel(false);
+    check('B2-4 配置损坏：经 fail-closed 单源拒写、原字节保留、如实回 ok:false',
+      r.ok === false && fs.readFileSync(cf, 'utf8') === '{"apiAccessKey":"SECRET","swit'
+      && evs.indexOf('config_persist_aborted') >= 0, JSON.stringify(r.error));
+  }
+  {
+    // 写口唯一性（源码层）：lan-panel 不再 require fs/writeAtomic 直写配置。
+    const src = require('./_strip').stripComments(fs.readFileSync(path.join(ROOT, 'src/app/settings/lan-panel.js'), 'utf8'));
+    check('B2-4 源码层：lan-panel 无 fs/writeAtomic 直写路径（唯一入口=persistConfigPatch）',
+      !/writeAtomic|readFileSync/.test(src) && /persistConfigPatch/.test(src), 'ok');
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -222,7 +337,9 @@ function fakeRegistry() {
   check('P3 syncDshView → dsh running + guardian 同源', lcMap.get('dsh').phase === 'running' && lcMap.get('dsh').guardian === true, lcMap.get('dsh').phase);
 
   const spec = control.sandboxSpec({ id: 's1', name: '沙箱', port: 3900, state: { phase: 'RUNNING' }, guardian: true });
-  check('P4 sandboxSpec 申报 desired=running + unit', spec && spec.desired === 'running' && spec.ownership.unit === 'dsh-web@s1', JSON.stringify(spec && spec.ownership));
+  check('P4 sandboxSpec 申报不含 desired（B2-1）也不含 guardian（B2-2）+ unit 在位',
+    spec && !('desired' in spec) && !('guardian' in spec) && spec.ownership.unit === 'dsh-web@s1',
+    'keys=' + Object.keys(spec || {}).join(','));
   check('P5 sandboxSpec 的 rootPath 来自实例域', spec.ownership.rootPath === '/root/s1', spec.ownership.rootPath);
 
   control.upsert(spec);
@@ -234,14 +351,15 @@ function fakeRegistry() {
   control.syncManagedRegistry();
   const keys = [...reg.entries.keys()].sort();
   check('P8 syncManagedRegistry 申报 main + router/lan daemon', keys.join(',') === 'lan-daemon,main,router-daemon', keys.join(','));
-  check('P9 域 B daemon 申报不含 guardian 字段（G-1）',
-    !('guardian' in reg.get('router-daemon')) && !('guardian' in reg.get('lan-daemon')), 'ok');
+  check('P9 B2-2 目录申报项一律无 guardian 键（main/router-daemon/lan-daemon，域记录才是权威源）',
+    ['main', 'router-daemon', 'lan-daemon'].every((k) => reg.get(k) && !('guardian' in reg.get(k))),
+    ['main', 'router-daemon', 'lan-daemon'].map((k) => k + ':' + (reg.get(k) ? Object.keys(reg.get(k)).join('/') : '缺')).join(' | '));
 
-  // -- D-8：沙箱 desired 的唯一来源是实例意图字段，观测（phase）不得进应然面（ST-2c 收口） --
-  //   旧形态：sandboxSpec 的 desired 由 inst.state.phase 反推，心跳每拍裸 upsert => 实例一崩进
-  //   BACKOFF，目录里的用户意图被静默改成 stopped 且无人恢复。当时的解法是 keepDesired 冻写。
-  //   ST-2c 起意图有了落点（inst.state.desired，由 lifecycle 的 start/stop 按 intent 分档写），
-  //   投影怎么写都不会错，故旗标机制整体废止 —— 本块的断言随实盘反转，不是绕过。
+  // -- D-8：沙箱不申报 desired（B2-1 第二落点废止）也不申报 guardian（B2-2 目录面零持键）--
+  //   旧形态一：sandboxSpec 的 desired 由 inst.state.phase 反推 => 实例一崩进 BACKOFF，意图被观测改写。
+  //   旧形态二（ST-2c）：desired 取 inst.state.desired 投影 => 该落点无决策消费者，纯空转字段。
+  //   收口后 spec 不含 desired，registry.update 见 undefined 即跳过——观测/启动对齐路径对沙箱
+  //   目录的 desired 彻底没有写权。本块钉 spec 形状、行为与判别器分辨力，不是绕过。
   {
     // 夹具接线：观测对象必须与上面 `control` 的 getManagedObjects 注入的是同一个 `reg`。
     //   两条教训（旧注释保留，仍然成立）：
@@ -255,43 +373,37 @@ function fakeRegistry() {
     control.upsert(control.sandboxSpec(sb({ state: { phase: 'RUNNING', desired: 'running' } })));
     check('D-8 前提：首登确实落到 control 的注册表（未接线即判红，不再崩溃）',
       !!d8.get('d8'), d8.get('d8') ? 'registered' : 'ABSENT');
-    check('D-8 前提：意图 running 投影为目录 desired=running',
-      ent('d8').desired === 'running', String(ent('d8').desired));
-    control.upsert(control.sandboxSpec(sb({ name: '改名', state: { phase: 'BACKOFF', desired: 'running' } })));
-    check('D-8 行为：裸 upsert 下 BACKOFF 不抹意图，name 等其余应然仍随观测刷新',
-      ent('d8').desired === 'running' && ent('d8').name === '改名',
+    check('D-8 形状：sandboxSpec 不再含 desired 键（意图投影没有来源）',
+      !('desired' in control.sandboxSpec(sb({ state: { phase: 'STOPPED', desired: 'stopped' } }))),
+      'keys=' + Object.keys(control.sandboxSpec(sb({}))).join(','));
+    // 假件 register 直通 spec（真实 registry 的 createEntry 缺省归一由 managed-registry-test 单独钉），
+    //   所以这里能钉到更强的形态：沙箱申报路径对目录 desired **一个值都不写**。
+    check('D-8 行为：register 直通后目录 desired 为空（spec 不带键，残留意图字段不参与）',
+      ent('d8').desired === undefined, String(ent('d8').desired));
+    control.upsert(control.sandboxSpec(sb({ name: '改名', state: { phase: 'BACKOFF', desired: 'stopped' } })));
+    check('D-8 行为：残留意图翻成 stopped + BACKOFF 观测，裸 upsert 仍不写 desired，name 照常刷新',
+      ent('d8').desired === undefined && ent('d8').name === '改名',
       'desired=' + ent('d8').desired + ' name=' + ent('d8').name);
-    control.upsert(control.sandboxSpec(sb({ state: { phase: 'RUNNING', desired: 'stopped' } })));
-    check('D-8 行为：意图 stopped 即便相位 RUNNING 也投影成 stopped（实然不翻意图）',
-      ent('d8').desired === 'stopped', String(ent('d8').desired));
-    control.upsert(control.sandboxSpec(sb({ state: { phase: 'STOPPED', desired: 'running' } })));
-    check('D-8 行为：意图 running 即便相位 STOPPED 也投影回 running（双向都由意图说了算）',
-      ent('d8').desired === 'running', String(ent('d8').desired));
-    control.upsert(control.sandboxSpec(sb({ id: 'd8r', name: '沙箱2', port: 3902, state: { phase: 'STOPPED', desired: 'stopped' } })));
-    check('D-8 register 分支：新记录按自身意图登记（缺省 stopped 不谎报 running）',
-      ent('d8r').desired === 'stopped', String(ent('d8r').desired));
 
-    // 源码形态：desired 的来源标签 + 旗标机制必须整体消失。判别器只认 sandboxSpec 函数体，
-    //   且带三档返回值（intent/derived/absent），下面用真源码造正反样本证明它有分辨力。
+    // 源码形态：三条申报线必须整体消失；判别器用两代旧形态合成样本证明它有分辨力。
     const { stripComments } = require('./_strip');
     const ad = stripComments(fs.readFileSync(path.join(ROOT, 'src', 'app', 'control', 'instance-adapter.js'), 'utf8'));
     const bs = stripComments(fs.readFileSync(path.join(ROOT, 'src', 'app', 'assembly', 'compose', 'observers.js'), 'utf8'));
     const sp = stripComments(fs.readFileSync(path.join(ROOT, 'src', 'app', 'control', 'specs.js'), 'utf8'));
     const lc = stripComments(fs.readFileSync(path.join(ROOT, 'src', 'domains', 'instance', 'lifecycle.js'), 'utf8'));
-    const DESIRED_LINE = /desired:\s*\(inst\.state[^?]*\?\s*'stopped'\s*:\s*'running'/;
-    const desiredSourceOf = (src) => {
-      const specBody = (/function sandboxSpec[\s\S]*?\n  \}/.exec(src) || [''])[0];
-      if (/desired:\s*\(inst\.state && inst\.state\.desired === 'stopped'\)/.test(specBody)) return 'intent';
-      if (/desired:\s*running\s*\?\s*'running'\s*:\s*'stopped'/.test(specBody)) return 'derived';
-      return 'absent';
-    };
-    check('D-8 接线：sandboxSpec 的 desired 取实例意图字段', desiredSourceOf(sp) === 'intent', desiredSourceOf(sp));
-    check('D-8 反向：desired 退回按 phase 三元推导即判红（判别器非空转）',
-      desiredSourceOf(sp.replace(DESIRED_LINE, "desired: running ? 'running' : 'stopped'")) === 'derived',
-      desiredSourceOf(sp.replace(DESIRED_LINE, "desired: running ? 'running' : 'stopped'")));
-    check('D-8 反向：删掉 desired 行判 absent（判别器不会恒判 intent）',
-      desiredSourceOf(sp.replace(DESIRED_LINE, '')) === 'absent',
-      desiredSourceOf(sp.replace(DESIRED_LINE, '')));
+    const specBodyOf = (src) => (/function sandboxSpec[\s\S]*?\n  \}/.exec(src) || [''])[0];
+    const declaresDesired = (body) => /\bdesired\s*:/.test(body);
+    const intentForm = (body) => /desired:\s*\(inst\.state[^?]*\?\s*'stopped'\s*:\s*'running'/.test(body);
+    const derivedForm = (body) => /desired:\s*running\s*\?\s*'running'\s*:\s*'stopped'/.test(body);
+    const OLD_INTENT_BODY = "function sandboxSpec(inst) {\n    return { id: inst.id, desired: (inst.state && inst.state.desired === 'stopped') ? 'stopped' : 'running',\n      guardian: true };\n  }";
+    const OLD_DERIVED_BODY = "function sandboxSpec(inst) {\n    const running = inst.state.phase === 'RUNNING'; return { id: inst.id, desired: running ? 'running' : 'stopped' };\n  }";
+    const body = specBodyOf(sp);
+    check('D-8 接线：sandboxSpec 体可定位（覆盖面非空）且不再声明 desired',
+      body.length > 0 && !declaresDesired(body), '体长=' + body.length);
+    check('D-8 反向：判据对意图投影/相位推导两代旧形态都命中，对现行体不命中（非空转）',
+      declaresDesired(OLD_INTENT_BODY) && declaresDesired(OLD_DERIVED_BODY)
+        && intentForm(OLD_INTENT_BODY) && derivedForm(OLD_DERIVED_BODY)
+        && !intentForm(body) && !derivedForm(body), 'hit');
     check('D-8 收口：keepDesired 旗标机制在 src 侧已整体废止（specs/心跳/动作路径）',
       !/keepDesired/.test(sp + ad + bs),
       '出现处数=' + ((sp + ad + bs).match(/keepDesired/g) || []).length);
@@ -300,17 +412,17 @@ function fakeRegistry() {
       bareSites === 3 && /upsert\(d\.control\(\)\.sandboxSpec\(inst\)\)/.test(ad),
       'observers=' + bareSites + ' adapter裸同步=' + /upsert\(d\.control\(\)\.sandboxSpec\(inst\)\)/.test(ad));
     const intentWrites = (lc.match(/inst\.state\.desired\s*=(?!=)/g) || []).length;
-    check('D-8 意图写口：lifecycle 内 desired 只以 inst.state.desired 形态出现且共 3 处（start 判定+两写）',
-      (lc.match(/\bdesired\b/g) || []).length === 3 && intentWrites === 2,
+    check('D-8 意图写口：lifecycle 内 desired 零出现、零写口（第二落点已废止）',
+      (lc.match(/\bdesired\b/g) || []).length === 0 && intentWrites === 0,
       'token=' + (lc.match(/\bdesired\b/g) || []).length + ' write=' + intentWrites);
-    const TRANSIENT_GUARD = /if \(!transient\) inst\.state\.desired = 'stopped'/;
-    check('D-8 意图写口：只有 user 档的停落 stopped（transient 分档在位）',
-      TRANSIENT_GUARD.test(lc) && /opts\.intent === 'transient'/.test(lc), '命中=' + TRANSIENT_GUARD.test(lc));
-    check('D-8 反向：抹掉 transient 分档即判红（自动来源又会抹用户意图的旧缺陷形态）',
-      !TRANSIENT_GUARD.test(lc.replace('if (!transient) ', '')), '识别为缺陷形态');
+    check('D-8 意图写口：stop 不再按 opts.intent 分档抹/留意图（transient 档随字段废止退场）',
+      !/opts\.intent/.test(lc), '命中=' + (/opts\.intent/.test(lc) ? '有' : '无'));
+    const OLD_TRANSIENT = "function stop(id, opts) { const transient = !!(opts && opts.intent === 'transient'); if (!transient) inst.state.desired = 'stopped'; }";
+    check('D-8 反向：transient 分档旧形态仍被识别为缺陷形态（判据非空转）',
+      /opts\.intent === 'transient'/.test(OLD_TRANSIENT) && !/opts\.intent/.test(lc), '识别为缺陷形态');
 
-    // 启动对齐（syncManagedRegistry 逐实例 upsert）：load() 后的 state.phase 是崩溃/停机快照，
-    //   现在 desired 取自意图字段，故照写不错；域 B 的 desired 来源是 config，必须照样落目录。
+    // 启动对齐（syncManagedRegistry 逐实例 upsert）：load() 后的 state.phase 只是实然快照；
+    //   沙箱 spec 不带 desired，对齐刷新永远碰不到目录里的应然意图。
     const d8boot = fakeRegistry();
     const bootInst = { id: 'boot1', name: '沙箱', port: 3903, guardian: false, state: { phase: 'BACKOFF', desired: 'running' } };
     const ctlBoot = createControlPlane({
@@ -327,15 +439,14 @@ function fakeRegistry() {
     ctlBoot.syncManagedRegistry();
     check('D-8 前提：实然快照确实是 BACKOFF（否则本例没有防御对象）',
       bootInst.state.phase === 'BACKOFF', String(bootInst.state.phase));
-    check('D-8 行为：启动对齐不抹意图（退避快照 + running 意图 = 目录仍 running）',
-      ent2('boot1').desired === 'running', String(ent2('boot1').desired));
+    ent2('boot1').desired = 'stale';
     ent2('boot1').name = '旧名';
     bootInst.name = '新名';
     ctlBoot.syncManagedRegistry();
     check('D-8 行为：启动对齐照常刷新其余应然（name 随申报更新）',
       ent2('boot1').name === '新名', String(ent2('boot1').name));
-    check('D-8 行为：同一次刷新里 desired 未被顺手改写',
-      ent2('boot1').desired === 'running', String(ent2('boot1').desired));
+    check('D-8 行为：同一次刷新不顺手改写目录 desired（观测路径对意图零写权）',
+      ent2('boot1').desired === 'stale', String(ent2('boot1').desired));
     check('D-8 边界：router daemon 的 desired 仍由 config 驱动（routerAutostart=true → running）',
       ent2('router-daemon').desired === 'running', String(ent2('router-daemon').desired));
     check('D-8 边界：lan daemon 的 desired 仍由 config 驱动（未启用 → stopped）',

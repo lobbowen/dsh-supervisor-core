@@ -144,6 +144,8 @@ function createOps(deps) {
         if (inst.domain === 'native') continue;
         try { lifecycle.supervise(inst.id); } catch {}
       }
+      // B2-6e：decide/下发/处置每拍恰一次，挂拍末而非逐实例监督拍（与 heartbeat onBeatDone 同构）。
+      try { lifecycle.governSweep(); } catch (e) { logger.warn && logger.warn('governSweep: ' + (e && e.message)); }
     }, intervalMs || 5000);
   }
 

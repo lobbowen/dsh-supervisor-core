@@ -108,7 +108,7 @@ function createUpgrade(deps) {
       if (wasRunning) {
         nj.step = 'stopping';
         if (task) { const s = tasks.step(task.id, '停止实例'); tasks.stepState(task.id, tasks.get(task.id).steps.indexOf(s), 'running'); }
-        try { await lifecycle.stop(id, { intent: 'transient' }); } catch {}
+        try { await lifecycle.stop(id); } catch {}
         if (task) { const t2 = tasks.get(task.id); const s2 = t2.steps[t2.steps.length - 1]; tasks.stepState(task.id, t2.steps.indexOf(s2), 'done'); }
       }
       // 2) 强制重装最新版（与首次安装同命令、同镜像源；npm 自会覆盖旧版本）。必须显式携带最高版本号。
@@ -135,7 +135,7 @@ function createUpgrade(deps) {
         // 回滚前先停新版本单元：失败路径 3（新版本已启动但健康验证未过）里进程可能仍监听端口，
         // 不停则旧版重启会被 _systemdStart 的「端口已被占用」拒绝，磁盘回旧版而内存仍跑新版。
         try {
-          const rs = await lifecycle.stop(id, { intent: 'transient' });
+          const rs = await lifecycle.stop(id);
           if (rs && rs.ok === false && task) tasks.log(task.id, '回滚前停止失败（继续回装旧版）：' + (rs.error || ''));
         } catch (e) {
           if (task) tasks.log(task.id, '回滚前停止异常（继续回装旧版）：' + ((e && e.message) || e));

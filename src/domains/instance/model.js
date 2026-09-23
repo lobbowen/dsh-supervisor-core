@@ -11,7 +11,7 @@ function taskStateToView(s) {
 
 /** 磁盘文档实例记录 -> 运行时记录（纯迁移，不落盘）：dshToken/remoteEnabled/frpEnabled/frpRemotePort/wanPort 一律剔除，
  *  legacy 布尔对推导 remoteMode 三态（端口权威在 relay 槽位注册表）；guardian 缺省关；
- *  重启后 FAILED 一律重置 STOPPED（失败是一次性状态）；desired（运行意图落点）缺失时按相位种子一次。
+ *  重启后 FAILED 一律重置 STOPPED（失败是一次性状态）；desired（运行意图第二落点）已废止，残留一次性剔除。
  *  令牌源登记（tokens.attach）是 IO，留在 store.load()，不进本函数。 */
 function normalizeInstance(inst) {
   if (Object.prototype.hasOwnProperty.call(inst, 'dshToken')) delete inst.dshToken;
@@ -30,12 +30,9 @@ function normalizeInstance(inst) {
     inst.state.lastError = null;
   }
   if (inst.state) inst.state.phase = inst.state.phase || 'STOPPED';
-  // 运行意图落点（一次性种子）：本字段之前不存在，老库只能按当时的实然相位猜一次，
-  //  此后再不由 phase 推导——崩溃退避、自动来源的临时停都不该抹掉用户意图。
-  if (inst.state && inst.state.desired === undefined) {
-    const p = inst.state.phase;
-    inst.state.desired = (p === 'RUNNING' || p === 'STARTING' || p === 'INSTALLING') ? 'running' : 'stopped';
-  }
+  // 运行意图不设第二落点（B2-1）：自动拉起只认 guardian 开关，用户启停就是动作本身。
+  //  历史库里残留的 desired 一次性剔除，与上面 legacy 布尔对的剔除同惯例——字段没了就是没了。
+  if (inst.state) delete inst.state.desired;
   return inst;
 }
 
@@ -61,7 +58,7 @@ function createRecord(payload, id) {
       protectHome: payload.protectHome === undefined ? false : !!payload.protectHome,
       // 资源配额不接收户输入：启动时由 governor 按机器预算与活跃实例数推导。
     },
-    state: { phase: 'STOPPED', desired: 'stopped', restartCount: 0, backoffLevel: 0, lastProbeOk: null },
+    state: { phase: 'STOPPED', restartCount: 0, backoffLevel: 0, lastProbeOk: null },
     createdAt: new Date().toISOString(),
   };
 }

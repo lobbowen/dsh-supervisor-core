@@ -26,15 +26,6 @@ function registerKind(kind, meta) {
   _customKinds[kind] = Object.assign({ label: kind, startable: false, guardable: false }, meta || {});
 }
 
-/** 域 A（用户意图域）kind 清单——只有它们持有 guardian 字段（契约 GUARD-DOMAIN-MODEL G-1/GD-1）：
- *  域 B 基础设施（router-daemon/lan-daemon）无用户意图轴，由保活路径无条件拉起，字段「不存在」而非「置 false」。
- *  判据必须落在入口（createEntry/load/save/update）而非申报处：createEntry 若无条件物化该字段并持久化，
- *  旧版本残留的 guardian:true 永远清不掉（update 见 p.guardian===undefined 即跳过）。 */
-const DOMAIN_A_KINDS = new Set(['dsh', 'sandbox-instance']);
-
-/** 该 kind 是否属域 A（只有域 A 才有 guardian 字段）。 */
-function isDomainA(kind) { return DOMAIN_A_KINDS.has(kind); }
-
 /** 受管对象目录项（应然 + 所有权；phase 由调谐驱动，观测不入册）。 */
 function createEntry(o) {
   const meta = kindMeta(o.kind);
@@ -46,8 +37,9 @@ function createEntry(o) {
     name: String(o.name || o.id),
     // desired 两域共用字段名但语义不同：域 A=用户意图；域 B=「当前业务是否需要它」的条件
     desired: (o.desired === 'stopped') ? 'stopped' : 'running',
-    // guardian 域 A 专有（见上）；域 B 不物化，旧残留才清得掉
-    ...(isDomainA(o.kind) ? { guardian: o.guardian === true } : {}),
+    // guardian 开关的权威在域记录本身（dsh-main.json / inst.guardian），消费者全部直读源；
+    //  目录曾在域 A entry 上物化该字段但零读者（B2-2 收口）。createEntry 永不物化 guardian 键
+    //  = 老库残留的天然一次性清理口（load 经本函数重建即消失），无需迁移脚本。
     ownership: normalizeOwnership(o.ownership),
     // 初始 stopped；业务不得直接改，由 heartbeat 调谐循环写入
     phase: 'stopped',
@@ -84,4 +76,4 @@ function normalizeOwnership(own) {
   };
 }
 
-module.exports = { DESIRED, MANAGED_KINDS, kindMeta, registerKind, isDomainA, createEntry, normalizeOwnership };
+module.exports = { DESIRED, MANAGED_KINDS, kindMeta, registerKind, createEntry, normalizeOwnership };

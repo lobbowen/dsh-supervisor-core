@@ -10,7 +10,7 @@ const logcore = require('../../platform/service/log/logcore');
 
 // lan-daemon：远程控制（relay/frpc）独立进程（L3b 进程解耦）。守卫只在 config.lanDaemon=true 时 spawn detached 并监测/拉起本进程
 // （调试也可直接 node src/domains/relay/daemon.js -c <configPath>）；守卫重启/停止不影响已有 relay/frpc，只短暂影响新增与变更对账。
-// 数据流（松耦合）：守卫写 <stateDir>/lan-state.json（原子 0600），本进程 2s 轮询 diff 后 reconcile，令牌变化经 lan.applyToken 热换 cookie；frp.json/frpc.toml 由本进程独占写（守卫经 ctl 委托读写）；端口用独立注册表 <stateDir>/ports-lan.json 免与 router/守卫并发写；ctl 只听 127.0.0.1:43108。
+// 数据流（松耦合）：守卫写 <stateDir>/lan-state.json（原子 0600），本进程 2s 轮询 diff 后 reconcile，令牌变化经 lan.applyToken 热换 cookie；frp.json/frpc.toml 由本进程独占写（守卫经 ctl 委托读写）；端口与守卫共写注册表 <stateDir>/ports.json（B2-5 单源：读路径 mtime+size 对时、分配临界区持 .alloc.lock，第二本账 ports-lan.json 已废止并一次性迁移）；ctl 只听 127.0.0.1:43108。
 
 const path = require('node:path');
 const fs = require('node:fs');
@@ -52,7 +52,11 @@ function main() {
   });
   const events = core.events;
   const logger = core.logger;
-  try { ports.configureFile(path.join(swDir, 'ports-lan.json')); } catch {}
+  // 端口注册表单源（B2-5）：先一次性迁移老部署的 ports-lan.json（owner=relay:* 并进 ports.json，
+  // 幂等；顺序必须在 configureFile 之前——重载后内存即含迁移结果），再指向与守卫同一本账。
+  try { ports.migrateByOwnerPrefix(path.join(swDir, 'ports-lan.json'), path.join(swDir, 'ports.json'), ['relay:']); }
+  catch (e) { logger.warn && logger.warn('ports-lan 迁移: ' + (e && e.message)); }
+  try { ports.configureFile(path.join(swDir, 'ports.json')); } catch {}
 
   // 实例源是文件快照的投影 { instances, save:noop }：wanPort 绑定权威只在端口注册表，快照不含端口字段。
   let snapshot = { instances: [], tokens: {}, mtime: 0, textHash: '' };

@@ -3,6 +3,7 @@
 // 服务操作全部经平台 Provider（deps.service），绝不直接调 systemctl。
 const fs = require('node:fs');
 const monitor = require('../../platform/service/monitor');
+const ports = require('../../platform/service/ports').shared;
 const guardian = require('../../shared/guardian');
 const sandbox = require('./sandbox');
 const governor = require('./governor');
@@ -54,8 +55,9 @@ function createLifecycle(deps) {
       logger.info && logger.info('cleaned stale transient unit: ' + unit);
     }
   }
-  /** 用 systemd 启动实例；绝不抛（抛会打挂 tick 循环），失败返回 {ok,error} 交调用方退避。 */
-  function _systemdStart(inst) {
+  /** 用 systemd 启动实例；绝不抛（抛会打挂 tick 循环），失败返回 {ok,error} 交调用方退避。
+   *  opts.manual：本次拉起来自用户显式动作（开新失败链，见 B2-6d 清计数处）。 */
+  function _systemdStart(inst, opts) {
     try {
       const cmdArr = sandbox.effectiveCommand(instancesRoot, deps.dshBin, inst);
       if (!cmdArr || !cmdArr.length) return { ok: false, error: '实例未配置启动命令' };
@@ -70,6 +72,18 @@ function createLifecycle(deps) {
         : null;
       if (boundary) {
         const msg = '启动命令未通过执行边界复校：' + boundary;
+        inst.state.lastError = msg;
+        store.save();
+        if (events) events.append('inst_start_refused', { id: inst.id, name: inst.name, error: msg });
+        logger.warn && logger.warn('[' + inst.id + '] ' + msg);
+        return { ok: false, error: msg };
+      }
+      // 端口预校验（B2-5 或然侧）：注册表是跨进程共享事实源（lan-daemon 的 relay 绑定同在
+      // ports.json），配置端口被他人登记时立即显式 PORT_TAKEN:<by>。静默端口的 TCP 探测
+      // 看不见「已登记未监听」，放任下去只会在 systemd 起舱后以 bind 失败暴露，面板无从定位。
+      const takenBy = ports.recordOf(inst.port);
+      if (takenBy && takenBy.owner !== 'inst:' + inst.id) {
+        const msg = 'PORT_TAKEN:' + (takenBy.owner || takenBy.role);
         inst.state.lastError = msg;
         store.save();
         if (events) events.append('inst_start_refused', { id: inst.id, name: inst.name, error: msg });
@@ -96,6 +110,15 @@ function createLifecycle(deps) {
       inst.state.phase = 'STARTING';
       inst.state.startAt = Date.now();
       inst.state.lastError = null;
+      // B2-6d：手动拉起开新失败链。attempts>20 后 restart() 即回 FAILED 且清零只靠
+      //   稳定 RUNNING>5min，fail() 承诺的「由用户手动重试」被计数封死；手动动作在此
+      //   一次性作废旧链，自动退避计数仍只在监督拍累加（不带 opts 的调用方）。
+      if (opts && opts.manual) {
+        inst.state.restartCount = 0;
+        inst.state.backoffLevel = 0;
+        inst.state.backoffUntil = null;
+        inst.state.lastFailAt = null;
+      }
       store.save();
       if (inst.port && hooks.onInstanceStart) hooks.onInstanceStart(inst);
       if (events) events.append('inst_started', { id: inst.id, port: inst.port });
@@ -125,9 +148,8 @@ function createLifecycle(deps) {
           return { ok: false, error: adm.error };
         }
       }
-      // 运行意图落点（写口之一）：走到真正要拉起/安装才记「要它在跑」，被拒的 start（作业在飞、
-      //  预算已满）不留意图。升级收尾与插件生效的重启同样经此表达「要它在跑」。
-      if (inst.state.desired !== 'running') { inst.state.desired = 'running'; store.save(); }
+      // 运行意图不设第二落点（B2-1）：自动拉起只认 guardian，用户启停就是动作本身；
+      //  被拒的 start（作业在飞、预算已满）不留任何状态，重试语义由准入拒绝本身表达。
       store.ensureDirs(inst);
       const dshEntry = sandbox.dshEntry(instancesRoot, inst);
       if (!fs.existsSync(dshEntry)) {
@@ -136,12 +158,11 @@ function createLifecycle(deps) {
         return { ok: true, installing: true };
       }
     }
-    return _systemdStart(inst);
+    return _systemdStart(inst, opts);
   }
-  /** 停止实例。opts.intent 分两档：默认 'user' 才把运行意图落库为 stopped；
-   *  'transient' = 升级/插件生效这类自动来源的临时停，只停这一次，不抹用户意图。 */
-  function stop(id, opts) {
-    const transient = !!(opts && opts.intent === 'transient');
+  /** 停止实例。自动来源（升级、插件生效重启）与用户停走同一路径：意图没有第二落点，
+   *  恢复由调用方的后续 start（升级收尾重拉）表达。 */
+  function stop(id) {
     const inst = store.instances.find((i) => i.id === id);
     if (!inst) return { ok: false, error: '实例不存在' };
     if (!isSandboxSupported()) return { ok: false, error: '当前平台不支持沙箱实例（能力矩阵见 GET /env/status 的 capabilities.sandboxLaunch；限额执行档位见 capabilities.sandboxEnforcement）' };
@@ -160,9 +181,6 @@ function createLifecycle(deps) {
     }
     inst.state.phase = 'STOPPED';
     inst.state.usage = null; // 用户显式停止同样清观测（与 RUNNING 分支同源语义）
-    // 只有用户来源的停才落「不再要它跑」；自动来源（升级、插件生效重启）保留意图，
-    // 否则长安装窗口或重试全败会把用户的 running 抹成 stopped 且无人恢复。
-    if (!transient) inst.state.desired = 'stopped';
     runtime.delete(inst.id);
     store.save();
     if (inst.port && hooks.onInstanceStop) hooks.onInstanceStop(inst);
@@ -193,9 +211,9 @@ function createLifecycle(deps) {
     }
     return roster;
   }
-  /** 控制面一拍（观测/决策/下发/处置），挂 supervise RUNNING 分支，不新增计时器。
-   *  采样异步回填、本拍消费上一拍值：无证据不判违规。
-   *  W2 下发 = state.allocation 展示值（下次启动生效）；运行期内核动态下发 = W3 setLimits。 */
+  /** 控制面采样拍（每实例）：runtime 观测回填，供守卫单拍 governSweep 消费（B2-6e）。
+   *  全花名册 decide 已移出——旧形态每 RUNNING 实例的监督拍各跑一遍 O(N) 决策，
+   *  N 实例即 N 倍放大；决策/下发/处置的周期驱动与 heartbeat 同源、每拍恰一次。 */
   function _governTick(inst, st) {
     for (const key of Array.from(runtime.keys())) {
       if (!store.instances.some((i) => i.id === key)) runtime.delete(key); // 实例已删：观测随葬
@@ -220,15 +238,20 @@ function createLifecycle(deps) {
         });
       }).catch(() => {});
     }
+  }
+
+  /** 资源治理守卫单拍（heartbeat 尾钩）：观测->全花名册 decide->下发/处置恰一次。
+   *  本拍消费上一拍采样值（采样异步回填）：无证据不判违规。 */
+  function governSweep() {
     const roster = _sandboxRoster();
-    if (!roster.length) return;
+    if (!roster.length) return { ok: true, entries: 0 };
     let plan;
     try {
       const f = machineFactsNow();
       plan = governor.decide({ totalMemBytes: f.totalMemBytes, cpuCount: f.cpuCount, roster });
     } catch (e) {
-      logger.warn && logger.warn('[' + inst.id + '] govern decide 失败: ' + (e && e.message));
-      return;
+      logger.warn && logger.warn('govern decide 失败: ' + (e && e.message));
+      return { ok: false, error: (e && e.message) || String(e) };
     }
     const now = Date.now();
     for (const entry of plan.entries) {
@@ -252,20 +275,22 @@ function createLifecycle(deps) {
           catch (e) { logger.warn && logger.warn('[' + entry.id + '] setLimits 下发异常: ' + (e && e.message)); }
         }
       }
-      if (!entry.violation || entry.id !== inst.id) continue; // 同租户违规由其自身监督拍处置（一拍内轮到）
+      if (!entry.violation) continue;
       const v = entry.violation;
       const kindLabel = v.kind === 'memory' ? '内存' : 'CPU';
       const reason = '资源违规:' + kindLabel + '持续超限(实际 ' + v.actual + '/限额 ' + v.target + ')';
-      if (events) events.append('inst_resource_violation', { id: inst.id, name: inst.name, kind: v.kind, actual: v.actual, target: v.target });
-      logger.warn && logger.warn('[' + inst.id + '] ' + reason);
+      if (events) events.append('inst_resource_violation', { id: target.id, name: target.name, kind: v.kind, actual: v.actual, target: v.target });
+      logger.warn && logger.warn('[' + target.id + '] ' + reason);
       try {
         // 经 Provider 动词：cgroup 档即内核拆舱；portable 档按端口/run.pid 锚点整树终止（W3）。
-        service.stopUnit('dsh-web@' + inst.id, Object.assign({ timeoutMs: 20000 }, sandbox.launchCtx(instancesRoot, deps.dshBin, inst)));
+        service.stopUnit('dsh-web@' + target.id, Object.assign({ timeoutMs: 20000 }, sandbox.launchCtx(instancesRoot, deps.dshBin, target)));
       } catch (e) {
-        logger.warn && logger.warn('[' + inst.id + '] 违规停单元异常: ' + (e && e.message));
+        logger.warn && logger.warn('[' + target.id + '] 违规停单元异常: ' + (e && e.message));
       }
-      stateMachine.restart(stateDeps(), inst, reason); // 复用既有退避链：BACKOFF，重试超限 -> FAILED
+      stateMachine.restart(stateDeps(), target, reason); // 复用既有退避链：BACKOFF，重试超限 -> FAILED
     }
+    store.save(); // 下发/处置改写的 allocation/usage 随本拍落盘（旧实现借道 supervise 尾 save，现自成一体）
+    return { ok: true, entries: plan.entries.length };
   }
   /** 单实例监督拍：整体 try/catch，单实例异常绝不拖垮心跳循环。 */
   function supervise(id) {
@@ -350,6 +375,6 @@ function createLifecycle(deps) {
     }
     return { ok: true };
   }
-  return { _prepareSystemd, start, stop, probe, probeInstance, supervise };
+  return { _prepareSystemd, start, stop, probe, probeInstance, supervise, governSweep };
 }
 module.exports = { createLifecycle };

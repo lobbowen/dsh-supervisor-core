@@ -1,14 +1,14 @@
 'use strict';
 
 // 管家注册机（ManagedRegistry）——守卫直接负责的受管对象声明目录：身份、应然
-// （desired/guardian，业务申报、持久）、所有权（端口/root/unit/daemon）、类型适配器挂接。
+// （desired，业务申报、持久；guardian 不入册——权威在域记录，B2-2）、所有权（端口/root/unit/daemon）、类型适配器挂接。
 // SSOT 与铁律（实然绝不写回目录；phase 由调谐循环驱动、业务不得直改；路径由 root 派生；
 // 域自治对象不入簿）在契约 GUARD-DOMAIN-MODEL，两份冲突以契约为准。
 
 const fs = require('node:fs');
 const path = require('node:path');
 const { writeAtomic } = require('../../platform/util/fs');
-const { DESIRED, MANAGED_KINDS, kindMeta, registerKind: registerManagedKind, isDomainA, createEntry, normalizeOwnership } = require('./managed-object');
+const { DESIRED, MANAGED_KINDS, kindMeta, registerKind: registerManagedKind, createEntry, normalizeOwnership } = require('./managed-object');
 
 /** 进程生命周期唯一词表。'installing' 是对应安装任务的操作态；升级/卸载态在 TaskRegistry，不在 phase。 */
 const PHASES = ['stopped', 'installing', 'starting', 'running', 'draining', 'backoff', 'failed', 'restarting'];
@@ -45,7 +45,7 @@ class ManagedRegistry {
       raw = JSON.parse(fs.readFileSync(this.file, 'utf8'));
     } catch (e) {
       // 既有文件损坏 != 首启空目录：当空目录继续会让任一 upsert 用派生内容覆盖原文件，
-      // desired/guardian 永久丢失。故改名 .bad-<ts> 保全原始字节，并以「未加载」态启动
+      // desired/崩溃计数永久丢失。故改名 .bad-<ts> 保全原始字节，并以「未加载」态启动
       // （允许 state.json 种子回灌）。
       if (this._loadedFromDisk) {
         this._log('warn', 'managed-objects 读/解析失败，按损坏保全处理: ' + ((e && e.message) || e));
@@ -67,9 +67,8 @@ class ManagedRegistry {
       // 逐条容错：单条坏 entry 不得中断整份加载，否则其后合法条目全部静默丢失
       try {
         if (!o || !kindMeta(o.kind)) continue; // 未知类型/损坏条目跳过，不阻断启动
-        // guardian 只在域 A 传：域 B 旧残留经 createEntry 自然丢弃、_save 也不写该字段，
-        // 升级后首次落盘即归一，无需迁移脚本。
-        const e = createEntry({ kind: o.kind, id: o.id, name: o.name, desired: o.desired, guardian: isDomainA(o.kind) ? o.guardian : undefined, ownership: o.ownership });
+        // guardian 不再入册（B2-2）：老库残留键经 createEntry 重建自然丢弃，无需迁移脚本。
+        const e = createEntry({ kind: o.kind, id: o.id, name: o.name, desired: o.desired, ownership: o.ownership });
         if (PHASES.includes(o.phase)) e.phase = o.phase;
         if (Number.isInteger(o.backoffLevel)) e.backoffLevel = o.backoffLevel;
         if (typeof o.backoffUntil === 'number' && o.backoffUntil > Date.now()) e.backoffUntil = o.backoffUntil;
@@ -96,7 +95,7 @@ class ManagedRegistry {
         schema: 'managed-objects@1',
         objects: this._objects.map((o) => Object.assign({
           kind: o.kind, id: o.id, name: o.name,
-          // desired 两域共用（语义不同，见 createEntry）；guardian 仅域 A 落盘。
+          // desired 两域共用（语义不同，见 createEntry）；guardian 不落盘（B2-2，权威在域记录）。
           desired: o.desired,
           ownership: o.ownership,
           phase: o.phase, backoffLevel: o.backoffLevel,
@@ -105,7 +104,7 @@ class ManagedRegistry {
           crashWindowStart: o.crashWindowStart || null,
           crashWindowRestarts: Number.isInteger(o.crashWindowRestarts) ? o.crashWindowRestarts : 0,
           startedAt: o.startedAt, createdAt: o.createdAt, updatedAt: o.updatedAt,
-        }, isDomainA(o.kind) ? { guardian: o.guardian === true } : {})),
+        })),
       }, null, 2);
       writeAtomic(this.file, body, { mode: 0o600 });
     } catch (e) { this._log('warn', 'managed-objects 持久化失败: ' + (e && e.message)); }
@@ -162,8 +161,8 @@ class ManagedRegistry {
     return e;
   }
 
-  /** 对象变更申报（desired/guardian/ownership/name）。guardian 是域 A 专有：
-   *  域 B 基础设施既不写入，还主动删键清除早期版本残留（下一次 update 即归一）。 */
+  /** 对象变更申报（desired/ownership/name）。guardian 不接受申报（B2-2）：createEntry 永不
+   *  物化该键，patch 里带 guardian 一律忽略，老库残留由 load 重建时清理。 */
   update(id, patch) {
     const e = this.get(id);
     if (!e) return { ok: false, error: '未注册: ' + id };
@@ -171,11 +170,6 @@ class ManagedRegistry {
     if (p.desired !== undefined) {
       if (!DESIRED.includes(p.desired)) return { ok: false, error: '非法 desired: ' + p.desired };
       e.desired = p.desired;
-    }
-    if (isDomainA(e.kind)) {
-      if (p.guardian !== undefined) e.guardian = p.guardian === true;
-    } else if ('guardian' in e) {
-      delete e.guardian;
     }
     if (p.name !== undefined) e.name = String(p.name || e.id);
     if (p.ownership !== undefined) {

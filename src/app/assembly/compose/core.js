@@ -99,7 +99,6 @@ function composeCore(host, rawConfig, configPath) {
     host._routerFacade = null;       // router ctl 门面缓存
     host._lc = null;                 // DaemonLifecycle 惰性单例表
     host._dshMainLive = null;        // dsh-main.json live 缓存
-    host._fallbackEntry = null;      // 目录 fallback 项
     host._lastStateBody = null;
     // main(dsh) 影子对比框架（并行不驱动）：影子只纯计算应然下一步并对比实际迁移，零行为变化；
     // 连续零 diff 拍数/累计 diff 拍数仅供日志/事件观测，不进任何决策。

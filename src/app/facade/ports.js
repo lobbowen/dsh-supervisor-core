@@ -2,11 +2,12 @@
 
 const probe = require('../../platform/util/probe');
 
-// app/facade/ports.js —— 端口管理对外门面：聚合三份端口注册表并补 active 监听状态。
+// app/facade/ports.js —— 端口管理对外门面：聚合各端口注册表并补 active 监听状态。
 // 姊妹注册表经 platform 只读聚合接口读取（不 fs 直读，platform 不硬编码域文件名，DS-G4）。
 // 导出契约：module.exports = { methods }；内部走 this。
 const ports = require('../../platform/service/ports').shared;
-const SIBLING_REGISTRIES = ['ports-lan.json', 'ports-router.json'];
+// ports-lan.json 已废止（B2-5）：lan-daemon 与守卫共写 ports.json 单本账，relay:* 老记录经 daemon 启动期一次性迁移。
+const SIBLING_REGISTRIES = ['ports-router.json'];
 
 const DEPS = new WeakMap();
 function depsOf(host) {
@@ -30,8 +31,8 @@ module.exports = { methods: {
   // 探测按端口集合整批缓存 3s TTL，避免前端 2s 心跳每次触发全量同步扫 /proc 挤占事件循环。
   async listPorts() {
     const d = depsOf(this);
-    // 系统端口登记分散在 3 个注册表文件（同 stateDir），必须聚合去重才是全系统运行状态：
-    //   ports.json（守卫共享 system/inst/oauth/managed-ctl）、ports-lan.json（lan-daemon 独占：relay 隧道、
+    // 系统端口登记分散在 2 个注册表文件（同 stateDir），必须聚合去重才是全系统运行状态：
+    //   ports.json（守卫共享 system/inst/oauth/managed-ctl + lan-daemon 的 relay 隧道，B2-5 单源，
     //   managed 池 20000-23999）、ports-router.json（router-daemon 独占：proxyInstance 反代 managed 池
     //   20000-23999、providerApi 供应商端点 24000-25999）
     try { ports.reload(); } catch (e) { d.logger() && d.logger().warn && d.logger().warn('ports reload: ' + (e && e.message)); }

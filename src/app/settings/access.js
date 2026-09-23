@@ -84,4 +84,6 @@ module.exports = {
       }
     },
   },
+  // settings 门面的写口核验件（B2-4）：lan-panel 共用同一「写后读回」口径，不各写各的。
+  verifyPersisted,
 };

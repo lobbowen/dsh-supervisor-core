@@ -17,13 +17,11 @@ function createSpecs(deps) {
   const daemons = () => (typeof g.getDaemons === 'function' ? g.getDaemons() : null);
   const logger = () => (typeof g.getLogger === 'function' ? g.getLogger() : null);
 
-  /** main(dsh) 申报为管家注册项。 */
+  /** main(dsh) 申报为管家注册项。guardian 不申报（B2-2）：守护开关权威在 dsh-main.json，消费者直读源。 */
   function mainSpec() {
-    const m = state().readMainMeta();
     return {
       kind: 'dsh', id: 'main', name: '主实例',
       desired: state().desired() === 'stopped' ? 'stopped' : 'running',
-      guardian: m.guardian === true,
       ownership: {
         ports: [{ role: 'dsh-main', port: Number(config().targetPort || 3080) }],
         rootPath: path.join(os.homedir(), '.dsh'),
@@ -32,8 +30,8 @@ function createSpecs(deps) {
     };
   }
 
-  /** 单个沙箱实例申报。desired 取实例自己的运行意图（落点 inst.state.desired，
-   *  由 lifecycle 的 start/stop 写），相位不进应然面。 */
+  /** 单个沙箱实例申报。不申报 desired（B2-1）也不申报 guardian（B2-2）：运行意图没有第二
+   *  落点，守护开关权威在实例记录 inst.guardian（supervise 直读）；相位不进应然面。 */
   function sandboxSpec(inst) {
     if (!inst || !inst.id) return null;
     let rootPath = null;
@@ -41,8 +39,6 @@ function createSpecs(deps) {
     try { if (im && typeof im.sandboxRoot === 'function') rootPath = im.sandboxRoot(inst); } catch {}
     return {
       kind: 'sandbox-instance', id: inst.id, name: String(inst.name || inst.id),
-      desired: (inst.state && inst.state.desired === 'stopped') ? 'stopped' : 'running',
-      guardian: inst.guardian === true,
       ownership: {
         ports: [{ role: 'inst', port: Number(inst.port) }],
         rootPath,
@@ -52,15 +48,15 @@ function createSpecs(deps) {
     };
   }
 
-  /** 申报或更新（存在->update 应然；否则 register）。spec.desired 必须是意图源的投影
-   *  （main=state.desired、沙箱=inst.state.desired、域 B=config 业务条件），不得由 phase 推导：
-   *  观测到崩溃/退避不等于「用户想停」（契约 M-1），实然面另由 setPhase 落。 */
+  /** 申报或更新（存在->update 应然；否则 register）。spec.desired 若给出必须是意图源的投影
+   *  （main=state.desired、域 B=config 业务条件），不得由 phase 推导（契约 M-1）；
+   *  沙箱实例有意不申报 desired——update 见 undefined 即跳过，目录项不落第二意图源。 */
   function upsert(spec) {
     const m = reg();
     if (!m || !spec) return;
     try {
       const existing = m.get(spec.id);
-      if (existing) m.update(spec.id, { desired: spec.desired, guardian: spec.guardian, name: spec.name, ownership: spec.ownership });
+      if (existing) m.update(spec.id, { desired: spec.desired, name: spec.name, ownership: spec.ownership });
       else m.register(spec);
     } catch (e) {
       const l = logger();
@@ -87,11 +83,11 @@ function createSpecs(deps) {
       const sandboxes = (_m && typeof _m.all === 'function' && _m.all()) || [];
       for (const inst of sandboxes) {
         if (inst.id === 'main' || inst.domain === 'native') continue;
-        // 申报即意图投影：load() 后的 state.phase 只是实然快照，不参与 desired，
-        // 故守卫重启恰逢实例退避时不会抹掉用户运行意图。
+        // 沙箱 spec 只带身份/所有权（B2-1/B2-2）：load() 后的 state.phase 是实然快照，
+        // 观测对齐路径对目录的 desired/guardian 零写权。
         upsert(sandboxSpec(inst));
       }
-      // 域 B 基础设施（router/lan daemon）不写 guardian（契约 G-1）；desired 由配置业务条件驱动。
+      // 目录全域不持 guardian（B2-2，契约 G-1 收口形态）；域 B 的 desired 由配置业务条件驱动。
       const c = ctl();
       upsert({
         kind: 'router-daemon', id: 'router-daemon', name: '智能路由 daemon',

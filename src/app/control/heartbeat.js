@@ -84,6 +84,12 @@ async function runBeat(registry, intervalMs) {
       registry._log('warn', 'heartbeat ' + (ad.supervise ? 'supervise' : 'observe') + '(' + e.kind + ':' + e.id + '): ' + ((err && err.message) || err));
     }
   }
+  // 拍末钩子（B2-6e）：需要「每心跳拍恰好一次」的全局决策（如 governor 全花名册 decide）挂这里，
+  // 与监督同源、不经逐实例 adapter，避免 N 实例把决策乘法放大成 O(N^2)。异常隔离：钩子失败不断心跳。
+  if (typeof registry.onBeatDone === 'function') {
+    try { await registry.onBeatDone({ observed, errors }); }
+    catch (err) { registry._log('warn', 'heartbeat onBeatDone: ' + ((err && err.message) || err)); }
+  }
   return { observed, errors };
 }
 

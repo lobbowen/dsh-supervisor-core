@@ -64,7 +64,7 @@
 
 | # | 铁律 |
 |---|---|
-| **G-1** | 基础设施**不得**有 `desired`/`guardian` 用户意图字段；只有"当前是否应运行"的**业务条件**。 |
+| **G-1** | 基础设施**不得**有 `desired`/`guardian` 用户意图字段；只有"当前是否应运行"的**业务条件**。**2026-09-23 B2-2 扩展收口**：`guardian` 已**整体退出目录面**——域 A entry 也曾带该键（设置面写入、全仓 src 零读者；守护开关权威一直在 `dsh-main.json` / `inst.guardian`，消费者直读源），目录留副本只会制造分歧面。现 `createEntry` 对任何 kind 都不物化该键，老目录残留经 load 重建自然丢弃，无需迁移脚本。 |
 | **G-2** | 基础设施的保活**不得**写 `guardian_action`（该事件专表"用户意图被触发"）。**2026-09-16 收口**：该事件唯一生产者 `_guardianEvent()` 已删除（域 B 两分支删除调用后成为死代码，从未服务域 A），登记（`platform/service/log/hub.js` 内部簿记名单）与 UI 标签（`ui/.../nav.ts` EVENT_LABELS）同步移除。 |
 | **G-3** | 域 A 对象**必须**有用户可见开关；无 UI 入口的"用户意图"是伪意图。 |
 | **G-4** | 两域**共用**心跳驱动（这是对的：都是周期收敛），但**不得共用**同一个状态模型。 |
@@ -78,7 +78,7 @@
 ```
 ManagedRegistry（心跳驱动 —— 共用）
    │
-   ├─ 域 A 受管对象（desired × guardian）
+   ├─ 域 A 受管对象（desired 在册；guardian 权威在域记录，不入目录 B2-2）
    │    main / sandbox-instance
    │    · 守护计数（restart_triggered/restartCount）、用户开关、crashHalted 语义
    │
@@ -97,10 +97,10 @@ ManagedRegistry（心跳驱动 —— 共用）
 
 | 门禁 | 断言 |
 |---|---|
-| GD-1 | 基础设施 kind（router-daemon/lan-daemon）的 entry **不含** `guardian` 字段 |
+| GD-1 | guardian 不入目录面（G-1 / B2-2 收口形态）：① 四类申报块均不含 `guardian` 字段；② `createEntry` 对**任何 kind** 都不物化该键（"不存在"而非"置 false"）；③ 目录面三文件（`control/managed-object.js`/`registry.js`/`specs.js`）去注释代码上 guardian token 清零（注释不计）|
 | GD-2 | 基础设施保活路径**不调用** `_guardianEvent`；且该函数已从 `src/app/daemons/runtime.js` **删除**（GD-2b：代码全域无定义/调用，注释不计），`guardian_action` 全域无生产者（GD-2c） |
 | GD-3 | 两平面 id **显式映射**，保活路径不跨平面混用 id（G-5）；域 A 计数不经 `guardian_action` |
-| GD-4 | 反向：判据能识别"基础设施带 guardian 字段"的旧形态（门禁非空转） |
+| GD-4 | 反向：判据能识别"申报带 guardian 字段""目录面物化/修正 guardian（`e.guardian = …` / `DOMAIN_A_KINDS` spread）"两代旧形态，且不误报现行形态（门禁非空转） |
 | GD-5 | 不再存在对恒 true 值的 `guardian !== true` 补丁判断（基础设施无此概念）|
 | GD-6 | 保活/游离判据**只读持久化意图**，不读生命周期视图或目录 entry 的 `desired` 镜像（见 §6.2 读侧同规则）|
 | ML-1..ML-3 | **目录写入 / 生命周期视图写权**门禁，见 §6.4（同一 `test/guard-domain-model-gate-test.js`）|
@@ -129,28 +129,27 @@ ManagedRegistry（心跳驱动 —— 共用）
 | 路径 | 能否写 `desired` | 依据 |
 |---|---|---|
 | 用户动作（面板/API 启停、守护开关） | ✅ 必须写 | 意图的唯一来源 |
-| 首次登记（`register` 分支） | ✅ 必须带 | `createEntry` 对缺省值是 `(desired==='stopped')?'stopped':'running'` —— **不显式带就会把一个停着的实例登记成「用户想它跑」** |
-| 心跳观测同步（`_syncSandboxRegistryEntry`） | ✅ 只投影意图 | 沙箱意图的**落点是 `inst.state.desired`**（ST-2c），`sandboxSpec` 直读该字段，phase 不进应然面 |
-| 启动对齐（`syncManagedRegistry` 实例循环） | ✅ 同上 | 同一条 spec 路径；`instances.load()` 后的 phase 只是崩溃/停机快照，与 desired 无关 |
+| 首次登记（`register` 分支，main/域 B） | ✅ 必须带 | `createEntry` 对缺省值是 `(desired==='stopped')?'stopped':'running'` —— **不显式带就会把一个停着的主实例登记成「用户想它跑」** |
+| 沙箱申报（`sandboxSpec`，含心跳观测与启动对齐） | ❌ 不申报（B2-1） | 沙箱运行意图**没有第二落点**：spec 不含 desired 键，`registry.update` 见 undefined 即跳过——观测/对齐路径对沙箱目录 desired 零写权（目录该字段恒为 createEntry 缺省，无消费者） |
 | 域 B daemon 申报（router/lan） | ✅ 必须写 | 域 B 的"是否该活着"由**业务条件**（`config.routerAutostart` / `lan.enabled()`）决定，config 就是它的应然源（§2 域 B），不属于 M-1 的"实然" |
 
 **缺陷形态与后果**（两处观测推导路径同形）：实例崩溃进 `BACKOFF` → 每拍/每次守卫重启把目录
 `desired` 静默改成 `stopped` → 用户重启守卫后，调谐循环按 `desired=stopped` **不再拉起**，
 表现为"我明明开着它，重启守卫就再也不起来了"。这与 **2026-09-18 事故同形**（应然被实然覆盖）。
 
-**收口形态（2026-09-22 ST-2c，取代原 `keepDesired` 冻写旗标）**：意图先要有一个**落点**，
-投影才谈得上正确——冻写只是"没有落点时不让写错"的过渡。沙箱的运行意图落在实例自己的持久化字段
-`inst.state.desired`，写者只有 instance 域：`lifecycle.start()` 走到真正拉起/安装才记 `running`
-（作业在飞、预算已满的被拒 start 不留意图）；`lifecycle.stop(id, opts)` 按**来源**分档——默认
-（用户经面板/API）落 `stopped`，`{intent:'transient'}`（升级收尾、插件生效重启）只停这一次、
-不抹用户意图；`model.normalizeInstance()` 对老库缺该字段的记录按当时相位猜一次作一次性种子，
-此后再不由 phase 推导。`sandboxSpec` 读该字段投影进目录，故观测路径不再需要旗标；`keepDesired`
-机制整体废止，src 内再出现即由 GD-7 判红。落点：`src/domains/instance/lifecycle.js` 与
-`model.js`（写）、`src/app/control/specs.js`（投影）。
+**收口形态（2026-09-23 B2-1，取代 ST-2c 的 `inst.state.desired` 落点）**：ST-2c 曾给沙箱意图
+设过落点（lifecycle 按来源分档写、specs 投影），但 GD-8 取证确认该字段**没有任何决策消费者**
+（自动拉起只认 `guardian`，心跳 derivePhase 只作用于 daemon 类），按 ST-2 判据「不得为消费者
+而保留死字段」整体废止：`lifecycle.start()/stop()` 不再写意图（被拒的 start 本就无痕，升级
+收尾/插件生效的恢复由调用方后续 start 表达）；`model.normalizeInstance()` 对老库残留的
+`state.desired` 一次性剔除（与 legacy 布尔对同惯例）；`createRecord` 不再种该字段；
+`sandboxSpec` 不再申报。`keepDesired` 与 `{intent:'transient'}` 分档随之退场，src 内再出现
+`.state.desired` 赋值即由 GD-7 判红。落点：`src/domains/instance/lifecycle.js`、`model.js`、
+`src/app/control/specs.js`。
 
-**已知缺口（GD-8 的 `GAP_BASELINE` 登记）**：`sandbox-instance` 的意图**有落点、无决策消费者**——
-守卫重启后 STOPPED 沙箱是否按 `desired=running` 自动拉起尚未定案（产品语义待定，不是缺陷），
-故该字段目前只作申报与投影之用，不代表自愈行为；定案后要补的是判据消费者，不是第二个写者。
+**已闭合缺口（原 GD-8 的 `GAP_BASELINE`）**：「有落点、无决策消费者」面随申报删除而清零——
+守卫重启后 STOPPED 沙箱是否自动拉起的产品语义仍未定案，但定案时要补的是 guardian 侧的判据，
+不是第二个 desired 落点。
 
 **读侧同规则（2026-09-22 ST-1）**：唯一写口成立后，镜像仍只是**派生态**，因此
 "该不该活着"的判据**只准读持久化意图本身**（`config.routerAutostart` / `daemons.enabled()`），
@@ -159,6 +158,14 @@ ManagedRegistry（心跳驱动 —— 共用）
 `src/app/daemons/supervise.js`（保活判据）、`src/app/audit/orphan-scan.js`（游离判据）；
 执法：GD-6（读侧）+ `test/session-lifecycle-test.js` 的 ST-1 段（写侧：缺 `setRouterRunning` 写口即显式拒绝，
 且 `ManagedLifecycle.start()` 异常分支与 `ok:false` 分支同语义复位 `desired`）。
+
+**config.json 的唯一写口（2026-09-23 B2-4）**：门面层（`settings/lan-panel.js` 等）不得自带
+`fs`/`writeAtomic` 直写配置——一律经 `state.persistConfigPatch({key: value})`（fail-closed：
+读/解析失败拒写、原字节保留），落盘成败用 `settings/access.js` 导出的 `verifyPersisted` 写后
+读回核验，各门面共用同一口径。旧键清理由 `settings/domain-config.js` 的**别名字典**驱动
+（`getConfigAliases` 注入）：仅当新旧键都已在盘上才删旧键——旧键是唯一意图时提前删=静默丢失。
+落点：`state/desired.js`、`settings/lan-panel.js`；执法：`test/app-ctor-injection-test.js` B2-4 块
+（单源落盘/损坏拒写/源码层无直写路径三判）。
 
 ### §6.3 生命周期视图（ManagedLifecycle）的写权分工（D-7）
 
@@ -169,7 +176,7 @@ ManagedRegistry（心跳驱动 —— 共用）
 | 驱动（启停动作） | `control/manager.js` 经 `start()/stop()/restart()` | `phase`/`desired`/`_monitoring`/`healthy`/`error`（对象自身迁移）|
 | 观测合成 | `control/projection.js`（`syncDshView` / `syncRouterView` / `syncInstancesView`）| 同上——但**只镜像观测**，不发起启停 |
 | 注册期能力 | `control/adapters.js`、`control/manager.js` | `_monitoring`（纳入/移出监督）|
-| main 域兜底出口 | `state/fields.js` 的 `setPhase`/`setDesired` | 目录不可用/条目非在册时才直写 entry（2 处，**合法**：这是守卫内 phase/desired 的唯一写口本体）|
+| main 域兜底出口 | `state/fields.js` 的 `setPhase`/`setDesired` | 目录不可用/条目非在册时经 **`record.fieldOf(...,true)` 唯一字段写口**落值（B2-3 归一后 fields.js 内不再直写）。**B2-3**：fallback 只是目录未就绪期的暂存稿——持久计数（崩溃窗/退避/重启）首见真 entry 时一次性回填（盘上非缺省值优先），desired 经 `mainSpec` 在登记时读出合并，phase 按「boot 不继承」有意不回填。 |
 
 **规则**：`domain-actions/*`、`assembly/*`、`session/*`、`daemons/*` 等业务/装配层**不得**直写
 生命周期对象的 `phase`/`desired`/`_monitoring`/`healthy`——要改就经 `lifecycleManager` 发指令，
@@ -183,19 +190,21 @@ ManagedRegistry（心跳驱动 —— 共用）
 | `src/app/assembly/bootstrap.js` | 9（:92/:106/:109/:114/:119）| boot 期 daemon 拉起结果直接落视图 | 同上：boot 只做"申报"，视图由 projection 统一合成 |
 | `src/app/session/shutdown.js` | 2（:68 `_monitoring`、:160 `inst.state.phase='STOPPED'`）| :68 是"守卫退出不再监督 daemon"；**:160 是跨域直写 instance 域内状态机**（instance 有自己的 phase 词表与迁移，见 `src/domains/instance/state-machine.js`）| :68 挪进 manager 的"停止监督"出口；:160 改经 instance 域动作 |
 | `src/app/daemons/supervise.js` | 1（:87）| 保活路径置 `starting` | 属观测合成的错位落点，宜并入 projection |
-| （非违例）`src/app/state/fields.js` | 2（:37/:65）| **§6.3 承认的合法出口**：`setPhase`/`setDesired` 在"目录不可用/条目非在册"时的兜底直写 | 登记进基线只为锁死处数（新增第三处直写即判红），不排期收敛 |
+| （非违例）`src/app/state/fields.js` | 0（B2-3 归一）| 兜底分支已并入 `record.fieldOf` 唯一字段写口，文件内零直写 | 基线钉 0：任何回潮直写即判红 |
 
 **注意**：`src/domains/**` 里另有大量 `state.phase =` / `state.desired =` 写入（instance、router、
 shell 各自域内），那是
 **域自治对象改自己的状态机**，正是 §2 要求的形态，**不计入本基线**（ratchet 只扫 `src/app/**`，
 且排除 `src/app/control/**`）——把广域扫描当门禁会把合法点基线化，反而给"随便写 phase"背书。
-沙箱域内的 `desired` 写入处数不在这里钉，由 GD-7 按文件单独钉（只减不增）。
+沙箱域内的 `desired` 写入处数不在这里钉，由 GD-7 全域清零钉死（`.state.desired` 赋值出现即红，
+model 的一次性残留剔除口是唯一合法触碰，另有独立断言钉其恰 1 处）。
 
 ### §6.4 门禁（ML-*）
 
 | 门禁 | 断言 | 落点 |
 |---|---|---|
-| ML-1 | 沙箱 `desired` 的**来源**必须是实例意图字段 `inst.state.desired`（退回按 phase 三元推导即判红，判别器带反向样本证明非空转）；`keepDesired` 旗标在 src 内出现即判红；心跳/启动对齐/动作路径的申报点保持**裸 upsert** | `test/app-ctor-injection-test.js` D-8 块（投影行为 + 源码形态 + 反向）+ `test/guard-domain-model-gate-test.js` GD-7（写口按文件只减不增）/ GD-8（来源与消费者自洽）|
+| ML-1 | 沙箱 `desired` **不申报**（B2-1）：`sandboxSpec` 体不含 desired 键（两代旧形态——意图投影与 phase 三元推导——由反向样本证明判据可识别）；`keepDesired` 旗标在 src 内出现即判红；心跳/启动对齐/动作路径的申报点保持**裸 upsert**，且不顺手改写目录 desired | `test/app-ctor-injection-test.js` D-8 块（spec 形状 + 行为 + 源码形态 + 反向）+ `test/guard-domain-model-gate-test.js` GD-7（写口全域清零）/ GD-8（申报源与消费者自洽，GAP 清零）|
 | ML-2 | `src/app/**`（排除 `src/app/control/**`）内对生命周期对象的 `phase/desired/_monitoring/healthy` 直写与 `_setPhase(` 调用：违规**文件集合 ⊆ 登记集合**（含 §6.3 承认为合法出口的 `state/fields.js`），且**每文件处数 ≤ 基线**（新增文件或同文件加写 → 判红；收敛后基线随之调小）| `test/guard-domain-model-gate-test.js` ML-2 块 |
 | ML-3 | 反向：判据对合成的旧违例源码确实计数 > 0（门禁非空转）| 同上 |
+| ML-4 | 端口注册表单源（B2-5）：relay/inst/system 的唯一落账文件是 `ports.json`——lan-daemon 与守卫共写（`ports-lan.json` 第二本账废止，daemon 启动期按 owner 前缀一次性迁移）；共享的前提是**每次写口/冲突判读口进入前按 mtime+size 指纹自动对时**（陈旧快照会抢注「已配置但停止」的静默端口并在 _save 时全表覆盖丢写）；实例启动对配置端口被他方登记即时 `PORT_TAKEN:<by>` 显式拒绝，不等 systemd bind 失败 | `test/ports-claim-test.js` RS-auto 块 + 真·跨进程夹具（两 node 进程握手共写一本账）+ 源码层（daemon/facade 判据 + 旧形态反向识别）；`test/round13-discipline-gaps-test.js` ④ 块（行为级）|
 
