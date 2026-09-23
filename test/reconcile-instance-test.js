@@ -378,11 +378,14 @@ process.on('SIGTERM', () => { killSpawnedSync(); process.exit(143); });
     check('R12c stopInstance 后进程处理（POSIX：仍在=TERM 被忽略；Windows：taskkill 强杀在升级预算内杀净=无 SIGTERM 语义可抗）',
       winNoSig ? !pidlook.isAlive(pid) : pidlook.isAlive(pid), 'alive=' + pidlook.isAlive(pid));
     check('R12d pid 已入停服台账', p._terminatingPids.has(pid), '');
-    // /proc 仅 Linux 有；Windows/macOS 无 zombie 概念（无回收滞后）-> 进程死即算死，statOf 恒 'GONE'
-    const statOf = (pid) => { if (process.platform !== 'linux') return 'GONE'; try { const st = fs.readFileSync('/proc/' + pid + '/stat', 'utf8'); const i = st.lastIndexOf(') '); return i >= 0 ? st[i + 2] : '?'; } catch { return 'GONE'; } };
+    // zombie（已退出未回收）判据必须走平台原语：Linux 读 /proc、macOS 看 ps 的 state 列、win32 无此形态。
+    // 本文件原先自己只读 /proc，非 Linux 恒得 'GONE' —— macOS 上「SIGKILL 已投递、仅待父进程回收」
+    // 就被判成活孤儿，这是 R12e 在 darwin-arm64 runner 上的真实红因。
+    const deadOrZombie = (one) => !pidlook.isAlive(one) || pidlook.isZombie(one);
+    const why = (one) => 'alive=' + pidlook.isAlive(one) + ' zombie=' + pidlook.isZombie(one);
     const okW = await p.waitAllStopped(3000); // unref SIGKILL(1.5s) 或本方法超时兜底
     // zombie 亦视为已死（SIGKILL 已投递、端口/stdio 已释放，仅待父进程回收）
-    check('R12e waitAllStopped 后进程已死或已投递 SIGKILL（不留活孤儿）', okW === true && (!pidlook.isAlive(pid) || statOf(pid) === 'Z'), 'alive=' + pidlook.isAlive(pid) + ' stat=' + statOf(pid));
+    check('R12e waitAllStopped 后进程已死或已投递 SIGKILL（不留活孤儿）', okW === true && deadOrZombie(pid), why(pid));
     check('R12f 台账清空', !p._terminatingPids.size, 'size=' + p._terminatingPids.size);
     check('R12g 端口已释放（无孤儿占端口）', !pidlook.findListeningPid(inst.port), 'listener=' + pidlook.findListeningPid(inst.port));
     // force 语义（停服专用）：ready+usable 且被选中/在用的账号，stopInstance 仅 defer（不杀）；force=true 强制杀——
@@ -401,9 +404,9 @@ process.on('SIGTERM', () => { killSpawnedSync(); process.exit(143); });
     acc2._stopPendingUntilIdle = false;
     p.stopInstance(inst2, true); // force（停服路径）-> 立即 TERM+SIGKILL 台账
     const dlj = Date.now() + 6000;
-    while (Date.now() < dlj && pidlook.isAlive(pid2) && statOf(pid2) !== 'Z') { await new Promise((res) => setTimeout(res, 150)); }
+    while (Date.now() < dlj && !deadOrZombie(pid2)) { await new Promise((res) => setTimeout(res, 150)); }
     await p.waitAllStopped(5000); // 清台账（含 zombie：SIGKILL 已投递、端口/stdio 已释放）
-    check('R12j force 停服：在用实例被强制终止（不留活孤儿）', !pidlook.isAlive(pid2) || statOf(pid2) === 'Z', 'alive=' + pidlook.isAlive(pid2) + ' stat=' + statOf(pid2));
+    check('R12j force 停服：在用实例被强制终止（不留活孤儿）', deadOrZombie(pid2), why(pid2));
     await new Promise((res) => setTimeout(res, 300));
   }
 
