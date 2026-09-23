@@ -1,6 +1,6 @@
 'use strict';
 
-// ctl 门面工厂：把 ctl 端口包成方法转发 Proxy（router/lan 共用），具名工厂 + deps 注入。
+// ctl 门面工厂：把 ctl 端口包成方法转发 Proxy，具名工厂 + deps 注入（现仅 router 侧消费）。
 // routerApi() 门面在 app/facade/router.js：本文件只保留通用 Proxy 构造、供其单向取用，
 // 避免 facade/router 与 ctl/facades 互相调用成环。
 
@@ -42,10 +42,6 @@ const methods = {
   _makeRouterFacade() {
     const client = createCtlClient({ getConfig: () => this.config });
     return createRouterCtlFacade({ getRouterPort: client.routerCtlPort, ctlCall: client.ctlCall });
-  },
-  _makeCtlFacade(port) {
-    const client = createCtlClient({ getConfig: () => this.config });
-    return createCtlFacade({ port, ctlCall: client.ctlCall });
   },
 };
 

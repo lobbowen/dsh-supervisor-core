@@ -12,8 +12,8 @@ ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 UI="$ROOT/ui"
 SKIP_INSTALL=0
 [ "${1:-}" = "--skip-install" ] && SKIP_INSTALL=1
-# 环境变量等价形式：供 CI（ci-core.sh）在 ui/node_modules 已就绪时
-# 跳过 npm ci，省时；CI 侧不设置该变量 -> 仍走可复现的 npm ci。
+# 环境变量等价形式：ci-core.sh 会先自行 npm ci 并跑前端门禁，再置该变量调本脚本，
+# 以免重复安装；其余调用方（本地、build-launcher）不设 -> 仍走可复现的 npm ci。
 [ "${DSH_UI_SKIP_INSTALL:-0}" = "1" ] && SKIP_INSTALL=1
 
 echo "[ui] unified frontend build (src=$UI)"

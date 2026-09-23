@@ -102,6 +102,18 @@ if (bin) {
 const miss = run(['/nonexistent/binary-xyz']);
 check('R7 文件不存在 -> 退出码 2', miss.code === 2, 'exit=' + miss.code);
 
+// 读不出符号 -> 退出码 2，而不是旧的 exit 0。
+//   原实现把「工具缺席/产物不是 ELF」与「产物真是静态链接」合并成一条 exit 0 —— 那种 runner
+//   上本门禁永远绿，等于没有。现在只有证明无 PT_INTERP（静态链接）才豁免，其余一律不可检。
+{
+  const tmp = fs.mkdtempSync(path.join(require('node:os').tmpdir(), 'glibc-gate-'));
+  const junk = path.join(tmp, 'not-an-elf');
+  fs.writeFileSync(junk, Buffer.from([0x00, 0x01, 0x02, 0x03, 0xff, 0xfe, 0x2a, 0x2a]));
+  const unreadable = run([junk, '2.35']);
+  check('R8 非 ELF（提不出符号且非静态）-> 退出码 2 而非 0', unreadable.code === 2, 'exit=' + unreadable.code);
+  fs.rmSync(tmp, { recursive: true, force: true });
+}
+
 const failed = results.filter((r) => !r);
 console.log(String.fromCharCode(10) + '结果: ' + (results.length - failed.length) + ' passed, ' + failed.length + ' failed');
 process.exit(failed.length ? 1 : 0);

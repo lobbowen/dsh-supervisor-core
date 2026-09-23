@@ -19,16 +19,11 @@ function localAddresses() {
 
 /** 受管 DSH 合成清单：沙箱在前、原生主干 main 在尾部（main 经 mainOf() 注入；daemon 模式下 main 由 lan-state.json 进入 instances.all()，mainOf 为 null）。
  *  main 与沙箱 id 空间不相交：沙箱 id 一律由 instance 域生成（inst-*，见 instance/ops.js 建实例处），
- *  原 main 记录在装配期由 app/state/store.js#migrateMainRecord 迁出 instances.json，故清单不会出现同 id 项，findManaged 取首个匹配即可靠。 */
+ *  原 main 记录在装配期由 app/state/store.js#migrateMainRecord 迁出 instances.json，故清单不会出现同 id 项。 */
 function allManaged({ instances, mainOf }) {
   const sandboxes = (instances && typeof instances.all === 'function' && instances.all()) || [];
   const main = (typeof mainOf === 'function') ? mainOf() : null;
   return main ? [...sandboxes, main] : sandboxes;
 }
 
-/** 合成查找：按 id 取首个匹配。 */
-function findManaged(list, id) {
-  return (list || []).find((x) => x.id === id) || null;
-}
-
-module.exports = { localAddresses, allManaged, findManaged };
+module.exports = { localAddresses, allManaged };

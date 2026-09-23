@@ -59,7 +59,7 @@ const BASELINE_TOTAL = 98; // = 上述各项之和（原文口径上界；剥注
 // 收紧记录：main 非热路径 4 文件原地去 this
 //   —— decide 25->0、health-gate 12->0、shadow 5->0、signals 3->0（共 45）。基线 main 141->96、
 //   总量 237->192（剥注释实测 190）。**未转换且不计入下调**：controller.js 28、process.js 68
-//   （二者带源码形态钉子，见 design-notes/_p6-b2-main-inplace.md）。
+//   （二者带源码形态钉子，逐文件转换记录随该批过程文档收敛时未留存主题卷）。
 // 收紧记录：controller.js 28->0
 //   （phase switch 抽取器同批改为形态无关）。基线 main 96->68、总量 192->164（剥注释实测 162）。
 // 收紧记录：process.js 68->0 —— main 目录

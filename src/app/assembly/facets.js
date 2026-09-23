@@ -39,7 +39,8 @@ const FACETS = [
   { name: 'domain-actions/router', mod: require('../domain-actions/router'), factory: 'createRouterActions' },
   { name: 'domain-actions/lan', mod: require('../domain-actions/lan'), factory: 'createLanActions' },
   { name: 'domain-actions/main', mod: require('../domain-actions/main'), factory: 'createMainActions' },
-  { name: 'audit/orphan-scan', mod: require('../audit/orphan-scan') },
+  // audit/orphan-scan 不在本清单：它是真 ctor 工厂（assembly/collaborators.js 的 installAuditFactory
+  //   构造 host.audit），实现体本身只是纯函数，不再需要 host 兼容外壳切面。
   { name: 'settings/env', mod: require('../settings/env') },
   { name: 'settings/node-lts', mod: require('../settings/node-lts') },
   { name: 'settings/versions', mod: require('../settings/versions') },

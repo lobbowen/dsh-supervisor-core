@@ -45,10 +45,6 @@ class Supervisor {
           m.kind = 'native';
           return m;
         },
-        persist: () => {
-          try { if (this.instances && this.instances.save) this.instances.save(); } catch {}
-          this._writeDshMain({});
-        },
         tokenOf: (id) => this.tokenService.get(id),
       });
     }

@@ -26,7 +26,6 @@ VER="$(node -p "require('./package.json').version")"
 
 # ---- 参数：--publish / --scope <val> / --scope=<val> ----
 PUBLISH=0
-ALL=0
 SCOPE="$(node -p "try{const p=require('./package.json');(p.npmPublish&&p.npmPublish.scope)||''}catch(e){''}")"
 MAIN_LICENSE="$(node -p "require('./package.json').license")"
 # 子包 repository 单源=根 package.json#repository.url。必须与 provenance 签名的
@@ -56,41 +55,6 @@ if [ "$PUBLISH" = 1 ] && [ "${GITHUB_ACTIONS:-}" != 'true' ]; then
   exit 2
 fi
 
-
-# -- 全平台模式：自递归（每个平台各跑一遍「单平台」路径）--
-# 为什么自递归而非循环内联：单平台路径已包含「冒烟 + 版本核对 + 组装 + 幂等发布 + 认证」全套逻辑，
-# 内联会把这些复制一份（双份维护，正是本项目反复出现的缺陷模式）。递归只多一层进程，换来单一路径。
-if [ "$ALL" = 1 ]; then
-  # shellcheck source=./_platforms.sh
-  . "$ROOT/release/scripts/_platforms.sh"
-  MATRIX="$(dsh_platform_matrix_assert)"
-  TOTAL="$(printf "%s\n" "$MATRIX" | grep -c .)"
-  echo "=== 全平台发布：$TOTAL 个平台 ==="
-  INNER=(--scope "$SCOPE")
-  if [ "$PUBLISH" = 1 ]; then INNER=(--publish --scope "$SCOPE"); fi
-  FAILED=()
-  while read -r P_OS P_PLAT P_ARCH; do
-    [ -n "${P_PLAT:-}" ] || continue
-    echo ""
-    echo "──────── $P_OS-$P_ARCH ────────"
-    if DSH_PLATFORM_OVERRIDE="$P_PLAT" DSH_ARCH_OVERRIDE="$P_ARCH" \
-        bash "$ROOT/release/scripts/publish-core.sh" "${INNER[@]}"; then
-      echo "  ✅ $P_OS-$P_ARCH 完成"
-    else
-      echo "  ❌ $P_OS-$P_ARCH 失败"
-      FAILED+=("$P_OS-$P_ARCH")
-    fi
-  done <<< "$MATRIX"
-  echo ""
-  if [ "${#FAILED[@]}" -gt 0 ]; then
-    echo "=== 全平台结果：$((TOTAL - ${#FAILED[@]}))/$TOTAL 成功；失败：${FAILED[*]} ==="
-    echo "    可只重跑失败平台（幂等：已成功平台会自动跳过）："
-    echo "      DSH_PLATFORM_OVERRIDE=<plat> DSH_ARCH_OVERRIDE=<arch> npm run publish:core -- --publish"
-    exit 1
-  fi
-  echo "=== 全平台结果：$TOTAL/$TOTAL 全部成功 ==="
-  exit 0
-fi
 # ---- 平台识别与产物定位 ----
 PLAT="$(node -p "process.platform")"   # linux | darwin | win32
 ARCH="$(node -p "process.arch")"       # x64 | arm64
@@ -108,11 +72,7 @@ SRC_DIR="dist/launcher/dsh-supervisor-$VER-$PLAT-$ARCH"
   # 本脚本只在 CI 内运行，产物由同一次 CI run 的 launcher 构建步产出，
   #   所以缺产物意味着那条构建步骤本身没跑或跑错平台 —— 去查同一 run 的构建步，
   #   **不要**按旧提示在本机补跑构建（本地不得产生发布产物）。
-  if [ "${ALL:-0}" = 1 ]; then
-    echo "  同一 run 内的全平台构建入口：npm run build:launcher:all（仅 CI 内）"
-  else
-    echo "  同一 run 内的 launcher 构建入口：npm run build:launcher（仅 CI 内，按 DSH_*_OVERRIDE 定平台）"
-  fi
+  echo "  同一 run 内的 launcher 构建入口：npm run build:launcher（仅 CI 内，按 DSH_*_OVERRIDE 定平台）"
   exit 1
 }
 [ -f "$SRC_DIR/bin/dsh-supervisor" ] || { echo "产物缺 bin/dsh-supervisor: $SRC_DIR"; exit 1; }

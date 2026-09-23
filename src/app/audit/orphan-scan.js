@@ -2,7 +2,7 @@
 
 // 游离对象自检（orphan-scan）—— 低频（~60s）自检，只写日志 + orphan_audit 事件
 // （同指纹 10min 抑制），绝不强杀/释放（异主隔离红线）。
-// 实现主体 orphanAudit(deps) 只经惰性取值函数取用宿主事实；methods 为 host 兼容外壳。
+// 实现主体 orphanAudit(deps) 只经惰性取值函数取用宿主事实；唯一调用方是 audit/collaborator.js 工厂。
 
 const ports = require('../../platform/service/ports').shared;
 
@@ -79,23 +79,4 @@ function orphanAudit(deps) {
   }
 }
 
-/** host 兼容外壳：facets.js 的 { methods } 把本函数装到 host（this=host）。
- *  抑制状态仍读写 host 上的 _lastOrphanKey/_lastOrphanAt（与既有初始化点同源）。 */
-function hostOrphanAudit() {
-  return orphanAudit({
-    getConfig: () => this.config,
-    getLogger: () => this.logger,
-    getEvents: () => this.events,
-    getInstances: () => this.instances,
-    getManagedObjects: () => this.managedObjects,
-    getCtl: () => this.ctl,
-    getDaemons: () => this.daemons,
-    getStopping: () => this._stopping,
-    getLastKey: () => this._lastOrphanKey,
-    setLastKey: (v) => { this._lastOrphanKey = v; },
-    getLastAt: () => this._lastOrphanAt,
-    setLastAt: (v) => { this._lastOrphanAt = v; },
-  });
-}
-
-module.exports = { methods: { _orphanAudit: hostOrphanAudit }, orphanAudit };
+module.exports = { orphanAudit };

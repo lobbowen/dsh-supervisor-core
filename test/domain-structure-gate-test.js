@@ -38,7 +38,7 @@
 // ## 初始模式：report-only
 //   域改造尚未完成，默认 DG 判据只打印 RED 清单、退出码恒 0；反向自检永远硬失败
 //   （门禁自身完整性必须真实）。DG_STRICT=1 可整体转硬失败。
-//   RED 基线记录在 design-notes/EXEC-gates.md。
+//   RED 基线记录在 archive/design-notes/_EXEC-FIX-HISTORY.md 的门禁基础设施一段。
 //
 // ## 已知待办（如实报告，不掩盖）
 //   - DG-8 命中 src/supervisor.js（Object.assign(Supervisor.prototype, mod.methods)）——
@@ -46,7 +46,7 @@
 //   - DG-3/DG-9/DG-10 依赖 src/domains/*/contract.js，
 //     当前判定为契约未建 RED，由后续批（M3/M4）补齐；
 //   - DG-6 采用静态代理而非子进程 require 探针 —— 遵守不启动进程 / 不碰产品状态根
-//     的硬约束（见 EXEC-gates.md 偏差记录）。
+//     的硬约束（偏差记录见同一卷的门禁基础设施一段）。
 // ---------------------------------------------------------------------------
 
 const fs = require('node:fs');
@@ -636,7 +636,7 @@ console.log('扫描: ' + ENTRIES.length + ' 个 src/**/*.js，' + DOMAINS.length
   const CONTRACT_HOOKS = {
     instance: ['onRemoteChange', 'onInstanceStart', 'onInstanceStop', 'onCreate', 'onRemove', 'onDestroy'],
     plugin: ['onNativeRestart'],
-    relay: ['persist', 'mainOf', 'tokenOf'],
+    relay: ['mainOf', 'tokenOf'],
     router: ['onPersist', '_ccLoginReject', '_ccLoginResolve'],
   };
   const perDomain = [];
@@ -1055,7 +1055,7 @@ console.log('扫描: ' + ENTRIES.length + ' 个 src/**/*.js，' + DOMAINS.length
 // -- 汇总 --
 console.log('\n结果: ' + passed.length + ' passed, ' + failedHard.length + ' failed(hard), ' + failedSoft.length + ' failed(soft/report-only)');
 if (failedSoft.length) {
-  console.log('\nRED 清单（report-only，待域改造收敛；基线见 design-notes/EXEC-gates.md）:');
+  console.log('\nRED 清单（report-only，待域改造收敛；基线见 archive/design-notes/_EXEC-FIX-HISTORY.md）:');
   for (const s of failedSoft) console.log('  - ' + s);
 }
 if (failedHard.length) {

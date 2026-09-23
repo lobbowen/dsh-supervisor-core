@@ -70,7 +70,7 @@ function createMainStore(deps) {
     if (!live) live = readDshMainFile(); // 可能在此置 corrupt
     if (corrupt && !(typeof m.remoteToken === 'string' && m.remoteToken)) {
       const l = logger();
-      if (l && l.warn) l.warn('_writeDshMain: 文件损坏态，拒绝以默认值覆盖写回');
+      if (l && l.warn) l.warn('writeDshMain: 文件损坏态，拒绝以默认值覆盖写回');
       return;
     }
     corrupt = false;
@@ -90,7 +90,7 @@ function createMainStore(deps) {
       writeAtomic(f, body, { mode: 0o600 });
     } catch (e) {
       const l = logger();
-      if (l && l.warn) l.warn('_writeDshMain: ' + ((e && e.message) || e));
+      if (l && l.warn) l.warn('writeDshMain: ' + ((e && e.message) || e));
     }
   }
 

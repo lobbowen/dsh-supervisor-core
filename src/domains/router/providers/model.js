@@ -92,7 +92,7 @@ function serializeProvider(p) {
     adapter: p.adapter || null,
     proxyAppId: p.proxyAppId || null,
     proxyRunning: p.proxyRunning || false,
-    selectedAccountKeyId: p.selectedAccountKeyId || p.selectedProxyKeyId || null,
+    selectedAccountKeyId: p.selectedAccountKeyId || null,
     activeAccountKeyId: (p.activeAccount && p.activeAccount.keyId) || null,
     accounts: (p.accounts || []).map((a) => {
       p._normalizeConsistency(a);

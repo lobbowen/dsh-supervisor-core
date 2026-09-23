@@ -36,7 +36,6 @@ class LanManager {
     this.instances = opts.instances; // InstanceManager：沙箱实例配置单一数据源
     this.configPath = opts.configPath || ''; // 端口回收按 configPath 精确匹配，防误杀其它配置的 lan-daemon
     this.mainOf = opts.mainOf || null; // 守卫核心服务的原生主干视图
-    this.persist = opts.persist || null; // 持久化路由：沙箱写 instances.save()，main 变更写守卫 dsh-main.json
     // frp 托管经 ctor 注入（默认真实实现），单测可给假 frp。
     this.frp = opts.frp || new FrpManager({ dir: opts.stateDir, logger: this.logger, events: this.events });
     this.lanInstances = []; // [{ id, name, dshPort, wanPort, token, remoteMode }]（派生缓存）
@@ -48,15 +47,8 @@ class LanManager {
   }
 
   localAddresses() { return managed.localAddresses(); }
-  /** 持久化：优先注入的 persist 路由，否则回退沙箱 instances.save()。 */
-  _saveAll() {
-    if (typeof this.persist === 'function') { try { this.persist(); } catch (e) { this.logger && this.logger.warn && this.logger.warn('lan persist: ' + (e && e.message)); } return; }
-    if (this.instances && typeof this.instances.save === 'function') { try { this.instances.save(); } catch {} }
-  }
   /** 受管 DSH 合成清单（沙箱 + 原生主干 main）。 */
   _allManaged() { return managed.allManaged({ instances: this.instances, mainOf: this.mainOf }); }
-  /** 合成查找：按 id 取首个匹配。 */
-  _findManaged(id) { return managed.findManaged(this._allManaged(), id); }
   /** frpc 子进程句柄只读访问器：不暴露 frp 私有对象，供 daemon 优雅停机等待其退出。 */
   frpChild() { return (this.frp && this.frp.child) || null; }
 
