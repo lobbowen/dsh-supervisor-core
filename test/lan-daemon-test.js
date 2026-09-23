@@ -3,7 +3,7 @@
 
 // lan-daemon（L3b 进程解耦）机制集成测试：
 //  - lan-daemon 从 lan-state.json 快照拉起 relay（mock 目标）：wanPort 绑定唯一权威是
-//    端口注册表（ports-lan.json，claimSlot byOwner），实例行不带端口字段——测试经
+//    端口注册表（与守卫共写 ports.json 单本账，B2-5；claimSlot byOwner），实例行不带端口字段——测试经
 //    ctl list 回读实际绑定端口，不再硬编码期望值（三态化收口删 wanPort 镜像后同步）。
 //  - ctl（28104 复用 router-ctl dispatcher）list/frpStatus/health 可用
 //  - 状态 diff：行缺席/remoteMode=off -> reconcile 移除 relay；实例新增 -> 补建

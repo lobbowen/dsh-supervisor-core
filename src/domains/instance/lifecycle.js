@@ -3,6 +3,7 @@
 // 服务操作全部经平台 Provider（deps.service），绝不直接调 systemctl。
 const fs = require('node:fs');
 const monitor = require('../../platform/service/monitor');
+const ports = require('../../platform/service/ports').shared;
 const guardian = require('../../shared/guardian');
 const sandbox = require('./sandbox');
 const governor = require('./governor');
@@ -70,6 +71,18 @@ function createLifecycle(deps) {
         : null;
       if (boundary) {
         const msg = '启动命令未通过执行边界复校：' + boundary;
+        inst.state.lastError = msg;
+        store.save();
+        if (events) events.append('inst_start_refused', { id: inst.id, name: inst.name, error: msg });
+        logger.warn && logger.warn('[' + inst.id + '] ' + msg);
+        return { ok: false, error: msg };
+      }
+      // 端口预校验（B2-5 或然侧）：注册表是跨进程共享事实源（lan-daemon 的 relay 绑定同在
+      // ports.json），配置端口被他人登记时立即显式 PORT_TAKEN:<by>。静默端口的 TCP 探测
+      // 看不见「已登记未监听」，放任下去只会在 systemd 起舱后以 bind 失败暴露，面板无从定位。
+      const takenBy = ports.recordOf(inst.port);
+      if (takenBy && takenBy.owner !== 'inst:' + inst.id) {
+        const msg = 'PORT_TAKEN:' + (takenBy.owner || takenBy.role);
         inst.state.lastError = msg;
         store.save();
         if (events) events.append('inst_start_refused', { id: inst.id, name: inst.name, error: msg });

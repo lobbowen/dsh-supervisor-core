@@ -49,6 +49,15 @@ class PortRegistry {
   _load() {
     this._records = new Map();
     for (const r of store.loadRecords(this._file)) this._records.set(r.port, r);
+    this._diskStamp = store.fileStamp(this._file);
+  }
+
+  /** 跨进程对时（B2-5）：ports.json 是多进程（守卫 + lan-daemon）共享事实源，各方全量
+   *  read-modify-write，陈旧内存快照会在 _save 时把他人新增整段覆盖丢失、或让分配器抢注
+   *  他进程已登记的端口。指纹（mtime+size）变化即重载——所有写口与冲突判读口的入口。
+   *  不动 _allocLock（复位会击穿本进程在飞分配的互斥）。 */
+  _syncFromDisk() {
+    if (store.fileStamp(this._file) !== this._diskStamp) this._load();
   }
 
   /** 重新从文件加载（读路径先 reload，以权威文件为准）。 */
@@ -58,7 +67,7 @@ class PortRegistry {
     this._load();
   }
 
-  _save() { store.saveRecords(this._file, [...this._records.values()]); }
+  _save() { store.saveRecords(this._file, [...this._records.values()]); this._diskStamp = store.fileStamp(this._file); }
 
   /** 通用记录迁移：owner 命中任一前缀的记录 oldFile 到 newFile，并从旧文件清除。 */
   migrateByOwnerPrefix(oldFile, newFile, prefixes) {
@@ -68,6 +77,7 @@ class PortRegistry {
   /* 登记（固定 / 用户 / 动态） */
   /** 登记固定端口；同端口已被其它固定角色占用则报错；user/动态记录由固定权威覆盖。 */
   register(role, port) {
+    this._syncFromDisk();
     const p = Number(port);
     if (!Number.isInteger(p) || p <= 0 || p > 65535) throw new Error('ports.register: 非法端口 ' + port);
     const existing = this._records.get(p);
@@ -96,6 +106,7 @@ class PortRegistry {
 
   /** 登记用户配置端口（实例内部端口等）；冲突（固定/保留池/已占）抛错。 */
   registerUser(port, owner) {
+    this._syncFromDisk();
     const p = Number(port);
     if (!Number.isInteger(p) || p <= 0 || p > 65535) throw new Error('ports.registerUser: 非法端口 ' + port);
     if (this._records.has(p)) throw new Error('端口 ' + p + ' 已被 [' + this._records.get(p).role + '] 占用');
@@ -108,6 +119,7 @@ class PortRegistry {
 
   /** 按 owner 释放端口（对象删除/关闭时调用）。 */
   unregister(owner) {
+    this._syncFromDisk();
     let removed = false;
     for (const [p, r] of this._records) {
       if (r.owner === owner) { this._records.delete(p); removed = true; }
@@ -118,6 +130,7 @@ class PortRegistry {
   /** 释放端口：不传 ownerId 按端口号；传了则仅当登记 owner 匹配才释放。空值检查必须先于 owner 比较。
    *  @returns {boolean} 是否真的释放了一条记录 */
   release(port, ownerId) {
+    this._syncFromDisk();
     const p = Number(port);
     const rec = this._records.get(p);
     if (!rec) return false;
@@ -131,6 +144,7 @@ class PortRegistry {
   /** 按 role 取端口（固定端口）。同 role 有多条（老版本避让留下的残留记录）时取**最新登记**：
    *  桌面壳读 ports.json 用的是同一判据，两侧不许对「哪个端口是当前的」给出不同答案。 */
   get(role) {
+    this._syncFromDisk();
     let best = null;
     for (const r of this._records.values()) {
       if (r.role !== role) continue;
@@ -139,11 +153,12 @@ class PortRegistry {
     return best ? best.port : null;
   }
 
-  isRegistered(port) { return this._records.has(Number(port)); }
+  isRegistered(port) { this._syncFromDisk(); return this._records.has(Number(port)); }
 
-  recordOf(port) { return this._records.get(Number(port)) || null; }
+  recordOf(port) { this._syncFromDisk(); return this._records.get(Number(port)) || null; }
 
   byOwner(owner) {
+    this._syncFromDisk();
     for (const r of this._records.values()) if (r.owner === owner) return r.port;
     return null;
   }
@@ -158,6 +173,7 @@ class PortRegistry {
 
   /** 全部端口清单（按端口升序）。 */
   list() {
+    this._syncFromDisk();
     return [...this._records.values()].sort((a, b) => a.port - b.port);
   }
 
@@ -180,6 +196,7 @@ class PortRegistry {
 
   /** 显式登记已分配端口（复用持久化端口时调用）。 */
   allocateMark(port, role, owner) {
+    this._syncFromDisk();
     const p = Number(port);
     if (!this._records.has(p)) {
       this._records.set(p, { port: p, role: role || 'dynamic', owner: owner || 'dynamic', createdAt: Date.now() });

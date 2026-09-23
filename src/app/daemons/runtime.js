@@ -122,8 +122,8 @@ module.exports = {
         }
         // 哈希必须用稳定内容（无易变时间戳），否则 30s 监督 tick 每次重写 lan-state，lan-daemon 每轮
         // 视为变化并重复 applyToken/重换 cookie。仅当内容真变化才落盘。
-        // 端口权威：同步实例不含 wanPort，relay 端口唯一权威是端口注册表（ports-lan.json，daemon
-        // claimSlot byOwner 复用）；曾含 wanPort 使守卫把历史写死值传播给 daemon，与注册表分裂成双族。
+        // 端口权威：同步实例不含 wanPort，relay 端口唯一权威是端口注册表（ports.json，B2-5 起
+        // 与守卫共写单本账；daemon claimSlot byOwner 复用）；曾含 wanPort 使守卫把历史写死值传播给 daemon，与注册表分裂成双族。
         const body = JSON.stringify({ instances: instances.map((i) => ({
           id: i.id, name: i.name, port: i.port,
           remoteMode: i.remoteMode === 'lan' || i.remoteMode === 'wan' ? i.remoteMode : 'off',

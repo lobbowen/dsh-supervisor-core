@@ -206,4 +206,5 @@ model 的一次性残留剔除口是唯一合法触碰，另有独立断言钉�
 | ML-1 | 沙箱 `desired` **不申报**（B2-1）：`sandboxSpec` 体不含 desired 键（两代旧形态——意图投影与 phase 三元推导——由反向样本证明判据可识别）；`keepDesired` 旗标在 src 内出现即判红；心跳/启动对齐/动作路径的申报点保持**裸 upsert**，且不顺手改写目录 desired | `test/app-ctor-injection-test.js` D-8 块（spec 形状 + 行为 + 源码形态 + 反向）+ `test/guard-domain-model-gate-test.js` GD-7（写口全域清零）/ GD-8（申报源与消费者自洽，GAP 清零）|
 | ML-2 | `src/app/**`（排除 `src/app/control/**`）内对生命周期对象的 `phase/desired/_monitoring/healthy` 直写与 `_setPhase(` 调用：违规**文件集合 ⊆ 登记集合**（含 §6.3 承认为合法出口的 `state/fields.js`），且**每文件处数 ≤ 基线**（新增文件或同文件加写 → 判红；收敛后基线随之调小）| `test/guard-domain-model-gate-test.js` ML-2 块 |
 | ML-3 | 反向：判据对合成的旧违例源码确实计数 > 0（门禁非空转）| 同上 |
+| ML-4 | 端口注册表单源（B2-5）：relay/inst/system 的唯一落账文件是 `ports.json`——lan-daemon 与守卫共写（`ports-lan.json` 第二本账废止，daemon 启动期按 owner 前缀一次性迁移）；共享的前提是**每次写口/冲突判读口进入前按 mtime+size 指纹自动对时**（陈旧快照会抢注「已配置但停止」的静默端口并在 _save 时全表覆盖丢写）；实例启动对配置端口被他方登记即时 `PORT_TAKEN:<by>` 显式拒绝，不等 systemd bind 失败 | `test/ports-claim-test.js` RS-auto 块 + 真·跨进程夹具（两 node 进程握手共写一本账）+ 源码层（daemon/facade 判据 + 旧形态反向识别）；`test/round13-discipline-gaps-test.js` ④ 块（行为级）|
 

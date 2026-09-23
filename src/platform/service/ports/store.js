@@ -29,6 +29,12 @@ function loadRecords(file) {
   return out;
 }
 
+/** 文件新鲜度指纹 `mtimeMs:size`；不存在返回 '0'。只用 mtime 会同毫秒双写撞值，
+ *  追加记录必改 size，两维合相把漏检窗口压到必须「mtime 与 size 都恰好相同」。 */
+function fileStamp(file) {
+  try { const st = fs.statSync(file); return st.mtimeMs + ':' + st.size; } catch { return '0'; }
+}
+
 /** 原子写注册表（0600 + .tmp + rename）；失败不抛（内存态仍准确）。 */
 function saveRecords(file, records) {
   try {
@@ -53,4 +59,4 @@ function extraRecords(file, extraFiles) {
   return out;
 }
 
-module.exports = { loadRecords, saveRecords, extraRecords };
+module.exports = { loadRecords, saveRecords, extraRecords, fileStamp };

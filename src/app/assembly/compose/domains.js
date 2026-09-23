@@ -69,8 +69,9 @@ function composeDomains(host) {
         host.managedObjects.registerAdapter('sandbox-instance', { supervise: (entry) => host._sandboxSuperviseOnce(entry), tickEvery: 1 });
       }
     } catch (e) { host.logger && host.logger.warn && host.logger.warn('managed registry init: ' + (e && e.message)); }
-    // relay 在 daemon 模式唯一由独立 lan-daemon 承载（独占 ports-lan），守卫只在非 daemon
-    //   经 get lan() 惰性创建本地实例；无条件 new 会让漏网调用把 relay 写进 ports.json。
+    // relay 在 daemon 模式唯一由独立 lan-daemon 承载，守卫只在非 daemon 经 get lan() 惰性创建
+    //   本地实例；两种模式同写 ports.json（B2-5 单源），漏网 new 不再分裂出第二本账，
+    //   但本地/daemon 双载体仍会互相抢 relay 绑定，故按模式收敛创建点。
     host._lan = null;
     host.pluginMarket = new PluginMarket({
       stateFile: host.config.stateFile,
