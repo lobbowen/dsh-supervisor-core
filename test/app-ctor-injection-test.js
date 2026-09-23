@@ -130,7 +130,7 @@ function fakeRegistry() {
   st.field('crashWindowStart', 1234); st.field('crashWindowRestarts', 4);
   check('M3a 未就绪期草稿写读一致',
     st.field('restartCount') === 5 && st.field('crashWindowStart') === 1234, 'fallback 直读');
-  // 真 entry 出现（计数=createEntry 缺省零值）→ 首见即回填（审计缺陷的正面反证）。
+  // 真 entry 出现（计数=createEntry 缺省零值）-> 首见即回填（审计缺陷的正面反证）。
   reg.register({ kind: 'dsh', id: 'main', desired: 'running',
     restartCount: 0, backoffLevel: 0, backoffUntil: null, crashWindowStart: null, crashWindowRestarts: 0 });
   const e = st.store();
@@ -244,7 +244,9 @@ function fakeRegistry() {
     const host = Object.assign({}, lpMethods, {
       config: { apiHost: '0.0.0.0', apiPort: 3080, apiAccessKey: 'k' },
       configPath: cf, logger: { warn() {}, info() {}, error() {} },
-      events: { append: (e) => evs.push(e) }, state, api: null,
+      events: { append: (e) => evs.push(e) }, state,
+      // 重绑门控是「changed && api().close 存在」（lan-panel.js:79）：夹具不挂 api 则该分支永不走。
+      api: { close() {} },
       _apiRebind() { host.__rebound = (host.__rebound || 0) + 1; },
     });
     return { host, evs };
