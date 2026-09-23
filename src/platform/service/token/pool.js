@@ -29,6 +29,8 @@ class TokenPool {
     this._bus = new FollowBus({ logger: this.logger });
     this._schedules = new Map(); // id 到 { seq, i, timer }；新轮次 seq 递增使旧轮次作废
     this._seq = 0;
+    this._attachGen = new Map(); // id 到登记代：attach/clear 各自递增，使在途 journal 回填作废（B2-6a）
+    this._journalFn = o.journal || capture.captureJournal; // journal 档显式注入口：CI 造不出 journalctl 输出，行为断言靠它
     this._backfillAt = new Map();
     this._poolFile = o.poolFile ? path.resolve(o.poolFile) : null;
     this._loaded = false;
@@ -54,6 +56,8 @@ class TokenPool {
     const unit = s.unit || (prev && prev.unit) || null;
     const file = s.file || (prev && prev.file) || null;
     this._sources.set(id, { kind, unit, file, lines: (prev && prev.lines) || [] });
+    // 换源即换代（含同参重复 attach，无害）：在途 journal 回填的 unit/file 属旧代事实，不得再落。
+    this._attachGen.set(id, (this._attachGen.get(id) || 0) + 1);
     const rec = this._records.get(id);
     if (rec) rec.kind = kind; // 记录已存在时补齐 kind（池快照载入的记录也带 kind，这里只兜底）
     return true;
@@ -80,12 +84,22 @@ class TokenPool {
       return this._commit(id, hit.token, hit.source);
     }
     // journald（systemd 托管）末位兜底：异步发射不占调用线程。
+    // B2-6a attach 世代守卫（照抄 scheduleCapture 的作废法）：发射前后各校验一次换代，
+    //   且源一律按 id 从池重取——闭包 src 的 unit/file 属旧代事实，
+    //   否则 detach/clear 后迟到的死令牌会以新 gen 回灌（违反 TK-8 无静默复活）。
     if (src.unit && kinds.isCaptured(src.kind)) {
+      const gen = this._attachGen.get(id) || 0;
+      const fresh = () => ((this._attachGen.get(id) || 0) === gen ? this._sources.get(id) : null);
       Promise.resolve()
-        .then(() => capture.captureJournal(src.unit, { logger: this.logger }))
+        .then(() => {
+          const cur = fresh();
+          return cur ? this._journalFn(cur.unit, { logger: this.logger }) : null;
+        })
         .then((j) => {
           if (!j) return;
-          if (src.file) this._persistLine(id, src.file, j.line);
+          const cur = fresh();
+          if (!cur) return;
+          if (cur.file) this._persistLine(id, cur.file, j.line);
           this._commit(id, j.token, j.source);
         })
         .catch(() => { /* 回填失败无碍：下个节流周期再来 */ });
@@ -160,6 +174,8 @@ class TokenPool {
     this._backfillAt.delete(id);
     const src = this._sources.get(id);
     if (src && src.lines && src.lines.length) src.lines.length = 0;
+    // 换代使在途 journal 回填作废：迟到结果若仍提交，等于刚广播 null 又静默复活死令牌。
+    this._attachGen.set(id, (this._attachGen.get(id) || 0) + 1);
     this._records.delete(id);
     this._persistPool();
     this._bus.emit(id, null, null);

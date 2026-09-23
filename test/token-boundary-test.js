@@ -166,6 +166,57 @@ async function main() {
   }
 
 
+  console.log('== 令牌边界：B2-6a journal 回填 attach 世代守卫（TK-8：在途回填被换代后必须作废）==');
+  {
+    const { TokenPool } = require(path.join(ROOT, 'src', 'platform', 'service', 'token', 'pool.js'));
+    const quiet = { warn() {}, info() {}, error() {} };
+    let journalCalls = 0; let late = null;
+    // journal 显式注入：返回悬挂 Promise，由用例控制「迟到」时机（CI 无 journalctl，真实档必然查无）。
+    const pool = new TokenPool({ logger: quiet, journal: () => { journalCalls += 1; return new Promise((r) => { late = r; }); } });
+    const drain = () => new Promise((r) => setTimeout(r, 25));
+
+    // A：detach 时回填已在途 —— 旧实现无守卫，此断言必红（死令牌以新 gen 复活并广播）
+    pool.attach('gp', { kind: 'dsh-instance', unit: 'u-gp' });
+    pool.capture('gp');
+    await drain(); // 让 journal 档真正发射（悬挂中）
+    pool.detach('gp');
+    late({ token: 'LATE1', source: 'journal', line: 'http://127.0.0.1:3101/?token=LATE1' });
+    await drain();
+    check('B2-6a detach 后迟到回填不得复活令牌', pool.get('gp') === '', pool.get('gp'));
+
+    // B：换源重 attach —— 旧代在途结果作废（unit/file 属旧代事实）
+    pool.attach('gr', { kind: 'dsh-instance', unit: 'u-gr' });
+    pool.capture('gr');
+    await drain();
+    pool.attach('gr', { kind: 'dsh-instance', unit: 'u-gr-new' });
+    late({ token: 'STALE2', source: 'journal', line: 'http://127.0.0.1:3102/?token=STALE2' });
+    await drain();
+    check('B2-6a 重 attach 后旧代回填不得落池', pool.get('gr') === '', pool.get('gr'));
+
+    // C：未换代的及时回填仍正常落池 —— 守卫不得连带砍死正常链路（防空转判据）
+    pool.attach('gq', { kind: 'dsh-instance', unit: 'u-gq' });
+    pool.capture('gq');
+    await drain();
+    late({ token: 'GOOD3', source: 'journal', line: 'http://127.0.0.1:3103/?token=GOOD3' });
+    await drain();
+    check('B2-6a 同代及时回填仍落池', pool.get('gq') === 'GOOD3', pool.get('gq'));
+
+    // D：发射前就 clear —— journal 档根本不该启动（同步换代先于微任务）
+    const callsBefore = journalCalls;
+    pool.attach('gs', { kind: 'dsh-instance', unit: 'u-gs' });
+    pool.capture('gs');
+    pool.clear('gs');
+    await drain();
+    check('B2-6a 发射前已清除则 journal 不执行', journalCalls === callsBefore, String(journalCalls - callsBefore));
+
+    // 形态：journal 链不得再闭包旧 src（旧形状出现即回潮）
+    const poolSrc = require(path.join(__dirname, '_strip')).stripComments(
+      fs.readFileSync(path.join(ROOT, 'src', 'platform', 'service', 'token', 'pool.js'), 'utf8'));
+    check('B2-6a 形态：journal 链按 id 重取源且带世代守卫',
+      !/capture\.captureJournal\(src\.unit/.test(poolSrc) && /_attachGen/.test(poolSrc), '有');
+  }
+
+
   console.log('\n==============================');
   console.log('结果: ' + passed + ' passed, ' + failed + ' failed');
   try { fs.rmSync(TMP, { recursive: true, force: true }); } catch {}
