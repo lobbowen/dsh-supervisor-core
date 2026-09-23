@@ -10,6 +10,8 @@ const { createControlPlane } = require('../control/collaborator');
 const { createCtl } = require('../ctl/collaborator');
 const { createOrphanScan } = require('../audit/collaborator');
 const { ENTRY_FIELDS, PROC_FIELDS } = require('../state/field-tables');
+// 换名别名字典的唯一声明处（与 config.normalize 同源，B2-4）：注入 state 供 persistConfigPatch 清理旧键。
+const { aliases: CONFIG_ALIASES } = require('../settings/domain-config');
 
 // 薄委托切面 -> { 协作方公开名: host 上的既有方法名 }
 const THIN_SPEC = {
@@ -76,6 +78,7 @@ function installFieldHelpers(host, state) {
 function installState(host) {
   const state = createStateStore({
     getConfig: () => host.config, getConfigPath: () => host.configPath,
+    getConfigAliases: () => CONFIG_ALIASES,
     getLogger: () => host.logger, getEvents: () => host.events,
     getManagedObjects: () => host.managedObjects, getInstances: () => host.instances,
     getViews: () => host.views, getIntents: () => host.intents,

@@ -33,7 +33,7 @@ function createStateStore(deps) {
 
   const desired = createDesired({
     fields, store, getIntents: g.getIntents, getEvents: g.getEvents,
-    getConfigPath: g.getConfigPath, getLogger: logger,
+    getConfigPath: g.getConfigPath, getConfigAliases: g.getConfigAliases, getLogger: logger,
     setCrashHalted: g.setCrashHalted, setManualRestart: g.setManualRestart,
     tick: g.tick, stopProcess: g.stopProcess,
   });

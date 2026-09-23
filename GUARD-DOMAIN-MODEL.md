@@ -159,6 +159,14 @@ ManagedRegistry（心跳驱动 —— 共用）
 执法：GD-6（读侧）+ `test/session-lifecycle-test.js` 的 ST-1 段（写侧：缺 `setRouterRunning` 写口即显式拒绝，
 且 `ManagedLifecycle.start()` 异常分支与 `ok:false` 分支同语义复位 `desired`）。
 
+**config.json 的唯一写口（2026-09-23 B2-4）**：门面层（`settings/lan-panel.js` 等）不得自带
+`fs`/`writeAtomic` 直写配置——一律经 `state.persistConfigPatch({key: value})`（fail-closed：
+读/解析失败拒写、原字节保留），落盘成败用 `settings/access.js` 导出的 `verifyPersisted` 写后
+读回核验，各门面共用同一口径。旧键清理由 `settings/domain-config.js` 的**别名字典**驱动
+（`getConfigAliases` 注入）：仅当新旧键都已在盘上才删旧键——旧键是唯一意图时提前删=静默丢失。
+落点：`state/desired.js`、`settings/lan-panel.js`；执法：`test/app-ctor-injection-test.js` B2-4 块
+（单源落盘/损坏拒写/源码层无直写路径三判）。
+
 ### §6.3 生命周期视图（ManagedLifecycle）的写权分工（D-7）
 
 `ManagedLifecycle`（`src/app/control/entry.js`）是**管理视图**，不是第二状态源。写权按"**驱动** vs **观测合成**"分：

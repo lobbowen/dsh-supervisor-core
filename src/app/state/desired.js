@@ -12,6 +12,9 @@ function createDesired(deps) {
   const intents = () => (typeof g.getIntents === 'function' ? g.getIntents() : null);
   const events = () => (typeof g.getEvents === 'function' ? g.getEvents() : null);
   const configPath = () => (typeof g.getConfigPath === 'function' ? g.getConfigPath() : null);
+  // 换名别名表与 config.normalize 同源（app/settings/domain-config 声明，装配期注入，B2-4）：
+  //   写盘清理由字典驱动，不在本文件硬编码键名。
+  const configAliases = () => (typeof g.getConfigAliases === 'function' ? (g.getConfigAliases() || []) : []);
   const logger = () => (typeof g.getLogger === 'function' ? g.getLogger() : null);
   const setCrashHalted = typeof g.setCrashHalted === 'function' ? g.setCrashHalted : () => {};
   const setManualRestart = typeof g.setManualRestart === 'function' ? g.setManualRestart : () => {};
@@ -85,7 +88,10 @@ function createDesired(deps) {
         }
       }
       Object.assign(cur, patch);
-      delete cur.switcherAutoStart; // 旧键随持久化收敛删除
+      // 旧键清理由别名驱动（B2-4）：仅当新键已在盘上才删旧键——旧键是唯一意图时提前删=静默丢失。
+      for (const [from, to] of configAliases()) {
+        if (cur[from] !== undefined && cur[to] !== undefined) delete cur[from];
+      }
       writeAtomic(p, JSON.stringify(cur, null, 2), { mode: 0o600 });
       return true;
     } catch (e) {

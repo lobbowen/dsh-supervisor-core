@@ -2,9 +2,10 @@
 
 // 管家面板局域网访问开关门面。
 // 导出形态 { methods }，方法经 this 协作。
-const fs = require('node:fs');
+// 写入契约（B2-4 归一）：config.json 持久化唯一入口 = state.persistConfigPatch
+//   （fail-closed + 原字节保留 + 别名字典清理），本层与 access.js 同口径「写后读回核验」。
 const netInfo = require('../../platform/os/netinfo');
-const { writeAtomic } = require('../../platform/util/fs');
+const { verifyPersisted } = require('./access');
 
 const DEPS = new WeakMap();
 function depsOf(host) {
@@ -15,6 +16,7 @@ function depsOf(host) {
       logger: () => host.logger,
       events: () => host.events,
       configPath: () => host.configPath,
+      state: () => host.state,
       api: () => host.api,
       lanPanelStatus: () => host.lanPanelStatus(),
       apiRebind: () => host._apiRebind(),
@@ -68,14 +70,11 @@ module.exports = {
         //   但把「未落盘」透传（api/domains/guard.js 据此回 500）。否则面板显示已切换、重启后回旧值。
         let persistError = null;
         if (d.configPath()) {
-          try {
-            const doc = JSON.parse(fs.readFileSync(d.configPath(), 'utf8'));
-            doc.apiHost = host;
-            writeAtomic(d.configPath(), JSON.stringify(doc, null, 2), { mode: 0o600 }); // 原子 + 0600
-          } catch (e) {
-            persistError = 'persist apiHost: ' + e.message;
-            d.logger().error(persistError);
-          }
+          // 单一写口 + 写后读回核验（与 access.js 同口径）：persistConfigPatch 内部
+          //   fail-closed（读/解析失败拒写并保留原字节），核验失败原因由 verifyPersisted 给出。
+          d.state().persistConfigPatch({ apiHost: host });
+          persistError = verifyPersisted(d.configPath(), { apiHost: host });
+          if (persistError) d.logger().error(persistError);
         }
         if (changed && d.api() && typeof d.api().close === 'function') d.apiRebind();
         if (d.events()) d.events().append('lan_panel_changed', { enabled: on });

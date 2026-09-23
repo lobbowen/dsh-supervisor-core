@@ -158,6 +158,7 @@ function fakeRegistry() {
   const warns = []; const evs = [];
   const d = createDesired({
     getConfigPath: () => cf,
+    getConfigAliases: () => [['switcherAutoStart', 'routerAutostart']],
     getLogger: () => ({ warn: (m) => warns.push(String(m)) }),
     getEvents: () => ({ append: (e) => evs.push(e) }),
     fields: {}, store: {},
@@ -178,6 +179,17 @@ function fakeRegistry() {
   check('A1a 不静默：warn 日志 + config_persist_aborted 事件都在',
     warns.some((w) => /fail-closed/.test(w)) && evs.filter((e) => e === 'config_persist_aborted').length >= 3,
     JSON.stringify(evs));
+
+  // -- B2-4：legacy 键清理由别名字典驱动（与 domain-config 声明同源，不再硬编码键名）--
+  fs.rmSync(cf);
+  fs.writeFileSync(cf, JSON.stringify({ switcherAutoStart: true }));
+  d.persistConfigPatch({ apiPort: 6001 });
+  check('B2-4 新键未落盘时旧键保留（旧键可能是唯一意图，预删=静默丢失）',
+    JSON.parse(fs.readFileSync(cf, 'utf8')).switcherAutoStart === true, 'ok');
+  d.persistConfigPatch({ routerAutostart: true });
+  const conv = JSON.parse(fs.readFileSync(cf, 'utf8'));
+  check('B2-4 新旧键并存的瞬间之后即收敛（字典驱动，非键名硬编码）',
+    conv.routerAutostart === true && !('switcherAutoStart' in conv), JSON.stringify(conv));
 }
 
 // ---------------------------------------------------------------------------
@@ -209,6 +221,57 @@ function fakeRegistry() {
     JSON.parse(fs.readFileSync(mf, 'utf8')).remoteToken === 'TK-RESET', fs.readFileSync(mf, 'utf8').slice(0, 60));
   ms.writeDshMain({ guardian: true });
   check('A1b 解锁后普通写恢复', JSON.parse(fs.readFileSync(mf, 'utf8')).guardian === true, 'ok');
+}
+
+// ---------------------------------------------------------------------------
+// B2-4 lan-panel 写口归一：setLanPanel 不再自拼 read-merge-write，
+//   与 access.js 同口径 = state.persistConfigPatch（唯一入口）+ verifyPersisted（写后读回）。
+//   判红点：配置损坏时经单源 fail-closed **原字节保留**且如实回 ok:false。
+// ---------------------------------------------------------------------------
+{
+  const t = fs.mkdtempSync(path.join(os.tmpdir(), 'b24-lanpanel-'));
+  const cf = path.join(t, 'config.json');
+  const { createDesired } = require(path.join(ROOT, 'src', 'app', 'state', 'desired.js'));
+  const lpMethods = require(path.join(ROOT, 'src', 'app', 'settings', 'lan-panel.js')).methods;
+  const mk = () => {
+    const evs = [];
+    const state = createDesired({
+      getConfigPath: () => cf,
+      getLogger: () => ({ warn() {} }),
+      getEvents: () => ({ append: (e) => evs.push(e) }),
+      fields: {}, store: {},
+    });
+    const host = Object.assign({}, lpMethods, {
+      config: { apiHost: '0.0.0.0', apiPort: 3080, apiAccessKey: 'k' },
+      configPath: cf, logger: { warn() {}, info() {}, error() {} },
+      events: { append: (e) => evs.push(e) }, state, api: null,
+      _apiRebind() { host.__rebound = (host.__rebound || 0) + 1; },
+    });
+    return { host, evs };
+  };
+  fs.writeFileSync(cf, JSON.stringify({ apiHost: '0.0.0.0', apiPort: 3080 }));
+  {
+    const { host } = mk();
+    const r = host.setLanPanel(false); // 0.0.0.0 -> 127.0.0.1
+    const doc = JSON.parse(fs.readFileSync(cf, 'utf8'));
+    check('B2-4 setLanPanel 经单源写口落盘 + 内存同步 + 触发重绑',
+      r.ok === true && doc.apiHost === '127.0.0.1' && host.config.apiHost === '127.0.0.1' && host.__rebound === 1,
+      JSON.stringify({ ok: r.ok, doc }));
+  }
+  {
+    fs.writeFileSync(cf, '{"apiAccessKey":"SECRET","swit'); // 半截 JSON
+    const { host, evs } = mk();
+    const r = host.setLanPanel(false);
+    check('B2-4 配置损坏：经 fail-closed 单源拒写、原字节保留、如实回 ok:false',
+      r.ok === false && fs.readFileSync(cf, 'utf8') === '{"apiAccessKey":"SECRET","swit'
+      && evs.indexOf('config_persist_aborted') >= 0, JSON.stringify(r.error));
+  }
+  {
+    // 写口唯一性（源码层）：lan-panel 不再 require fs/writeAtomic 直写配置。
+    const src = require('./_strip').stripComments(fs.readFileSync(path.join(ROOT, 'src/app/settings/lan-panel.js'), 'utf8'));
+    check('B2-4 源码层：lan-panel 无 fs/writeAtomic 直写路径（唯一入口=persistConfigPatch）',
+      !/writeAtomic|readFileSync/.test(src) && /persistConfigPatch/.test(src), 'ok');
+  }
 }
 
 // ---------------------------------------------------------------------------
