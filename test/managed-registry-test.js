@@ -39,6 +39,9 @@ const fakePorts = {
   // 1. 注册
   const dsh = reg.register({ kind: 'dsh', id: 'main', name: '主实例', desired: 'running', guardian: true, ownership: { ports: [{ role: 'dsh-main', port: 3080 }], rootPath: '/home/u/.dsh', processMode: 'spawn' } });
   check('注册 dsh 返回目录项', !!dsh && dsh.id === 'main' && dsh.phase === 'stopped');
+  // B2-2：guardian 不入目录面（权威在 dsh-main.json / inst.guardian，消费者直读源）——
+  //   register 入参带 guardian 也必须不落键，否则目录副本与域记录只有分歧面没有真相。
+  check('B2-2 register 带 guardian 入参不落键', !!dsh && !('guardian' in dsh), Object.keys(dsh).join(','));
   const inst = reg.register({ kind: 'sandbox-instance', id: 'inst-1', name: '沙箱1', desired: 'running', guardian: false, ownership: { ports: [{ role: 'inst', port: 3200 }], rootPath: '/data/instances/inst-1', unit: 'dsh-web@inst-1' } });
   check('注册沙箱', !!inst);
   check('查询 list 顺序', reg.list().map(o => o.id).join(',') === 'main,inst-1');
@@ -57,7 +60,7 @@ const fakePorts = {
 
   // 3. update（应然申报）
   const up = reg.update('main', { guardian: false });
-  check('update guardian', up.ok && reg.get('main').guardian === false);
+  check('B2-2 update 传 guardian：返回 ok 但一律忽略、不落键', up.ok && !('guardian' in reg.get('main')));
   reg.update('main', { desired: 'stopped' });
   check('update desired', reg.get('main').desired === 'stopped');
   const bad = reg.update('main', { desired: 'maybe' });
@@ -76,13 +79,14 @@ const fakePorts = {
   const reg2 = new ManagedRegistry({ file, logger: null, events: null, ports: fakePorts });
   check('恢复 2 对象', reg2.count() === 2);
   check('恢复 desired', reg2.get('main').desired === 'stopped');
-  check('恢复 guardian', reg2.get('main').guardian === false);
+  check('B2-2 恢复后目录项不含 guardian 键', !('guardian' in reg2.get('main')));
   check('恢复 phase', reg2.get('main').phase === 'running');
   check('恢复所有权 ports', reg2.get('main').ownership.ports[0].port === 3080);
   check('观测不持久化', reg2.get('main').lastObserved === null);
   const body = fs2.readFileSync(file, 'utf8');
   check('文件 schema 标记', body.indexOf('managed-objects@1') >= 0);
   check('文件无适配器/观测字段', body.indexOf('observe') < 0 && body.indexOf('lastObserved') < 0);
+  check('B2-2 目录文件不含 guardian', body.indexOf('guardian') < 0);
 
   // 6. 注销级联（释放所有权端口）
   const before = released.length;
@@ -191,6 +195,25 @@ const fakePorts = {
     const regP = new ManagedRegistry({ file: pf, logger: null });
     check('A1c 未知 kind 单条跳过，其后合法条目仍恢复',
       regP.count() === 1 && !!regP.get('ok-1'), String(regP.count()));
+  }
+
+  // 12. B2-2 老库残留清理口：目录文件带 guardian 键时，load 经 createEntry 重建即丢弃，
+  //     且后续保存不回流——这就是"无需迁移脚本"的机制本体，必须有正向证据。
+  {
+    const rf = path.join(TMP, 'residue-objects.json');
+    fs2.writeFileSync(rf, JSON.stringify({ schema: 'managed-objects@1', objects: [
+      { kind: 'dsh', id: 'r1', name: 'r1', desired: 'running', guardian: true, phase: 'stopped', ownership: {} },
+      { kind: 'sandbox-instance', id: 'r2', name: 'r2', desired: 'stopped', guardian: false, phase: 'running', ownership: {} },
+    ] }));
+    const rr = new ManagedRegistry({ file: rf, logger: null });
+    check('B2-2 残留 guardian 键 load 后即消失（r1/r2）',
+      !!rr.get('r1') && !('guardian' in rr.get('r1')) && !('guardian' in rr.get('r2')));
+    check('B2-2 残留清理不伤其它字段（desired/phase 保留）',
+      rr.get('r1').desired === 'running' && rr.get('r1').phase === 'stopped'
+      && rr.get('r2').desired === 'stopped' && rr.get('r2').phase === 'running');
+    rr.update('r1', { name: 'r1-renamed' }); // 触发一次落盘
+    check('B2-2 清理后不回写盘（文件再含 guardian 即回流）',
+      fs2.readFileSync(rf, 'utf8').indexOf('guardian') < 0);
   }
 
   console.log('');

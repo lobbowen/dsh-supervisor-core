@@ -64,7 +64,7 @@
 
 | # | 铁律 |
 |---|---|
-| **G-1** | 基础设施**不得**有 `desired`/`guardian` 用户意图字段；只有"当前是否应运行"的**业务条件**。 |
+| **G-1** | 基础设施**不得**有 `desired`/`guardian` 用户意图字段；只有"当前是否应运行"的**业务条件**。**2026-09-23 B2-2 扩展收口**：`guardian` 已**整体退出目录面**——域 A entry 也曾带该键（设置面写入、全仓 src 零读者；守护开关权威一直在 `dsh-main.json` / `inst.guardian`，消费者直读源），目录留副本只会制造分歧面。现 `createEntry` 对任何 kind 都不物化该键，老目录残留经 load 重建自然丢弃，无需迁移脚本。 |
 | **G-2** | 基础设施的保活**不得**写 `guardian_action`（该事件专表"用户意图被触发"）。**2026-09-16 收口**：该事件唯一生产者 `_guardianEvent()` 已删除（域 B 两分支删除调用后成为死代码，从未服务域 A），登记（`platform/service/log/hub.js` 内部簿记名单）与 UI 标签（`ui/.../nav.ts` EVENT_LABELS）同步移除。 |
 | **G-3** | 域 A 对象**必须**有用户可见开关；无 UI 入口的"用户意图"是伪意图。 |
 | **G-4** | 两域**共用**心跳驱动（这是对的：都是周期收敛），但**不得共用**同一个状态模型。 |
@@ -78,7 +78,7 @@
 ```
 ManagedRegistry（心跳驱动 —— 共用）
    │
-   ├─ 域 A 受管对象（desired × guardian）
+   ├─ 域 A 受管对象（desired 在册；guardian 权威在域记录，不入目录 B2-2）
    │    main / sandbox-instance
    │    · 守护计数（restart_triggered/restartCount）、用户开关、crashHalted 语义
    │
@@ -97,10 +97,10 @@ ManagedRegistry（心跳驱动 —— 共用）
 
 | 门禁 | 断言 |
 |---|---|
-| GD-1 | 基础设施 kind（router-daemon/lan-daemon）的 entry **不含** `guardian` 字段 |
+| GD-1 | guardian 不入目录面（G-1 / B2-2 收口形态）：① 四类申报块均不含 `guardian` 字段；② `createEntry` 对**任何 kind** 都不物化该键（"不存在"而非"置 false"）；③ 目录面三文件（`control/managed-object.js`/`registry.js`/`specs.js`）去注释代码上 guardian token 清零（注释不计）|
 | GD-2 | 基础设施保活路径**不调用** `_guardianEvent`；且该函数已从 `src/app/daemons/runtime.js` **删除**（GD-2b：代码全域无定义/调用，注释不计），`guardian_action` 全域无生产者（GD-2c） |
 | GD-3 | 两平面 id **显式映射**，保活路径不跨平面混用 id（G-5）；域 A 计数不经 `guardian_action` |
-| GD-4 | 反向：判据能识别"基础设施带 guardian 字段"的旧形态（门禁非空转） |
+| GD-4 | 反向：判据能识别"申报带 guardian 字段""目录面物化/修正 guardian（`e.guardian = …` / `DOMAIN_A_KINDS` spread）"两代旧形态，且不误报现行形态（门禁非空转） |
 | GD-5 | 不再存在对恒 true 值的 `guardian !== true` 补丁判断（基础设施无此概念）|
 | GD-6 | 保活/游离判据**只读持久化意图**，不读生命周期视图或目录 entry 的 `desired` 镜像（见 §6.2 读侧同规则）|
 | ML-1..ML-3 | **目录写入 / 生命周期视图写权**门禁，见 §6.4（同一 `test/guard-domain-model-gate-test.js`）|

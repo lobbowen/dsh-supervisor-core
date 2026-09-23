@@ -35,8 +35,9 @@ function fakeRegistry() {
     get: (id) => entries.get(id),
     list: () => [...entries.values()],
     setPhase(id, ph) { const e = entries.get(id); if (e) { e.phase = ph; e.lastTransitionAt = 't'; } },
-    // 与真实 registry.update 同源的关键语义：**值为 undefined 的键不改写**（域 B 申报不带 guardian，
-    //   靠这一点不被写成 undefined；用裸 Object.assign 会抹掉，假件反而比实现更严）。
+    // 与真实 registry.update 同源的关键语义：**值为 undefined 的键不改写**（沙箱申报不带
+    //   desired/guardian（B2-1/B2-2），靠这一点不会把目录已有键抹成 undefined；
+    //   用裸 Object.assign 会抹掉，假件反而比实现更严）。
     update(id, patch) {
       const e = entries.get(id);
       if (!e) return { ok: false, error: '未注册: ' + id };
@@ -222,9 +223,9 @@ function fakeRegistry() {
   check('P3 syncDshView → dsh running + guardian 同源', lcMap.get('dsh').phase === 'running' && lcMap.get('dsh').guardian === true, lcMap.get('dsh').phase);
 
   const spec = control.sandboxSpec({ id: 's1', name: '沙箱', port: 3900, state: { phase: 'RUNNING' }, guardian: true });
-  check('P4 sandboxSpec 申报不含 desired（B2-1）+ unit/guardian 在位',
-    spec && !('desired' in spec) && spec.ownership.unit === 'dsh-web@s1' && spec.guardian === true,
-    JSON.stringify(spec && spec.ownership));
+  check('P4 sandboxSpec 申报不含 desired（B2-1）也不含 guardian（B2-2）+ unit 在位',
+    spec && !('desired' in spec) && !('guardian' in spec) && spec.ownership.unit === 'dsh-web@s1',
+    'keys=' + Object.keys(spec || {}).join(','));
   check('P5 sandboxSpec 的 rootPath 来自实例域', spec.ownership.rootPath === '/root/s1', spec.ownership.rootPath);
 
   control.upsert(spec);
@@ -236,10 +237,11 @@ function fakeRegistry() {
   control.syncManagedRegistry();
   const keys = [...reg.entries.keys()].sort();
   check('P8 syncManagedRegistry 申报 main + router/lan daemon', keys.join(',') === 'lan-daemon,main,router-daemon', keys.join(','));
-  check('P9 域 B daemon 申报不含 guardian 字段（G-1）',
-    !('guardian' in reg.get('router-daemon')) && !('guardian' in reg.get('lan-daemon')), 'ok');
+  check('P9 B2-2 目录申报项一律无 guardian 键（main/router-daemon/lan-daemon，域记录才是权威源）',
+    ['main', 'router-daemon', 'lan-daemon'].every((k) => reg.get(k) && !('guardian' in reg.get(k))),
+    ['main', 'router-daemon', 'lan-daemon'].map((k) => k + ':' + (reg.get(k) ? Object.keys(reg.get(k)).join('/') : '缺')).join(' | '));
 
-  // -- D-8：沙箱不申报 desired（B2-1 运行意图第二落点废止），目录应然面只剩 guardian/ownership --
+  // -- D-8：沙箱不申报 desired（B2-1 第二落点废止）也不申报 guardian（B2-2 目录面零持键）--
   //   旧形态一：sandboxSpec 的 desired 由 inst.state.phase 反推 => 实例一崩进 BACKOFF，意图被观测改写。
   //   旧形态二（ST-2c）：desired 取 inst.state.desired 投影 => 该落点无决策消费者，纯空转字段。
   //   收口后 spec 不含 desired，registry.update 见 undefined 即跳过——观测/启动对齐路径对沙箱

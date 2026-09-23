@@ -13,7 +13,8 @@
 //   本门禁把该文档第 2 节的两域模型与第 3 节的 G-1..G-6 铁律变成**可执行断言**，防止错位回潮。
 //
 // ## 断言
-//   GD-1 域 B 基础设施（**router-daemon 与 lan-daemon 两者**）的 entry 申报**不含** guardian 字段（G-1）
+//   GD-1 guardian 不入目录面（G-1 / B2-2 收口）：申报块无 guardian 字段、createEntry 对全部 kind
+//        不物化该键、去注释代码上目录面三文件零 guardian token（权威在 dsh-main.json / inst.guardian，消费者直读源）
 //   GD-2 _daemonSuperviseOnce 的 **router 与 lan 两个分支**均**不调用** _guardianEvent（G-2）
 //   GD-3 两平面 id 必须**显式映射**，保活路径不得跨平面混用 id（G-5）
 //         契约共识方案把 router-daemon 也归入域 B 后，「router 的 guardian_action 读写同 id」
@@ -30,8 +31,9 @@
 //   域 B 基础设施 = **router-daemon + lan-daemon**（两者都无用户意图轴、都无条件保活）。
 //
 // ## 现状
-//   实现已按契约归位：registry-view 两处申报删除 guardian；control-view 两分支删除
-//   _guardianEvent / guardian!==true 补丁 / restartCount 写入，GD-1 / GD-2 / GD-5 由本门禁覆盖。
+//   实现已按契约归位：域 B 申报自始不带 guardian，control-view 两分支删除
+//   _guardianEvent / guardian!==true 补丁 / restartCount 写入；B2-2 进一步让目录面
+//   全域不持 guardian（GD-1 覆盖申报/运行期/源码 token 三层）。
 //   GD-4 仍以**构造的旧形态**证明判据有分辨力（门禁非空转）。
 // ---------------------------------------------------------------------------
 
@@ -120,6 +122,10 @@ function routerBranchOf(fnBody) {
 /** GD-1 判据：entry 申报块是否带 guardian 字段（域 B 不应有用户意图字段）。 */
 const hasGuardianField = (spec) => /\bguardian\s*:/.test(spec);
 
+/** GD-1 判据（B2-2）：去注释代码任意处出现 guardian token = 目录面仍在读/写该字段。
+ *   守护开关权威在域记录（dsh-main.json / inst.guardian），目录面留副本只会制造分歧面。 */
+const carriesGuardianCode = (code) => /guardian/i.test(code);
+
 /** GD-2 判据：某分支是否调用 _guardianEvent('<id>'。 */
 const callsGuardianEvent = (branch, id) => new RegExp("_guardianEvent\\(\\s*['\"]" + id + "['\"]").test(branch);
 
@@ -150,7 +156,7 @@ function walkSrc(dir, out) {
 }
 
 // ---------------------------------------------------------------------------
-// GD-1 域 B 基础设施 entry 申报不含 guardian 字段（G-1）
+// GD-1 guardian 不入目录面（G-1 / B2-2：守护开关权威在域记录，消费者直读源）
 // ---------------------------------------------------------------------------
 {
   const registrySrc = read('src/app/control/specs.js');
@@ -158,9 +164,9 @@ function walkSrc(dir, out) {
   const lanSpec = entrySpecOf(registrySrc, 'lan-daemon');
   const routerSpec = entrySpecOf(registrySrc, 'router-daemon');
   check('GD-1 lan-daemon 申报块被准确定位', !!lanSpec,
-    lanSpec ? 'registry-view.js 中已定位 kind: lan-daemon 对象字面量' : '未找到 kind: lan-daemon 申报块');
+    lanSpec ? 'specs.js 中已定位 kind: lan-daemon 对象字面量' : '未找到 kind: lan-daemon 申报块');
   check('GD-1 router-daemon 申报块被准确定位', !!routerSpec,
-    routerSpec ? 'registry-view.js 中已定位 kind: router-daemon 对象字面量' : '未找到 kind: router-daemon 申报块');
+    routerSpec ? 'specs.js 中已定位 kind: router-daemon 对象字面量' : '未找到 kind: router-daemon 申报块');
   // 域 B 基础设施（router-daemon + lan-daemon）**两者都不得有** guardian 字段（契约 共识方案）。
   check('GD-1 域 B 基础设施申报不含 guardian 字段（G-1：无用户意图轴）',
     !!lanSpec && !!routerSpec && !hasGuardianField(lanSpec) && !hasGuardianField(routerSpec),
@@ -168,19 +174,25 @@ function walkSrc(dir, out) {
      routerSpec && hasGuardianField(routerSpec) ? 'router-daemon 仍含 guardian:' : null]
       .filter(Boolean).join('; ') || 'ok（两者均无 guardian）');
 
-  //  GD-1 运行期断言：
-  //   上面只查**申报源码**——但 createEntry 曾对所有 kind 无条件物化该字段并随目录落盘，
-  //   于是"申报不写"掩盖不了"数据层仍有该字段"：实测升级路径曾让两个 daemon 长期带
-  //   guardian: true，而 update() 因 guardian===undefined 永不修正 -> 契约 GD-1 形同虚设。
-  //   故必须断言**运行期形态**（"不存在"而非"置 false"）。
+  //  GD-1 运行期断言（B2-2 收口：全域 kind 都不物化）：
+  //   createEntry 曾按 DOMAIN_A_KINDS 对 dsh/sandbox-instance 物化 guardian 并随目录落盘，
+  //   而该字段在全仓 src 内零读者——落盘副本与域记录之间只有分歧面，没有真相来源。
+  //   现断言**任何 kind** 传入 guardian 都不落键（"不存在"而非"置 false"），
+  //   老目录残留经 load→createEntry 重建即自然消失，无需迁移脚本。
   const { createEntry } = require(path.join(ROOT, 'src', 'app', 'control', 'registry.js'));
-  const daemonEntry = createEntry({ kind: 'lan-daemon', id: 'lan-daemon', desired: 'stopped', guardian: true });
-  check('GD-1 运行期：域 B entry **不物化** guardian 键（不是"置 false"，是"不存在"）',
-    !('guardian' in daemonEntry),
-    'lan-daemon entry 的键: ' + Object.keys(daemonEntry).join(','));
-  const dshEntry = createEntry({ kind: 'dsh', id: 'main', desired: 'running', guardian: true });
-  check('GD-1 运行期：域 A entry **保留** guardian（反向对照，防判据误伤）',
-    dshEntry.guardian === true, 'dsh entry guardian=' + JSON.stringify(dshEntry.guardian));
+  for (const k of ['dsh', 'sandbox-instance', 'router-daemon', 'lan-daemon']) {
+    const e = createEntry({ kind: k, id: 'gd1-' + k, desired: 'running', guardian: true });
+    check(`GD-1 运行期：createEntry 对 kind='${k}' 不物化 guardian 键（带 guardian:true 入参也不落）`,
+      !('guardian' in e), 'entry 的键: ' + Object.keys(e).join(','));
+  }
+  //  GD-1 源码层断言：目录面三文件（entry 工厂 / 注册机 / 申报器）去注释后 guardian token 清零。
+  //   申报不写 + 运行期不落键只挡住数据面；update() 里一句残留补丁、或未来某处
+  //   「entry.guardian」读法，都会被本条直接判红（注释说明不计）。
+  const OFFENDER_FILES = ['src/app/control/managed-object.js', 'src/app/control/registry.js', 'src/app/control/specs.js'];
+  const offenders = OFFENDER_FILES.filter((f) => carriesGuardianCode(stripComments(read(f))));
+  check('GD-1 源码层：目录面三文件去注释后零 guardian token（B2-2）',
+    offenders.length === 0,
+    offenders.length ? offenders.map((f) => f + ' 仍含 guardian 代码').join('; ') : 'ok（三份仅剩说明性注释）');
 }
 
 // ---------------------------------------------------------------------------
@@ -262,6 +274,14 @@ const lanBranch = fnBody ? lanBranchOf(fnBody) : null;
   const cleanSpec = entrySpecOf(CLEAN_ENTRY, 'lan-daemon');
   check('GD-4 反向：判据不误报无 guardian 的正确形态',
     !!cleanSpec && !hasGuardianField(cleanSpec), 'ok');
+
+  // 旧形态1b（B2-2 废止的目录面写法）：createEntry 曾按域物化该键、update() 曾带残留补丁。
+  const OLD_MATERIALIZE = "if (isDomainA(spec.kind)) e.guardian = spec.guardian === true;";
+  const OLD_UPDATE_PATCH = "if (p.guardian !== undefined) { e.guardian = p.guardian === true; return; }";
+  check('GD-4 反向：源码层判据能识别目录面物化/修正 guardian 的旧形态',
+    carriesGuardianCode(OLD_MATERIALIZE) && carriesGuardianCode(OLD_UPDATE_PATCH), 'hit');
+  check('GD-4 反向：源码层判据不误报现行入参形态（kind/id/desired/ownership）',
+    !carriesGuardianCode("const e = createEntry({ kind: o.kind, id: o.id, desired: o.desired, ownership: o.ownership });"), 'ok');
 
   // 旧形态2：lan 分支仍调用 _guardianEvent（当年 control-view.js:451/469 的形态）
   const OLD_LAN_BRANCH = "if (!this.lanDaemonEnabled()) return { ok: this._lanDaemonActive() };\n"
