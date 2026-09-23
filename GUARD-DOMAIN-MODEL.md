@@ -168,7 +168,7 @@ ManagedRegistry（心跳驱动 —— 共用）
 | 驱动（启停动作） | `control/manager.js` 经 `start()/stop()/restart()` | `phase`/`desired`/`_monitoring`/`healthy`/`error`（对象自身迁移）|
 | 观测合成 | `control/projection.js`（`syncDshView` / `syncRouterView` / `syncInstancesView`）| 同上——但**只镜像观测**，不发起启停 |
 | 注册期能力 | `control/adapters.js`、`control/manager.js` | `_monitoring`（纳入/移出监督）|
-| main 域兜底出口 | `state/fields.js` 的 `setPhase`/`setDesired` | 目录不可用/条目非在册时才直写 entry（2 处，**合法**：这是守卫内 phase/desired 的唯一写口本体）。**B2-3**：fallback 只是目录未就绪期的暂存稿——持久计数（崩溃窗/退避/重启）首见真 entry 时一次性回填（盘上非缺省值优先），desired 经 `mainSpec` 在登记时读出合并，phase 按「boot 不继承」有意不回填。 |
+| main 域兜底出口 | `state/fields.js` 的 `setPhase`/`setDesired` | 目录不可用/条目非在册时经 **`record.fieldOf(...,true)` 唯一字段写口**落值（B2-3 归一后 fields.js 内不再直写）。**B2-3**：fallback 只是目录未就绪期的暂存稿——持久计数（崩溃窗/退避/重启）首见真 entry 时一次性回填（盘上非缺省值优先），desired 经 `mainSpec` 在登记时读出合并，phase 按「boot 不继承」有意不回填。 |
 
 **规则**：`domain-actions/*`、`assembly/*`、`session/*`、`daemons/*` 等业务/装配层**不得**直写
 生命周期对象的 `phase`/`desired`/`_monitoring`/`healthy`——要改就经 `lifecycleManager` 发指令，
@@ -182,7 +182,7 @@ ManagedRegistry（心跳驱动 —— 共用）
 | `src/app/assembly/bootstrap.js` | 9（:92/:106/:109/:114/:119）| boot 期 daemon 拉起结果直接落视图 | 同上：boot 只做"申报"，视图由 projection 统一合成 |
 | `src/app/session/shutdown.js` | 2（:68 `_monitoring`、:160 `inst.state.phase='STOPPED'`）| :68 是"守卫退出不再监督 daemon"；**:160 是跨域直写 instance 域内状态机**（instance 有自己的 phase 词表与迁移，见 `src/domains/instance/state-machine.js`）| :68 挪进 manager 的"停止监督"出口；:160 改经 instance 域动作 |
 | `src/app/daemons/supervise.js` | 1（:87）| 保活路径置 `starting` | 属观测合成的错位落点，宜并入 projection |
-| （非违例）`src/app/state/fields.js` | 2（:37/:65）| **§6.3 承认的合法出口**：`setPhase`/`setDesired` 在"目录不可用/条目非在册"时的兜底直写 | 登记进基线只为锁死处数（新增第三处直写即判红），不排期收敛 |
+| （非违例）`src/app/state/fields.js` | 0（B2-3 归一）| 兜底分支已并入 `record.fieldOf` 唯一字段写口，文件内零直写 | 基线钉 0：任何回潮直写即判红 |
 
 **注意**：`src/domains/**` 里另有大量 `state.phase =` / `state.desired =` 写入（instance、router、
 shell 各自域内），那是

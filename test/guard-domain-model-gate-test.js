@@ -506,7 +506,7 @@ const lanBranch = fnBody ? lanBranchOf(fnBody) : null;
     'src/app/assembly/bootstrap.js': { n: 9, legal: false },
     'src/app/session/shutdown.js': { n: 2, legal: false },
     'src/app/daemons/supervise.js': { n: 1, legal: false },
-    'src/app/state/fields.js': { n: 2, legal: true }, // 守卫内 main 域 phase/desired 唯一写口的兜底分支
+    'src/app/state/fields.js': { n: 0, legal: true }, // B2-3 起兜底直写并入 record.fieldOf，本文件零直写（回潮即红）
   };
   /** 对一份（已去注释的）源码计数违规写入。 */
   const countLifecycleWrites = (src) => {

@@ -33,8 +33,9 @@ function createFields(deps) {
     try {
       if (m && typeof m.setPhase === 'function' && record.entryOf() === e) {
         if (e.phase !== ph) m.setPhase('main', ph);
-      } else if (e.phase !== ph) {
-        e.phase = ph;
+      } else {
+        // 兜底直写并入唯一字段写口 record.fieldOf（B2-3）：fallback 期的值走草稿回填，不再各写各的。
+        record.fieldOf('phase', ph, true);
       }
     } catch (e2) {
       const l = logger();
@@ -61,8 +62,9 @@ function createFields(deps) {
     try {
       if (m && typeof m.update === 'function' && record.entryOf() === e) {
         if (e.desired !== want) m.update('main', { desired: want });
-      } else if (e.desired !== want) {
-        e.desired = want;
+      } else {
+        // 兜底直写并入唯一字段写口 record.fieldOf（B2-3）。
+        record.fieldOf('desired', want, true);
       }
     } catch (e2) {
       const l = logger();
