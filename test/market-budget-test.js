@@ -28,7 +28,7 @@
 //   M-d  两个批次循环都检查预算（源码级：loop guard 在 `slice` 之前）
 //   M-e  超预算时**返回部分结果**（不抛、不清缓存）
 //   M-h  叠建预算互不干扰：A 结束只清 A 的 ctx，B 构建中 deadline 恒有效
-//   M-i  `getIndex(force=true)` 复用 `_inFlight`：force 不得叠加并发构建（审计#25 的申报侧）
+//   M-i  `getIndex(force=true)` 复用 `_inFlight`：force 不得叠加并发构建（复用事实钉内部登记，async 外层 promise 恒不等）
 // ---------------------------------------------------------------------------
 
 const path = require('node:path');
@@ -207,9 +207,12 @@ const { PluginMarket } = require(SRC);
     m.indexCommunity = async () => [];
     const p1 = m.getIndex(true);
     const p2 = m.getIndex(true);
-    check('M-i force 请求取到同一在途构建（promise 同一引用）', p1 === p2, p1 === p2 ? 'same' : 'diff');
-    await p1;
+    // async 函数会把 `return this._inFlight` 再包一层新 promise——外层恒不等。
+    // 复用事实钉内部登记：force 拍 _inFlight 指向当前 raw，两次 getIndex 各自 await 同一次构建。
+    check('M-i force 请求复用同一在途构建（_inFlight 登记态）', m._inFlight !== null, String(m._inFlight));
+    await p1; await p2;
     check('M-i 连续 force 只发起一次构建', builds === 1, String(builds));
+    check('M-i 结算后 _inFlight 归零（不误挂消化后的 promise）', m._inFlight === null, String(m._inFlight));
     fs.rmSync(dir, { recursive: true, force: true });
   }
 
