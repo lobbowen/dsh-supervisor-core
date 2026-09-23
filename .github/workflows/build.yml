@@ -341,10 +341,12 @@ jobs:
 
   # ── 发布后冒烟（S8 的 CI 半边）：从**公开 registry** 装已发布子包，证明线上产物可自举 ──
   # 与 build job 内的安装包冒烟共用同一脚本，区别只在装的是 registry 里的包而非本地 dist/。
-  #   registry/unpkg 传播有分钟级延迟，故重试数轮；只有最后一轮的失败才决定判据（早期轮失败
-  #   不算永久红）。公开包无需 NPM_TOKEN，本 job 也不挂载任何令牌。
-  # ⚠ 必须 needs release：npm 发布动作在 release job 里，只依赖 build 会在**同一 run 内**与发布赛跑，
-  #   四平台各 4 轮 45s 预算耗尽后判红——而线上其实已经发好了（追修于 0.1.6-BETA.5 补充批）。
+  #   registry 上架到可被解析有分钟级延迟（npm 自身摄取 + 前置缓存 max-age=300），故重试数轮；
+  #   只有最后一轮的失败才决定判据（早期轮失败不算永久红）。公开包无需 NPM_TOKEN，本 job 也不挂载任何令牌。
+  # ⚠ 必须 needs release：npm 发布在 build job 的「内核发布」步（NPM_TOKEN 唯一持有步），
+  #   release 又 needs 四条 build 腿，故 needs 里带上 release 才真正等到上传完成；只依赖 build
+  #   在并行度上不等发布。但**排在后面仍读不到包**的那一段是缓存/传播，见下面 ATTEMPTS 与脚本里的
+  #   --prefer-online——那是本 job 首跑（0.1.6-BETA.6）判红的真因。
   #   always() 不可省：tag 之外的运行里 release 是 skipped，不加 always 本 job 会被连带跳过（假绿）。
   published-smoke:
     needs: [precheck, build, release]
@@ -387,23 +389,36 @@ jobs:
           VER="${VER_INPUT:-$(node -p 'require("./package.json").version')}"
           SPEC="@dsh-sup/dsh-core-$OS_TAG-$ARCH@$VER"
           echo "  发布后冒烟目标: $SPEC"
-          ATTEMPTS=6
+          ATTEMPTS=10
+          # 窗口必须盖过 registry 前置缓存的 max-age=300：首轮取到的「尚无此版本」packument
+          # 会在缓存里存活 5 分钟，短窗重试等于反复读同一份陈旧元数据。
+          SLEEP_SEC=75
+          ROUND_DIR="${RUNNER_TEMP:-$(mktemp -d)}"
           i=0
           rc=1
           while [ "$i" -lt "$ATTEMPTS" ]; do
             i=$((i + 1))
             echo "== 冒烟第 $i/$ATTEMPTS 轮 =="
-            if bash release/scripts/install-smoke-core.sh --pkg "$SPEC" --ver "$VER"; then
+            ROUND_LOG="$ROUND_DIR/published-smoke-round-$i.log"
+            if bash release/scripts/install-smoke-core.sh --pkg "$SPEC" --ver "$VER" >"$ROUND_LOG" 2>&1; then
+              cat "$ROUND_LOG"
               rc=0
               break
             else
               rc=$?
-              echo "  第 $i 轮失败（registry 可能尚未传播）"
-              [ "$i" -lt "$ATTEMPTS" ] && sleep 45
+              cat "$ROUND_LOG"
+              # 只对「registry 还看不到这个版本」重试：装上了却挂在 self-check/healthz 是真缺陷，
+              #   重试只会把同一条缺陷抄满预算，还白占四台 runner 的时间。
+              if ! grep -Eq 'ETARGET|notarget|E404|404 Not Found' "$ROUND_LOG"; then
+                echo "  第 $i 轮不是传播类失败，不再重试"
+                break
+              fi
+              echo "  第 $i 轮仍看不到该版本（等 registry 传播与缓存过期）"
+              [ "$i" -lt "$ATTEMPTS" ] && sleep "$SLEEP_SEC"
             fi
           done
           if [ "$rc" != 0 ]; then
-            echo "::error::发布后冒烟在 $ATTEMPTS 轮后仍失败（$SPEC）"
+            echo "::error::发布后冒烟在 $i/$ATTEMPTS 轮后仍失败（$SPEC）"
             exit "$rc"
           fi
 

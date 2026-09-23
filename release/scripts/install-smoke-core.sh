@@ -96,14 +96,20 @@ dump_daemon_log() {
 
 INSTALL_LOG="$SMOKE_HOME/npm-install.log"
 echo "== 安装包冒烟: pkg=$PKG ver=$VER =="
+# registry spec 必须绕开缓存：packument 在 npm 本地缓存和 registry 前置缓存里都按 max-age=300 复用，
+#   调用方重试时若每轮都读回首轮那份「尚无此版本」的元数据，包早已上架也照样判 ETARGET。
+#   目录形态装的是本地产物，不经 registry，故不带该旗标（本地判据不该引入网络往返）。
+#   不加引号是有意的：空值要被整体吞掉，加引号会传成一个空参数。
+NPM_RESOLVE_OPT=""
+[ -d "$PKG" ] || NPM_RESOLVE_OPT="--prefer-online"
 # 先按 npm 的常规校验装；只有撞上 EBADPLATFORM 才带 --force 重装一次。
 # macos-14 腿在 arm64 机上产 darwin-x64 子包，npm 按当前宿主拒装 —— 挡的是分发选型元数据，
 # 本子包运行时依赖为 0、纯 JS，装到 arm64 上跑的就是同一份字节。常开 --force 会连带放行真坏掉的包。
-if ! npm i -g "$PKG" --no-audit --no-fund >"$INSTALL_LOG" 2>&1; then
+if ! npm i -g "$PKG" --no-audit --no-fund $NPM_RESOLVE_OPT >"$INSTALL_LOG" 2>&1; then
   cat "$INSTALL_LOG"
   grep -q EBADPLATFORM "$INSTALL_LOG" || fail "npm i -g 失败: $PKG"
   echo "  宿主与包声明平台不符，按目标平台重装修（仅此一条放行）"
-  npm i -g "$PKG" --no-audit --no-fund --force >"$INSTALL_LOG" 2>&1 || { cat "$INSTALL_LOG"; fail "EBADPLATFORM 重装仍失败: $PKG"; }
+  npm i -g "$PKG" --no-audit --no-fund --force $NPM_RESOLVE_OPT >"$INSTALL_LOG" 2>&1 || { cat "$INSTALL_LOG"; fail "EBADPLATFORM 重装仍失败: $PKG"; }
   cat "$INSTALL_LOG"
 fi
 rm -f "$INSTALL_LOG"
