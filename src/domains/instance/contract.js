@@ -23,6 +23,8 @@ module.exports = {
     'addInstance', 'removeInstance', 'updateInstance',
     // 生命周期 + 探活 + 升级 + 定时
     'startInstance', 'stopInstance', 'supervise', 'probeInstance',
+    // 治理单拍（B2-6e：heartbeat 拍末一次 decide，消费者 = compose/domains.js 的 onBeatDone）
+    'governSweep',
     'checkUpdate', 'upgradeInstance', 'upgradeStatus', 'startTimer',
     // 资源预算总览（W2 观测面；/env/status 消费）
     'budgetSnapshot',
@@ -42,6 +44,7 @@ module.exports = {
       'all', 'forEach', 'find', 'map',
       'load', 'save', 'list', 'addInstance', 'removeInstance', 'updateInstance',
       'startInstance', 'stopInstance', 'supervise', 'probeInstance',
+      'governSweep',
       'checkUpdate', 'upgradeInstance', 'upgradeStatus', 'startTimer',
       'budgetSnapshot',
       'launchCtx',

@@ -87,6 +87,8 @@ class InstanceManager {
   startInstance(id, opts) { return this._lifecycle.start(id, opts); }
   stopInstance(id) { return this._lifecycle.stop(id); }
   supervise(id) { return this._lifecycle.supervise(id); }
+  /** 治理单拍（B2-6e）：心跳拍末由 onBeatDone 调一次，全花名册 decide+下发+违规处置。 */
+  governSweep() { return this._lifecycle.governSweep(); }
   probeInstance(id) { return this._lifecycle.probeInstance(id); }
   /** 资源预算总览（/env/status 观测面，W2）：当前占用/剩余/下一份保底/可容纳实例数。 */
   budgetSnapshot() { return governor.budgetSnapshot(this._store.instances, this.machineFacts || undefined); }

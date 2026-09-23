@@ -214,8 +214,9 @@ check('副作用经 deps.save 显式发出（非隐式 this）', saves > 0, 'sav
       /startInstance\(j\.id, \{ manual: true \}\)/.test(apiSrc) && !/startInstance\(j\.id\)/.test(apiSrc), '有');
   }
 
-  // ---- 7. W2 控制面监督拍（govern tick + 准入）：观测(假 resstats)->决策(真 governor+假机器事实)
-  //      ->下发(展示值)->处置(违规停单元+退避)。注入走 ctor opts（显式注入，不 patch 模块导出）。
+  // ---- 7. W2 控制面治理（B2-6e 两段制：逐实例采样拍 + 拍末 governSweep decide）+ 准入：
+  //      观测(假 resstats)->每拍决策(真 governor+假机器事实)->下发(展示值)->处置(违规停单元+退避)。
+  //      注入走 ctor opts（显式注入，不 patch 模块导出）。
   //      端口用真实监听让 monitor 命中 RUNNING，但采样被假 resstats 接管，绝不读真实进程账本。 ----
   {
     const net = require('node:net');
@@ -267,10 +268,10 @@ check('副作用经 deps.save 显式发出（非隐式 this）', saves > 0, 'sav
       });
       const inst = govInst('g1', port);
       mgr.instances = [inst];
-      for (let k = 0; k < 3; k++) { mgr.supervise('g1'); await sleep(10); }
+      for (let k = 0; k < 3; k++) { mgr.supervise('g1'); mgr.governSweep(); await sleep(10); }
       check('7A 迟滞爬升中不处置（内存计数未触顶即不停单元）',
         inst.state.phase === 'RUNNING' && !journal.some((j) => j.kind === 'stopUnit'), inst.state.phase);
-      mgr.supervise('g1'); await sleep(10);
+      mgr.supervise('g1'); mgr.governSweep(); await sleep(10);
       const ev = journal.find((j) => j.kind === 'event' && j.name === 'inst_resource_violation');
       const stop = journal.findIndex((j) => j.kind === 'stopUnit');
       check('7A 连续第 3 个证据拍触发违规处置', !!ev && stop >= 0, JSON.stringify(ev && ev.data));
@@ -307,16 +308,16 @@ check('副作用经 deps.save 显式发出（非隐式 this）', saves > 0, 'sav
       const a = govInst('gb1', pA, { phase: 'RUNNING', restartCount: 0, backoffLevel: 0, startAt: 1000, allocation: null });
       const b = govInst('gb2', pB, { phase: 'RUNNING', restartCount: 0, backoffLevel: 0, startAt: 2000, allocation: null });
       mgr.instances = [a, b];
-      mgr.supervise('gb1'); mgr.supervise('gb2'); await sleep(30);
+      mgr.supervise('gb1'); mgr.supervise('gb2'); mgr.governSweep(); await sleep(30);
       check('7B 首拍（采样回填前）等权预留 5734M', a.state.allocation.memoryMax === '5734M', a.state.allocation.memoryMax);
-      mgr.supervise('gb1'); mgr.supervise('gb2'); await sleep(30);
+      mgr.supervise('gb1'); mgr.supervise('gb2'); mgr.governSweep(); await sleep(30);
       check('7B 有需求实例补到真实用量（7000M，两拍内到位）',
         a.state.allocation.memoryMax === '7000M' && b.state.allocation.memoryMax === '7000M',
         a.state.allocation.memoryMax + ' / ' + b.state.allocation.memoryMax);
       check('7B 展示值含 MemoryHigh（0.9x = 6300M）', a.state.allocation.memoryHigh === '6300M', a.state.allocation.memoryHigh);
       // cpuPct 需相邻两拍时间差 >0（Windows 粗时钟兜底，多跑一拍）。
-      mgr.supervise('gb1'); mgr.supervise('gb2'); await sleep(30);
-      mgr.supervise('gb1'); mgr.supervise('gb2'); await sleep(30);
+      mgr.supervise('gb1'); mgr.supervise('gb2'); mgr.governSweep(); await sleep(30);
+      mgr.supervise('gb1'); mgr.supervise('gb2'); mgr.governSweep(); await sleep(30);
       check('7B 观测行 usage 回填（rss 即时 + cpu delta 终有值）',
         !!a.state.usage && a.state.usage.memMb === 7000 && typeof a.state.usage.cpuPct === 'number',
         JSON.stringify(a.state.usage));
@@ -355,7 +356,7 @@ check('副作用经 deps.save 显式发出（非隐式 this）', saves > 0, 'sav
       });
       const inst = govInst('gd1', port);
       mgr.instances = [inst];
-      for (let k = 0; k < 6; k++) { mgr.supervise('gd1'); await sleep(5); }
+      for (let k = 0; k < 6; k++) { mgr.supervise('gd1'); mgr.governSweep(); await sleep(5); }
       check('7D 采样恒失败 -> 无证据不处置（六拍仍 RUNNING、零违规事件）',
         inst.state.phase === 'RUNNING' && !journal.some((j) => j.name === 'inst_resource_violation'), inst.state.phase);
       srv.close();
@@ -396,16 +397,65 @@ check('副作用经 deps.save 显式发出（非隐式 this）', saves > 0, 'sav
       });
       const inst2 = govInst('ge2', port2);
       g2.mgr.instances = [inst2];
-      g2.mgr.supervise('ge2'); await sleep(10);
+      g2.mgr.supervise('ge2'); g2.mgr.governSweep(); await sleep(10);
       const sl = g2.journal.find((j) => j.kind === 'setLimits');
       check('7E RUNNING 拍 alloc 变化即下发 setLimits（运行期动态化，不等重启）',
         !!sl && sl.unit === 'dsh-web@ge2' && !!sl.alloc && sl.alloc.memoryMax === inst2.state.allocation.memoryMax,
         sl && JSON.stringify(sl.alloc));
       const n1 = g2.journal.filter((j) => j.kind === 'setLimits').length;
-      g2.mgr.supervise('ge2'); await sleep(10);
+      g2.mgr.supervise('ge2'); g2.mgr.governSweep(); await sleep(10);
       check('7E 未变化拍不重发 setLimits（迟滞收敛防写放大）',
         g2.journal.filter((j) => j.kind === 'setLimits').length === n1, 'n=' + n1);
       srv2.close();
+    }
+    // 7F. B2-6e 行为证据：两实例同超限 -> decide 每拍恰一次（旧形态逐实例监督拍各跑一遍全花名册，
+    //     违规 tick 双计，第 3 拍就会处置）。第 4 拍一次扫描同时处置两违规（不再按实例归属）。
+    {
+      const p1 = safePort('instance-state', 6);
+      const p2 = safePort('instance-state', 7);
+      const srv1 = await listen(p1);
+      const srv2b = await listen(p2);
+      const rss = Math.round(30000 * 1024 * 1024);
+      const { mgr, journal } = mkGovMgr({
+        resstats: { sampleAsync: () => Promise.resolve({ rssBytes: rss, cpuMs: 5000 }) },
+        machineFacts: () => ({ totalMemBytes: GiB(16), cpuCount: 8 }),
+      });
+      const x = govInst('gf1', p1, { phase: 'RUNNING', restartCount: 0, backoffLevel: 0, startAt: 1000, allocation: null });
+      const y = govInst('gf2', p2, { phase: 'RUNNING', restartCount: 0, backoffLevel: 0, startAt: 2000, allocation: null });
+      mgr.instances = [x, y];
+      for (let k = 0; k < 3; k++) { mgr.supervise('gf1'); mgr.supervise('gf2'); mgr.governSweep(); await sleep(10); }
+      check('7F 双实例三拍仍不处置（每拍一次 decide；旧形态双计早已触顶）',
+        x.state.phase === 'RUNNING' && y.state.phase === 'RUNNING' && !journal.some((j) => j.kind === 'stopUnit'),
+        x.state.phase + '/' + y.state.phase);
+      mgr.supervise('gf1'); mgr.supervise('gf2'); mgr.governSweep(); await sleep(10);
+      const evs = journal.filter((j) => j.kind === 'event' && j.name === 'inst_resource_violation');
+      const stops = journal.filter((j) => j.kind === 'stopUnit');
+      check('7F 第 4 拍单扫描同时处置两违规（事件+停单元各 2、双 BACKOFF）',
+        evs.length === 2 && stops.length === 2 && x.state.phase === 'BACKOFF' && y.state.phase === 'BACKOFF'
+        && x.state.restartCount === 1 && y.state.restartCount === 1,
+        'ev=' + evs.length + ' stop=' + stops.length + ' ' + x.state.phase + '/' + y.state.phase);
+      srv1.close(); srv2b.close();
+    }
+    // 7G. B2-6e 形态钉死：decide 离开每实例拍、进守卫单拍（heartbeat 拍末钩子），门面/契约同源登记
+    {
+      const lcSrc = fs.readFileSync(path.join(ROOT, 'src/domains/instance/lifecycle.js'), 'utf8');
+      const hbSrc = fs.readFileSync(path.join(ROOT, 'src/app/control/heartbeat.js'), 'utf8');
+      const dmSrc = fs.readFileSync(path.join(ROOT, 'src/app/assembly/compose/domains.js'), 'utf8');
+      const idxSrc = fs.readFileSync(path.join(ROOT, 'src/domains/instance/index.js'), 'utf8');
+      const ctSrc = fs.readFileSync(path.join(ROOT, 'src/domains/instance/contract.js'), 'utf8');
+      const tickBody = lcSrc.slice(lcSrc.indexOf('function _governTick'), lcSrc.indexOf('function governSweep'));
+      check('7G _governTick 只采样（含 sampleAsync 回填、零 governor.decide）',
+        tickBody.length > 200 && /sampleAsync/.test(tickBody) && !/governor\.decide\(/.test(tickBody), 'len=' + tickBody.length);
+      check('7G lifecycle 全文件 decide 恰一处且位于 governSweep（判据非空转：旧形态此处为 2+）',
+        (lcSrc.match(/governor\.decide\(/g) || []).length === 1 && /function governSweep/.test(lcSrc),
+        String((lcSrc.match(/governor\.decide\(/g) || []).length));
+      check('7G heartbeat 拍末钩子 onBeatDone（await + try/catch 隔离）',
+        /await registry\.onBeatDone\(/.test(hbSrc) && /catch \(err\) \{ registry\._log\('warn', 'heartbeat onBeatDone/.test(hbSrc), '');
+      check('7G compose 接线 onBeatDone -> instances.governSweep（与监督拍同源、每拍一次）',
+        /onBeatDone\s*=\s*\(\)\s*=>\s*host\.instances\.governSweep\(\)/.test(dmSrc), '');
+      check('7G 门面委托 governSweep + 契约双清单登记（DG-10 消费面）',
+        /governSweep\(\)\s*\{\s*return this\._lifecycle\.governSweep\(\);/.test(idxSrc)
+        && (ctSrc.match(/'governSweep'/g) || []).length === 2, String((ctSrc.match(/'governSweep'/g) || []).length));
     }
   }
 })().catch((e) => { check('B15 supervise 块无异常', false, e && e.message); }).then(() => {

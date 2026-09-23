@@ -211,9 +211,9 @@ function createLifecycle(deps) {
     }
     return roster;
   }
-  /** 控制面一拍（观测/决策/下发/处置），挂 supervise RUNNING 分支，不新增计时器。
-   *  采样异步回填、本拍消费上一拍值：无证据不判违规。
-   *  W2 下发 = state.allocation 展示值（下次启动生效）；运行期内核动态下发 = W3 setLimits。 */
+  /** 控制面采样拍（每实例）：runtime 观测回填，供守卫单拍 governSweep 消费（B2-6e）。
+   *  全花名册 decide 已移出——旧形态每 RUNNING 实例的监督拍各跑一遍 O(N) 决策，
+   *  N 实例即 N 倍放大；决策/下发/处置的周期驱动与 heartbeat 同源、每拍恰一次。 */
   function _governTick(inst, st) {
     for (const key of Array.from(runtime.keys())) {
       if (!store.instances.some((i) => i.id === key)) runtime.delete(key); // 实例已删：观测随葬
@@ -238,15 +238,20 @@ function createLifecycle(deps) {
         });
       }).catch(() => {});
     }
+  }
+
+  /** 资源治理守卫单拍（heartbeat 尾钩）：观测->全花名册 decide->下发/处置恰一次。
+   *  本拍消费上一拍采样值（采样异步回填）：无证据不判违规。 */
+  function governSweep() {
     const roster = _sandboxRoster();
-    if (!roster.length) return;
+    if (!roster.length) return { ok: true, entries: 0 };
     let plan;
     try {
       const f = machineFactsNow();
       plan = governor.decide({ totalMemBytes: f.totalMemBytes, cpuCount: f.cpuCount, roster });
     } catch (e) {
-      logger.warn && logger.warn('[' + inst.id + '] govern decide 失败: ' + (e && e.message));
-      return;
+      logger.warn && logger.warn('govern decide 失败: ' + (e && e.message));
+      return { ok: false, error: (e && e.message) || String(e) };
     }
     const now = Date.now();
     for (const entry of plan.entries) {
@@ -270,20 +275,22 @@ function createLifecycle(deps) {
           catch (e) { logger.warn && logger.warn('[' + entry.id + '] setLimits 下发异常: ' + (e && e.message)); }
         }
       }
-      if (!entry.violation || entry.id !== inst.id) continue; // 同租户违规由其自身监督拍处置（一拍内轮到）
+      if (!entry.violation) continue;
       const v = entry.violation;
       const kindLabel = v.kind === 'memory' ? '内存' : 'CPU';
       const reason = '资源违规:' + kindLabel + '持续超限(实际 ' + v.actual + '/限额 ' + v.target + ')';
-      if (events) events.append('inst_resource_violation', { id: inst.id, name: inst.name, kind: v.kind, actual: v.actual, target: v.target });
-      logger.warn && logger.warn('[' + inst.id + '] ' + reason);
+      if (events) events.append('inst_resource_violation', { id: target.id, name: target.name, kind: v.kind, actual: v.actual, target: v.target });
+      logger.warn && logger.warn('[' + target.id + '] ' + reason);
       try {
         // 经 Provider 动词：cgroup 档即内核拆舱；portable 档按端口/run.pid 锚点整树终止（W3）。
-        service.stopUnit('dsh-web@' + inst.id, Object.assign({ timeoutMs: 20000 }, sandbox.launchCtx(instancesRoot, deps.dshBin, inst)));
+        service.stopUnit('dsh-web@' + target.id, Object.assign({ timeoutMs: 20000 }, sandbox.launchCtx(instancesRoot, deps.dshBin, target)));
       } catch (e) {
-        logger.warn && logger.warn('[' + inst.id + '] 违规停单元异常: ' + (e && e.message));
+        logger.warn && logger.warn('[' + target.id + '] 违规停单元异常: ' + (e && e.message));
       }
-      stateMachine.restart(stateDeps(), inst, reason); // 复用既有退避链：BACKOFF，重试超限 -> FAILED
+      stateMachine.restart(stateDeps(), target, reason); // 复用既有退避链：BACKOFF，重试超限 -> FAILED
     }
+    store.save(); // 下发/处置改写的 allocation/usage 随本拍落盘（旧实现借道 supervise 尾 save，现自成一体）
+    return { ok: true, entries: plan.entries.length };
   }
   /** 单实例监督拍：整体 try/catch，单实例异常绝不拖垮心跳循环。 */
   function supervise(id) {
@@ -368,6 +375,6 @@ function createLifecycle(deps) {
     }
     return { ok: true };
   }
-  return { _prepareSystemd, start, stop, probe, probeInstance, supervise };
+  return { _prepareSystemd, start, stop, probe, probeInstance, supervise, governSweep };
 }
 module.exports = { createLifecycle };

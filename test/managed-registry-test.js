@@ -130,6 +130,28 @@ const fakePorts = {
   check('heartbeat 每拍对象继续观测(s1)', r2.observed.indexOf('s1') >= 0);
   check('实然不持久化', JSON.stringify(fs2.readFileSync(hbFile, 'utf8')).indexOf('lastObserved') < 0);
 
+  // 8b. B2-6e 拍末钩子 onBeatDone：每拍恰一次（不随条目数放大）、带拍汇总、钩子异常不断心跳
+  {
+    const hkFile = path.join(TMP, 'hb-hook.json');
+    const hk = new ManagedRegistry({ file: hkFile, logger: null, events: null });
+    const seen = [];
+    hk.register({ kind: 'sandbox-instance', id: 'h1' });
+    hk.register({ kind: 'sandbox-instance', id: 'h2' });
+    hk.register({ kind: 'sandbox-instance', id: 'h3' });
+    hk.registerAdapter('sandbox-instance', { observe: () => ({ ok: true }) });
+    hk.onBeatDone = (sum) => { seen.push(sum); };
+    const r3 = await hk.heartbeat(1000);
+    check('onBeatDone 每拍恰一次（3 条目不放大调用）', seen.length === 1, 'n=' + seen.length);
+    check('onBeatDone 收到本拍汇总（observed/errors 与返回同源）',
+      !!seen[0] && seen[0].observed === r3.observed && seen[0].errors === r3.errors, '');
+    await hk.heartbeat(1000);
+    check('onBeatDone 逐拍触发（第二拍再记一次）', seen.length === 2, 'n=' + seen.length);
+    hk.onBeatDone = () => { throw new Error('hook boom'); };
+    const r4 = await hk.heartbeat(1000);
+    check('onBeatDone 异常隔离（心跳仍返回全量 observed）',
+      r4.observed.length === 3 && r4.errors.length === 0, JSON.stringify(r4));
+  }
+
 
   // 9. heartbeat derivePhase（daemon 类）：desiredx观测收敛 phase
   const dpFile = path.join(TMP, 'dp-objects.json');
