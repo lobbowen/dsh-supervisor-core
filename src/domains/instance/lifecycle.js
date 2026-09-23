@@ -55,8 +55,9 @@ function createLifecycle(deps) {
       logger.info && logger.info('cleaned stale transient unit: ' + unit);
     }
   }
-  /** 用 systemd 启动实例；绝不抛（抛会打挂 tick 循环），失败返回 {ok,error} 交调用方退避。 */
-  function _systemdStart(inst) {
+  /** 用 systemd 启动实例；绝不抛（抛会打挂 tick 循环），失败返回 {ok,error} 交调用方退避。
+   *  opts.manual：本次拉起来自用户显式动作（开新失败链，见 B2-6d 清计数处）。 */
+  function _systemdStart(inst, opts) {
     try {
       const cmdArr = sandbox.effectiveCommand(instancesRoot, deps.dshBin, inst);
       if (!cmdArr || !cmdArr.length) return { ok: false, error: '实例未配置启动命令' };
@@ -109,6 +110,15 @@ function createLifecycle(deps) {
       inst.state.phase = 'STARTING';
       inst.state.startAt = Date.now();
       inst.state.lastError = null;
+      // B2-6d：手动拉起开新失败链。attempts>20 后 restart() 即回 FAILED 且清零只靠
+      //   稳定 RUNNING>5min，fail() 承诺的「由用户手动重试」被计数封死；手动动作在此
+      //   一次性作废旧链，自动退避计数仍只在监督拍累加（不带 opts 的调用方）。
+      if (opts && opts.manual) {
+        inst.state.restartCount = 0;
+        inst.state.backoffLevel = 0;
+        inst.state.backoffUntil = null;
+        inst.state.lastFailAt = null;
+      }
       store.save();
       if (inst.port && hooks.onInstanceStart) hooks.onInstanceStart(inst);
       if (events) events.append('inst_started', { id: inst.id, port: inst.port });
@@ -148,7 +158,7 @@ function createLifecycle(deps) {
         return { ok: true, installing: true };
       }
     }
-    return _systemdStart(inst);
+    return _systemdStart(inst, opts);
   }
   /** 停止实例。自动来源（升级、插件生效重启）与用户停走同一路径：意图没有第二落点，
    *  恢复由调用方的后续 start（升级收尾重拉）表达。 */

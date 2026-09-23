@@ -177,6 +177,43 @@ check('副作用经 deps.save 显式发出（非隐式 this）', saves > 0, 'sav
       'ok=' + r.ok + ' phase=' + inst.state.phase);
   }
 
+  // ---- 6g. B2-6d：手动拉起开新失败链 —— fail() 承诺的「由用户手动重试」成为真实通道 ----
+  //   旧缺陷：attempts>20 后 restart() 瞬回 FAILED，清零只靠稳定 RUNNING>5min，
+  //   超限实例的手动重试通道实质封死（§4 的 21 次循环即达该状态）。
+  {
+    const mgr = mkMgr(fs.mkdtempSync(path.join(os.tmpdir(), 'b26d-')));
+    const inst = mk('FAILED', { restartCount: 21, backoffLevel: 5, lastError: '重试超限(崩溃)', lastFailAt: Date.now() - 1000, backoffUntil: Date.now() - 1 });
+    mgr.instances = [inst];
+    seedEntry(mgr, inst);
+    const r = await mgr.startInstance('b15', { manual: true });
+    check('D-1 手动启动成功 → 旧链计数作废（restartCount/backoffLevel/backoffUntil 清零）',
+      r.ok === true && inst.state.phase === 'STARTING' && inst.state.restartCount === 0 && inst.state.backoffLevel === 0 && inst.state.backoffUntil === null,
+      'ok=' + r.ok + ' ' + JSON.stringify(inst.state));
+    // 收口点：手动拉起后进程再失败，监督拍的 restart 从第 1 次重试重新走起。
+    sm.restart(deps, inst, '实例进程退出');
+    check('D-2 手动启动后的失败重新进 BACKOFF 计第 1 次（旧实现此处必直落「重试超限」FAILED）',
+      inst.state.phase === 'BACKOFF' && inst.state.restartCount === 1, inst.state.phase + ' count=' + inst.state.restartCount);
+  }
+  {
+    const mgr = mkMgr(fs.mkdtempSync(path.join(os.tmpdir(), 'b26d-auto-')));
+    const inst = mk('FAILED', { restartCount: 21, backoffLevel: 5, installOk: true });
+    inst.guardian = true;
+    mgr.instances = [inst];
+    seedEntry(mgr, inst);
+    mgr.supervise('b15');
+    await new Promise((r) => setImmediate(r));
+    check('D-3 自动来源拉起（监督拍 installOk 兜底）不开新链：restartCount=21 原样保留',
+      inst.state.restartCount === 21, 'phase=' + inst.state.phase + ' count=' + inst.state.restartCount);
+    sm.restart(deps, inst, '实例进程退出');
+    check('D-3b 自动链超限判定不变：超限后再失败仍 FAILED（超限->手动重启才有出路）',
+      inst.state.phase === 'FAILED' && /重试超限/.test(inst.state.lastError || ''), inst.state.phase);
+  }
+  {
+    const apiSrc = require('node:fs').readFileSync(path.join(ROOT, 'src', 'api', 'domains', 'instances.js'), 'utf8');
+    check('D-4 API 接线：act=start 是唯一显式 manual 来源（自动路径不经此标记）',
+      /startInstance\(j\.id, \{ manual: true \}\)/.test(apiSrc) && !/startInstance\(j\.id\)/.test(apiSrc), '有');
+  }
+
   // ---- 7. W2 控制面监督拍（govern tick + 准入）：观测(假 resstats)->决策(真 governor+假机器事实)
   //      ->下发(展示值)->处置(违规停单元+退避)。注入走 ctor opts（显式注入，不 patch 模块导出）。
   //      端口用真实监听让 monitor 命中 RUNNING，但采样被假 resstats 接管，绝不读真实进程账本。 ----
