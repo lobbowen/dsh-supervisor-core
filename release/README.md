@@ -43,12 +43,32 @@
 
 | 文件 | 方向 | 内容 |
 |---|---|---|
-| `registry.json` | 壳 → 内核 | 镜像源偏好与测速结果（内核「优先采用壳投放的 selected」） |
+| `registry.json` | **壳写、内核只读** | 镜像源**证据**：候选目录 `catalog` + 探测规格 `probe` + 逐源实测 `measurements`（schema3） |
+| `registry-choice.json` | **内核写（唯一写者）、壳只读** | 镜像源**选择**：`mode`（auto/manual）、`manualOrigin`、用户在面板维护的 `origins` |
 | `identity.json` | 壳写 | 壳自身身份（`version`/`phase`/`exe`/`lastSeenAt` 等运行时字段）；护栏/回退字段已废除 |
 | `update-journal.json` | 内核写 | 壳更新账本（`to`/`confirmed`）；强制更新，**不含回退/拉黑** |
 
 **约束**：契约字段的**新增**必须向后兼容（读方在字段缺失时降级）；
 契约字段的**移除或语义变更**必须**内核先行**，并允许两侧版本错配运行一个发布周期。
+
+#### 0.1.1 镜像源为什么拆成两份文件
+
+同一份文件不允许有两个写者。schema2 时代「证据」与「选择」挤在 `registry.json` 里，留下了两处互相让步：
+内核读回原文只为覆盖 `mode/manualOrigin/origins` 三个键；壳见到 `mode=manual` 就得冻结自己写的契约。
+schema3 按写者拆开后，两处让步一起删除——**壳只投证据，选择归内核**。
+
+| 键 | 写入方 | 读取侧的判据 |
+|---|---|---|
+| `registry.json` `schema` | 壳 | 内核 `src/platform/contract/registry.js` 的 `SUPPORTED_SCHEMA`（当前 3）：高于本值整份不采用（`contract-schema-newer`），低值按演进规则降级读 |
+| `registry.json` `writtenBy` / `writtenAt` | 壳 | 只作来源与新鲜度证据，不参与选源 |
+| `registry.json` `catalog` | 壳 | 候选镜像目录；每条仍在内核侧过形态闸 `src/platform/distribution/registry-ref.js::parseRegistryBase`（允许带 path，拒凭证/query/片段） |
+| `registry.json` `probe` | 壳 | 探测规格（超时等），内核按同一规格自测 |
+| `registry.json` `measurements[]` | 壳 | 逐源实测 `{origin,ok,latencyMs,error,checkedAt}`。**采用条件三条同时成立**（`src/platform/distribution/policies.js::shellProbeResults`）：新鲜（`SHELL_PROBE_MAX_AGE_SEC` = 30 分钟）、覆盖本轮全部候选、每源过形态闸；否则整批回退内核自测（选源结果 `source` 记 `shell-probe` / `probe`） |
+| `registry-choice.json` `mode` / `manualOrigin` / `origins` / `updatedAt` | **内核唯一**（`src/platform/distribution/registry-config.js`） | 壳只读 `mode === "manual"` 时的 `manualOrigin`（置顶自己的候选列表），其余键忽略 |
+
+**跨仓同表**：形态表与私网主机表在内核与壳各有一份实现（JS 与 Rust），由内核
+`test/npm-resolution-test.js` 与壳 `src-tauri/src/mirror.rs` 的 golden vectors 单测钉住同一张表——
+任一侧改表而不同步另一侧，两侧 CI 各判一处红。历史上这张表就是这样抓出 127/8 与 0/8 两处真实分叉的。
 
 ### 0.2 跨仓发布时序（规范）
 

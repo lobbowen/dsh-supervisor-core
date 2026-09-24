@@ -286,12 +286,13 @@ DSH_CANARY=1
 
 ## §6 门禁
 
-| 门禁 | 断言 |
-|---|---|
-| RC-G1 | 壳 `core.rs` 的选版算法含 `rollback` 分支且优先级最高 |
-| RC-G2 | 壳选版**优先读 `latest`**（不得仅取 versions 最高） |
-| RC-G3 | 内核 `fetchNpmLatest` 同上（若该函数仍用于我们的包） |
-| RC-G4 | 发布脚本：`-RC.*` 发布挂 `--tag latest`、`-BETA.*` 发布挂 `--tag beta`，**两档都在发布后回补 `latest`（只升不降，RC-6）**；回补失败必须非零退出 |
-| RC-G5 | 反向：判据能识别"取全量最高"的旧形态（门禁非空转） |
-| RC-G6 | `install-id.js` 存在：生成 UUID v4、持久化 0600、幂等、读失败不静默新建 |
-| RC-G7 | 灰度匹配**只用 installId/hostnames**（不得用 IP/MAC），且名单只认 `schema:1` 格式 |
+| 门禁 | 断言 | 执行位点 |
+|---|---|---|
+| RC-G1 | 壳选版含 `rollback` 分支且优先级最高 | **壳仓** `src-tauri/src/release_channel.rs` 的 `tests::step1_*`（内核 CI 不检出壳仓，交叉断言只能恒绿，故不作废代码留在本仓） |
+| RC-G2 | 壳选版**优先读 `latest`**（不得仅取 versions 最高） | **壳仓** 同上 `tests::step3_latest_is_trusted_even_when_versions_is_higher`（`step4_*` 判的是 latest 缺失时的回落） |
+| RC-G3 | 内核 `fetchNpmLatest` 同上（结构判据钉在取版本链的三个决定点函数体，不钉整目录） | `test/release-channel-gate-test.js` |
+| RC-G4 | 发布脚本：`-RC.*` 发布挂 `--tag latest`、`-BETA.*` 发布挂 `--tag beta`，**两档都在发布后回补 `latest`（只升不降，RC-6）**；回补失败必须非零退出 | `test/release-channel-gate-test.js` |
+| RC-G5 | 反向：判据能识别"取全量最高"的旧形态（门禁非空转） | `test/release-channel-gate-test.js` |
+| RC-G6 | `install-id.js` 存在：生成 UUID v4、持久化 0600、幂等、读失败不静默新建 | `test/install-id-test.js` 的 `ID-1..ID-8`（ID-5/ID-6 判「读坏不覆盖 / 写失败不返回临时值」） |
+| RC-G7 | 灰度匹配**只用 installId/hostnames**（不得用 IP/MAC），且名单只认 `schema:1` 格式 | **壳仓** `src-tauri/src/release_channel.rs` 的 `tests::allowlist_matches_install_id` / `allowlist_hostname_is_fallback_hit` / `allowlist_requires_schema_1` —— 匹配函数只吃 installId 与 hostnames 两个入参，IP/MAC 没有入口。**内核不做名单匹配**：`test/release-channel-test.js:124,126` 钉住内核只认本地开关、且不得以「名单包存在」为依据 |
+| RC-G8 | 权威查询的真相源边界：有官方源可问时**只问官方源**（取不到也不去镜像顺延拿陈旧版本）；只有镜像时退回镜像但 `origin` 必须如实回传 | `test/release-channel-gate-test.js` |

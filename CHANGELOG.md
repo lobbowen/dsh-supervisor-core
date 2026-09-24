@@ -4,6 +4,28 @@
 格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，
 版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [未发布]
+
+### 门禁改锚到决定点 + 权威选版边界补判据 + 镜像契约文档化（镜像源重构最后一批的内核侧）
+
+- `test/release-channel-gate-test.js`：RC-G3 的结构判据从「整目录聚合」改为钉在取版本链的三个决定点
+  函数体（`fetchNpmLatest` / `versionFromOrigin` / `pickReleaseVersion`）。旧写法下 `release.js` 里那次
+  合法的 `tags.latest` 读取，会让「取版本口读 latest」这条断言恒真 —— 决定点本身换回「全量最高」也不会
+  判红。整目录聚合只留给「某种形态不得出现在任何一处」这类负判据（那条确实要覆盖全目录）。
+- 同文件删掉 RC-G1-x/RC-G2-x 交叉块：内核 CI 从不检出壳仓（`test/no-cross-repo-test.js` 正是为禁这种
+  读法而存在），于是「壳源码不存在就当通过」是唯一走得到的分支，两条断言在链上恒绿。壳侧同一事实由其
+  `release_channel` 的 step1..step5 单测执行；契约 §6 表逐条补齐**执行位点**，谁判红写清楚。
+- 新增 RC-G8（行为，假 registry 双源）：`authoritative` 查询在有官方源可问时只问官方源；官方源没同步该包
+  时如实判失败，**不**顺延去镜像取一个陈旧版本；一条官方源都没有（企业代理形态）才退回镜像，且 `origin`
+  必须如实回传。此前这条分支没有任何判据，而代码注释写的是「绝不回落到镜像」—— 与实现相反，注释已按
+  实际规则改写并指向 RC-G8。
+- `test/plugin-change-restart-test.js` 新增 P 组：registry 取不到版本时 `update()` 必须带原因失败、零 CLI、
+  零重启，且失败结论**不落进检测缓存** —— 落进去就等于 TTL 之久面板都显示「无更新」，而「取不到」与
+  「已最新」是两种完全不同的处置。反向对照钉住「取到版本才写缓存、第二次检查不再触网」，证明计数判据有牙。
+- `release/README.md` 新增 §0.1.1：镜像源两份文件的键、写者、读取判据成文（含壳证据的三条采用条件与
+  跨仓 golden vectors）。§0.1 表旧行仍写「内核优先采用壳投放的 selected」，而那个键已随契约 schema3 删除；
+  `registry-choice.json` 此前在跨仓契约表里根本没有一行 —— 读文档的人无从知道选择面搬去了哪。
+
 ## [0.1.6-BETA.10]（2026-09-24）
 
 ### 镜像契约 schema3 与两文件所有权拆分（P0-C，跨仓与桌面壳同批）

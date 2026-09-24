@@ -11,6 +11,7 @@
 //  - 停用/启用：官方补丁层机制（$DSH_HOME/cordis.patch.yml）热载面，不动 bundles（防 reconcile 击穿），
 //    无需重启；启用顺带清理 legacy overlay
 //  - 更新：检测（registry 最高版 vs 已装版）+ 执行（update/add）+ 重启生效；本地/git 型拒绝
+//  - registry 取不到版本：报「取不到 + 原因」而不是静默无更新，且失败结论不落进检测缓存
 // 全部用桩（stub CLI/instances/registry），profile 目录用真实临时目录验证文件级行为。
 
 const path = require('node:path');
@@ -54,6 +55,7 @@ function makePM(opts = {}) {
 
   const installedOnTargets = opts.installedOnTargets || ['native', 'inst-a'];
   const events = [];
+  const distCalls = []; // 取版本口的调用次数：区分「重新查询」与「命中缓存」的唯一依据
   const instances = {
     calls: [],
     states: { 'inst-a': opts.running !== false, 'inst-b': false, 'main': opts.running !== false },
@@ -72,6 +74,7 @@ function makePM(opts = {}) {
     exitIntended: opts.exitIntended || (() => false),
     // dist 的取版本口回结构化结果（{ok,version,...}）：桩按包名给版本，缺键即「取不到」。
     dist: { fetchNpmLatest: async (n) => {
+      distCalls.push(n);
       const v = opts.distLatest !== undefined ? opts.distLatest[n] : '2.0.0';
       return v ? { ok: true, version: v, origin: 'https://fake.registry', attempts: [], error: null }
         : { ok: false, version: null, origin: null, attempts: [{ origin: 'https://fake.registry', error: '桩：无该包' }], error: '桩：无该包' };
@@ -94,7 +97,7 @@ function makePM(opts = {}) {
   };
   pm.inventory = async () => ({ entries: [{ entryId: 'e1', moduleName: '@x/p-something' }] });
   pm.saveOverlayEntries = (entries) => fs.writeFileSync(overlayFile, JSON.stringify(entries, null, 2) + String.fromCharCode(10));
-  return { pm, instances, events, tmp, aProfile, nativeProfile, overlayFile };
+  return { pm, instances, events, distCalls, tmp, aProfile, nativeProfile, overlayFile };
 }
 
 const readJson = (f) => { try { return JSON.parse(fs.readFileSync(f, 'utf8')); } catch { return null; } };
@@ -301,6 +304,30 @@ const eventsOf = (arr, type) => (arr || []).some((e) => e.t === type);
     check('O4 退出中不发 plugin_restart_* 事件', !eventsOf(events, 'plugin_restart_started') && !eventsOf(events, 'plugin_restart_done'), events.map((e) => e.t).join(','));
     const { pm: pm2, instances: inst2 } = makePM({ running: true });
     check('O5 反向（门有牙）：未退出 → 正常重启生效', await pm2._applyPluginChange(A_TGT, 'uninstall', () => {}) === true && inst2.calls.includes('start:inst-a'), inst2.calls.join(','));
+  }
+
+  // -- P. registry 取不到版本：如实上报原因，且失败结论不落进检测缓存 --
+  //   latestCached 只在取到时写缓存；把「取不到」写进去等于 TTL 之久面板都显示「无更新」，
+  //   而这两件事对用户是同一个症状、却是完全不同的处置（重试 vs 等发版）。
+  {
+    const { pm, instances, distCalls } = makePM({ running: true, distLatest: {} });
+    const r = await pm.update('@x/p', 'inst-a');
+    check('P1 取不到版本时 update 直接失败并带上逐源原因', r.ok === false && /桩：无该包/.test(String(r.error)) && r.jobId === undefined, JSON.stringify(r));
+    check('P2 取不到版本时零 CLI、零重启（不得静默走「已是最新」分支）',
+      !instances.calls.some((c) => c.startsWith('cli:') || c.startsWith('start:')), instances.calls.join(','));
+    check('P3 失败结论不落进检测缓存', pm._updCache['@x/p'] === undefined, JSON.stringify(pm._updCache));
+    const chk = await pm.checkUpdates();
+    const row = (chk.plugins || []).find((x) => x.name === '@x/p');
+    check('P4 检测：取不到时 latest 为 null 且 updateAvailable=false（不猜版本）',
+      !!row && row.latest === null && row.updateAvailable === false, JSON.stringify(row));
+    await pm.checkUpdates();
+    check('P5 门禁非空转：失败后每次检查都重新查询，而不是被负缓存挡掉', distCalls.length === 3, String(distCalls.length));
+    const { pm: pm2, distCalls: calls2 } = makePM({ running: true, distLatest: { '@x/p': '2.0.0' } });
+    await pm2.checkUpdates();
+    await pm2.checkUpdates();
+    check('P6 反向对照：取到版本才写缓存，第二次检查不再触网',
+      calls2.length === 1 && pm2._updCache['@x/p'] && pm2._updCache['@x/p'].latest === '2.0.0',
+      calls2.length + ' / ' + JSON.stringify(pm2._updCache));
   }
 
   const failed = results.filter((r) => !r);

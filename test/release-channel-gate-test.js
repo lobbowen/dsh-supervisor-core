@@ -6,8 +6,9 @@
 //
 // ## 断言
 //   RC-G3 内核选版「优先读 latest」（结构断言 + 行为断言）
-//         - 结构：src/platform/distribution/ 的 fetchNpmLatest 读 dist-tags.latest，
-//                 且不再「dist-tags 全部值 并 versions 全部键」取最高
+//         - 结构：取版本链的三个决定点（fetchNpmLatest / versionFromOrigin / pickReleaseVersion）
+//                 逐个取函数体判定：委托链完整、latest 读点在选版算法体内、体内无「dist-tags 全部值
+//                 并 versions 全部键」取最高；只有「不得出现在任何一处」的负判据走整目录聚合
 //         - 行为：假 registry 上 latest=0.1.6-RC.1 而 versions 另有数字更高的
 //                 0.2.0-BETA.1 —— 契约第 3 节第 3 步要求返回 latest（通道控制）
 //   RC-G4 发布脚本 release/scripts/publish-core.sh 的标签策略（RC-6）
@@ -16,12 +17,15 @@
 //           真发布分支与幂等跳过分支都要走到；回补失败非零退出
 //         - rollback / canary 不由发布脚本设置（人工运维，契约）
 //   RC-G5 反向：判据能识别「仅取全量最高」的旧形态（门禁非空转）
-//   附    RC-G1/G2 交叉断言：只读**壳仓** core.rs 源码（壳实现归壳仓，本仓不改）
+//   RC-G8 权威查询的真相源边界：有官方源可问时只问官方源；只有镜像时退回镜像但 origin 留痕
 //
 // ## 覆盖面边界
-//   本文件只静态判定发布脚本的**形态**（命令行、调用点、判据来源），不真触网。
+//   本文件只静态判定发布脚本的**形态**（命令行、调用点、判据来源），不真触网（假 registry 本机起端口）。
 //   「registry 上 latest 是否真的对齐」由发布日志与契约第 4 节的通道自检覆盖 ——
 //   静态门禁抓不到「脚本对但某次人工把标签改回去」。
+//   契约第 6 节的 RC-G1/G2 是壳侧断言：内核 CI 不检出壳仓（no-cross-repo X-2），
+//   在本仓读 `../dsh-supervisor-launcher/...` 的交叉断言只会走「文件不存在当通过」那条分支，
+//   故由壳仓 release_channel 的 step1..step5 单测执行，本文件不再挂空名。
 // ---------------------------------------------------------------------------
 
 const fs = require('node:fs');
@@ -100,10 +104,20 @@ function legacyUnionMax(meta) {
 
 const DIST_DIR = 'src/platform/distribution';
 const SCRIPT_REL = 'release/scripts/publish-core.sh';
-/**  （域结构第三轮）：distribution 已拆分（release/policies/registry/install + index 门面），
- *  结构断言的对象是「分发能力」而非单文件，故按目录聚合读取（读取面随文件搬移同步，判据语义不变）。 */
+/**  distribution 已拆分（release/policies/registry/install + index 门面），按目录聚合的读取面只用于
+ *  「某种形态不得出现在任何一处」这类负判据；正向判据（读 latest、委托选版）钉在函数体上，
+ *  因为聚合面上它们恒为真。 */
 const readDist = () => fs.readdirSync(path.join(ROOT, DIST_DIR)).filter((f) => f.endsWith('.js')).sort()
   .map((f) => fs.readFileSync(path.join(ROOT, DIST_DIR, f), 'utf8')).join(String.fromCharCode(10));
+
+/** 取顶层函数体（从声明到首个顶格 `}`）。结构断言用它把判据钉在决定点本身，
+ *  而不是整个文件或整个目录 —— 聚合面上「读 latest」永远为真。定位不到返回 null（判红）。 */
+function fnBody(src, decl) {
+  const s = src.indexOf(decl);
+  if (s < 0) return null;
+  const e = src.indexOf('\n}', s);
+  return e < 0 ? null : src.slice(s, e);
+}
 
 // fixture：契约 ) 与「全量最高」在**同一份元数据**上给出不同答案
 const META_A = {
@@ -119,17 +133,21 @@ const META_B = {
 
 const { DistributionManager, semverCompare } = require(path.join(ROOT, 'src', 'platform', 'distribution', 'index.js'));
 
-/** 假 registry：只提供被测包元数据与 /-/ping，门禁不依赖真实网络。 */
-function startFakeRegistry() {
+/** 假 registry：只提供被测包元数据与 /-/ping，门禁不依赖真实网络。
+ *  opts.prefix 把包挂到带路径前缀的基址下（用于造「同一台机器上既像官方源又像镜像」的两个候选）；
+ *  opts.miss 让包路由恒 404（模拟「源在架但这个包没同步」）。 */
+function startFakeRegistry(opts) {
+  const o = opts || {};
   const state = { meta: META_A };
   const server = http.createServer((req, res) => {
-    const url = decodeURIComponent(String(req.url || '').split('?')[0]);
+    let url = decodeURIComponent(String(req.url || '').split('?')[0]);
+    if (o.prefix && url.startsWith(o.prefix)) url = url.slice(o.prefix.length) || '/';
     if (url === '/-/ping') {
       res.writeHead(200, { 'content-type': 'application/json' });
       res.end('{}');
       return;
     }
-    if (url === '/' + META_A.name) {
+    if (url === '/' + META_A.name && !o.miss) {
       res.writeHead(200, { 'content-type': 'application/json' });
       res.end(JSON.stringify(state.meta));
       return;
@@ -140,7 +158,7 @@ function startFakeRegistry() {
   return new Promise((resolve) => {
     server.listen(0, '127.0.0.1', () => {
       resolve({
-        origin: 'http://127.0.0.1:' + server.address().port,
+        origin: 'http://127.0.0.1:' + server.address().port + (o.prefix || ''),
         set: (m) => { state.meta = m; },
         close: () => new Promise((r) => server.close(r)),
       });
@@ -152,15 +170,35 @@ async function main() {
   // --- RC-G3 结构 ---
   console.log('== RC-G3 内核选版优先读 latest（结构）==');
   {
+    // 判据必须落在真正做决定的函数体上。整目录聚合时，release.js 里合法的 tags.latest 读取
+    // 会让「取版本口读 latest」恒真 —— 即使 fetchNpmLatest 换回全量最高也照样绿（判目录=空转）。
+    const vc = stripJsComments(read(path.join(DIST_DIR, 'version-check.js')));
+    const rel = stripJsComments(read(path.join(DIST_DIR, 'release.js')));
+    const fetchBody = fnBody(vc, 'async function fetchNpmLatest(');
+    const queryBody = fnBody(vc, 'async function versionFromOrigin(');
+    const pickBody = fnBody(rel, 'function pickReleaseVersion(');
+    const located = fetchBody !== null && queryBody !== null && pickBody !== null;
+    check('RC-G3-a 三个决定点均可在指定文件内定位（取版本口/单源查询/选版算法）', located,
+      'fetch:' + (fetchBody !== null) + ' query:' + (queryBody !== null) + ' pick:' + (pickBody !== null));
+    // 取版本口自己不选版：委托链 fetchNpmLatest -> versionFromOrigin -> release.pickReleaseVersion。
+    check('RC-G3-b 取版本口逐源委托 versionFromOrigin，后者委托唯一选版实现 pickReleaseVersion',
+      located && /versionFromOrigin\(/.test(fetchBody) && /release\.pickReleaseVersion\(/.test(queryBody),
+      '委托链' + (located ? ' ok' : ' 未定位'));
+    check('RC-G3-c latest 优先的读点确实落在选版算法体内（tags.latest）',
+      located && readsLatestTag(pickBody), 'ok');
+    check('RC-G3-d 选版算法单点：pickReleaseVersion 在取版本链里只被调用一次且发生在单源查询内',
+      located && (vc.match(/pickReleaseVersion/g) || []).length === 1
+        && /release\.pickReleaseVersion\(/.test(queryBody)
+        && (fetchBody.match(/semverCompare\(|pickReleaseVersion\(/g) || []).length === 0,
+      'vc 内引用 ' + (vc.match(/pickReleaseVersion/g) || []).length + ' 处');
+    check('RC-G3-e 决定链三处体内都无「dist-tags 并 versions 取最高」（旧形态不得回流）',
+      located && !isUnionMax(fetchBody) && !isUnionMax(queryBody) && !isUnionMax(pickBody),
+      located ? 'ok' : '未定位');
     const src = stripJsComments(readDist());
-    check('RC-G3-a fetchNpmLatest 存在（内核「我们的包」选版入口）',
-      /\bfetchNpmLatest\s*\(/.test(src), DIST_DIR);
-    check('RC-G3-b 选版读 dist-tags.latest（RC-1）',
-      readsLatestTag(src), readsLatestTag(src) ? 'ok' : '未见 tags.latest 读取点（仍按全量最高）');
-    check('RC-G3-c 选版不再并集 versions 取最高（RC-1）',
+    check('RC-G3-f 全目录仍无并集取最高形态（聚合面只用于「不得存在任何一处」这一负判据）',
       !isUnionMax(src), isUnionMax(src) ? '检测到 dist-tags ∪ versions 取最高（旧形态）' : 'ok');
     const rc = read('src/platform/contract/registry.js');
-    check('RC-G3-d 镜像契约 selected 不含版本字段（latest 只来自 registry 元数据）',
+    check('RC-G3-g 镜像契约 selected 不含版本字段（latest 只来自 registry 元数据）',
       !/dist-?tags/.test(rc), 'ok');
   }
 
@@ -243,24 +281,11 @@ async function main() {
       '旧算法=' + String(legacyUnionMax(META_A)) + '；契约期望=' + META_A['dist-tags'].latest);
   }
 
-  // --- RC-G1 / RC-G2 交叉（只读壳仓源码；实现归分片1）---
-  console.log('== RC-G1/G2 交叉：壳仓 core.rs（只读；实现归分片1）==');
-  {
-    const shellCore = path.join(ROOT, '..', 'dsh-supervisor-launcher', 'src-tauri', 'src', 'core.rs');
-    if (!fs.existsSync(shellCore)) {
-      check('RC-G1-x 壳 core.rs 含 rollback 分支（交叉）', true,
-        '壳仓工作树不可见 → 跳过（实现归分片1）');
-      check('RC-G2-x 壳 core.rs 优先读 latest（交叉）', true, '壳仓工作树不可见 → 跳过');
-    } else {
-      const core = withoutCommentLines(fs.readFileSync(shellCore, 'utf8'));
-      const hasRollback = /["']rollback["']/.test(core);
-      check('RC-G1-x 壳 core.rs 含 rollback 分支且优先（交叉）', hasRollback,
-        hasRollback ? 'ok' : '未见 rollback 分支（分片1 待落地）');
-      const union = isUnionMax(core);
-      check('RC-G2-x 壳 core.rs 优先读 latest（交叉）', !union,
-        union ? '检测到 dist-tags ∪ versions 取最高（旧形态；分片1 待落地）' : 'ok');
-    }
-  }
+  // --- RC-G1 / RC-G2：壳侧选版不在本仓判定 ---
+  //   原交叉块读的是 `ROOT/../dsh-supervisor-launcher/...`，而内核 CI 从不检出壳仓（由
+  //   test/no-cross-repo-test.js X-2 钉住），所以「文件不存在就当过」那条分支才是唯一走得到的分支：
+  //   两条断言在内核链上恒绿，属空转门禁。壳侧的同一事实由壳仓 src-tauri/src/release_channel.rs
+  //   的 step1..step5 单测判定，那里每次壳 CI 都真跑。
 
   // --- RC-G3 行为（假 registry）---
   console.log('== RC-G3 内核选版优先读 latest（行为，假 registry）==');
@@ -272,25 +297,57 @@ async function main() {
 
       fake.set(META_A);
       const gotA = await dist.fetchNpmLatest(META_A.name, { authoritative: true });
-      check('RC-G3-e 行为：latest=RC 时返回 latest（BETA 数字更高不得压过）',
+      check('RC-G3-h 行为：latest=RC 时返回 latest（BETA 数字更高不得压过）',
         gotA.ok === true && gotA.version === META_A['dist-tags'].latest,
         '返回 ' + JSON.stringify({ ok: gotA.ok, version: gotA.version, error: gotA.error }) + '（契约 §3③ 期望 ' + META_A['dist-tags'].latest + '）');
-      check('RC-G3-e2 行为：origin 回传给出该版本的源（下载必须同源，否则显示与下载分叉）',
+      check('RC-G3-i 行为：origin 回传给出该版本的源（下载必须同源，否则显示与下载分叉）',
         gotA.origin === fake.origin, String(gotA.origin));
 
       fake.set(META_B);
       const gotB = await dist.fetchNpmLatest(META_B.name, { authoritative: true });
-      check('RC-G3-f 行为：latest=1.0.0 / max=9.9.9 → 仍返回 latest（不得猜最高）',
+      check('RC-G3-j 行为：latest=1.0.0 / max=9.9.9 → 仍返回 latest（不得猜最高）',
         gotB.ok === true && gotB.version === '1.0.0', '返回 ' + JSON.stringify({ ok: gotB.ok, version: gotB.version }) + '（契约 §3③ 期望 1.0.0）');
 
       // 取不到时必须回传结构化失败 + 逐源原因，而不是 null（null 会让 UI 把「取不到」显示成「已是最新」）。
       const gotNone = await dist.fetchNpmLatest('@dsh-sup/not-published-at-all', { authoritative: true });
-      check('RC-G3-g 行为：包不存在 → ok:false + version:null + 指名源与原因',
+      check('RC-G3-k 行为：包不存在 → ok:false + version:null + 指名源与原因',
         gotNone.ok === false && gotNone.version === null && gotNone.attempts.length === 1
           && gotNone.attempts[0].origin === fake.origin && /HTTP 404/.test(gotNone.attempts[0].error),
         JSON.stringify(gotNone.attempts) + ' error=' + String(gotNone.error));
     } finally {
       await fake.close();
+    }
+  }
+  // --- RC-G8 权威查询的真相源边界（假 registry，两个候选源）---
+  //   authoritative 的动机是「镜像同步延迟会把新版本判成已是最新」。所以「有官方源可查时绝不查镜像」
+  //   必须可判红；而用户只配了镜像时退回镜像是有意兜底 —— 但必须把实际用的源如实回传。
+  console.log('== RC-G8 authoritative：官方源优先，镜像兜底要留痕 ==');
+  {
+    const official = await startFakeRegistry({ prefix: '/registry.npmjs.org' });
+    const mirror = await startFakeRegistry({ prefix: '/mirror' });
+    try {
+      const both = new DistributionManager({ registries: [mirror.origin, official.origin], registryFile: null, logger: { warn() {} } });
+      const r1 = await both.fetchNpmLatest(META_A.name, { authoritative: true });
+      check('RC-G8-a 官方源与镜像并存时只问官方源（镜像不得当真相源）',
+        r1.ok === true && r1.origin === official.origin && String(JSON.stringify(r1)).indexOf(mirror.origin) < 0,
+        JSON.stringify({ origin: r1.origin, attempts: r1.attempts }));
+
+      const missing = await startFakeRegistry({ prefix: '/registry.npmjs.org', miss: true });
+      const offButMiss = new DistributionManager({ registries: [mirror.origin, missing.origin], registryFile: null, logger: { warn() {} } });
+      const r2 = await offButMiss.fetchNpmLatest(META_A.name, { authoritative: true });
+      check('RC-G8-b 官方源没同步该包时如实判失败，不顺延去镜像取一个陈旧版本',
+        r2.ok === false && r2.version === null && r2.attempts.length === 1
+          && r2.attempts[0].origin === missing.origin && String(JSON.stringify(r2)).indexOf(mirror.origin) < 0,
+        JSON.stringify({ ok: r2.ok, attempts: r2.attempts }));
+      await missing.close();
+
+      const onlyMirror = new DistributionManager({ registries: [mirror.origin], registryFile: null, logger: { warn() {} } });
+      const r3 = await onlyMirror.fetchNpmLatest(META_A.name, { authoritative: true });
+      check('RC-G8-c 无官方源可问时退回用户配置的首选源，且 origin 如实回传该镜像（兜底不留暗账）',
+        r3.ok === true && r3.origin === mirror.origin, JSON.stringify({ ok: r3.ok, origin: r3.origin }));
+    } finally {
+      await official.close();
+      await mirror.close();
     }
   }
 }
