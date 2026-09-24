@@ -128,6 +128,22 @@ pool.onChange(fn)                        // fn(id, value|null, record) —— va
 > 的派生投影（daemon 绝不回写），不构成第二权威；`tokens` 段仍严格只承载 DSH 侧令牌。门禁 TK-G4
 > 据此对 instances[] 行做**字段白名单**判定——新增凭证字段想混进此文件必须先过门禁改约。
 
+> **TK-7 追加裁决（#4 的补齐与呈现边界）**：`remote-token` 是用户配置类令牌，但「开启远程控制」是
+> 用户唯一的开远程动作，动作内缺凭据会产出开关已开、屏幕无二维码、用户不知凭据为何的半截状态。
+> 据此允许两件事、划定一条边界：
+> - **允许自动补齐**：意图唯一写入口 `app/domain-actions/lan.js#setRemoteMode` 在 `mode!==off` 且现值为空时
+>   经 **唯一分配口** `domains/relay/core.js#generateRemoteToken` 生成（URL-safe、强度达 wan 闸下限）并与
+>   模式**同一次落盘**。它是用户配置字段的写入，不是 DSH 令牌捕捉，故不触 TK-1/TK-4/TK-7；已有值（含过弱的）
+>   一律不覆盖——静默改写用户自设凭据是另一类事故。
+> - **允许本机看明文**：`/instances` 的 `remoteToken` 明文**只在回环来源**下发（判据与 `authUrl` 的 `?token=`
+>   同一条：`identity.loopback`，socket 层现取），使面板的「查看/修改凭据」闭环。
+> - **边界不变**：`/lan-access` 白名单仍**零令牌字段**（LAN/公网访客只可见 `tokenSet` 布尔与 `accessUrl`）；
+>   事件载荷只记布尔（TK-5）；明文绝不进 argv 或 `accessUrl` 的 `?token=`（TK-G6）。
+>   即：放宽的只是**本机面板的呈现形态**，可达面与攻击面一律未放宽。
+> - **一次性出示可进二维码**：本机面板持有明文时，二维码载荷允许拼 `?token=<令牌>`（门卫据此种
+>   `dsh_lan_token` Cookie）。它只是把「扫了落在 401 提示页」的半截入口补成可用入口：码由本机屏幕渲染，
+>   不属任何 HTTP 响应体、不进 `spawn` argv，故 TK-G6 与 `/lan-access` 白名单均未放宽。
+
 ---
 
 ## §6 门禁（`test/token-contract-gate-test.js`）

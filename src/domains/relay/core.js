@@ -204,14 +204,25 @@ function validateWanAccess({ remoteToken }) {
   return { ok: true };
 }
 
+/** 门卫令牌的唯一分配口。长度与字符集由本函数一处定义：只出 URL-safe 字符，
+ *  因为 relay 的令牌一次性出示形态是 `?token=`（proxy.js 的 401 提示语），非 URL-safe 会逼每个
+ *  消费方各自转义。放 core.js 而非 shared/credential：shared 层零 require 纪律不容纳随机源，
+ *  而令牌形态本就是 relay 门卫的知识；分配只被远程控制写入口消费，不存在第二处生成。 */
+function generateRemoteToken() {
+  return crypto.randomBytes(12).toString('base64url');
+}
+
 /** 远程访问模式读侧归一（纯）：磁盘/快照记录可能缺字段，一律收敛到 'off'，消费方不做真值猜测。 */
 function normalizeRemoteMode(v) {
   return v === 'lan' || v === 'wan' ? v : 'off';
 }
 
 /** 远程访问视图投影（纯）——URL 与就绪态的唯一事实源，前端零判定直消费。
- *  ready = relayListening（listen 失败会即时移除）且 DSH 会话 cookie 已注入；wan 额外要求 frpc 在跑；
- *  未就绪原因按优先级列在 reasons 供 UI 呈现。
+ *  ready = relay 在听 且 DSH 会话 cookie 已注入（relay 未监听时无从注入，故注入因走 else-if 不叠加）；
+ *  wan 另要求已设令牌 + frps 地址 + frpc 隧道在跑。未就绪原因按优先级列在 reasons 供 UI 呈现。
+ *  访问令牌只在 wan 计入就绪：relay 空令牌恒放行（tokenGateDecision），局域网侧「没设令牌」不阻断访问，
+ *  把它挂到就绪位等于用「能不能访问」表达「够不够安全」；而公网侧空令牌 = DSH 特权面零认证可达，
+ *  故 wan 必须计入。accessUrl 与 ready 正交：端口/地址已定即给出地址，未就绪也要让用户看得见要访问什么。
  *  @param {{mode,relayListening,cookieReady,tokenSet,frpcRunning,serverAddr,lanAddress,wanPort}} v */
 function projectRemoteView(v) {
   const x = v || {};
@@ -219,9 +230,9 @@ function projectRemoteView(v) {
   if (mode === 'off') return { mode, ready: false, accessUrl: null, reasons: [] };
   const reasons = [];
   if (!x.relayListening) reasons.push('远程服务未就绪（relay 未监听）');
-  if (!x.tokenSet) reasons.push('未设访问令牌');
   else if (!x.cookieReady) reasons.push('正在注入 DSH 会话…');
   if (mode === 'wan') {
+    if (!x.tokenSet) reasons.push('未设访问令牌');
     if (!String(x.serverAddr || '').trim()) reasons.push('未配置 frps 服务器地址');
     if (!x.frpcRunning) reasons.push('公网隧道未建立（frpc 未运行）');
   }
@@ -246,6 +257,7 @@ module.exports = {
   buildFrpcToml,
   normalizeFrpSettings,
   normalizeRemoteMode,
+  generateRemoteToken,
   validateFrpServerSettings,
   validateWanAccess,
   projectRemoteView,

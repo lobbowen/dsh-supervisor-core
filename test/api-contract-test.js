@@ -48,6 +48,9 @@ const pluginManager = { install: async () => ({ ok: true }) };
 const lan = { list: () => ({ items: [], addresses: [] }) };
 const tokenService = { get: () => 'dsh-session-token-abc123' };
 
+// 远程访问令牌的边界样本：main 记录带明文（进程内意图字段），API 边界只该在回环交出它。
+const MAIN_VIEW = () => ({ id: 'main', name: '主实例', port: 3080, domain: 'native', remoteMode: 'lan', remoteToken: 'lan-gate-token-1' });
+
 // Proxy 兜底：任何未 stub 的方法返回 { ok: true }（route 只取所需字段）
 const sup = new Proxy({}, {
   get(t, k) {
@@ -55,6 +58,7 @@ const sup = new Proxy({}, {
     if (k === 'nativeManager') return nativeManager;
     if (k === 'routerApi') return routerApi;
     if (k === 'instances') return instances;
+    if (k === 'dshMainView') return MAIN_VIEW;
     if (k === 'pluginManager') return pluginManager;
     if (k === 'lan') return lan;
     if (k === 'tokenService') return tokenService;
@@ -225,6 +229,11 @@ function req(method, p, body, hostHeader, extraHeaders, via) {
   let instR = await req('GET', '/instances');
   const instLoopback = instR.body.native;
   check('F1 回环 Host /instances 下发含 token authUrl', !!instLoopback && instLoopback.authUrl.indexOf('token=dsh-session-token-abc123') >= 0 && instLoopback.tokenPresent === true, JSON.stringify(instLoopback && instLoopback.authUrl));
+  // 远程访问令牌的明文与 DSH 会话令牌同判据（回环才交）：本机面板的「查看/修改令牌」闭环靠它，
+  // 而 tokenSet 布尔对所有来源在场——放宽的是本机的呈现形态，不是可达面。
+  check('F1 回环 /instances 下发 remoteToken 明文 + tokenSet',
+    !!instLoopback && instLoopback.remoteToken === 'lan-gate-token-1' && instLoopback.tokenSet === true,
+    JSON.stringify(instLoopback && { r: instLoopback.remoteToken, s: instLoopback.tokenSet }));
   instR = LAN_IP ? await req('GET', '/instances', null, LAN_IP + ':' + API_PORT, null, 'lan') : { code: 0, body: {} };
   check('F1 LAN（真实非回环 socket）未配置密钥 → 401（fail-closed）',
     !LAN_IP || instR.code === 401, LAN_IP ? (instR.code + '') : '（无 LAN 地址，跳过）');
@@ -239,6 +248,7 @@ function req(method, p, body, hostHeader, extraHeaders, via) {
       if (k === 'nativeManager') return nativeManager;
       if (k === 'router') return router;
       if (k === 'instances') return instances;
+      if (k === 'dshMainView') return MAIN_VIEW;
       if (k === 'pluginManager') return pluginManager;
       if (k === 'lan') return lan;
       if (k === 'tokenService') return tokenService;
@@ -283,6 +293,13 @@ function req(method, p, body, hostHeader, extraHeaders, via) {
   check('F2 已认证 LAN GET /instances → 200 且不下发 token（安全属性转移自 F1）',
     !LAN_IP || (kr.code === 200 && !!instLanAuthed && instLanAuthed.authUrl.indexOf('token=') < 0 && instLanAuthed.tokenPresent === false),
     LAN_IP ? (kr.code + ' ' + JSON.stringify(instLanAuthed && instLanAuthed.authUrl)) : '（无 LAN 地址，跳过）');
+  // 远程访问令牌明文与 DSH 会话令牌共用同一条回环判据：LAN 侧即使已带 access key 认证，
+  // 也只见到 tokenSet 布尔——明文出本机是面板「查看/修改凭据」闭环的唯一理由，不是可达面。
+  check('F2 已认证 LAN GET /instances → 有 tokenSet 布尔但零 remoteToken 明文',
+    !LAN_IP || (kr.code === 200 && !!instLanAuthed && instLanAuthed.tokenSet === true
+      && instLanAuthed.remoteToken === undefined
+      && JSON.stringify(instLanAuthed).indexOf('lan-gate-token-1') < 0),
+    LAN_IP ? JSON.stringify(instLanAuthed) : '（无 LAN 地址，跳过）');
   // 代开端点的回环闸：已认证 LAN 访客的浏览器不在这台机器上，请内核开浏览器既无用又是白送的动作面。
   //   面板据同一判据（页面来源是否回环）改走访客自己的 window.open，故这里必须如实拒绝而非静默成功。
   kr = await reqKey('POST', '/env/open-url', null, { Authorization: 'Bearer ' + KEY }, 'lan');
