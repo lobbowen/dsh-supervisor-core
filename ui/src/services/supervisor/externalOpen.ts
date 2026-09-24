@@ -41,16 +41,32 @@ export async function handOffFromPanel(url: string): Promise<OpenExternalResult>
 
 export type OpenTier = "confirmed" | "handed-off" | "failed";
 
+/** 启动形态摊成一行小字：三档里 handedOff 与 failed 的区别只在证据强弱，用户需要知道自己点了什么
+ *  才知道该不该信这句结论 —— 内核把 bin/via/ownsWindow/exit 一并交出，此前它在响应体里躺着没人看。 */
+export function evidenceDetail(ev?: OpenExternalResult["evidence"]): string | null {
+  if (!ev || typeof ev !== "object") return null;
+  const exe = typeof ev.bin === "string" ? ev.bin.split(/[\\/]/).pop() : null;
+  const bits: string[] = [];
+  if (exe) bits.push(exe);
+  if (ev.via) bits.push(ev.via);
+  if (ev.ownsWindow === false) bits.push("退出码不作证据");
+  if (ev.exitCode !== undefined && ev.exitCode !== null) bits.push("exit " + String(ev.exitCode));
+  else if (ev.exitSignal) bits.push("signal " + ev.exitSignal);
+  else if (ev.error) bits.push(String(ev.error));
+  return bits.length ? bits.join(" | ") : null;
+}
+
 /** 结果分档（纯函数）：三档语义在此唯一一次映射为界面档位。
  *  判据取 ok/confirmed，不取 message/error 文本 —— 文案可变，档位是契约。 */
-export function classifyOpenResult(r?: OpenExternalResult | null): { tier: OpenTier; url: string | null; title: string } {
+export function classifyOpenResult(r?: OpenExternalResult | null): { tier: OpenTier; url: string | null; title: string; detail: string | null } {
   const url = typeof r?.url === "string" && r.url ? r.url : null;
+  const detail = evidenceDetail(r?.evidence);
   if (!r || r.ok !== true) {
-    return { tier: "failed", url, title: (r && r.error) || "无法调起系统浏览器，请手动打开下方地址" };
+    return { tier: "failed", url, detail, title: (r && r.error) || "无法调起系统浏览器，请手动打开下方地址" };
   }
-  if (r.confirmed === true) return { tier: "confirmed", url, title: r.message || "已在系统浏览器打开" };
+  if (r.confirmed === true) return { tier: "confirmed", url, detail, title: r.message || "已在系统浏览器打开" };
   return {
-    tier: "handed-off", url,
-    title: "地址已交给系统，但无法确认浏览器窗口是否出现" + (url ? "：没看到窗口请复制或手动打开" : ""),
+    tier: "handed-off", url, detail,
+    title: "已把地址交给系统，但没拿到窗口出现的证据" + (url ? "：没看到浏览器就点下方地址" : ""),
   };
 }

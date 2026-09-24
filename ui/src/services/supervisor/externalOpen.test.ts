@@ -3,7 +3,7 @@
 // 只能证明源码里有这些字样，证不了分档判据按字段而非文案走、也证不了选路判据成立，故这里按行为钉。
 // 与 client.test.ts 同一手法：注入 fetch 替身，测到真实请求的路径与请求体，不碰 supervisorApi 本身。
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { handOffFromPanel, openViaWindow, servedByKernelHost, classifyOpenResult } from "./externalOpen";
+import { handOffFromPanel, openViaWindow, servedByKernelHost, classifyOpenResult, evidenceDetail } from "./externalOpen";
 
 function jsonResponse(status: number, body: unknown): Response {
   return new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } } as ResponseInit);
@@ -60,6 +60,30 @@ describe("classifyOpenResult：三档只看字段，不看文案", () => {
   it("结果整体缺失也是 failed（不得因 undefined 冒充实成功）", () => {
     expect(classifyOpenResult(null).tier).toBe("failed");
     expect(classifyOpenResult(undefined).url).toBe(null);
+  });
+});
+
+describe("evidenceDetail：把启动形态摊给用户（真机报错只有文案时无人能定位）", () => {
+  it("不可信形态标注「退出码不作证据」，并可执行文件名而非全路径", () => {
+    expect(evidenceDetail({ bin: "C:\\Windows\\explorer.exe", via: "dispatcher", ownsWindow: false, exitCode: 1 }))
+      .toBe("explorer.exe | dispatcher | 退出码不作证据 | exit 1");
+  });
+  it("可信形态只报退出码；只剩 error 码时报 error 码", () => {
+    expect(evidenceDetail({ bin: "xdg-open", via: "dispatcher", ownsWindow: true, exitCode: 3 })).toBe("xdg-open | dispatcher | exit 3");
+    expect(evidenceDetail({ bin: "xdg-open", via: "dispatcher", ownsWindow: true, error: "ENOENT" })).toBe("xdg-open | dispatcher | ENOENT");
+  });
+  it("反向：ownsWindow 缺失（旧内核结果）不得凭空标注证据规则", () => {
+    expect(evidenceDetail({ bin: "open", via: "dispatcher", exitCode: 0 })).toBe("open | dispatcher | exit 0");
+    expect(evidenceDetail(null)).toBe(null);
+    expect(evidenceDetail({})).toBe(null);
+  });
+  it("handed-off 档带着证据细节也不升成成功说法", () => {
+    const r = classifyOpenResult({
+      ok: true, confirmed: false, handedOff: true, url: "http://a.b/",
+      evidence: { bin: "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe", via: "browser", ownsWindow: false, exitCode: 1 },
+    });
+    expect(r.tier).toBe("handed-off");
+    expect(r.detail).toBe("msedge.exe | browser | 退出码不作证据 | exit 1");
   });
 });
 

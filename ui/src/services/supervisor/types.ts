@@ -592,8 +592,8 @@ export interface GenericOk { ok?: boolean; error?: string | null; [k: string]: u
 
 /** 外部打开（把 http(s) 地址交给系统默认浏览器）的结果契约，与内核 platform/os/browser.js 的
  *  outcome 同字段。三档语义不得在界面上合并：
- *    confirmed  —— 内核拿到了成功证据（承载进程 0 退出且该形态的退出可信）
- *    handedOff  —— 只是把地址交了出去，窗口是否出现无从证明（win32 的 explorer.exe 即此类）
+ *    confirmed  —— 内核拿到了成功证据（本次启动确定拥有自己的窗口，且它以 0 退出）
+ *    handedOff  —— 只是把地址交了出去，窗口是否出现无从证明（ownsWindow 为 false 的形态恒到此档）
  *    ok=false   —— 明确失败，error 为内核给出的一句话，url 仍必须呈现给用户
  *  url 恒在场：任何一档都要能让用户复制/手动打开，不得只报成败。 */
 export interface OpenExternalResult {
@@ -608,6 +608,8 @@ export interface OpenExternalResult {
     bin?: string | null;
     engine?: string | null;
     via?: string | null;
+    /** 本次启动是否确定拥有自己的窗口；false 时退出码在两个方向上都不是证据。 */
+    ownsWindow?: boolean;
     exitCode?: number | string | null;
     exitSignal?: string | null;
     error?: string | null;

@@ -7,9 +7,12 @@
 // 外部打开的唯一出口是 openBrowser（非隔离）与 launchIsolated（登录用的隔离窗口），两者共用同一结果词汇
 //   {ok, confirmed, handedOff, reason, error, message}：调用方与面板只需认一套字段，不必各自解释 argv 结局。
 // 三档语义不得混为一谈（这是本能力的标准，也是历史上「面板显示成功而屏幕什么都没有」的病根）：
-//   confirmed  —— 拿到了「浏览器/调度器确实接收了该 URL」的证据（子进程 0 退出且该形态的退出可信）
-//   handedOff  —— 只证明命令已交出且没报错，无法证明窗口出现（win32 的 explorer.exe 恒返 0，即此类）
-//   ok:false   —— 明确失败，必须带 reason 码与给用户的一句话，且绝不静默返回成功。
+//   confirmed  —— 拿到了「调度器确实接收了该 URL」的证据：仅限本次启动确定拥有自己窗口的形态 0 退出
+//   handedOff  —— 命令已交出且 spawn 没报错，但没有任何形态学证据说明窗口出现过
+//   ok:false   —— 明确失败（非 0 退出/信号/error 事件/预检不过），必须带 reason 码与给用户的一句话，且绝不静默返回成功。
+// 「退出码何时算证据」只由 ownsItsWindow 一处决定，并且**双向**生效：不可信形态既不能凭 0 冒领 confirmed，
+//   也不能凭非 0 判成失败 —— win32 真机就读错了一个方向：explorer.exe 的返回码不携带信息，却把它
+//   当成「窗口未出现」的证据报了出来。
 // 结果需要等子进程的 error/exit 才能定，而 ENOENT 只在异步 error 事件里出现（见 binAvailable 注释），
 //   故 openBrowser 是异步的：同步返回 true 的旧形态等于把「没报错」当「已打开」。
 
@@ -51,7 +54,8 @@ const SUPPORTED_OPEN_PLATFORMS = Object.keys(CAPABILITY_PROFILES).filter((k) => 
 
 /** 结果词汇的唯一构造点：三档语义在此定型，调用方与面板不再各自解释 argv/exit。
  *  @param {{ok:boolean, confirmed?:boolean, handedOff?:boolean, reason?:string|null,
- *           url?:string, evidence?:object}} p */
+ *           url?:string, evidence?:object}} p
+ *  evidence 原样交出（调用方与面板靠它说明「这一档凭的是什么」），本函数不解释也不改写 argv 结局。 */
 function outcome(p) {
   const ok = !!p.ok;
   const confirmed = ok && p.confirmed === true;
@@ -67,33 +71,48 @@ function outcome(p) {
 }
 
 const CONFIRMED_TEXT = '已在系统浏览器打开';
-const HANDEDOFF_TEXT = '已把地址交给系统，但无法确认浏览器窗口是否出现';
-/** reason 码 -> 给用户的一句话（码是契约、文案是呈现；面板按码挂文案时不得改写码）。 */
+const HANDEDOFF_TEXT = '已把地址交给系统，但这次启动拿不到窗口是否出现的证据';
+/** reason 码 -> 给用户的一句话（码是契约、文案是呈现；面板按码挂文案时不得改写码）。
+ *  只有 ownsItsWindow 为真的形态才会走到 exit-nonzero/killed-by-signal，故这里可以断言窗口没出现。 */
 const FAILURE_TEXT = {
   'unsafe-url': '地址不是 http(s) 绝对 URL，已拒绝交给浏览器',
   'no-launcher': '未找到可用的浏览器启动命令，请手动打开该地址',
   'spawn-failed': '浏览器启动失败（系统拒绝了该命令）',
-  'exit-nonzero': '浏览器启动命令以非 0 退出，窗口未出现',
-  'killed-by-signal': '浏览器启动命令被系统终止',
+  'exit-nonzero': '系统拒绝了这个地址（启动命令非 0 退出），窗口未出现',
+  'killed-by-signal': '浏览器启动命令被系统终止，窗口未出现',
   'no-desktop-session': '当前没有图形会话，无法调起浏览器',
   'unsupported-platform': '当前平台不在产品支持的桌面平台内，请手动打开该地址',
 };
 
+/** 退出码可信判据的唯一定义处：**本次启动是否确定拥有自己的窗口**。
+ *  只有确定是新实例时，它的退出码才同时具备两种证明力：0 说明命令被接收、非 0 说明没接收。
+ *  两种不可信形态各有一个平台事实作根据，且都是平台语义而不是产品缺陷：
+ *    win32 的 explorer.exe 走 ShellExecute，其返回码与地址是否打开无关（真机现场返回的是 1）；
+ *    裸 URL 直启 chromium/firefox 派生系时，浏览器已在运行则本次进程只把地址转交给既有实例，
+ *    退出码属于「转交动作」而不属于那个窗口。
+ *  故不可信形态两个方向都不许进判决，一律只到 handedOff：命令交出且 spawn 未报错即 ok，
+ *  窗口有无由用户按面板给出的地址判定。 */
+function ownsItsWindow(via, platform) {
+  if (via !== 'dispatcher') return false;
+  // darwin 的 open / linux 的 xdg-open：非 0 即调度器明确拒了这次请求，0 即它确认接收。
+  // win32 没有可信的调度器形态：explorer.exe 的退出码不携带信息（见上），只能老实落到 handedOff。
+  return platform !== 'win32';
+}
+
 /** 非隔离打开计划（纯函数，与 isolatedPlan 同族、同一解析输入）。
- *  解析到真实浏览器（chromium/firefox 派生系）就直启：调度器形态在非 win32 之外的取证能力更弱，
- *  且 win32 的 explorer.exe 连「失败」都不报（见 trustExit）。other 引擎（Safari、snap 包装器）
- *  的裸 URL 参数语义不确定，交回系统调度器 —— 不为此砍掉整条链路。 */
+ *  解析到真实浏览器（chromium/firefox 派生系）就直启：把「用哪个浏览器」留给用户在系统里设的默认值，
+ *  argv 仍由我们自己拼（不经 shell）。other 引擎（Safari、snap 包装器）的裸 URL 参数语义不确定，
+ *  交回系统调度器 —— 不为此砍掉整条链路。退出码可信度一律问 ownsItsWindow，此处不再按平台宣称取证能力。 */
 function openPlan(platform, url, opts) {
   const o = opts || {};
   const pl = platform || process.platform;
   const db = o.defaultBrowser;
   const engine = db && db.bin ? engineOf(db.bin) : 'other';
   if (engine === 'chromium' || engine === 'firefox') {
-    return { bin: db.bin, engine, via: 'browser', baseArgs: (db.baseArgs || []).concat([url]), trustExit: true };
+    return { bin: db.bin, engine, via: 'browser', baseArgs: (db.baseArgs || []).concat([url]), exitIsEvidence: ownsItsWindow('browser', pl) };
   }
   const c = openCommand(pl, url);
-  // win32 调度器 = explorer.exe 的 ShellExecute：立即返回 0，与浏览器是否真打开无关，故不可据其宣称成功。
-  return { bin: c.cmd, engine: 'other', via: 'dispatcher', baseArgs: c.args, trustExit: pl !== 'win32' };
+  return { bin: c.cmd, engine: 'other', via: 'dispatcher', baseArgs: c.args, exitIsEvidence: ownsItsWindow('dispatcher', pl) };
 }
 
 /** 观测一次 spawn 的真实结局（有界）：error/exit 先到者定局，窗口内两者都没到即「已移交、未证实」。
@@ -141,7 +160,7 @@ async function openBrowser(url, o) {
   else if (typeof opts.resolveDefault === 'function') db = opts.resolveDefault(pl, opts.resolveDeps || {});
   else db = resolveDefaultBrowser(pl, opts.resolveDeps || {});
   const plan = openPlan(pl, url, { defaultBrowser: db });
-  const evidence = { bin: plan.bin, engine: plan.engine, via: plan.via, exitCode: null, exitSignal: null, error: null };
+  const evidence = { bin: plan.bin, engine: plan.engine, via: plan.via, ownsWindow: plan.exitIsEvidence === true, exitCode: null, exitSignal: null, error: null };
   // linux 无图形会话时任何启动命令都必败：先给出准确原因，别让用户去读 xdg-open 的非 0 退出码。
   // darwin/win32 由图形会话内的 LaunchAgent / schtasks ONLOGON 载入，无会话即无本进程（判定同源 desktop.js）。
   const desktopAvailable = typeof opts.desktopAvailable === 'function' ? opts.desktopAvailable : desktop.sessionAvailable;
@@ -163,16 +182,19 @@ async function openBrowser(url, o) {
   evidence.exitCode = seen.code === undefined ? null : seen.code;
   evidence.exitSignal = seen.signal === undefined ? null : seen.signal;
   if (seen.stage === 'error') return outcome({ ok: false, reason: 'spawn-failed', url, evidence });
-  if (seen.stage === 'exit' && (seen.code !== 0 || seen.signal)) {
+  // 退出码进判决的唯一闸门，规则只在 openPlan/ownsItsWindow 一处写：不可信形态的退出码在两个方向上
+  //   都不是证据 —— 据它判红会把已打开的页面报成失败（win32 真机踩过这条），据它判绿会凭空宣称窗口出现过。
+  //   判红与判绿必须同一条 `&&`，分两处写就会重新分叉。
+  const exitDecides = seen.stage === 'exit' && plan.exitIsEvidence === true;
+  if (exitDecides && (seen.code !== 0 || seen.signal)) {
     return outcome({
       ok: false, reason: seen.signal ? 'killed-by-signal' : 'exit-nonzero', url, evidence,
       error: FAILURE_TEXT[seen.signal ? 'killed-by-signal' : 'exit-nonzero'] + '（' + (seen.signal || seen.code) + '）',
     });
   }
-  // 0 退出：只有「退出可信」的形态才算证据；win32 的 explorer.exe 恒 0，仍是一句「已移交」。
-  //   另一侧同理：观测窗口内仍存活时压根没有退出可言，trustExit 也无从为真 —— 没证据就不算证据。
-  const exitEvidence = seen.stage === 'exit' && plan.trustExit;
-  return outcome({ ok: true, confirmed: exitEvidence, handedOff: !exitEvidence, url, evidence });
+  // 剩下的都是 ok：可信形态 0 退出算 confirmed；不可信形态（或窗口内仍存活、压根没有退出可言）
+  //   只算 handedOff —— 命令确实交出去了，但窗口有无只有用户能判，故面板必须同时给出地址。
+  return outcome({ ok: true, confirmed: exitDecides, handedOff: !exitDecides, url, evidence });
 }
 
 /** detachedIgnored 的无 env 变体：外部打开不注入反取证环境，用宿主环境即可（隔离窗口才需要 antiEnv）。 */
@@ -406,7 +428,7 @@ function launchIsolated(url, o) {
 }
 
 module.exports = {
-  openBrowser, launchIsolated, openCommand, openPlan, isolatedPlan, observeSpawn, isSafeHttpUrl,
+  openBrowser, launchIsolated, openCommand, openPlan, ownsItsWindow, isolatedPlan, observeSpawn, isSafeHttpUrl,
   resolveDefaultBrowser, resolveDefaultWin, resolveDefaultMac, resolveDefaultLinux,
   engineOf, parseExecLine, tokenizeExec, regValueOf, exeFromCmdLine, binAvailable,
 };

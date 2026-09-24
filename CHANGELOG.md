@@ -6,6 +6,43 @@
 
 ## [未发布]
 
+### 外部打开的「退出码何时算证据」收口为一条双向规则（Windows 真机报「窗口未出现（1）」）
+
+真机现象：在 Windows 的面板点一条外部地址，弹出红色「浏览器启动命令以非 0 退出，窗口未出现（1）」。
+地址其实已经交给系统了，失败的是我们对退出码的解释。
+
+根因是同一件事写了两处、且只写了一个方向。`openBrowser` 先无条件把「子进程非 0 退出」判成
+`exit-nonzero` 失败，之后才轮到 `openPlan` 声明这种形态的退出码可不可信——于是那条声明只约束
+`confirmed`（不许凭 0 冒领成功），约束不了判红（可以凭非 0 凭空造失败）。而 win32 恰恰没有任何
+可信形态：`explorer.exe` 走 ShellExecute，其返回码与地址是否打开无关（本次真机现场返回 1）；注册表解析到
+默认浏览器时我们是裸 URL 直启，浏览器已在运行则本次进程只把地址转交给既有实例，其退出码属于
+转交动作、不属于那个窗口。两处都判不了成败，旧实现却都拿去判了红——这是跨平台差异被当成产品缺陷
+处理的典型：把平台语义读成结论，而不是读成「这一档没有证据」。
+
+- 新规则只写在一处：`platform/os/browser.js#ownsItsWindow(via, platform, engine)`——本次启动是否
+  **确定拥有自己的窗口**。只有为真时退出码才同时具备两种证明力（0 算接收、非 0 算拒绝）；为假时
+  两个方向都不许进判决，一律落 `handedOff`。`openPlan` 的 `trustExit` 因此改名 `exitIsEvidence`
+  （旧名只说 0 退出可信，正是这个单向读法放大了缺陷），判红与判绿共用同一条 `&&`，分两处写必再分叉。
+- 能力零损伤：`spawn` 的 `error` 事件、`binAvailable` 预检、`no-desktop-session`、
+  `unsupported-platform`、以及 linux/darwin 调度器的非 0 退出全部保留为**真**失败信号；被取消的只是
+  「拿不携带信息的退出码当证据」这一步。win32 的 `confirmed` 从此不可达，这是如实结果而非降级——
+  该档本来就不该由 explorer.exe 的返回码来宣称。
+- `evidence` 新增 `ownsWindow`，并第一次抵达用户眼前：`handedOff`/`ok:false` 两档在地址行下面摊出
+  `可执行文件 | 启动形态 | 退出码`（`ui/.../externalOpen.ts#evidenceDetail`）。此前证据只躺在响应体里，
+  真机报错只剩一句无法定位的文案——本条缺陷从上报到定性全靠读代码，就是因为少了这一行。
+- 门禁换锚（不新增链条目）：X-8 钉住 `ownsItsWindow` 的五种输入组合与「旧字段名 `trustExit` 已消失」；
+  X-10 补两组反向样本——win32 调度器 **非 0** 退出必须仍 `handedOff`（旧实现这里必红）、裸 URL 直启
+  chromium 的 0 退出不得再升 `confirmed`；同时保留「可信形态非 0 仍判 `exit-nonzero`」以证明没砍真失败信号。
+  P-5 取证档位断言、`api-contract` 的 OW 移交档夹具（改成真机形态：`ownsWindow:false` + `exit 1`）、
+  `ui` 的 `externalOpen.test.ts`（`evidenceDetail` 四例）同步跟上。
+- 文案纠正：`exit-nonzero` 的说法改为「系统拒绝了这个地址」，`handedOff` 改为「没拿到窗口出现的证据」——
+  两档都仍必须把地址交到用户眼前，这一条不变。
+
+### 文案与判据同步（`PLATFORM-CAPABILITY-MATRIX.md` C8/§九、`README.md` 外部打开行、`capability-profile.js` win32 档注释）
+
+三处都还写着「win32 的 `explorer.exe` 恒返 0」「只有解析到默认浏览器才可能 `confirmed`」——前者与真机
+观测相反，后者在新规则下不成立（裸 URL 直启同样不拥有窗口）。现统一改为引用 `ownsItsWindow` 一处定义。
+
 ## [0.1.6-BETA.11]（2026-09-25）
 
 ### 面板弹窗统一（第二批）：三处自拼的确认 Dialog 收编进 `useConfirm()`

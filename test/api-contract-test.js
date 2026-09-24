@@ -136,7 +136,7 @@ function req(method, p, body, hostHeader, extraHeaders, via) {
 
   // OW 组：open-web 把内核外部打开的三档结果**原样**交给面板（confirmed / handedOff / ok:false）。
   //   病根即此端点：旧实现只要 spawn 没抛错就 send 200 ok:true，屏幕上什么都没有却显示成功。
-  const CONFIRMED = (url) => ({ ok: true, confirmed: true, handedOff: false, reason: null, error: null, message: '已在系统浏览器打开', url, evidence: { bin: 'xdg-open', via: 'dispatcher', exitCode: 0, exitSignal: null, error: null } });
+  const CONFIRMED = (url) => ({ ok: true, confirmed: true, handedOff: false, reason: null, error: null, message: '已在系统浏览器打开', url, evidence: { bin: 'xdg-open', via: 'dispatcher', ownsWindow: true, exitCode: 0, exitSignal: null, error: null } });
   try {
     owCase = CONFIRMED;
     r = await req('POST', '/instances/open-web', JSON.stringify({ id: 'sb1' }));
@@ -150,11 +150,11 @@ function req(method, p, body, hostHeader, extraHeaders, via) {
     r = await req('POST', '/instances/open-web', JSON.stringify({ id: 'sb1' }));
     check('OW 每次调用重新签发一次性码（成功路径不烧码：码要留给浏览器回 /open 换 cookie）', argvUrls[1] !== firstCode && r.code === 200, argvUrls[1]);
 
-    owCase = (url) => ({ ok: true, confirmed: false, handedOff: true, reason: null, error: null, message: '已把地址交给系统，但无法确认窗口', url, evidence: { bin: 'explorer.exe', via: 'dispatcher', exitCode: 0, exitSignal: null, error: null } });
+    owCase = (url) => ({ ok: true, confirmed: false, handedOff: true, reason: null, error: null, message: '已把地址交给系统，但没拿到窗口出现的证据', url, evidence: { bin: 'explorer.exe', via: 'dispatcher', ownsWindow: false, exitCode: 1, exitSignal: null, error: null } });
     r = await req('POST', '/instances/open-web', JSON.stringify({ id: 'sb1' }));
-    check('OW 移交档（win32 explorer.exe 恒返 0）→ 200 但 confirmed:false，面板据此不说「已打开」',
+    check('OW 移交档（win32 的退出码不作证据，真机 explorer.exe 以 1 返回）→ 200 但 confirmed:false，面板据此不说「已打开」',
       r.code === 200 && r.body.ok === true && r.body.confirmed === false && r.body.handedOff === true
-      && r.body.evidence.bin === 'explorer.exe', JSON.stringify(r.body));
+      && r.body.evidence.bin === 'explorer.exe' && r.body.evidence.ownsWindow === false, JSON.stringify(r.body));
 
     owCase = (url) => ({ ok: false, confirmed: false, handedOff: false, reason: 'no-launcher', error: '未找到可用的浏览器启动命令，请手动打开该地址', message: null, url, evidence: { bin: 'xdg-open', via: 'dispatcher', exitCode: null, exitSignal: null, error: null } });
     r = await req('POST', '/instances/open-web', JSON.stringify({ id: 'sb1' }));
