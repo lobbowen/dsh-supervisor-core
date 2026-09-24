@@ -53,7 +53,7 @@ macOS 的**壳自启 / 壳自愈从项目奠基提交（`8867942`, 2026-09-01）
 | C5 | 端口 → PID 反查 | ✅ `/proc` + `ss` 兜底 | ✅ `lsof` | ✅ `netstat -ano` | `platform/os/pidlookup/index.js` | A2 |
 | C6 | 进程列表 / 命令行读取 | ✅ `pgrep -af` | ✅ `pgrep` + `ps` | ✅ CIM | `platform/os/pidlookup/index.js` | A2 |
 | C7 | 桌面通知 | ✅ `notify-send` | ✅ `osascript` | ✅ PowerShell 气泡 | `platform/os/notify.js` | A2 |
-| C8 | 打开浏览器（外部打开）：**唯一出口** `openBrowser`（非隔离）/ `launchIsolated`（登录隔离窗口，引擎 = **系统默认浏览器**，隔离参数按解析结果的引擎族展开），两者共用同一结果词汇 `{ok, confirmed, handedOff, reason, error, message, url, evidence}`。三档语义：`confirmed`=拿到「命令 0 退出且该形态退出可信」的证据；`handedOff`=只证明交出去了（win32 `explorer.exe` 恒返 0 即此类）；`ok:false`=显式失败并带 reason 码 | ✅ `xdg-settings`+`.desktop` Exec 解析 → `xdg-open` 兜底；无图形会话时 `capabilities()` 实测把 `openBrowser` 覆写为 false 并报 `no-desktop-session` | ✅ LaunchServices 解析直启 → `open` 兜底 | ✅ 注册表 `Clients\StartMenuInternet` 解析直启 → `explorer.exe` 兜底（**只有解析到浏览器才可能 confirmed**） | `platform/os/browser.js`（结果词汇唯一构造点 `outcome()`；argv 永不裹 shell，win32 用 `explorer.exe` 直启而非 `cmd /c start`，URL 不被二次解析） | A1·A2（能力位 + 实现产物）· A3（未知平台显式 `unsupported-platform`）· P-5（声明 + `trustExit` 取证档位）· X-8/X-10/X-11（计划、三档行为、唯一出口）· `api-contract` OW 组（HTTP 原样透传）· `ui` `externalOpen.test.ts`（面板分档判据） |
+| C8 | 打开浏览器（外部打开）：**唯一出口** `openBrowser`（非隔离）/ `launchIsolated`（登录隔离窗口，引擎 = **系统默认浏览器**，隔离参数按解析结果的引擎族展开），两者共用同一结果词汇 `{ok, confirmed, handedOff, reason, error, message, url, evidence}`。三档语义：`confirmed`=本次启动确定拥有自己的窗口且它以 0 退出（判据只写在 `ownsItsWindow` 一处，双向生效）；`handedOff`=只证明交出去了（win32 两种形态与被既有实例吸收的裸 URL 直启都属此类）；`ok:false`=显式失败并带 reason 码 | ✅ `xdg-settings`+`.desktop` Exec 解析 → `xdg-open` 兜底；无图形会话时 `capabilities()` 实测把 `openBrowser` 覆写为 false 并报 `no-desktop-session` | ✅ LaunchServices 解析直启 → `open` 兜底 | ✅ 注册表 `Clients\StartMenuInternet` 解析直启 → `explorer.exe` 兜底（**两形态的退出码都不作证据，故恒只到 `handedOff`**） | `platform/os/browser.js`（结果词汇唯一构造点 `outcome()`；argv 永不裹 shell，win32 用 `explorer.exe` 直启而非 `cmd /c start`，URL 不被二次解析） | A1·A2（能力位 + 实现产物）· A3（未知平台显式 `unsupported-platform`）· P-5（声明 + `exitIsEvidence` 取证档位）· X-8/X-10/X-11（计划、三档行为、唯一出口、证据细节下达屏幕）· `api-contract` OW 组（HTTP 原样透传）· `ui` `externalOpen.test.ts`（面板分档判据与 `evidenceDetail`） |
 | C9 | 宿主服务单元管理（systemd 单元语义：daemonReload / 持久单元 / failed 复位） | ✅ systemd | ❌ **显式**（launchd 无 provider；实例舱由 `portable` 档承担，见 C10，不冒充服务管理器） | ❌ **显式**（同左；Windows 服务无 provider，实例舱走 `portable` 档） | `platform/os/service.js` | A3 |
 | C10 | 沙箱实例舱（两维拆分声明：拉起 `sandboxLaunch` / 限额执行 `sandboxEnforcement`；provider 分档见 `service.current()`） | ✅ 拉起 + 限额 `cgroup`（`systemd-run` transient；运行期动态限额 `systemctl --user set-property --runtime`）；无 user-systemd 的容器/WSL1 自动落 `portable` 软档 | ✅ 拉起 + 限额 `supervise`（`portable` provider：端口反查 + cmdline 锚点认领，软档无内核强制） | ✅ 拉起 + 限额 `supervise`（同 macOS；未知平台仍**显式** launch=false、enforcement=none） | `platform/os/{service,portable}.js`（provider 分档与 dispatch） + `platform/os/capability-profile.js` + `domains/instance/{sandbox,governor}.js` + `platform/os/resstats.js`（W2 采样观测；governor 决策/准入三平台同跑；W3 落地运行期限额动态化：systemd `setLimits` 下发，portable `setLimits` 恒 false = 档位声明而非缺陷） | A1·A2·A3 · P-5 · X-3·X-3b·X-3c·X-3d |
 | C11 | **守卫**开机自启 | ✅ systemd + linger | ✅ LaunchAgent | ✅ schtasks | `platform/os/autostart/index.js` | A2 |
@@ -284,9 +284,17 @@ pidlookup 的认领/停止语义矩阵）· X-3c（真实宿主拉起→监听�
 
 | 档位 | 判据（不是文案） | 允许说 | 禁止说 |
 |---|---|---|---|
-| `confirmed` | 子进程 0 退出**且该形态的退出可信**（`openPlan().trustExit`） | 「已在系统浏览器打开」 | —— |
-| `handedOff` | 命令已交出、无报错，但结局不可取证（win32 `explorer.exe` 恒返 0；观测窗口内仍存活） | 「已把地址交给系统，无法确认窗口」 | 「已打开」 |
-| `ok:false` | 明确失败 | 一句给用户的说法 + `reason` 码 + **地址** | 静默 `ok:true` |
+| `confirmed` | 本次启动**确定拥有自己的窗口**（`ownsItsWindow`）且它以 0 退出 | 「已在系统浏览器打开」 | —— |
+| `handedOff` | 命令已交出、`spawn` 没报错，但退出码不属于「窗口是否出现」这个事实：win32 的任何形态、被既有实例吸收的裸 URL 直启、观测窗口内仍存活 | 「已把地址交给系统，无法确认窗口」 | 「已打开」 |
+| `ok:false` | 明确失败：`error` 事件、`binAvailable` 预检不过、**可信形态**非 0 退出或被信号终止 | 一句给用户的说法 + `reason` 码 + **地址** | 静默 `ok:true` |
+
+**退出码何时算证据，是一条双向规则，只写在 `platform/os/browser.js#ownsItsWindow` 一处**：只有本次启动
+确定拥有自己的窗口（即确定是新实例）时，它的退出码才同时具备「0 算接收、非 0 算拒绝」两种证明力。
+不可信形态的退出码两个方向都不许进判决——win32 正是这条被写反过：`explorer.exe` 的返回码与地址是否打开无关
+（与地址是否打开无关），旧实现「非 0 即失败」于是把已经打开的页面报成「窗口未出现」。同一处还解释了为什么
+裸 URL 直启 chromium/firefox 派生系也不算拥有窗口：浏览器已在运行时，本次进程只把地址转交给既有实例。
+`evidence.ownsWindow` 随结果一起交出，面板在 `handedOff`/`ok:false` 两档把启动形态（`bin | via | exit`）
+摊在地址行下面——没有这一行，真机报错就只剩一句无法定位的文案。
 
 `reason` 码是契约、文案是呈现：`unsafe-url` / `no-launcher` / `spawn-failed` / `exit-nonzero` /
 `killed-by-signal` / `no-desktop-session` / `unsupported-platform`。

@@ -31,10 +31,22 @@ function OpenUrlRow({ url }: { url: string }) {
   );
 }
 
+/** 结果正文：地址行恒在最前，其下是本次的启动形态（bin | via | 退出码）。
+ *  confirmed 档不摊细节（证据已经说完了），另两档必须说清「凭的是什么」，否则用户只能猜。 */
+function OpenResultBody({ url, detail }: { url: string | null; detail: string | null }) {
+  return (
+    <div className="flex min-w-0 flex-col gap-1">
+      {url ? <OpenUrlRow url={url} /> : null}
+      {detail ? <div className="break-all font-mono text-[10px] text-muted-foreground">{detail}</div> : null}
+    </div>
+  );
+}
+
 /** 一次外部打开结果的呈现（不抛错：这一步没有可失败的后端动作）。 */
 export function notifyOpen(r?: OpenExternalResult | null): void {
-  const { tier, url, title } = classifyOpenResult(r);
-  const opts = { description: url ? <OpenUrlRow url={url} /> : undefined, duration: tier === "confirmed" ? 3000 : 20000 };
+  const { tier, url, title, detail } = classifyOpenResult(r);
+  const shown = tier === "confirmed" ? null : detail;
+  const opts = { description: url || shown ? <OpenResultBody url={url} detail={shown} /> : undefined, duration: tier === "confirmed" ? 3000 : 20000 };
   if (tier === "confirmed") toast.success(title, opts);
   else if (tier === "handed-off") toast.warning(title, opts);
   else toast.error(title, opts);

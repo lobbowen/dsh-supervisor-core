@@ -54,8 +54,8 @@ const win32 = {
   desktopNotify: true,   // 期望 powershell（实测覆写）
   autostart: true,       // 期望 schtasks（实测覆写）
   frpExpose: true,
-  // 可打开，但只有注册表解析到默认浏览器时才有退出证据；退到 explorer.exe 调度器即恒返 0，
-  // 每次调用的证据档位由 openBrowser 的 confirmed/handedOff 如实回报，不在此处宣称。
+  // 可打开，但 win32 的两种启动形态（explorer.exe 调度器 / 裸 URL 直启解析到的浏览器）退出码都不携带
+  // 窗口是否出现的信息，故每次调用最多到 handedOff（见 browser.js#ownsItsWindow）。能力位只声明「能交出去」。
   openBrowser: true,
   hostService: 'windows-service',
   guardAutostart: true,  // schtasks DSH-Supervisor（ONLOGON，由壳建立）

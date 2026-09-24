@@ -133,20 +133,23 @@ function underFake(platform, arch, body) {
   check('P-5 未知平台全 false（显式 Unsupported，绝不静默成功）',
     Object.entries(U).every(([k, v]) => (k === 'platform' || k === 'arch' || k === 'hostService' || k === 'sandboxEnforcement') || v === false),
     JSON.stringify(U));
-  // 外部打开：三端声明可开，但**取证档位不同**（win32 的 explorer.exe 恒返 0）。差异必须落在
-  //  计划的 trustExit 这一个判据上，不得由调用方各自按平台猜成败 —— 那是「按钮无反应却报成功」的成因。
+  // 外部打开：三端声明可开，但**取证档位不同**（win32 无论走 explorer.exe 还是直启浏览器，退出码
+  //  都不携带窗口是否出现的信息）。差异必须落在计划的 exitIsEvidence 这一个判据上，且双向生效：
+  //  不可信形态既不能凭 0 冒领成功，也不能凭非 0 判失败 —— 后者正是 Windows 真机报错的成因。
   check('P-5 三平台 openBrowser=true 而未知平台 false（声明面，unknown 不静默尝试）',
     L.openBrowser === true && D.openBrowser === true && W.openBrowser === true && U.openBrowser === false,
     [L, D, W, U].map((x) => x.openBrowser).join(','));
   {
     const br = osLayer.browser;
     const u = 'http://127.0.0.1:28111/open?code=x';
-    check('P-5 外部打开计划取证档位：win32 调度器不可取证，linux/darwin 调度器与三端直启浏览器可取证',
-      br.openPlan('win32', u, {}).trustExit === false
-      && br.openPlan('linux', u, {}).trustExit === true
-      && br.openPlan('darwin', u, {}).trustExit === true
-      && br.openPlan('win32', u, { defaultBrowser: { bin: 'C:\\Program Files\\Microsoft\\Edge\\msedge.exe' } }).trustExit === true
-      && br.openPlan('win32', u, { defaultBrowser: { bin: 'C:\\Program Files\\Microsoft\\Edge\\msedge.exe' } }).via === 'browser',
+    const edge = { defaultBrowser: { bin: 'C:\\Program Files\\Microsoft\\Edge\\msedge.exe' } };
+    check('P-5 外部打开计划取证档位：仅 linux/darwin 调度器可取证，win32 两种形态与三端直启浏览器都不可',
+      br.openPlan('win32', u, {}).exitIsEvidence === false
+      && br.openPlan('linux', u, {}).exitIsEvidence === true
+      && br.openPlan('darwin', u, {}).exitIsEvidence === true
+      && br.openPlan('win32', u, edge).exitIsEvidence === false
+      && br.openPlan('linux', u, { defaultBrowser: { bin: 'google-chrome' } }).exitIsEvidence === false
+      && br.openPlan('win32', u, edge).via === 'browser',
       JSON.stringify([br.openPlan('win32', u, {}), br.openPlan('linux', u, {})]));
     check('P-5 反向：未知平台不得进入计划（openBrowser 位为 false 即被唯一出口拒绝）',
       Object.keys(require(path.join(ROOT, 'src', 'platform', 'os', 'capability-profile.js')))
