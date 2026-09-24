@@ -41,13 +41,14 @@ function beginTask(host, requestedVersion) {
   return task;
 }
 
+/** 目标版本与它的来源：查询成功时两者同源返回；钉死版本则没有来源（安装前另选一次）。 */
 async function resolveTarget(host, requestedVersion, task) {
-  if (requestedVersion) return requestedVersion;
+  if (requestedVersion) return { version: requestedVersion, origin: null };
   taskLog(host, task, '查询最新版本…');
   log(host, '查询最新版本…');
-  const target = await host._latestVersion();
-  if (!target) throw new Error('无法从任何 registry 获取最新版本');
-  return target;
+  const info = await host._latestVersion();
+  if (!info || !info.ok || !info.version) throw new Error((info && info.error) || '无法从任何 registry 获取最新版本');
+  return { version: info.version, origin: info.origin };
 }
 
 /** 先停 DSH（含接管实例），期间守卫暂停自动拉起。 */
@@ -64,10 +65,11 @@ async function stopForUpgrade(host, task) {
 }
 
 /** 安装 + 版本校验 + 写 manifest。安装后磁盘版本与目标不一致即视为失败（抛错走回滚）。 */
-async function installTarget(host, oldV, target, task) {
-  const registry = await host._selectRegistry();
+async function installTarget(host, oldV, target, origin, task) {
+  // 下载源 = 给出目标版本的那个源（同源时不再另选）；另选一次会让版本与字节来自两个镜像。
+  const registry = origin || await host._selectRegistry();
   markStep(host, task, '安装 ' + target);
-  const res = await host._runInstall(target, registry);
+  const res = await host._runNpm({ action: 'install', version: target, registry });
   if (!res.ok) throw new Error(res.error || 'install failed');
   const newV = host.installedVersion();
   if (newV !== target) throw new Error('安装后版本校验失败：期望 ' + target + '，实际 ' + newV);
@@ -154,7 +156,7 @@ async function rollbackNative(host, oldVersion, task) {
   if (!oldVersion) { tlog('无旧版本可回滚'); return { ok: false, error: 'no old version to rollback' }; }
   tlog('自动回滚到 ' + oldVersion + '…');
   const registry = await host._selectRegistry();
-  const res = await host._runInstall(oldVersion, registry);
+  const res = await host._runNpm({ action: 'install', version: oldVersion, registry });
   let okVer = false;
   try { okVer = host.installedVersion() === oldVersion; } catch {}
   if (!res.ok || !okVer) {
@@ -179,7 +181,7 @@ async function rollbackAfterFailure(host) {
   if (host.events) host.events.append('upgrade_rollback_started', { to: host.oldVersion });
   log(host, '回滚到 ' + host.oldVersion + '…');
   const registry = await host._selectRegistry();
-  const res = await host._runInstall(host.oldVersion, registry);
+  const res = await host._runNpm({ action: 'install', version: host.oldVersion, registry });
   let okVer = false;
   try { okVer = host.installedVersion() === host.oldVersion; } catch {}
   if (!res.ok || !okVer) {
@@ -238,7 +240,8 @@ async function upgrade(host, requestedVersion) {
   try {
     const oldV = host.installedVersion();
     host.oldVersion = oldV;
-    const target = await resolveTarget(host, requestedVersion, task);
+    const pick = await resolveTarget(host, requestedVersion, task);
+    const target = pick.version;
     host.targetVersion = target;
     taskLog(host, task, '目标版本 ' + target);
     if (!oldV) {
@@ -252,7 +255,7 @@ async function upgrade(host, requestedVersion) {
     log(host, '升级 ' + oldV + ' → ' + target);
     taskLog(host, task, '升级 ' + oldV + ' → ' + target);
     await stopForUpgrade(host, task);
-    await installTarget(host, oldV, target, task);
+    await installTarget(host, oldV, target, pick.origin, task);
     if (!(host.hooks.desiredRunning && host.hooks.desiredRunning())) return finishStopped(host, oldV, target, task);
     return await verifyAndFinalize(host, oldV, target, task);
   } catch (err) {

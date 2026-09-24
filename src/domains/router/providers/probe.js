@@ -16,6 +16,7 @@ const { quotaOverallStatus } = require('./policies/quota');
 const { cachedPkgBin, ensurePkgCached } = require('./pkg-cache');
 const stateRoot = require('../../../platform/service/state-root');
 const { Rotator } = require('../../../platform/service/log/log');
+const registryRef = require('../../../platform/distribution/registry-ref');
 const INSTANCE_LOG_MAX_BYTES = 2 * 1024 * 1024;
 
 async function spawnInstance(provider, inst) {
@@ -79,7 +80,10 @@ async function spawnInstance(provider, inst) {
       envVars[k] = String(v).replace('{{key}}', inst.key).replace('{{port}}', String(port));
     }
   }
-  if (launch.registry) { envVars.npm_config_registry = launch.registry; envVars.NPM_CONFIG_REGISTRY = launch.registry; }
+  // 契约 registry 走 registry-ref 单口注入：畸形基址写进 env 会让实例报出与真实原因无关的连接错误。
+  const rpReg = registryRef.registryEnvPair(launch.registry);
+  if (rpReg.ok) Object.assign(envVars, rpReg.env);
+  else if (launch.registry && provider.logger) provider.logger.warn('[proxy-instance] 契约 registry 非法（' + rpReg.violation + '），改用 npx 默认源');
   // 实例 stdout/stderr 全量落盘 + 关键词行落事件（stateDir 由 Provider 注入）。
   // 落盘必须走 Rotator：首建即 0600（实例日志含启动令牌 URL/环境变量派生行），且超阈值轮转防无界增长。
   const logFilter = /error|streaming|idle|timeout|ECONN|abort|socket|finish|truncat/i;

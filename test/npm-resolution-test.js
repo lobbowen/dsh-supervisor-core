@@ -34,6 +34,8 @@ const ROOT = path.join(__dirname, '..');
 
 const results = [];
 const check = (n, c, x) => { results.push(!!c); console.log((c ? 'PASS' : 'FAIL') + ' ' + n + (x !== undefined && x !== '' ? '  ← ' + x : '')); };
+/** 「单点/单源」类判据一律在剥注释后的源码上数：说明文里的键名不是注入点。 */
+const { stripComments } = require('./_strip');
 /** B11：需要 await 的行为断言登记处，文件尾统一结算后再统计。 */
 const _asyncGates = [];
 
@@ -123,17 +125,23 @@ check("C-e 非 Windows 返回 'npx'", npxBin({ platform: 'linux' }) === 'npx', n
 
 // -- C-d：模板路径也解析 --
 {
-  //  （域结构第三轮）：distribution 已拆分，按目录聚合读取（安装执行器落在 install.js）。
+  //  （安装执行口收口）：distribution 已拆分，按目录聚合读取；启动形态解析一次、
+  //   注入口接管**整对**（program+args），故判据问的是「解析口 + 整对接管」两件事。
   const distDir = path.join(ROOT, 'src', 'platform', 'distribution');
   const dist = fs.readdirSync(distDir).filter((f) => f.endsWith('.js')).sort().map((f) => fs.readFileSync(path.join(distDir, f), 'utf8')).join(String.fromCharCode(10));
   // 钉代码行（不钉注释）：模板首项为逻辑名 npm 时，程序与前缀参数一并取自解析口。
   check('C-d commandTemplate 首项为 npm 时经统一启动形态解析（npmLauncher 的 program+args）',
-    /const launcher = runtimeContract\.npmLauncher\(\);/.test(dist)
+    /const contractLauncher = runtimeContract\.npmLauncher\(\);/.test(dist)
+      && /: contractLauncher;/.test(dist)
       && /bin = fromTemplate \? argv\[0\] : launcher\.program;/.test(dist)
       && /launcher\.args/.test(dist),
     '已接入');
   check('C-d 反向：只取 program（丢 args）的旧形状会被同一把尺拒',
     !/bin = fromTemplate \? argv\[0\] : launcher\.program;/.test('bin = argv[0];'), '已拒');
+  // 注入即接管整对：只换程序会让假解释器去跑契约的 npm-cli.js（真实副作用）。
+  check('C-d 注入方（app 层 npmLaunch）接管 program+args 整对，不半接',
+    /const launcher = \(o\.launcher && o\.launcher\.program\)/.test(dist)
+      && /Array\.isArray\(o\.launcher\.args\)/.test(dist), '整对接管');
   // 模板自带解释器（首项非 'npm'）时不得把契约的 npm 前缀参数塞给它 —— 那是第二种拆半错误。
   check('C-d 契约前缀参数只在前置给契约程序（模板程序不继承）',
     /fromTemplate \? \[\] : launcher\.args/.test(dist), '有');
@@ -143,8 +151,10 @@ check("C-e 非 Windows 返回 'npx'", npxBin({ platform: 'linux' }) === 'npx', n
 {
   const distDir = path.join(ROOT, 'src', 'platform', 'distribution');
   const dist = fs.readdirSync(distDir).filter((f) => f.endsWith('.js')).sort().map((f) => fs.readFileSync(path.join(distDir, f), 'utf8')).join(String.fromCharCode(10));
-  check('C-f 默认 npm argv 带 --ignore-scripts（安装期不执行包内生命周期脚本）',
-    /'--no-fund'\];[\s\S]{0,400}?push\('--ignore-scripts'\)/.test(dist), '有');
+  const execSrc = fs.readFileSync(path.join(distDir, 'install.js'), 'utf8');
+  const vcSrc = fs.readFileSync(path.join(distDir, 'version-check.js'), 'utf8');
+  check('C-f 默认 npm argv 带 --ignore-scripts，且不分动作（装/卸都带）',
+    /if \(action === 'install'\) argv\.push\('--no-audit', '--no-fund'\);[\s\S]{0,400}?argv\.push\('--ignore-scripts'\)/.test(execSrc), '有');
   // 字符集白名单搬家到 platform/util/input 单源，本域只保留同名导出。
   //   旧判据钉「install.js 里有 `const PKG_NAME_RE = /…/` 字面量」——搬家后会静默 FAIL，
   //   而它真正要守的是「pkg 进 argv 前过白名单」。现判据 = 调用点问闸 + 尺子只有一把。
@@ -160,11 +170,22 @@ check("C-e 非 Windows 返回 'npx'", npxBin({ platform: 'linux' }) === 'npx', n
     /BAD_ARGV_CHAR_RE\.test\(String\(a\)\)/.test(dist), '有');
   // 「先过闸、再落敏感动作」这类时序判据必须在**同一份文件**内比序：聚合目录后跨文件顺序
   //   天然成立（拆分把 install.js/registry-ref.js 固定成字母序），删掉闸门也照样判绿。
-  const execSrc = fs.readFileSync(path.join(distDir, 'install.js'), 'utf8');
-  const vcSrc = fs.readFileSync(path.join(distDir, 'version-check.js'), 'utf8');
-  check('C-f registry 写入 npm_config_registry 前过基址闸（单源 registry-ref，同文件比序）',
-    /ref\.parseRegistryBase\(o\.registry\)/.test(execSrc)
-      && execSrc.indexOf('ref.parseRegistryBase(o.registry)') < execSrc.indexOf('envVars.npm_config_registry'), '有');
+  const gateAt2 = execSrc.indexOf('ref.registryEnvPair(o.registry)');
+  const assignAt2 = execSrc.indexOf('Object.assign(envVars, rp.env)');
+  check('C-f registry 写进子进程 env 前过基址闸（注入形态单源 registryEnvPair，同文件比序）',
+    gateAt2 >= 0 && assignAt2 > gateAt2 && /if \(!rp\.ok\) return fail\(/.test(execSrc),
+    'gate@' + gateAt2 + ' assign@' + assignAt2);
+  // 注入点收口为 1：npm 的两个 registry 环境变量字面量只许住在 registry-ref.js。
+  //   旧状是四处各写一遍（执行器/插件 CLI/npx 预取/实例契约），有的过闸有的不过闸，
+  //   于是「面板显示一个源、子进程用另一个源」。剥注释后按文件计数，判据才不会命中说明文。
+  {
+    const sites = [];
+    for (const f of files) {
+      if (/npm_config_registry/.test(stripComments(fs.readFileSync(f, 'utf8')))) sites.push(f.replace(ROOT + path.sep, ''));
+    }
+    check('C-f 反向：registry 注入形态全仓单点（只有 registry-ref 写键名）',
+      sites.length === 1 && /registry-ref\.js$/.test(sites[0]), sites.join(' | ') || '(无)');
+  }
   // 语义 = 包名进 URL 前必须过白名单。参照物不能取「registryPackagePath 在文件中的首次出现」：
   //   拼 URL 只发生在被闸保护的 versionFromOrigin 里，它在文件中天然靠前，整文件比序会必红。
   //   改在 fetchNpmLatest 函数体内比序：闸早于对取版本函数的调用，且拼 URL 不许搬进这个函数。
@@ -206,6 +227,42 @@ check("C-e 非 Windows 返回 'npx'", npxBin({ platform: 'linux' }) === 'npx', n
     check('C-f 行为：registry file:// → 拒（不写 npm_config_registry）', !rs[2].ok && /registry 基址/.test(rs[2].error), rs[2].error);
     check('C-f 行为：registry 凭证夹带 → 拒', !rs[3].ok && /registry 基址/.test(rs[3].error), rs[3].error);
     check('C-f 行为：{prefix} 注入空白/元字符 → 替换后仍被拒', !rs[4].ok && /禁用字符/.test(rs[4].error), rs[4].error);
+  });
+
+  // 行为面（默认 argv 构造 + 注入落地）：用 launcher 注入口把 npm 换成回显脚本，走**真实默认分支**
+  //   又不碰真实 npm。静态正则只证明字面量在文件里，证明不了装/卸两条分支各自构造出哪份 argv、
+  //   带 path 的镜像基址是否原样到达子进程。
+  _asyncGates.push(async () => {
+    const FAKE = path.join(ROOT, 'test', 'fake-npm.js');
+    const launcher = { program: process.execPath, args: [FAKE] };
+    process.env.FAKE_MODE = 'argv';
+    let rs;
+    try {
+      rs = await Promise.all([
+        inst.runNpmInstall({ action: 'install', pkg: '@a/b', version: '1.2.3', registry: 'https://repo.huaweicloud.com/repository/npm/', launcher }),
+        inst.runNpmInstall({ action: 'uninstall', pkg: '@a/b', registry: 'https://registry.npmjs.org', launcher }),
+      ]);
+    } finally { delete process.env.FAKE_MODE; }
+    // 回显行超 200 字符会被执行器截断（截断即解析失败，本块判红而不是静默放行）。
+    const echo = (r) => {
+      const l = (r.output || []).find((x) => String(x).indexOf('FAKE-ARGV ') === 0);
+      if (!l) return null;
+      try { return JSON.parse(String(l).slice(10)); } catch { return null; }
+    };
+    const a = echo(rs[0]);
+    const b = echo(rs[1]);
+    check('C-f 行为：安装 argv = install -g --no-audit --no-fund --ignore-scripts pkg@version',
+      !!a && JSON.stringify(a.argv) === JSON.stringify(['install', '-g', '--no-audit', '--no-fund', '--ignore-scripts', '@a/b@1.2.3']),
+      a ? JSON.stringify(a.argv) : '(无回显) ' + JSON.stringify(rs[0] && rs[0].output));
+    check('C-f 行为：带 path 的镜像基址原样进 npm_config_registry（不剥路径）',
+      !!a && a.registry === 'https://repo.huaweicloud.com/repository/npm', a ? String(a.registry) : '(无回显)');
+    check('C-f 行为：卸载 argv 只点名包且同样 --ignore-scripts（不执行待删包脚本）',
+      !!b && JSON.stringify(b.argv) === JSON.stringify(['uninstall', '-g', '--ignore-scripts', '@a/b']),
+      b ? JSON.stringify(b.argv) : '(无回显) ' + JSON.stringify(rs[1] && rs[1].output));
+    check('C-f 行为：卸载不注入 registry（不联网的动作不带镜像地址）', !!b && b.registry === null, b ? String(b.registry) : '(无回显)');
+    check('C-f 行为：两条动作都以 ok/exitCode=0 收口（结果形状统一）',
+      rs[0].ok === true && rs[0].exitCode === 0 && rs[1].ok === true && rs[1].exitCode === 0,
+      JSON.stringify(rs.map((r) => ({ ok: r.ok, exitCode: r.exitCode, timedOut: r.timedOut, aborted: r.aborted }))));
   });
 
   // 反向：旧判据/旧输入必须能被新闸识别

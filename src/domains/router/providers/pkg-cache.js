@@ -9,6 +9,7 @@ const fs = require('node:fs');
 // Windows 上 .cmd 垫片既弹控制台又触发无 shell spawn EINVAL）。
 const ex = require('../../../platform/util/exec');
 const { npxCacheDir, npxLauncher } = require('../../../platform/os/npx-forms');
+const registryRef = require('../../../platform/distribution/registry-ref');
 
 const HASH_DIR_RE = /^[0-9a-f]{8,}$/i;
 
@@ -68,7 +69,10 @@ async function ensurePkgCached(provider, app) {
   try {
     const regOrigin = provider.dist ? await provider.dist.registryOrigin(false).catch(() => null) : null;
     const env = Object.assign({}, process.env);
-    if (regOrigin) { env.npm_config_registry = regOrigin; env.NPM_CONFIG_REGISTRY = regOrigin; }
+    // 注入走 registry-ref 单口：非法基址一律不写键（npx 会用自身默认源），
+    // 成败以下方缓存复检为准，别让一个畸形地址伪装成「下载失败」。
+    const rp = registryRef.registryEnvPair(regOrigin);
+    if (rp.ok) Object.assign(env, rp.env);
     const launcher = npxLauncher();
     // 预下载成败以下方缓存复检为准，runOutAsync 自身绝不 reject。
     await ex.runOutAsync(launcher.program, [...launcher.args, '--yes', app.pkg, '--help'], { env, timeoutMs: 120000 });

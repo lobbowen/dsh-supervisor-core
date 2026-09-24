@@ -37,7 +37,13 @@ const check = (n, c, x) => { results.push(!!c); console.log((c ? 'PASS' : 'FAIL'
   fs.writeFileSync(path.join(pkgDir, 'lib', 'bin.js'), '#!/usr/bin/env node\n');
   fs.writeFileSync(path.join(pkgDir, 'package.json'), JSON.stringify({ name: '@deepseek-ai/dsh', version: '0.1.1-rc.2' }));
   fs.symlinkSync(path.join(pkgDir, 'lib', 'bin.js'), fakeBin);
-  const nm2 = new NativeManager({ config: { command: ['node', fakeBin, 'web'] }, stateDir: TMP, npmRoot, logger: { info(){}, warn(){}, error(){} }, events: null });
+  const nm2 = new NativeManager({
+    config: { command: ['node', fakeBin, 'web'] },
+    stateDir: TMP, npmRoot,
+    // 卸载动作走真实执行器（前缀已隔离到 TMP/npm-root），dist 不注入则连子进程都不会起。
+    dist: require(path.join(ROOT, 'src', 'platform', 'distribution', 'install.js')),
+    logger: { info(){}, warn(){}, error(){} }, events: null,
+  });
   const s2 = nm2.status();
   check('已安装状态识别', s2.installed === true && s2.version === '0.1.1-rc.2', JSON.stringify(s2));
 

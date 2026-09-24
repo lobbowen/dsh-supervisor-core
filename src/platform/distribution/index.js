@@ -53,8 +53,11 @@ class DistributionManager {
   _inCanaryList() { return policies.isInCanaryList(this); }
 
   // ---- 版本检查 / 安装 / 健康（version-check.js + install.js）----
-  // fetchNpmLatest 回结构化结果（含实际给出该版本的 origin 与逐源原因）；fetchLatestVersion 只回版本字符串。
+  // fetchNpmLatest 回 npm 通道的结构化结果（含给出该版本的 origin 与逐源原因）。
+  // fetchVersionInfo 是**跨通道**的结构化口（npm|github，github 的 origin 恒 null）；
+  // fetchLatestVersion 只回版本字符串，只要版本号的调用方走它。
   fetchNpmLatest(pkg, opts) { return versionCheck.fetchNpmLatest(this, pkg, opts); }
+  fetchVersionInfo(pkg, channel, opts) { return versionCheck.fetchVersionInfo(this, pkg, channel, opts); }
   fetchLatestVersion(pkg, channel, opts) { return versionCheck.fetchLatestVersion(this, pkg, channel, opts); }
   runNpmInstall(opts) { return install.runNpmInstall(opts); }
   waitPortHealthy(opts) { return install.waitPortHealthy(opts); }

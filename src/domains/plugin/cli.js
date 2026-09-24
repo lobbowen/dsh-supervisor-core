@@ -10,6 +10,8 @@ const spawn = require('../../platform/os/spawn');
 // 整树终止走平台层单源（platform/os/process.killTree）：Windows 无进程组语义，域内自写组信号只杀得到
 // .cmd 那层壳，pnpm 孙进程照旧成孤儿。
 const procOS = require('../../platform/os/process');
+// 镜像基址的形态与注入形态只有一个口（platform/distribution/registry-ref），域内不再各写一遍 env 键。
+const registryRef = require('../../platform/distribution/registry-ref');
 const { assertSafeCliArgs, cliArgv } = require('./policies');
 
 const CLI_TIMEOUT_MS = 180000;
@@ -32,12 +34,13 @@ function runCli({ target, args, opts, registryOrigin, logger }) {
     let timer = null; // 置于 executor 顶层：settle 闭包必须能访问（放 .then 内会引用越界、resolve 不执行）
     const settle = (v) => { if (!settled) { settled = true; if (timer) clearTimeout(timer); resolve(v); } };
     Promise.resolve().then(() => registryOrigin()).then((regRaw) => {
-      // registry 为 null 时不得写进 env：Node spawn 会把 env 值强转成字符串 'null'，pnpm 收到
-      // npm_config_registry='null' 会报与真实原因（全镜像不可达）无关的错。null/空则完全不注入该键。
-      const reg = regRaw || null;
+      // registry 注入只有 registry-ref 一个口：非法基址与 null/空一样「完全不注入该键」，
+      // 因为 Node spawn 会把值强转成字符串，pnpm 收到 npm_config_registry='null' 或畸形地址时
+      // 报的错与真实原因（全镜像不可达 / 基址非法）无关，诊断会被带偏。
+      const rp = registryRef.registryEnvPair(regRaw);
       const envBase = Object.assign({}, process.env, target.env);
-      if (reg) { envBase.npm_config_registry = reg; envBase.NPM_CONFIG_REGISTRY = reg; }
-      else if (logger && logger.warn) logger.warn('plugin CLI: 无可用的 registry 镜像，回退 pnpm 默认（npmjs.org）');
+      if (rp.ok) Object.assign(envBase, rp.env);
+      else if (logger && logger.warn) logger.warn('plugin CLI: 无可用的 registry 镜像（' + rp.violation + '），回退 pnpm 默认（npmjs.org）');
       const env = envBase;
       let child;
       try {

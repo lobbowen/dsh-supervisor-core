@@ -6,6 +6,11 @@
 // SSRF 主机分级与镜像基址形态都在 registry-ref 单一定义，本文件只做纯策略的组合与文案。
 const registryRef = require('./registry-ref');
 
+/** npm 子进程动作的时长预算（毫秒）。两处最坏情形不同，故分开定量、不再各写一个字面量：
+ *  安装受 registry 往返支配；卸载只删本地 node_modules，卡住的原因是网络盘/杀软扫描，
+ *  量级与 Rust 侧 npm 上限（15min）对齐。调用方可用 config 覆盖（测试与慢盘环境）。 */
+const NPM_TIMEOUT_MS = { install: 600000, uninstall: 900000 };
+
 /** 最小兜底镜像源——仅契约缺失/损坏时使用，不参与正常选择路径（不变量 C2 的兜底）。
  *  完整目录与探测规格归壳（经 registry.json 的 catalog 投放）。保留 2 条覆盖两种基本
  *  情形：能上公网（官方）/ 中国网络（npmmirror）。 */
@@ -72,6 +77,7 @@ function isInCanaryList(state) {
 
 module.exports = {
   FALLBACK_REGISTRIES,
+  NPM_TIMEOUT_MS,
   registryOriginViolation,
   effectiveOrigins,
   rebuildRegistryConfig,

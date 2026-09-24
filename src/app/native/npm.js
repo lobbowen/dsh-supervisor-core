@@ -42,12 +42,13 @@ async function checkEnvironment(host) {
   return { ok: errors.length === 0, errors, npmRoot };
 }
 
-/** 最新版本（统一分发通道）。第三方包语义：latest 通道优先，缺失/非法才回落 versions
- *  最高——由 dist.fetchLatestVersion 保证，调用侧勿自行取 versions 最高。 */
+/** 最新版本 + **给出该版本的那个镜像源**（统一分发通道，结构化）。第三方包语义：latest 通道优先，
+ *  缺失/非法才回落 versions 最高——由 dist.fetchVersionInfo 保证，调用侧勿自行取 versions 最高。
+ *  origin 必须一起返回：调用方另选一次源，就会「装的是 A 源查到的版本、字节从 B 源下」。 */
 async function latestVersion(host) {
   if (!host.dist || !host.config.packageName) throw new Error('分发服务未初始化，无法查询最新版本');
   const channel = host.config.releaseChannel || 'npm';
-  return host.dist.fetchLatestVersion(host.config.packageName, channel);
+  return host.dist.fetchVersionInfo(host.config.packageName, channel);
 }
 
 /** 选最快可达镜像（网络环境自适应）。只要本次用的那一个源；顺延序列在 dist 侧。 */
@@ -56,17 +57,25 @@ async function selectRegistry(host) {
   try { return await host.dist.registryOrigin(true); } catch { return null; }
 }
 
-/** 安装执行（唯一入口 = dist.runNpmInstall）；行日志回写升级日志 +（安装中）安装日志。 */
-function runInstall(host, version, registry) {
-  if (!host.dist) return Promise.resolve({ ok: false, error: 'dist 分发服务不可用，无法安装', output: [] });
-  const pkg = host.config.packageName || '@deepseek-ai/dsh';
-  const tpl = host.config.installCommandTemplate;
+/** npm 动作执行（唯一入口 = dist.runNpmInstall）：装/升/回滚/卸载共用同一个执行器。
+ *  本函数只把 host 状态翻译成执行器入参；超时、杀树、在途记账、镜像注入全在执行器那侧。
+ *  超时缺省值不写在这里（platform 的策略表是唯一定量），只传配置覆盖值。 */
+function runNpm(host, opts) {
+  const a = (opts && opts.action) || 'install';
+  const verb = a === 'uninstall' ? '卸载' : '安装';
+  if (!host.dist) return Promise.resolve({ ok: false, error: 'dist 分发服务不可用，无法' + verb, output: [] });
+  const tpl = a === 'install' ? host.config.installCommandTemplate : null;
   return host.dist.runNpmInstall({
-    pkg,
-    version,
-    registry,
+    action: a,
+    pkg: host.config.packageName || '@deepseek-ai/dsh',
+    version: opts && opts.version,
+    // 前缀单源：装与卸必须落在同一个全局前缀，否则「卸载成功」而包还在原地。
+    prefix: host.npmRoot || null,
+    registry: opts && opts.registry,
+    // 只在显式注入过 npm 形态时接管启动形态；生产留空，由执行器按运行期契约解析一次。
+    launcher: host._npmBin ? npmLaunch(host) : null,
     commandTemplate: Array.isArray(tpl) && tpl.length ? tpl : null,
-    timeoutMs: host.config.upgradeTimeoutMs || 600000,
+    timeoutMs: a === 'uninstall' ? host.config.uninstallTimeoutMs : host.config.upgradeTimeoutMs,
     onLine: (l) => {
       host._appendUpgradeLog(l);
       if (host.installing) host._appendInstallLog(l);
@@ -74,4 +83,4 @@ function runInstall(host, version, registry) {
   });
 }
 
-module.exports = { npmLaunch, resolveNpmRoot, checkEnvironment, latestVersion, selectRegistry, runInstall };
+module.exports = { npmLaunch, resolveNpmRoot, checkEnvironment, latestVersion, selectRegistry, runNpm };

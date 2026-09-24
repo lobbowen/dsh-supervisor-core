@@ -54,6 +54,11 @@ const check = (n, c, x) => { results.push(!!c); console.log((c ? 'PASS' : 'FAIL'
   //   于是这次「伪造的挂起」实际执行了**真实 npm uninstall -g**。
   //   那次恰好 no-op（目标 prefix 无此包），但这是侥幸：若真有包就会被删。
   //   现改为**构造期依赖注入**（opts.npmBin），测试在结构上不可能触碰真实 npm。
+  //
+  //  dist 注入的是**真实执行器**（platform/distribution/install.js）：卸载已收编进统一
+  //   npm 动作执行器，看门狗/杀树/超时事实都在那侧。这里若塞一个假 dist，本测试就只证明了
+  //   ops 的接线，证明不了「挂起的子进程真的被超时收尾」——那正是本文件存在的理由。
+  const installMod = require(path.join(ROOT, 'src', 'platform', 'distribution', 'install.js'));
   const mgr = new NativeManager({
     config: {
       packageName: '@deepseek-ai/dsh',
@@ -62,6 +67,7 @@ const check = (n, c, x) => { results.push(!!c); console.log((c ? 'PASS' : 'FAIL'
     },
     stateDir,
     npmBin: fakeNpm, // <- 依赖注入：绝不解析到真实 npm
+    dist: installMod,
     logger: { info() {}, warn() {}, error() {} },
   });
 
@@ -116,7 +122,6 @@ const check = (n, c, x) => { results.push(!!c); console.log((c ? 'PASS' : 'FAIL'
   //   新守卫 boot 时旧 npm 仍在写 node_modules 与全局前缀（无人等待、无人记账的并发写入者）。
   //   本块证明三件事：句柄被记账、abort 真的杀掉进程组、Promise 不悬挂（ok:false + aborted:true）。
   {
-    const installMod = require(path.join(ROOT, 'src', 'platform', 'distribution', 'install.js'));
     const distFacade = require(path.join(ROOT, 'src', 'platform', 'distribution'));
     check('D-10 接线：关停出口经门面 re-export（同一函数，不另造事实源）',
       distFacade.killInflightNpm === installMod.killInflightNpm
