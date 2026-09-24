@@ -33,6 +33,8 @@
   通道）并在失败时作废该一次性授权码（残留可用码等于给一次从未发生的浏览留门）；`proxyLoginStart` 交出
   `{ok, url=authUrl, reason, error, isolated}`，成功档的 `confirmed/handedOff` 直接取自平台层结果对象而不是
   在消费方重写死值；`router/ops/browser.js` 返回 `{profile, result}`——只回 profile 就是只回 `ok:true` 的同一失效形态。
+  两个 HTTP 消费方**取出口的方式**也收口：网关 `createServer(sup, deps)` 缺省装平台层唯一出口、随 `ctx` 交出，
+  契约测试经 `deps.browser` 在构造期注入假出口（旧写法 patch 模块导出，正是 `test-safety-gate` A 条所禁的值绑定形态）。
 - **S-4 面板**：`ui/src/services/supervisor/externalOpen.ts`（选路 + 分档判据，只看字段不看文案）+
   `ui/src/features/supervisor/openExternal.tsx`（唯一呈现口 `runOpenExternal`）。**三档每一档都渲染可点、可复制的地址行**，
   失败响应体里的地址也照样呈现（catch 里优先取 `err.body`）；DSH Web / 概览 / 反代登录 / 远程访问地址四处入口全部改经该入口。
@@ -45,7 +47,8 @@
 
 门禁与标准（新增判据全部并入既有条链目，未新增链条目）：X-8（计划与取证档位）· X-10（三档行为 + `observeSpawn` 本体，
 假 spawn/假时钟，CI 不真起浏览器）· X-11（唯一出口的源码级不变量，含面板最后一环：`window.open` 只允许出现在
-`externalOpen.ts` 的回环分支、`target=_blank` 与 `dsh:open-url` 全仓零出现、`/env/open-url` 处理体整段切片判定）；
+`externalOpen.ts` 的回环分支、`target=_blank` 与 `dsh:open-url` 全仓零出现、`/env/open-url` 处理体整段切片判定、
+出口装配只允许「缺省即平台层」这一种形态）；
 `four-platform-behavior-matrix` P-5 补 `openBrowser` 声明位与 `trustExit` 档位；
 `platform-capability-audit` A1·A2·A3 补能力位、实现产物与未知平台显式失败；`api-contract` 新增 OW/OU 两组
 （真 HTTP 三档透传、500、地址在场、一次性码作废、跨站 403、已认证 LAN 访客的代开请求 403）；

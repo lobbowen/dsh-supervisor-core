@@ -294,6 +294,10 @@ pidlookup 的认领/停止语义矩阵）· X-3c（真实宿主拉起→监听�
 结果必须等子进程的 `error`/`exit` 才能定，而 Node 的 ENOENT **只在异步 `error` 事件里出现**——
 所以 `openBrowser` 是异步的：同步返回布尔的实现形态本身就不诚实。
 
+出口交到调用方手里的方式也只有一种：HTTP 网关 `createServer(sup, deps)` **缺省**装本出口并随请求上下文
+`ctx.browser` 交出，`deps.browser` 仅供契约测试在构造期注入假件。调用方不得自己 patch 模块导出——
+patch 是否生效取决于消费方是解构还是按属性取用，静默失效的那一次就会真去 spawn 浏览器。
+
 ### S-2 能力位与降级
 
 `capabilityProfile().openBrowser` 是唯一的声明面：三平台 `true`（Linux 由 `capabilities()` 用

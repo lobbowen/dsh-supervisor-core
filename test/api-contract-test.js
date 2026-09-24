@@ -7,7 +7,9 @@
 
 // API 契约断言测试：对 createServer 的响应对未来回归设防。
 // 覆盖审计修复的关键契约：202 异步受理带 ok、key/use 路由 await（Promise 序列化回归）、
-// 实例/插件写操作状态码与 ok 字段、open-web 与面板代开端点的外部打开三档结果原样透传（OW/OU 组）。全部用最小 stub Supervisor（Proxy 兜底方法）。
+// 实例/插件写操作状态码与 ok 字段、open-web 与面板代开端点的外部打开三档结果原样透传（OW/OU 组）。
+// 全部用最小 stub Supervisor（Proxy 兜底方法）。外部打开出口经 createServer 第二参在构造期注入假件，
+// 因此本文件从不真起浏览器，也不 patch 任何模块导出。
 
 const path = require('node:path');
 const http = require('node:http');
@@ -64,7 +66,19 @@ const sup = new Proxy({}, {
 });
 
 const { createServer } = require(path.join(ROOT, 'src', 'api', 'index'));
-const server = createServer(sup);
+// 外部打开的出口在测试里由网关**构造期注入**（createServer 第二参）：真出口会 spawn 浏览器，
+//   而三档结果必须由用例指定才谈得上「端点是否原样透传」。不去 patch 模块导出——那是
+//   test-safety-gate A 条记的形态（值绑定是否生效取决于消费方写法，patch 静默失效就跑真实副作用）。
+const argvUrls = [];
+let owCase = null; // (url) => 三档结果，或 'throw' 模拟出口抛错
+const fakeBrowser = {
+  openBrowser: async (url) => {
+    argvUrls.push(url);
+    if (owCase === 'throw') throw new Error('spawn blew up');
+    return owCase(url);
+  },
+};
+const server = createServer(sup, { browser: fakeBrowser });
 
 // 本机非回环 IPv4（P0-1 结构修复后的真实 LAN 身份来源：socket 层，不再伪造 Host 头）
 const os = require('node:os');
@@ -118,16 +132,6 @@ function req(method, p, body, hostHeader, extraHeaders, via) {
 
   // OW 组：open-web 把内核外部打开的三档结果**原样**交给面板（confirmed / handedOff / ok:false）。
   //   病根即此端点：旧实现只要 spawn 没抛错就 send 200 ok:true，屏幕上什么都没有却显示成功。
-  //   打桩点在 platform/os/browser 的导出对象上（instances.js 按属性动态取用），故不真起浏览器。
-  const brMod = require(path.join(ROOT, 'src', 'platform', 'os', 'browser.js'));
-  const realOpenBrowser = brMod.openBrowser;
-  const argvUrls = [];
-  let owCase = null; // (url) => 三档结果，或 'throw' 模拟出口抛错
-  brMod.openBrowser = async (url) => {
-    argvUrls.push(url);
-    if (owCase === 'throw') throw new Error('spawn blew up');
-    return owCase(url);
-  };
   const CONFIRMED = (url) => ({ ok: true, confirmed: true, handedOff: false, reason: null, error: null, message: '已在系统浏览器打开', url, evidence: { bin: 'xdg-open', via: 'dispatcher', exitCode: 0, exitSignal: null, error: null } });
   try {
     owCase = CONFIRMED;
@@ -189,7 +193,8 @@ function req(method, p, body, hostHeader, extraHeaders, via) {
     check('OU 出口抛错 → 结构化 500 且地址仍在场',
       r.code === 500 && r.body.reason === 'spawn-failed' && r.body.url === 'http://a.b/', r.code + ' ' + JSON.stringify(r.body));
   } finally {
-    brMod.openBrowser = realOpenBrowser;
+    // 反空转：注入的出口若一次都没被叫到，整组三档断言都只是对着空气判绿。
+    check('OW/OU 两组真的驱动了注入出口（出口未被调用即整组空转）', argvUrls.length >= 7, 'calls=' + argvUrls.length);
   }
 
   // 跨站 Origin 仍拒绝（安全契约不回归）

@@ -1,6 +1,5 @@
 'use strict';
 
-const platform = require('../../platform/os/index');
 // 执行边界的单一事实源：形态/路径类判定与启动期复校共用 exec-path 的同一纯函数。
 const execPath = require('../../platform/os/exec-path');
 
@@ -130,8 +129,8 @@ function commandShapeError(command, dshBin) {
 }
 
 function handle(ctx) {
-  const { sup, req, res, pathname, identity, send, collectBody, originAllowed, tokOf } = ctx;
-  function openInSystemBrowser(url) { return platform.browser.openBrowser(url); }
+  const { sup, req, res, pathname, identity, send, collectBody, originAllowed, tokOf, browser } = ctx;
+  function openInSystemBrowser(url) { return browser.openBrowser(url); }
 
     // /open 落地页不属 /instances 前缀，但消费本域签发的一次性码、与 tokOf 同源，故不再建第二份实现。
     if (req.method === 'GET' && pathname === '/open') return handleOpen(ctx);

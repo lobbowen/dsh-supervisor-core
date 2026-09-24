@@ -866,13 +866,24 @@ async function x10() {
   const ob = om ? om[1] : '';
   check('X-11 代开端点存在且整段处理体被切片判定（切片为空即判据失去对象）', ob.length > 200, 'len=' + ob.length);
   check('X-11 代开端点走唯一出口、失败映射非 2xx、抛错路径仍带地址',
-    /platform\.browser\.openBrowser\(url\)/.test(ob) && /send\(r\.ok \? 200 : 500, r\)/.test(ob) && /, url \}\)/.test(ob), 'ok');
+    /browser\.openBrowser\(url\)/.test(ob) && /send\(r\.ok \? 200 : 500, r\)/.test(ob) && /, url \}\)/.test(ob), 'ok');
   check('X-11 代开端点只受理回环来源（跨站与远程访客各有一闸，缺一即白送动作面）',
     /identity\.loopback/.test(ob) && /originAllowed\(req, sup\.config\.apiPort\)/.test(ob), 'ok');
   const badOpenUrl = "\n  const u = JSON.parse(body).url; require('node:child_process').exec(u);\n  return send(200, { ok: true });\n    }";
   check('X-11 反向：判据能识别旁路 spawn、恒 200 与无来源闸（否则上面两条恒绿）',
     !/platform\.browser\.openBrowser\(url\)/.test(badOpenUrl) && !/send\(r\.ok \? 200 : 500, r\)/.test(badOpenUrl)
       && !/identity\.loopback/.test(badOpenUrl), 'hit');
+  // 出口如何交到域手里也要有闸：网关只允许「缺省即平台层唯一出口、注入只服务于测试」这一种装配。
+  //   否则调用方传个 deps.browser 就把外部打开换了实现，S-1 的唯一出口判据形同虚设。
+  const gwSrc = fs.readFileSync(path.join(ROOT, 'src', 'api', 'transport', 'server.js'), 'utf8');
+  check('X-11 出口由网关缺省装配并随 ctx 交出（无缺省即留第二出口位）',
+    /const browser = \(deps && deps\.browser\) \|\| browserExit;/.test(gwSrc)
+      && /require\('\.\.\/\.\.\/platform\/os\/browser'\)/.test(gwSrc)
+      && /const ctx = \{[^}]*\bbrowser\b/.test(gwSrc), 'ok');
+  const gwNoDefault = "  const browser = deps.browser;\n    const ctx = { sup, req };";
+  check('X-11 反向：判据能识别「deps 不给缺省」与「ctx 不带出口」的装配形态',
+    !/const browser = \(deps && deps\.browser\) \|\| browserExit;/.test(gwNoDefault)
+      && !/const ctx = \{[^}]*\bbrowser\b/.test(gwNoDefault), 'hit');
 
   // 最后一环在面板：外部打开地址的窗口创建必须只有一个出口，且各页面必须经统一入口消费结果。
   //   为什么平台门禁要读到 ui/：这条能力的判据如果只覆盖内核，面板照样能把 handedOff 显示成成功；
