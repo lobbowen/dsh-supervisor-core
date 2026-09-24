@@ -2,7 +2,7 @@
 
 // 插件域更新检测与执行（网络 + CLI 编排）。
 // 查 registry 最高版 vs 已装版；npm 型走 update，失败退 add；git/local 型拒绝。
-// 检测缓存（_updCache/_updTTL）挂在装配根，经 ctx 显式访问。
+// 检测状态（逐插件缓存 _updCache/_updTTL + 快照 _updSnapshot/_updInFlight）挂在装配根，经 ctx 显式访问。
 
 const { specType, isUpdateAvailable } = require('./policies');
 
@@ -26,23 +26,62 @@ async function latestCached(ctx, name, force) {
   return { latest, error };
 }
 
-/** 检测：聚合各目标已装插件，标出可更新项（npm 型查 registry 最高版）。 */
-async function checkUpdates(ctx, force) {
+/** 检测快照：立即返回已知结论，registry 往返一律在后台跑（与 /plugins/market 同一口径）。
+ *  挂在 HTTP 请求上等 N 个插件的往返，等于让面板 15s 计时先放弃而服务端继续跑 —— 用户见失败、结论却是好的。
+ *  失败不做静默重试：快照里的 error 逐插件带上原因，面板据此区分「取不到」与「已是最新」。 */
+function checkUpdates(ctx, force) {
+  if (!ctx._updSnapshot || force) _requestCheck(ctx, force);
+  const s = ctx._updSnapshot;
+  return Promise.resolve({
+    ok: true,
+    checkedAt: s ? s.checkedAt : 0,
+    plugins: s ? s.plugins : [],
+    refreshing: !!ctx._updInFlight,
+    error: s ? s.error : null,
+  });
+}
+
+/** 触发一次后台检测；已有在飞即复用（force 连点不叠加）。 */
+function _requestCheck(ctx, force) {
+  if (ctx._updInFlight) return ctx._updInFlight;
+  const raw = refreshUpdates(ctx, force);
+  raw.catch(() => {}); // 无消费者 await：不标记则一次意外就是进程级 unhandledRejection
+  ctx._updInFlight = raw;
+  raw.catch((e) => {
+    const msg = (e && e.message) || String(e);
+    if (ctx.logger && ctx.logger.warn) ctx.logger.warn('plugin check-updates 失败: ' + msg);
+    if (!ctx._updSnapshot) ctx._updSnapshot = { checkedAt: 0, plugins: [], error: msg };
+  }).then(() => { if (ctx._updInFlight === raw) ctx._updInFlight = null; });
+  return raw;
+}
+
+/** 一次完整检测：逐插件查 registry 最高版（有界并发）并聚合逐目标行。 */
+async function refreshUpdates(ctx, force) {
   const targets = [ctx._nativeTarget(), ...ctx._allSandboxTargets()];
   const meta = new Map();
   for (const t of targets) {
     for (const p of ctx.installedOn(t)) {
       if (meta.has(p.name)) continue;
-      const st = specType(p.source);
-      let latest = null;
-      if (st === 'npm' && ctx.dist) latest = (await latestCached(ctx, p.name, force)).latest;
-      meta.set(p.name, { specType: st, latest });
+      meta.set(p.name, { specType: specType(p.source), latest: null, error: null });
     }
+  }
+  // 串行会把每个插件的往返时间相加（registry 慢时各吃满传输超时），故 6 并发分批。
+  const npmNames = [...meta.entries()].filter(([, m]) => m.specType === 'npm' && ctx.dist).map(([name]) => name);
+  const errors = [];
+  for (let i = 0; i < npmNames.length; i += 6) {
+    const slice = npmNames.slice(i, i + 6);
+    await Promise.all(slice.map(async (name) => {
+      const r = await latestCached(ctx, name, force);
+      const m = meta.get(name);
+      m.latest = r.latest;
+      m.error = r.error;
+      if (r.error) errors.push(name + ': ' + r.error);
+    }));
   }
   const rows = [];
   for (const t of targets) {
     for (const p of ctx.installedOn(t)) {
-      const m = meta.get(p.name) || { specType: 'npm', latest: null };
+      const m = meta.get(p.name) || { specType: 'npm', latest: null, error: null };
       const updateAvailable = m.specType === 'npm' && isUpdateAvailable(m.latest, p.version);
       rows.push({ name: p.name, target: t.id, targetName: t.name, installed: p.version || null, latest: m.latest || null, updateAvailable, specType: m.specType, bundle: p.bundle });
     }
@@ -50,11 +89,15 @@ async function checkUpdates(ctx, force) {
   const byName = new Map();
   for (const row of rows) {
     let rec = byName.get(row.name);
-    if (!rec) { byName.set(row.name, { name: row.name, specType: row.specType, targets: [] }); rec = byName.get(row.name); }
+    if (!rec) { byName.set(row.name, { name: row.name, specType: row.specType, error: meta.get(row.name) ? meta.get(row.name).error : null, targets: [] }); rec = byName.get(row.name); }
     rec.targets.push({ id: row.target, name: row.targetName, installed: row.installed, latest: row.latest, updateAvailable: row.updateAvailable });
   }
-  const plugins = [...byName.values()].map((x) => ({ name: x.name, specType: x.specType, updateAvailable: x.targets.some((t) => t.updateAvailable), targets: x.targets })).sort((a, b) => a.name.localeCompare(b.name));
-  return { ok: true, checkedAt: Date.now(), plugins };
+  const plugins = [...byName.values()]
+    .map((x) => ({ name: x.name, specType: x.specType, error: x.error, updateAvailable: x.targets.some((t) => t.updateAvailable), targets: x.targets }))
+    .sort((a, b) => a.name.localeCompare(b.name));
+  const snap = { checkedAt: Date.now(), plugins, error: errors.length ? errors.join('; ') : null };
+  ctx._updSnapshot = snap;
+  return snap;
 }
 
 /** 执行更新：逐目标串行（npm update，失败退 add）；成功后重启生效。 */

@@ -6,20 +6,22 @@
 //
 // ## 缺陷
 //
-// 社区源候选约 **2468** 个，按 8 并发分批、每批各带超时 —— 最坏情况可达数十分钟；
-// 而 `GET /plugins/market` 会**阻塞到构建完成**：
-//   - 前端 15s 就放弃了（AbortSignal），**服务端却还在跑**；
-//   - 反复点「刷新」会叠加多轮构建。
+// 社区源候选约 **2468** 个，按 8 并发分批、每批各带超时 —— 最坏情况可达数十分钟。
+// 真机取证（用户面板实报）：点「刷新」得到 `请求超时（15s）：/plugins/market?refresh=1`，
+// 而**服务端还在继续构建**并把结果写进缓存 —— 用户见失败、结论却是好的，再点一次常秒回。
 //
-// ## 修法
+// ## 修法（两层，缺一不可）
 //
-// 给整次构建一个上限（默认 4 分钟，可经 `buildBudgetMs` 注入）：
+// 1) 预算（M-a..M-h）：给整次构建一个上限（默认 4 分钟，可经 `buildBudgetMs` 注入）：
 //   - `buildIndex()` 造**本次构建私有**的预算 ctx（deadline + truncated 集合），`finally` 只清自己的（B2-6c）；
 //   - 各源的批次循环在发起**新批次前**检查 `_budgetExhausted(bctx)`，到点即 break；
 //   - 用已采集的部分构建索引 —— 与既有的「坏构建保护」天然配合
 //     （部分结果 < 旧缓存 50% 时会按 source 维度沿用旧缓存，不会冲掉）。
 //   旧实现把 deadline 挂在实例上：叠建（直接 buildIndex，绕过 getIndex 的 _inFlight 去重）时
 //   先结束者 finally 清零，后启动者预算上限整体失效 —— M-h 即钉此点。
+//
+// 2) 请求不得等构建（M-i/M-j）：`getIndex` 只回快照（`building` 表在飞、`error` 表上次失败原因），构建在后台跑，
+//   面板轮询到 `building=false` 才宣布成败。预算再小也还是 4 分钟，压进 15s 的客户端窗口本来就是错的口径。
 //
 // ## 锁定不变量
 //   M-a  `buildBudgetMs` 可注入（默认 4 分钟）
@@ -28,7 +30,8 @@
 //   M-d  两个批次循环都检查预算（源码级：loop guard 在 `slice` 之前）
 //   M-e  超预算时**返回部分结果**（不抛、不清缓存）
 //   M-h  叠建预算互不干扰：A 结束只清 A 的 ctx，B 构建中 deadline 恒有效
-//   M-i  `getIndex(force=true)` 复用 `_inFlight`：force 不得叠加并发构建（复用事实钉内部登记，async 外层 promise 恒不等）
+//   M-i  `getIndex` 立即回快照、绝不等构建；force 复用 `_inFlight` 不叠加并发构建
+//   M-j  冷启动/构建失败如实上报（`building` + `error`），失败后进退避；反向：force 必须绕开退避
 // ---------------------------------------------------------------------------
 
 const path = require('node:path');
@@ -38,6 +41,10 @@ const ROOT = path.join(__dirname, '..');
 
 const results = [];
 const check = (n, c, x) => { results.push(!!c); console.log((c ? 'PASS' : 'FAIL') + ' ' + n + (x !== undefined && x !== '' ? '  ← ' + x : '')); };
+
+// 等在飞构建真正收尾：摘除 `_inFlight` 登记挂在 raw 收尾链的**下一条微任务**上，
+// 只 `await m._inFlight` 会读到尚未摘除的登记（M-i/Q3 因此在四平台同时判红）。
+const settleBuild = async (m) => { if (!m._inFlight) return; await m._inFlight.catch(() => {}); await new Promise((r) => setImmediate(r)); };
 
 // 步骤8a（DIRECTORY-STRUCTURE-DESIGN）：pluginmarket.js 改名归位为 market.js
 const SRC = path.join(ROOT, 'src', 'domains', 'plugin', 'market.js');
@@ -197,22 +204,49 @@ const { PluginMarket } = require(SRC);
     fs.rmSync(dir, { recursive: true, force: true });
   }
 
-  // -- M-i（审计#25 申报侧）：getIndex(force=true) 复用 _inFlight，不叠加并发构建 --
+  // -- M-i：getIndex(force=true) 复用 _inFlight 不叠建；且**快照立即返回、绝不等构建** --
   {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mkt-'));
     const m = new PluginMarket({ cacheDir: dir, stateFile: path.join(dir, 's.json'), logger: { info() {}, warn() {}, error() {} } });
     let builds = 0;
-    m.indexNpm = async () => { builds += 1; await new Promise((r) => setTimeout(r, 20)); return []; };
+    m.indexNpm = async () => { builds += 1; await new Promise((r) => setTimeout(r, 200)); return []; };
     m.indexGithub = async () => [];
     m.indexCommunity = async () => [];
-    const p1 = m.getIndex(true);
-    const p2 = m.getIndex(true);
-    // async 函数会把 `return this._inFlight` 再包一层新 promise——外层恒不等。
-    // 复用事实钉内部登记：force 拍 _inFlight 指向当前 raw，两次 getIndex 各自 await 同一次构建。
+    const t0 = Date.now();
+    const s1 = await m.getIndex(true);
+    const s2 = await m.getIndex(true);
+    const dt = Date.now() - t0;
+    check('M-i 快照不被构建阻塞（200ms 构建仍在飞时已返回）', dt < 50 && builds >= 1, dt + 'ms builds=' + builds);
+    check('M-i 在飞期间快照 building=true（面板据此轮询）', s1.building === true && s2.building === true, s1.building + '/' + s2.building);
     check('M-i force 请求复用同一在途构建（_inFlight 登记态）', m._inFlight !== null, String(m._inFlight));
-    await p1; await p2;
+    await settleBuild(m);
     check('M-i 连续 force 只发起一次构建', builds === 1, String(builds));
     check('M-i 结算后 _inFlight 归零（不误挂消化后的 promise）', m._inFlight === null, String(m._inFlight));
+    check('M-i 结算后快照 building=false', (await m.getIndex()).building === false, '');
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+
+  // -- M-j：冷启动（磁盘无缓存）与构建失败必须如实上报，且失败不得点燃「每次读都重建」的风暴 --
+  {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mkt-'));
+    const m = new PluginMarket({ cacheDir: dir, stateFile: path.join(dir, 's.json'), retryBackoffMs: 60000, logger: { info() {}, warn() {}, error() {} } });
+    let builds = 0;
+    m.indexNpm = async () => { builds += 1; throw new Error('镜像源不可达（桩）'); };
+    m.indexGithub = async () => [];
+    m.indexCommunity = async () => [];
+    const cold = await m.getIndex();
+    check('M-j 冷启动回合法空快照 + building=true（已后台点火）',
+      cold.ok === true && cold.plugins.length === 0 && cold.indexedAt === 0 && cold.building === true,
+      JSON.stringify({ n: cold.plugins.length, i: cold.indexedAt, b: cold.building }));
+    await settleBuild(m);
+    const after = await m.getIndex();
+    check('M-j 构建失败：error 如实上报（不得显示成「没有插件」）',
+      /镜像源不可达/.test(String(after.error)) && after.plugins.length === 0, JSON.stringify(after.error));
+    check('M-j 失败后进入退避：再读不叠建（旧形态每读一次点一轮 4 分钟构建）',
+      after.building === false && builds === 1, 'builds=' + builds + ' building=' + after.building);
+    await m.getIndex(true);
+    check('M-j 反向：force（用户点刷新）绕开退避立即重试', builds === 2, 'builds=' + builds);
+    await settleBuild(m);
     fs.rmSync(dir, { recursive: true, force: true });
   }
 

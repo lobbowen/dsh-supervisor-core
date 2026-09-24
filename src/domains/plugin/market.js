@@ -46,8 +46,13 @@ class PluginMarket {
     this._cache = null;
     this._ts = 0;
     this._inFlight = null;
-    // 整体构建预算（默认 4 分钟）：社区源候选约 2468 个，8 并发分批最坏可达数十分钟，
-    // 而 GET /plugins/market 会阻塞到构建完成。到点即停止发起新批次，用已采集部分构建索引。
+    this._lastError = null;
+    this._nextAllowAt = 0;
+    // 冷启动构建失败后的重试退避：读端点每次命中「无缓存」都会点火重建，没有退避就是读一次点一轮 4 分钟。
+    this.retryBackoffMs = opts.retryBackoffMs || 60000;
+    // 整体构建预算（默认 4 分钟）：社区源候选约 2468 个，8 并发分批最坏可达数十分钟。
+    // 到点即停止发起新批次，用已采集部分构建索引（截断源与旧缓存按 source 取并集，见 _buildIndexInner）。
+    // 预算与「请求何时结束」无关：构建在后台跑，快照以 building 暴露进度（见 getIndex）。
     this.buildBudgetMs = opts.buildBudgetMs || 240000;
     this.loadFromDisk();
   }
@@ -62,35 +67,47 @@ class PluginMarket {
 
   saveToDisk() { marketCache.saveIndex(this.cacheDir, this.indexFile, this._cache, this.logger); }
 
-  /** 读取插件列表（带 TTL 缓存 + 并发去重）。 */
-  async getIndex(force = false) {
-    if (this._cache && !force) {
-      this._refreshIfStale();
-      return this._cache;
-    }
-    if (this._inFlight) return this._inFlight;
-    return this._startBuild();
+  /** 索引快照，耗时上限必须是「读内存」：构建（默认预算 4 分钟）交 _requestBuild 在后台跑。
+   *  挂到请求上等构建，面板 15s 计时会先放弃而服务端仍在跑 —— 用户见失败、结论却是好的。
+   *  无缓存且上次构建刚失败时按 retryBackoffMs 退避，免得每次读都点燃一轮 4 分钟构建；force 不受退避约束。 */
+  getIndex(force = false) {
+    const need = !this._cache || force || Date.now() - this._ts >= this.ttl;
+    if (need && (force || Date.now() >= this._nextAllowAt)) this._requestBuild();
+    return Promise.resolve(this._view());
   }
 
-  /** 启动一次构建并登记为并发去重引用，返回原始 promise。两条不变量必须同时成立：
-   *  (a) 无消费者的后台刷新失败不得成为进程级 unhandledRejection —— 靠给 raw 挂 no-op handler「标记已处理」实现，而不是把 promise 消化掉；
-   *  (b) 被消费者取走时仍须如实失败 —— raw 的 reject 语义不变（api/domains/plugins.js 的 GET /plugins/market 据此回答 500）。
-   *  若改成「消化后存回 _inFlight」，force 请求会取到它并在失败时 resolve 成 undefined -> 200 + 空体。 */
-  _startBuild() {
+  /** 快照视图（无缓存也返回合法空索引，绝不为取数据而触网）。 */
+  _view() {
+    const c = this._cache;
+    return {
+      ok: true,
+      indexedAt: c ? c.indexedAt : 0,
+      sources: c ? c.sources : { npm: 0, github: 0, community: 0 },
+      total: c ? c.total : 0,
+      plugins: c ? c.plugins : [],
+      building: !!this._inFlight,
+      error: this._lastError,
+    };
+  }
+
+  /** 启动一次构建（无消费者 await）并登记为在飞引用；两条不变量：
+   *  (a) 无人等待的失败不得成为进程级 unhandledRejection —— 给 raw 挂 no-op handler「标记已处理」；
+   *  (b) 去重：已有在飞构建就直接复用，force 连点不得叠加并发构建（M-i）。
+   *  失败原因记入 _lastError 并由快照如实上报 —— 取不到不能显示成「没有插件」。 */
+  _requestBuild() {
+    if (this._inFlight) return this._inFlight;
     const raw = this.buildIndex();
     raw.catch(() => {}); // 标记已处理：无人 await 时否则就是 unhandledRejection
     this._inFlight = raw;
-    raw.then(() => {}, () => {}).then(() => { if (this._inFlight === raw) this._inFlight = null; });
+    raw.then(
+      () => { this._lastError = null; },
+      (e) => {
+        this._lastError = (e && e.message) || String(e);
+        if (!this._cache) this._nextAllowAt = Date.now() + this.retryBackoffMs;
+        this.logger.warn && this.logger.warn('market: 索引构建失败（沿用旧缓存）: ' + this._lastError);
+      }
+    ).then(() => { if (this._inFlight === raw) this._inFlight = null; });
     return raw;
-  }
-
-  _refreshIfStale() {
-    if (Date.now() - this._ts < this.ttl) return;
-    if (this._inFlight) return;
-    // 后台刷新无消费者：额外接一个 warn（不静默）；raw 自身的 reject 语义不变（见 _startBuild）。
-    this._startBuild().catch((e) => {
-      this.logger.warn && this.logger.warn('market: 后台刷新索引失败（沿用旧缓存）: ' + ((e && e.message) || e));
-    });
   }
 
   async buildIndex() {

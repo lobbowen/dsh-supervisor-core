@@ -6,6 +6,26 @@
 
 ## [未发布]
 
+### 读端点不再等长动作：市场重建与更新检测改「快照 + 后台跑」（真机取证驱动）
+
+用户面板点「刷新」实报 `请求超时（15s）：/plugins/market?refresh=1`。先把口径弄清：**没有任何服务端会在 120s 砍断它**——
+`src/platform/ctl/server.js` 的 keepAlive/headers/request 三个超时常量属于 ctl 回环控制通道，面板网关
+`src/api/transport/server.js` 根本不设超时（跑 Node 默认）；机制复现（生产同值 150s handler 与缩小比例两套）证明
+`requestTimeout` 完全不约束「客户端已把请求发完、服务端还在干活」的请求。真正的冲突是**客户端 15s 计时**
+（`ui/src/services/supervisor/client.ts`）对上 4 分钟构建预算：面板先判失败，服务端却把构建跑完并写进缓存，
+于是「失败了」与「其实成功了」同时成立，再点一次常秒回。
+
+- `market.getIndex`：只回快照（`building` 表在飞、`error` 表上次失败原因），构建交后台；冷启动构建失败后进
+  `retryBackoffMs`（默认 60s）退避，`force` 绕开退避 —— 否则无缓存期间每读一次就点燃一轮 4 分钟构建。
+- `updater.checkUpdates`：同一口径（快照 + `refreshing`），并把逐插件 registry 查询由**串行**改为 6 并发分批
+  （串行时长随插件数线性增长，正是撞 15s 的那条形态）。每行带 `error`，面板据此把「取不到版本」与「已是最新」
+  分开上报 —— P0-D 遗留的「检测那条路把取失败显示成无更新」由此收口（`update()` 那条路已在 P 组钉过）。
+- 面板：新增 `pollSnapshot`，**只有首拍发 force**、轮询拍读非 force 快照（每拍 force 会不断重启构建、永不收敛）；
+  市场页区分「正在构建索引」与「索引为空/失败原因」，检查更新的 toast 带上逐源原因。
+- 门禁：M-i 从「await 两次 getIndex 后 `_inFlight` 归零」改锚为「200ms 构建在飞时快照已返回」——旧写法在新语义下
+  必红，因为它钉的正是「请求等构建」这件被废除的事；新增 M-j（冷启动/失败如实上报 + 退避 + force 反向对照）、
+  P4c（原因随行走）、Q 组（registry 挂住时读端点已返回、force 连点复用同一在飞检测）。
+
 ### 门禁改锚到决定点 + 权威选版边界补判据 + 镜像契约文档化（镜像源重构最后一批的内核侧）
 
 - `test/release-channel-gate-test.js`：RC-G3 的结构判据从「整目录聚合」改为钉在取版本链的三个决定点

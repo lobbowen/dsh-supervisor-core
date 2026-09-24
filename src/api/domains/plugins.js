@@ -8,6 +8,8 @@ function owns(pathname) {
 function handle(ctx) {
   const { sup, req, res, pathname, send, collectBody, originAllowed } = ctx;
 
+    // 市场索引：只读快照，构建在后台跑（building/error 表在飞与上次失败原因）。
+    // 这里的 reject 分支不是给前端的错误码：handle() 不返回该 promise，少了它一次意外 reject 就是进程级 unhandledRejection。
     if (req.method === 'GET' && pathname === '/plugins/market') {
       const force = req.url.indexOf('refresh=1') >= 0;
       return sup.pluginMarket.getIndex(force).then(
@@ -18,7 +20,8 @@ function handle(ctx) {
     if (req.method === 'GET' && pathname === '/plugins/installed') {
       return sup.pluginManager.listInstalled().then((r) => send(200, r)).catch((e) => send(500, { ok: false, error: e.message }));
     }
-    // 已装插件更新检测（npm 型查统一镜像 registry 最高版；git/local 型标注类型）
+    // 已装插件更新检测（npm 型查 registry 最高版；git/local 型标注类型）。
+    // 与 /plugins/market 同口径：立即回快照，registry 往返在后台跑，refreshing 表进度、error 表逐源取不到原因。
     if (req.method === 'GET' && pathname === '/plugins/check-updates') {
       const force = req.url.indexOf('refresh=1') >= 0;
       return sup.pluginManager.checkUpdates(force).then((r) => send(200, r)).catch((e) => send(500, { ok: false, error: e.message }));

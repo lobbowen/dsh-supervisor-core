@@ -351,8 +351,12 @@ export interface MarketPlugin {
 }
 export interface MarketResponse {
   plugins: MarketPlugin[];
-  indexedAt?: string;
+  indexedAt?: number;
   sources?: { npm?: number; github?: number; community?: number; official?: number };
+  /** 索引正在后台构建：读端点立即回快照而不等构建，面板据此轮询（等同步响应会被 15s 计时误判成失败）。 */
+  building?: boolean;
+  /** 上一次构建失败的原因。有值且 plugins 为空 = 真取不到，不是「没有插件」。 */
+  error?: string | null;
 }
 export interface PluginTargetInfo { id: string; name: string; kind: string; }
 export interface InstalledPlugin {
@@ -378,8 +382,12 @@ export interface InstalledPluginsResponse {
   installationOwned?: string[];
 }
 export interface PluginUpdatesResponse {
-  plugins?: Array<{ name: string; updateAvailable?: boolean; targets?: Array<{ name: string; updateAvailable?: boolean; latest?: string }> }>;
-  checkedAt?: string;
+  plugins?: Array<{ name: string; updateAvailable?: boolean; error?: string | null; targets?: Array<{ name: string; updateAvailable?: boolean; latest?: string }> }>;
+  checkedAt?: number;
+  /** registry 往返在后台跑（同 /plugins/market 口径），面板轮询到 false 才宣布结论。 */
+  refreshing?: boolean;
+  /** 逐插件「取不到版本」原因的汇总；有它就不能报「全部已是最新」。 */
+  error?: string | null;
 }
 // 插件任务进度（后端 /plugins/install-status?job= 派生自 TaskRegistry；前端轮询到 done/failed）
 export type JobState = "running" | "done" | "failed";

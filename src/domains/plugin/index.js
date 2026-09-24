@@ -33,6 +33,8 @@ class PluginManager {
     this.tasks = opts.tasks || null;           // 统一安装/更新任务注册表
     this._updCache = {};                       // 插件更新检测缓存：name -> { latest, at }（TTL 6h）
     this._updTTL = 6 * 3600 * 1000;
+    this._updSnapshot = null;                  // 最近一次检测结果快照 { checkedAt, plugins, error }
+    this._updInFlight = null;                  // 在飞检测 promise（去重：force 连点不叠加）
     this.jobs = createJobs({ tasks: this.tasks });                          // 作业表 + 作用域互斥
     this.layers = createLayers({ overlayFile: this.overlayFile, logger: this.logger }); // 补丁层写队列
     this.store = new store.PluginStore({ getInventory: () => this.inventory() });       // 补丁行 id 推导

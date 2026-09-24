@@ -11,7 +11,7 @@ import { formatSize } from "../../framework/format";
 import {
   pollJob,
   supervisorApi,
-  type InstalledPlugin, type MarketPlugin,
+  type InstalledPlugin, type MarketPlugin, type MarketResponse,
 } from "../../services/supervisor";
 import { useSupervisorAction } from "./useSupervisorAction";
 import { Card, CardTitle, Pill } from "./widgets";
@@ -35,8 +35,24 @@ async function pollJobsSummary(jobIds: string[], verb: string, total: number) {
   else toast.warning(verb + "结束：成功 " + done + "，失败 " + failed, { id: t });
 }
 
+/**
+ * 快照轮询：内核的市场重建与更新检测是「立即回快照 + 后台跑」（等同步响应只会被 15s 客户端计时误判成失败）。
+ * busy 为读端点的在飞标记；超时上限须大于服务端构建预算（市场默认 4 分钟）。
+ * 注意：force 只能发一次，轮询拍必须读非 force 快照——否则每拍都会再触发一轮构建，永不收敛。
+ */
+async function pollSnapshot<T>(read: () => Promise<T>, busy: (r: T) => boolean, timeoutMs = 300_000, intervalMs = 2_000): Promise<T> {
+  let r = await read();
+  const until = Date.now() + timeoutMs;
+  while (busy(r) && Date.now() < until) {
+    await new Promise((res) => setTimeout(res, intervalMs));
+    r = await read();
+  }
+  return r;
+}
+
 export function PluginsPage() {
   const [tab, setTab] = useState<Tab>("market");
+  const [marketNonce, setMarketNonce] = useState(0);   // 刷新收尾后让市场列表重读快照（否则要点「已安装」再回来才见新索引）
   return (
     <div className="grid content-start gap-4">
       <div className="flex items-center justify-between">
@@ -54,19 +70,26 @@ export function PluginsPage() {
             </Button>
           ))}
         </div>
-        {tab === "market" ? <MarketRefresh /> : null}
+        {tab === "market" ? <MarketRefresh onSettled={() => setMarketNonce((n) => n + 1)} /> : null}
       </div>
-      {tab === "market" ? <MarketTab /> : <InstalledTab />}
+      {tab === "market" ? <MarketTab nonce={marketNonce} /> : <InstalledTab />}
     </div>
   );
 }
 
-function MarketRefresh() {
+function MarketRefresh({ onSettled }: { onSettled?: () => void }) {
   const [refreshing, setRefreshing] = useState(false);
   async function go() {
     setRefreshing(true);
-    try { await supervisorApi.market(true); toast.success("插件索引已刷新"); }
-    catch (e) { toast.error(String(e)); }
+    try {
+      const first = await supervisorApi.market(true);
+      const r = first.building ? await pollSnapshot(() => supervisorApi.market(), (x) => !!x.building) : first;
+      // error 非空就是构建失败，此时 plugins 是沿用下来的旧索引 —— 不能报「已刷新」
+      if (r.error) toast.error("索引刷新失败：" + r.error + "（暂用旧索引的 " + r.plugins.length + " 个）");
+      else if (r.plugins.length) toast.success("插件索引已刷新（" + r.plugins.length + " 个）");
+      else toast.error("索引刷新失败：无结果");
+      onSettled?.();
+    } catch (e) { toast.error(String(e)); }
     setRefreshing(false);
   }
   return (
@@ -76,8 +99,10 @@ function MarketRefresh() {
   );
 }
 
-function MarketTab() {
-  const [index, setIndex] = useState<{ plugins: MarketPlugin[]; indexedAt?: string; sources?: Record<string, number> } | null>(null);
+function MarketTab({ nonce = 0 }: { nonce?: number }) {
+  const [index, setIndex] = useState<MarketResponse | null>(null);
+  const [building, setBuilding] = useState(false);
+  const [loadErr, setLoadErr] = useState<string | null>(null);
   const [kw, setKw] = useState("");
   // Radix Select 不允许空值："all" 哨兵 = 全部
   const [cat, setCat] = useState("all");
@@ -89,9 +114,24 @@ function MarketTab() {
 
   useEffect(() => {
     let alive = true;
-    supervisorApi.market().then((r) => { if (alive) { setIndex(r); setLoaded(PAGE); } }).catch(() => undefined);
+    // 冷启动（磁盘无索引）时内核自己会起一次构建，这里只读快照轮询，不再额外 force
+    void (async () => {
+      try {
+        let r = await supervisorApi.market();
+        if (r.building) {
+          if (alive) setBuilding(true);
+          r = await pollSnapshot(() => supervisorApi.market(), (x) => !!x.building);
+        }
+        if (!alive) return;
+        setBuilding(false);
+        setIndex(r.plugins.length ? r : null);
+        setLoadErr(r.plugins.length ? null : (r.error || "索引为空，点「刷新」重建"));
+        setLoaded(PAGE);
+      } catch (e) { if (alive) { setBuilding(false); setLoadErr(String(e)); } }
+    })();
     return () => { alive = false; };
-  }, []);
+    // nonce：市场刷新收尾后重读快照（非 force，不会点燃第二轮构建）
+  }, [nonce]);
 
   const filtered = useMemo(() => {
     if (!index) return [];
@@ -163,7 +203,9 @@ function MarketTab() {
       </div>
 
       {!index ? (
-        <div className="grid place-items-center py-20 text-sm text-muted-foreground">加载插件索引…</div>
+        <div className="grid place-items-center py-20 text-sm text-muted-foreground">
+          {building ? "正在构建插件索引（首次约需数分钟，可留在本页）…" : (loadErr || "加载插件索引…")}
+        </div>
       ) : (
         <>
           <p className="text-xs text-muted-foreground">共 {index.plugins.length} 个插件 · 更新 {index.indexedAt ? new Date(index.indexedAt).toLocaleString() : "—"} · npm {index.sources?.npm || 0} · GitHub {index.sources?.github || 0} · 社区 {index.sources?.community || 0}</p>
@@ -259,7 +301,9 @@ function InstalledTab() {
   async function checkUpdates() {
     setChecking(true);
     try {
-      const r = await supervisorApi.pluginsCheckUpdates(true);
+      // force 只发一次，其余拍读快照；「取不到版本」与「已是最新」必须分开报（P 组口径）
+      const first = await supervisorApi.pluginsCheckUpdates(true);
+      const r = first.refreshing ? await pollSnapshot(() => supervisorApi.pluginsCheckUpdates(), (x) => !!x.refreshing) : first;
       const m = new Map<string, string>();
       for (const u of r.plugins ?? []) {
         if (!u.updateAvailable) continue;
@@ -267,7 +311,11 @@ function InstalledTab() {
         m.set(u.name, latest);
       }
       setUpdatable(m);
-      toast.success(m.size ? "发现 " + m.size + " 个可更新插件" : "全部插件已是最新");
+      const errs = (r.plugins ?? []).filter((u) => u.error);
+      const settled = m.size ? "发现 " + m.size + " 个可更新插件" : "全部插件已是最新";
+      if (!r.checkedAt && r.error) toast.error("检查更新失败：" + r.error);
+      else if (errs.length) toast.warning(errs.length + " 个插件取不到最新版本（" + (errs[0].error || "") + (errs.length > 1 ? " 等" : "") + "）· " + settled);
+      else toast.success(settled);
       await load();
     } catch (e) { toast.error(String(e)); }
     setChecking(false);
