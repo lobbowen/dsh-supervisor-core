@@ -42,6 +42,8 @@ const ROOT = path.join(__dirname, '..');
 
 const results = [];
 const check = (n, c, x) => { results.push(!!c); console.log((c ? 'PASS' : 'FAIL') + ' ' + n + (x !== undefined && x !== '' ? '  ← ' + x : '')); };
+// 必须 await 才能判的条目（写入口的「拒后不动」只有等整次调用结束才成立）。
+const _asyncGates = [];
 const read = (p) => fs.readFileSync(path.join(ROOT, p), 'utf8');
 //  步骤8a（DIRECTORY-STRUCTURE-DESIGN）：shell/plugin 两域已拆为
 //   index/journal/restart 与 index/ops/store/market。本套源码级断言的**对象是「域」**
@@ -397,37 +399,66 @@ const readDomain = (dir) => fs.readdirSync(path.join(ROOT, dir)).filter((f) => f
 // -- J-k：镜像源写入口 SSRF 闸 —— 私网/元数据字面量不得落盘 --
 //   旧 setRegistryConfig 只过 isValidOrigin：http://127.0.0.1:4873 之类合法落盘，
 //   并反向豁免探测闸1)层（已配置源按 hostname 放行）。现在写盘前过 registryOriginViolation。
+//   夹具必须是「磁盘态的镜像」：手塞 registryConfig 而不落盘时，setRegistryConfig 异步段里的一次契约
+//   重载会把手塞值冲成默认，断言判的是夹具而不是实现（内核 PR #49 首跑即由 CI 揭出）。
+//   契约带 measurements 且覆盖全部候选，于是本例零网络；判的是「拒之后内存与磁盘都不动」。
 {
   const { DistributionManager } = require(path.join(ROOT, 'src', 'platform', 'distribution', 'index.js'));
+  const polK = require(path.join(ROOT, 'src', 'platform', 'distribution', 'policies.js'));
   const tmpK = fs.mkdtempSync(path.join(os.tmpdir(), 'regk-'));
-  const mkDm = () => {
-    const dm = Object.create(DistributionManager.prototype);
-    dm.registryFile = path.join(tmpK, 'no-such', 'registry.json'); // 不存在：load/save 走无操作分支
-    dm.logger = { warn() {}, info() {}, debug() {} };
-    dm.registryConfig = { mode: 'auto', origins: ['https://registry.npmjs.org'], manualOrigin: 'https://registry.npmjs.org' };
-    return dm;
+  const rfK = path.join(tmpK, 'registry.json');
+  const cfK = path.join(tmpK, 'registry-choice.json');
+  const nowK = Math.floor(Date.now() / 1000);
+  const msk = (origin, latencyMs) => ({ origin, ok: true, latencyMs, error: null, checkedAt: nowK });
+  fs.writeFileSync(rfK, JSON.stringify({
+    schema: 3, writtenBy: 'shell@1.2.9', writtenAt: nowK,
+    catalog: ['https://registry.npmjs.org'],
+    measurements: [msk('https://registry.npmjs.org', 10), msk('https://pub.example', 20)],
+  }));
+  const initialChoice = {
+    schema: 1, updatedAt: nowK, mode: 'auto',
+    manualOrigin: 'https://registry.npmjs.org', origins: ['https://registry.npmjs.org'],
   };
-  // manual 切换 + 私网手动源：**同步校验段零改动**（内存配置与磁盘都不动）。
-  //   异步段会经 registryInfo 回读实况（可能按既有选源逻辑复测），所以本例只断言同步段。
-  //   原缺陷：rc 曾是 state.registryConfig 的别名，mode 在校验前就被写进内存 -> 拒后
-  //   UI 显示 manual 而磁盘仍是 auto，且下次自动重测按 manual 走旧手动源。
-  {
-    const dm = mkDm();
-    dm.setRegistryConfig({ mode: 'manual', manualOrigin: 'http://169.254.169.254' });
-    check('C-8 manual+元数据地址 → registryConfig.mode 未被改（同步拒）',
-      dm.registryConfig.mode === 'auto', JSON.stringify({ mode: dm.registryConfig.mode }));
-    check('C-8 manual+回环 dev 镜像 → manualOrigin 未被落盘（同步拒）',
-      dm.registryConfig.manualOrigin === 'https://registry.npmjs.org', JSON.stringify({ mo: dm.registryConfig.manualOrigin }));
-  }
-  // 候选列表：私网项被逐条剔除（同步段），公网项保留
-  {
-    const dm = mkDm();
-    dm.setRegistryConfig({ origins: ['https://pub.example', 'http://127.0.0.1:4873', 'http://10.0.0.7:4873'] });
-    check('C-8 候选中回环/私网字面量被剔除',
-      JSON.stringify(dm.registryConfig.origins) === JSON.stringify(['https://pub.example']),
-      JSON.stringify(dm.registryConfig.origins));
-  }
-  fs.rmSync(tmpK, { recursive: true, force: true });
+  const mkDm = () => {
+    fs.writeFileSync(cfK, JSON.stringify(initialChoice));
+    return new DistributionManager({
+      registryFile: rfK, registryChoiceFile: cfK, registries: ['https://registry.npmjs.org'],
+      logger: { warn() {}, info() {}, debug() {} },
+    });
+  };
+  const disk = () => JSON.parse(fs.readFileSync(cfK, 'utf8'));
+  // 闸本身若恒拒，上面的「剔除」就毫无意义；恒假则「拒后不动」也是白断。两条各钉一个子句。
+  check('C-8 反向：同一道闸放行公网候选（闸不是恒真拒一切）',
+    polK.registryOriginViolation('https://pub.example') === null,
+    String(polK.registryOriginViolation('https://pub.example')));
+  check('C-8 反向：同一道闸真的拒回环字面量（判据可红）',
+    polK.registryOriginViolation('http://127.0.0.1:4873') !== null, '拒因存在');
+  _asyncGates.push(async () => {
+    // 1) 切 manual + 元数据地址：整次调用（含异步段）都不许改动内存与磁盘。
+    const dm1 = mkDm();
+    const r1 = await dm1.setRegistryConfig({ mode: 'manual', manualOrigin: 'http://169.254.169.254' });
+    check('C-8 manual+元数据地址 → 返回体带拒因（不静默成功）',
+      typeof r1.error === 'string' && r1.error.length > 0, JSON.stringify({ error: r1.error }));
+    check('C-8 manual+元数据地址 → registryConfig.mode 未被改',
+      dm1.registryConfig.mode === 'auto', JSON.stringify({ mode: dm1.registryConfig.mode }));
+    check('C-8 manual+元数据地址 → manualOrigin 未被改（内存）',
+      dm1.registryConfig.manualOrigin === initialChoice.manualOrigin,
+      JSON.stringify({ mo: dm1.registryConfig.manualOrigin }));
+    check('C-8 manual+元数据地址 → 选择文档零写入（磁盘）',
+      JSON.stringify(disk()) === JSON.stringify(initialChoice), JSON.stringify(disk()));
+    // 2) 候选列表：非法项逐条剔除并回传，合法项落盘 —— 面板显示的那份必须就是磁盘那份。
+    const dm2 = mkDm();
+    const r2 = await dm2.setRegistryConfig({ origins: ['https://pub.example', 'http://127.0.0.1:4873', 'http://10.0.0.7:4873'] });
+    check('C-8 候选中回环/私网字面量被剔除（内存只留公网项）',
+      JSON.stringify(dm2.registryConfig.origins) === JSON.stringify(['https://pub.example']),
+      JSON.stringify(dm2.registryConfig.origins));
+    check('C-8 被剔除项逐条回传（用户改镜像源要知道哪条被拒、为什么）',
+      JSON.stringify(r2.rejectedOrigins) === JSON.stringify(['http://127.0.0.1:4873', 'http://10.0.0.7:4873']),
+      JSON.stringify(r2.rejectedOrigins));
+    check('C-8 剔除结果同步落盘（否则下次载入又回到旧列表）',
+      JSON.stringify(disk().origins) === JSON.stringify(['https://pub.example']), JSON.stringify(disk().origins));
+    fs.rmSync(tmpK, { recursive: true, force: true });
+  });
 }
 
 // -- J-l：写端点的「200 假成功」必须归真，且前端有统一判据 --
@@ -621,6 +652,9 @@ const readDomain = (dir) => fs.readdirSync(path.join(ROOT, dir)).filter((f) => f
   }
 }
 
-const failed = results.filter((r) => !r);
-console.log(String.fromCharCode(10) + '结果: ' + (results.length - failed.length) + ' passed, ' + failed.length + ' failed');
-process.exit(failed.length ? 1 : 0);
+(async () => {
+  for (const g of _asyncGates) await g();
+  const failed = results.filter((r) => !r);
+  console.log(String.fromCharCode(10) + '结果: ' + (results.length - failed.length) + ' passed, ' + failed.length + ' failed');
+  process.exit(failed.length ? 1 : 0);
+})();
