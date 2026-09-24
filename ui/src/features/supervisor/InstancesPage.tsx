@@ -26,7 +26,6 @@ export function InstancesPage({ onRegisterActions }: { onRegisterActions?: (a: {
   const { busy: busyId, run } = useSupervisorAction();
   const askConfirm = useConfirm();
   const [addOpen, setAddOpen] = useState(false);
-  const [confirmId, setConfirmId] = useState<string | null>(null);
 
   const [fName, setFName] = useState("");
   const [fPort, setFPort] = useState("");
@@ -97,6 +96,27 @@ export function InstancesPage({ onRegisterActions }: { onRegisterActions?: (a: {
       confirmText: "升级",
     }))) return;
     await run(it.id, () => supervisorApi.instanceUpgrade(it.id), { success: "升级已开始…" });
+  }
+
+  /** 删除实例：不可恢复，走统一确认出口。 */
+  async function removeInstance(it: SupervisorInstance) {
+    if (!(await askConfirm({
+      title: "删除实例「" + it.name + "」？",
+      description: "将彻底删除该沙箱实例（含配置与运行时数据）。此操作不可恢复。",
+      confirmText: "删除实例",
+      tone: "destructive",
+    }))) return;
+    // 删除的安全结果必须对用户可见：后端在「单元仍在运行」时保留数据目录（防不可逆丢失）
+    //并返回 dataPreserved=true，须如实说明，否则等于谎报「数据已清」。
+    await run(it.id, async () => {
+      const r = await supervisorApi.instanceRemove(it.id);
+      if (r && r.ok !== false && r.dataPreserved === true) {
+        toast.warning("实例已移除，但因其单元仍在运行，数据目录已保留（未删除）——请先停止实例再删数据");
+      } else if (r && r.ok === false) {
+        toast.error(r.error || "删除失败");
+      }
+      supervisorStore.refresh();
+    });
   }
 
   const InstanceRow = ({ it }: { it: SupervisorInstance }) => {
@@ -203,7 +223,7 @@ export function InstancesPage({ onRegisterActions }: { onRegisterActions?: (a: {
               {it.guardian ? "停止守护" : "启动守护"}
             </Button>
             {/* 守护后无分割线(用户定稿, 与主 DSH 卡一致); 窄屏隐藏(只留启停+守护) */}
-            <Button className="hidden h-[30px] md:inline-flex" disabled={busy} onClick={() => setConfirmId(it.id)} size="sm" variant="destructive">
+            <Button className="hidden h-[30px] md:inline-flex" disabled={busy} onClick={() => void removeInstance(it)} size="sm" variant="destructive">
               <Trash2 className="size-4" />删除
             </Button>
           </div>
@@ -272,36 +292,6 @@ export function InstancesPage({ onRegisterActions }: { onRegisterActions?: (a: {
         </DialogContent>
       </Dialog>
 
-      {/* 删除确认 */}
-      <Dialog open={!!confirmId} onOpenChange={(o) => !o && setConfirmId(null)}>
-        <DialogContent className="max-w-[380px]">
-          <DialogHeader><DialogTitle>删除实例？</DialogTitle></DialogHeader>
-          <p className="text-sm text-muted-foreground">将彻底删除该沙箱实例（含配置与运行时数据）。此操作不可恢复。</p>
-          <DialogFooter>
-            <Button onClick={() => setConfirmId(null)} variant="outline">取消</Button>
-            <Button
-              className="h-[34px]"
-              onClick={() => {
-                const id = confirmId;
-                setConfirmId(null);
-                if (!id) return;
-                // 删除的安全结果必须对用户可见：后端在「单元仍在运行」时保留数据目录
-                //（防不可逆丢失）并返回 dataPreserved=true，须如实说明，否则等于谎报「数据已清」。
-                void run(id, async () => {
-                  const r = await supervisorApi.instanceRemove(id);
-                  if (r && r.ok !== false && r.dataPreserved === true) {
-                    toast.warning("实例已移除，但因其单元仍在运行，数据目录已保留（未删除）——请先停止实例再删数据");
-                  } else if (r && r.ok === false) {
-                    toast.error(r.error || "删除失败");
-                  }
-                  supervisorStore.refresh();
-                });
-              }}
-              variant="destructive"
-            >删除</Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
     </div>
   );
 }

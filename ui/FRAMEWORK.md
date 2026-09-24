@@ -87,7 +87,7 @@ src/
 | 用途 | 出口 | 不允许出现 |
 |---|---|---|
 | 是/否危险动作确认（卸载、删除、重启壳、批量操作） | `useConfirm()`（`src/framework/ui/confirm.tsx`，底层 `alert-dialog.tsx`） | 原生 `confirm/alert/prompt`；features 直接 import `alert-dialog` 原语 |
-| 表单/详情/列表编辑 | `Dialog`（`src/framework/ui/dialog.tsx`） | 手写 `position:fixed` 遮罩、`role="dialog"` 自拼弹窗 |
+| 表单/详情/列表编辑 | `Dialog`（`src/framework/ui/dialog.tsx`） | 手写 `position:fixed` 遮罩、`role="dialog"` 自拼弹窗、是/否确认自拼（疑问句标题或 `confirm/pending` 命名的状态驱动 Dialog） |
 
 - **为什么消灭原生 confirm**：浏览器原生弹窗不受主题令牌约束（壳里是系统灰底，与全站深色不一致），
   多行只能靠 `\n` 拼接（插件批量卸载的清单就是这么写的），且它同步阻塞、无法被任何测试覆盖。
@@ -99,9 +99,12 @@ src/
 - **`AlertDialog` 原语不进 barrel**：把原语摊给 features 等于把「统一出口」换回「各自拼一套确认样式」。
   确认层的层级高于表单层（`z-[70]` vs `z-50`），因此**允许从已打开的 Dialog 内发起危险确认**
   （删除供应商、移除 Key 都在此处），由确认层盖住表单层，不靠挂载顺序巧合决定谁在上面。
-- **尚未收口**：三处 state+Dialog 自拼的是/否确认（LanPage 的 `pendingOn`、InstancesPage 的 `confirmId`、
-  OverviewPage 的 `confirmStopDsh`）仍是第二套形态，须迁到 `useConfirm()`；U-d 目前只保证原生弹窗归零与
-  出口唯一，「yes/no 不得自拼 Dialog」要等迁移完成后才能作为判据写进闸，否则闸当场红。
+- **自拼确认已收编**：原先三处 `useState` + `Dialog` 的是/否确认（LanPage 开远程/切公网共用的 `pendingOn`、
+  InstancesPage 删实例的 `confirmId`、OverviewPage 停主干的 `confirmStopDsh`）已全部改经 `useConfirm()`。
+  闸面对应加两条：Dialog 标题不得是疑问句、不得有 `confirm/pending/will` 命名的状态去驱动 Dialog。
+  **边界要如实说**：这两条认的是「自拼确认的形态特征」，不是「所有 Dialog 都只用于表单」这个全称命题——
+  真正结构性的禁止需要组件级 DOM 测试设施（当前没有，见下条），换个不像确认的变量名仍能躲过状态面判据，
+  但标题面与出口计数面会同时兜住大部分回归。
 - **覆盖缺口（按 E-2 登记）**：假件与纯逻辑测试证明不了弹窗真的出现、也证明不了 Esc 走的是取消分支。
   vitest 是 node 环境（无 jsdom / testing-library，见 4.3 节），组件层只由 `tsc strict` + 源码形态闸约束；
   确认框的实际观感需真机面板走查。

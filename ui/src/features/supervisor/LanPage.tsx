@@ -7,6 +7,7 @@ import { ExternalLink, Eye, EyeOff, Globe, KeyRound, Landmark, Save, Wrench } fr
 import { toast } from "sonner";
 import QRCode from "react-qr-code";
 import { Button, Switch } from "../../framework/ui";
+import { useConfirm } from "../../framework/ui/confirm";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "../../framework/ui/dialog";
 import { Input } from "../../framework/ui/input";
 import { Label } from "../../framework/ui/label";
@@ -39,11 +40,11 @@ export function LanPage() {
   const [frpPort, setFrpPort] = useState("7000");
   const [frpToken, setFrpToken] = useState("");
   const [loaded, setLoaded] = useState(false);
-  // 高危「开启/公网」动作统一二次确认 Dialog；令牌对话框带上打开时刻的现值（本机可见即明文可改）
+  // 令牌对话框带上打开时刻的现值（本机可见即明文可改）
   const [tokenFor, setTokenFor] = useState<{ id: string; name?: string; current: string | null } | null>(null);
   const [tokenInput, setTokenInput] = useState("");
   const [tokenVisible, setTokenVisible] = useState(false);
-  const [pendingOn, setPendingOn] = useState<{ title: string; desc: string; act: () => void } | null>(null);
+  const askConfirm = useConfirm();
   useEffect(() => {
     if (!frp || loaded) return;
     setFrpAddr(frp.settings.serverAddr || "");
@@ -73,23 +74,25 @@ export function LanPage() {
     if (ok && allocated) toast.info("已自动生成访问令牌，点钥匙按钮可查看或修改");
     return ok;
   }
-  /** 开启远程控制（off->lan）：高危，经确认框。缺访问令牌时后端在写入处补齐。 */
-  function askOn(it: { id: string; name?: string }) {
-    setPendingOn({
+  /** 开启远程控制（off->lan）：高危，经统一确认出口。缺访问令牌时后端在写入处补齐。 */
+  async function askOn(it: { id: string; name?: string }) {
+    if (!(await askConfirm({
       title: "开启远程控制？",
-      desc: "「" + (it.name || it.id) + "」将开启局域网反向代理，同网段设备可访问该实例"
-        + "（无访问令牌时自动生成一个，可在钥匙按钮处查看）。确认开启？",
-      act: () => void setMode(it, "lan", "已开启远程控制（局域网）"),
-    });
+      description: "「" + (it.name || it.id) + "」将开启局域网反向代理，同网段设备可访问该实例"
+        + "（无访问令牌时自动生成一个，可在钥匙按钮处查看）。",
+      confirmText: "开启远程控制",
+    }))) return;
+    await setMode(it, "lan", "已开启远程控制（局域网）");
   }
   /** 切公网：高危确认（互联网可触达）；令牌前置由后端 wan 闸裁决，拒因如实提示。 */
-  function askWan(it: { id: string; name?: string }) {
-    setPendingOn({
+  async function askWan(it: { id: string; name?: string }) {
+    if (!(await askConfirm({
       title: "切换到公网访问？",
-      desc: "「" + (it.name || it.id) + "」的访问端口将映射到公网（frps），互联网上任何人都可尝试触达"
-        + "（访问令牌是硬性前置，缺失时自动生成）。确认切换？",
-      act: () => void setMode(it, "wan", "已切换到公网访问"),
-    });
+      description: "「" + (it.name || it.id) + "」的访问端口将映射到公网（frps），互联网上任何人都可尝试触达"
+        + "（访问令牌是硬性前置，缺失时自动生成）。",
+      confirmText: "切换到公网",
+    }))) return;
+    await setMode(it, "wan", "已切换到公网访问");
   }
   /** 打开「设置访问令牌」对话框。current 为 null 表示本机看不到明文（远程访客面板），退化为只写不读。 */
   function setToken(it: { id: string; name?: string }, current: string | null) {
@@ -189,7 +192,7 @@ export function LanPage() {
                       disabled={!running || busy === it.id}
                       onCheckedChange={(v) => {
                         if (!v) { void setMode(it, "off", "已关闭远程控制"); return; }
-                        askOn(it);
+                        void askOn(it);
                       }}
                     />
                   </div>
@@ -208,7 +211,7 @@ export function LanPage() {
                         className="h-7 px-2 text-xs" size="chip"
                         variant={mode === "wan" ? "default" : "outline"}
                         title={frp?.settings?.serverAddr ? "经 FRP 暴露到公网（需访问令牌）" : "需先在右侧配置 frps 服务器地址"}
-                        onClick={() => { if (mode !== "wan") askWan(it); }}
+                        onClick={() => { if (mode !== "wan") void askWan(it); }}
                       >
                         <Globe className="size-3.5" />公网
                       </Button>
@@ -262,18 +265,6 @@ export function LanPage() {
         ) : null}
       </Card>
       </div>
-
-      {/* 高危动作（开启远程 / 切公网）共用二次确认 */}
-      <Dialog open={!!pendingOn} onOpenChange={(o) => !o && setPendingOn(null)}>
-        <DialogContent className="max-w-[420px]">
-          <DialogHeader><DialogTitle>{pendingOn?.title}</DialogTitle></DialogHeader>
-          <p className="text-sm text-muted-foreground">{pendingOn?.desc}</p>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setPendingOn(null)}>取消</Button>
-            <Button onClick={() => { const a = pendingOn?.act; setPendingOn(null); a?.(); }}>确认开启</Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
 
       {/* 令牌对话框：本机（回环）拿得到明文就预填、可原地改；远程访客读不到现值，退化为只写不读。 */}
       <Dialog open={!!tokenFor} onOpenChange={(o) => !o && setTokenFor(null)}>

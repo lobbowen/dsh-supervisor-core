@@ -134,10 +134,11 @@ const check = (n, c, x) => {
   }
 
   // -- G B28/B7-UI 高危动作确认与令牌脱敏--
-  // LanPage：window.prompt 令牌录入 -> 脱敏 Dialog；远程控制/公网暴露/FRP 总闸三个
-  // 无确认 Switch -> 二次确认；frps authToken 服务端已脱敏（仅 authTokenSet），
+  // LanPage：window.prompt 令牌录入 -> 脱敏 Dialog；off->lan 与 ->wan 两条开启路径各需一次确认
+  // （FRP 总闸已随三态化收口删除）；frps authToken 服务端已脱敏（仅 authTokenSet），
   // UI 不得再回填、留空提交必须省略字段（提交 '' 会被后端清除现值）。
-  // OverviewPage：停止主干 DSH 需确认。无组件测试设施 -> 锁源码形态。
+  // OverviewPage：装/卸/停三个高危动作各需一次确认。确认面自弹窗统一批起只有框架出口（useConfirm），
+  // 无组件测试设施 -> 锁源码形态；出口自身的排队与决议语义由 ui/src/framework/ui/confirm-queue.test.ts 判。
   console.log('== G B28/B7-UI 确认对话框与 authToken 脱敏 ==');
   {
     const rd = (rel) => fs.readFileSync(path.join(ROOT, ...rel.split('/')), 'utf8');
@@ -146,10 +147,13 @@ const check = (n, c, x) => {
     const client = rd('ui/src/services/supervisor/client.ts');
     check('G LanPage 不再调用 window.prompt（真实调用形态；注释提及不算）',
       !/window\.prompt\(\s*['"`]/.test(lan), 'ok');
-    check('G LanPage 高危开启两处确认（askOn/askWan setPendingOn 装载 >=2）+ Dialog 渲染',
-      // 旧第三处是 FRP 总闸开关：三态化收口删总闸（frpc 生命周期由「是否存在 wan 意图」驱动），
-      // 高危确认面随之只剩 off->lan 与 ->wan 两条开启路径。
-      (lan.match(/setPendingOn\(\{/g) || []).length >= 2 && /Dialog open=\{!!pendingOn\}/.test(lan), 'ok');
+    // 危险动作的确认面从此由框架唯一出口承担（规范见 ui/FRAMEWORK.md 弹窗统一标准）：判据锁
+    //  「off->lan 与 ->wan 两条开启路径各经一次 askConfirm」，不锁按钮文案；旧形态（自拼 state+Dialog）
+    //  一旦复现即为绕过出口，故同一判据里显式拒绝 setPendingOn 残留。
+    const confirmedTwice = (src) => (src.match(/await askConfirm\(\{/g) || []).length >= 2 && !/setPendingOn/.test(src);
+    check('G LanPage 开启远程/切公网两处高危动作各经统一确认出口（且无自拼确认残留）', confirmedTwice(lan), 'ok');
+    check('G 反向：自拼 state+Dialog 确认形态被同一判据拒绝',
+      !confirmedTwice('const [pendingOn, setPendingOn] = useState(null); function askWan(it) { setPendingOn({ act: () => void setMode(it, "wan") }); }'), 'rejected');
     // 令牌录入的不变式是「默认遮罩」：明文只在该机主动点眼睛时出现，肩窥与截屏不再默认泄漏。
     //  判据按这条行为写，不钉 placeholder 文案（改文案不该让闸变红）。
     const maskedJudge = (src) => /Dialog open=\{!!tokenFor\}/.test(src)
@@ -161,8 +165,12 @@ const check = (n, c, x) => {
       /authTokenSet \? "已设置 · 留空不修改，输入即轮换"/.test(lan), 'ok');
     check('G client remoteFrpServer 的 authToken 为可选字段（patch 语义；旧名 frpSettings 已随路由收口更名）',
       /authToken\?: string/.test(client), 'ok');
-    check('G OverviewPage 停止主干 DSH 走确认对话框',
-      /setConfirmStopDsh\(true\)/.test(overview) && /Dialog open=\{confirmStopDsh\}/.test(overview), 'ok');
+    // 概览页的三个高危动作（在线安装 / 彻底卸载 / 停止主干）各经一次统一确认出口；
+    //  旧形态是「按钮只置一个 confirmStopDsh 状态、由自拼 Dialog 决议」，故同批拒绝该残留。
+    const overviewConfirmed = (src) => (src.match(/await askConfirm\(\{/g) || []).length >= 3 && !/confirmStopDsh/.test(src);
+    check('G OverviewPage 装/卸/停三个高危动作各经统一确认出口（且无自拼确认残留）', overviewConfirmed(overview), 'ok');
+    check('G 反向：停止动作只置状态由自拼 Dialog 决议的形态被拒绝',
+      !overviewConfirmed('onClick={() => { if (running) setConfirmStopDsh(true); }} <Dialog open={confirmStopDsh}>'), 'rejected');
     // 反向：判据对旧形态敏感（门禁非空转）
     check('G 反向：旧 prompt 录入形态会被判据命中',
       /window\.prompt\(\s*['"`]/.test("const t = window.prompt('为该实例设置远程访问令牌：');"), 'hit');

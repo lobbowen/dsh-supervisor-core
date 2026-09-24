@@ -27,8 +27,6 @@ export function OverviewPage() {
   const { busy, run } = useSupervisorAction();
   const askConfirm = useConfirm();
   const [upgradeOpen, setUpgradeOpen] = useState(false);
-  // 停止运行中的主干 DSH 会中断在飞请求，属高危动作：需二次确认
-  const [confirmStopDsh, setConfirmStopDsh] = useState(false);
   // main(原生 DSH) 守护开关
   const [mainGuardian, setMainGuardian] = useState<boolean | null>(null);
   const s = snap.status;
@@ -51,6 +49,15 @@ export function OverviewPage() {
   async function toggleDsh() {
     // 启停统一走 /lifecycle/dsh/start|stop（单一控制路径）
     await run("dsh", () => (running ? supervisorApi.lifecycleStop("dsh") : supervisorApi.lifecycleStart("dsh")), { success: running ? "正在停止 DSH…" : "正在启动 DSH…" });
+  }
+  /** 停止运行中的主干 DSH 会中断在飞请求，属高危动作：经统一确认出口后再停。 */
+  async function stopDsh() {
+    if (!(await askConfirm({
+      title: "停止 DSH？",
+      description: "主干 DeepSeek Harness 正在运行；停止会中断进行中的请求，远程访问同时不可用。",
+      confirmText: "停止 DSH",
+    }))) return;
+    await toggleDsh();
   }
   async function openWeb() {
     // 三档结果与地址一律由 notifyOpen 呈现（run 的通用判据会把「只是交出去了」也报成一条丢地址的错误）
@@ -205,7 +212,7 @@ export function OverviewPage() {
                 </Button>
                 {/* D3-A 定案：主 DSH 由守卫统一自 spawn（始终守护拉起），无「进程守护」开关；
                     运行操作统一白底 outline（卸载 DSH 为唯一高危实色按钮） */}
-                <Button disabled={busy === "dsh"} onClick={() => { if (running) setConfirmStopDsh(true); else void toggleDsh(); }} size="sm" variant="outline">
+                <Button disabled={busy === "dsh"} onClick={() => void (running ? stopDsh() : toggleDsh())} size="sm" variant="outline">
                   {running ? <><Power className="size-4 text-status-error" />停止 DSH</> : <><Rocket className="size-4 text-primary" />启动 DSH</>}
                 </Button>
                 {/* 分割线（自停止/启动 DSH 后开始分割）-> 进程守护按钮（实例页同款按钮式，非 Switch） */}
@@ -259,17 +266,6 @@ export function OverviewPage() {
             <Button disabled={busy === "upg" || upgradeRunning} onClick={() => void upgradeDsh()}>
               {busy === "upg" || upgradeRunning ? "升级中…" : "开始升级"}
             </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      <Dialog open={confirmStopDsh} onOpenChange={setConfirmStopDsh}>
-        <DialogContent className="max-w-[400px]">
-          <DialogHeader><DialogTitle>停止 DSH？</DialogTitle></DialogHeader>
-          <p className="text-sm text-muted-foreground">主干 DeepSeek Harness 正在运行；停止会中断进行中的请求，远程访问同时不可用。确认停止？</p>
-          <DialogFooter>
-            <Button onClick={() => setConfirmStopDsh(false)} variant="outline">取消</Button>
-            <Button disabled={busy === "dsh"} onClick={() => { setConfirmStopDsh(false); void toggleDsh(); }}>停止 DSH</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
