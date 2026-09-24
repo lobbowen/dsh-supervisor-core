@@ -26,6 +26,8 @@
 //   C-f  安装执行器入参白名单：pkg/version/argv 项/registry origin 在 spawn 前全部过闸
 //   C-g  --prefix 与模板分支对称：前缀过路径形态尺（绝对 + 无控制符 + 不以 - 开头），
 //        且不得因该尺误杀 Windows 真实前缀（含空白、含反斜杠、8.3 短名）
+//   C-m  跨仓同表：镜像基址形态与主机维度判定的答案，必须与壳仓 Rust 实现逐条相同
+//        （壳侧同表见 src-tauri/src/mirror.rs 的 registry_base / private_host_literal golden vectors）
 // ---------------------------------------------------------------------------
 
 const path = require('node:path');
@@ -528,6 +530,256 @@ check("C-e 非 Windows 返回 'npx'", npxBin({ platform: 'linux' }) === 'npx', n
       await new Promise((r) => server.close(r));
     }
   });
+}
+
+// -- C-i：契约读取器不得再养第二把「镜像形态」尺（P0-C）--
+//   schema2 时代读取器自带 scheme 正则：带 path 的华为云/腾讯云源在这里被收下、到消费侧判非法，
+//   面板就成了「取不到版本也下载不了」。形态只在 registry-ref 定义一次，读取器只管文档形状。
+{
+  const os = require('node:os');
+  const reader = path.join(ROOT, 'src', 'platform', 'contract', 'registry.js');
+  const code = stripComments(fs.readFileSync(reader, 'utf8'));
+  /** 形态判定的三种真实写法：正则里的 scheme 前缀、URL 解析、协议比较。判据是纯函数，
+   *   所以同一条尺既能量真实源码、也能量合成旧形状（见下面的反向）。 */
+  const shapeRuler = (src) => {
+    const hits = [];
+    if (/https\?:/.test(src)) hits.push('scheme 正则');
+    if (/new URL\(/.test(src)) hits.push('new URL 解析');
+    if (/\.protocol\s*[!=]==?\s*['"]https?:['"]/.test(src)) hits.push('协议字面量比较');
+    return hits;
+  };
+  check('C-i 契约读取器内无第二把形态尺（形状判定归 registry-ref）',
+    shapeRuler(code).length === 0, shapeRuler(code).join(' | ') || '无');
+  check('C-i 反向：三种旧形态喂给同一把尺全部被抓到',
+    ['if (!/^https?:\\/\\/[\\w.-]+/.test(o)) continue;',
+     'const u = new URL(o);',
+     "if (u.protocol !== 'https:') return null;"].every((s) => shapeRuler(s).length > 0),
+    '3/3');
+  check('C-i 合法写法不误伤：只判文档形状的代码过得了同一把尺',
+    shapeRuler("const s = normText(x); if (s && !out.includes(s)) out.push(s);").length === 0, 'ok');
+  // 目录里的条目必须**带着原样**到达消费侧才有逐源结论；读取器一旦顺手 filter 掉自己不认的形态，
+  // 面板就只看到「少了一个源」而说不出为什么。
+  const { read } = require(reader);
+  const tmpI = fs.mkdtempSync(path.join(os.tmpdir(), 'npres-i-'));
+  const cfI = path.join(tmpI, 'registry.json');
+  fs.writeFileSync(cfI, JSON.stringify({
+    schema: 3, writtenBy: 'shell@1.2.9',
+    catalog: ['https://hw.example/npm', 'not-a-url', 'https://private.example'],
+    measurements: [{ origin: 'https://private.example', ok: false, latencyMs: 0, error: 'HTTP 502', checkedAt: Math.floor(Date.now() / 1000) }],
+  }));
+  const cI = read(cfI);
+  check('C-i 非法形态条目原样透传（拒因留给消费侧，读取器不静默删源）',
+    cI.ok && cI.catalog.length === 3 && cI.catalog.includes('not-a-url'), JSON.stringify(cI.catalog));
+  check('C-i v3 的逐源测速证据按形状收下、拒因不丢',
+    cI.measurements.length === 1 && cI.measurements[0].ok === false && /502/.test(cI.measurements[0].error),
+    JSON.stringify(cI.measurements));
+  check('C-i v3 契约不再向内核提供选择字段（两文件所有权的前提）',
+    cI.legacyChoice === null, JSON.stringify(cI.legacyChoice));
+  fs.rmSync(tmpI, { recursive: true, force: true });
+}
+
+// -- C-j：两份镜像文件的写面各自唯一，且每个装配点都拿到选择文档 --
+{
+  const distDir = path.join(ROOT, 'src', 'platform', 'distribution');
+  const domainCode = fs.readdirSync(distDir).filter((f) => f.endsWith('.js')).sort()
+    .map((f) => stripComments(fs.readFileSync(path.join(distDir, f), 'utf8'))).join(String.fromCharCode(10));
+  /** 对某条状态路径的落盘写法：三个真实 sink + 直接 fs 写。同 C-i 的尺，纯函数可量合成旧形状。 */
+  const writesTo = (src, prop) => {
+    const re = new RegExp('(writeAtomic|writeFileSync|writeFile)\\(\\s*state\\.' + prop, 'g');
+    return (src.match(re) || []).length;
+  };
+  check('C-j 内核域内对壳契约零写入（契约文件只读）',
+    writesTo(domainCode, 'registryFile') === 0, writesTo(domainCode, 'registryFile') + ' 处');
+  check('C-j 反向：旧的双写形态喂给同一把尺必然判红',
+    writesTo("writeAtomic(state.registryFile, JSON.stringify(doc, null, 2));", 'registryFile') === 1, '抓到');
+  check('C-j 选择文档恰有一个写点（多写点=又一次互相覆盖的起点）',
+    writesTo(domainCode, 'choiceFile') === 1, writesTo(domainCode, 'choiceFile') + ' 处');
+
+  // 装配点：漏传 choiceFile 的后果不是报错而是「面板设了手动源、下次启动静默回到 auto」，
+  // 所以判据按「每个 new DistributionManager( 都要带这个选项」枚举，而不是数已知站点个数。
+  const sites = [];
+  (function walkJ(dir) {
+    for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+      if (e.name === 'node_modules' || e.name === '.git') continue;
+      const p = path.join(dir, e.name);
+      if (e.isDirectory()) walkJ(p);
+      else if (e.name.endsWith('.js')) {
+        const src = stripComments(fs.readFileSync(p, 'utf8'));
+        let i = -1;
+        while ((i = src.indexOf('new DistributionManager(', i + 1)) >= 0) {
+          sites.push({ p: path.relative(ROOT, p), block: src.slice(i, i + 900) });
+        }
+      }
+    }
+  })(path.join(ROOT, 'src'));
+  const missing = sites.filter((s) => !/registryChoiceFile\s*:/.test(s.block)).map((s) => s.p);
+  check('C-j 装配点数量非零（否则本判据是空过滤）', sites.length >= 2, sites.length + ' 处');
+  check('C-j 每个 DistributionManager 装配点都注入选择文档', missing.length === 0, missing.join(' | ') || sites.length + '/' + sites.length);
+}
+
+// -- C-k：壳投放的测速证据只在「新鲜 + 覆盖全部候选 + 逐源过形态闸」时被采用 --
+//   采用它的唯一理由是省一次全量网络往返；条件松一点就会出现「面板显示一个源、下载用另一个」，
+//   所以三条拒因各钉一条，且必须钉住「不采用时回退自测」而不是直接判死。
+{
+  const os = require('node:os');
+  const policies = require(path.join(ROOT, 'src', 'platform', 'distribution', 'policies.js'));
+  const now = 1_700_000_000;
+  const A = 'https://a.example', B = 'https://b.example';
+  const ms = (ageA, ageB) => [
+    { origin: A, ok: true, latencyMs: 30, checkedAt: now - ageA },
+    { origin: B, ok: true, latencyMs: 80, checkedAt: now - (ageB === undefined ? ageA : ageB) },
+  ];
+  const ok = policies.shellProbeResults([A, B], ms(10), now, 600);
+  check('C-k 新鲜且全覆盖的证据被采用，可达优先按延迟排序并标注来源',
+    ok && ok.length === 2 && ok[0].origin === A && ok[1].origin === B
+      && ok.every((r) => r.from === 'shell-contract'), JSON.stringify(ok));
+  check('C-k 尾斜杠/空白不影响匹配（证据与候选按同一基址归一）',
+    policies.shellProbeResults([A + '/', ' ' + B], ms(10), now, 600) !== null, '命中');
+  check('C-k 证据过期不采用（上次谁最快不等于现在谁最快）',
+    policies.shellProbeResults([A, B], ms(601), now, 600) === null, 'null');
+  check('C-k 只覆盖部分候选不采用（否则面板逐源卡缺一半而没人知道为什么）',
+    policies.shellProbeResults([A, B, 'https://c.example'], ms(10), now, 600) === null, 'null');
+  check('C-k 反向：证据里夹带凭证的基址不采用（采用文件内容前仍过同一道形态闸）',
+    policies.shellProbeResults(['https://u:p@a.example', B],
+      [{ origin: 'https://u:p@a.example', ok: true, latencyMs: 1, checkedAt: now },
+       { origin: B, ok: true, latencyMs: 2, checkedAt: now }], now, 600) === null, 'null');
+  check('C-k 全不可达的新鲜证据仍算「测过」（不重复测速，诊断照落）',
+    (function () {
+      const r = policies.shellProbeResults([A, B],
+        [{ origin: A, ok: false, error: 'HTTP 502', checkedAt: now },
+         { origin: B, ok: false, error: '超时', checkedAt: now }], now, 600);
+      return !!r && r.length === 2 && r.every((x) => !x.ok);
+    })(), 'ok');
+  check('C-k 无证据回退 null 而不是空数组（调用方据此决定是否自测）',
+    policies.shellProbeResults([A], [], now, 600) === null
+      && policies.shellProbeResults([], ms(1), now, 600) === null, 'null');
+
+  // 端到端：采用成立时选源必须**一个请求都不发**（这是采用壳证据的全部理由），证据过期则必须
+  //   回到自测。两种情形都由假 registry 计数证明：hits 才是「有没有走网络」的直接证据，
+  //   只看 source 会放过「标着 shell-probe 却偷偷重测一次」的实现。
+  _asyncGates.push(async () => {
+    const http = require('node:http');
+    const { DistributionManager } = require(path.join(ROOT, 'src', 'platform', 'distribution', 'index.js'));
+    let hits = 0;
+    const server = http.createServer((req, res) => {
+      hits++; res.writeHead(200, { 'content-type': 'application/json' }); res.end('{"name":"dsh-e2e-pkg"}');
+    });
+    await new Promise((r) => server.listen(0, '127.0.0.1', r));
+    const originK = 'http://127.0.0.1:' + server.address().port;
+    // 两个带 path 的镜像：国内镜像常态，也顺带钉住「证据与候选要先按同一基址归一再比对」。
+    const KA = originK + '/ka', KB = originK + '/kb';
+    const tmpK = fs.mkdtempSync(path.join(os.tmpdir(), 'npres-k-'));
+    const contractK = path.join(tmpK, 'registry.json');
+    const writeContract = (age) => {
+      const sec = Math.floor(Date.now() / 1000);
+      fs.writeFileSync(contractK, JSON.stringify({
+        schema: 3, writtenBy: 'shell@1.2.9', catalog: [KA, KB],
+        probe: { kind: 'ping', timeoutMs: 1000 },
+        measurements: [
+          { origin: KA, ok: true, latencyMs: 400, checkedAt: sec - age },
+          { origin: KB, ok: true, latencyMs: 90, checkedAt: sec - age },
+        ],
+      }));
+    };
+    try {
+      writeContract(0);
+      const dmK = new DistributionManager({ registryFile: contractK, registries: [KA] });
+      const selK = await dmK.selectRegistry(true);
+      check('C-k 行为：证据齐全时直接采纳并按壳的延迟排序，且零请求（采用证据的意义所在）',
+        selK.source === 'shell-probe' && selK.origin === KB && selK.ordered[0] === KB
+          && selK.latencyMs === 90 && hits === 0,
+        JSON.stringify({ source: selK.source, origin: selK.origin, latencyMs: selK.latencyMs, hits }));
+      writeContract(7200);
+      dmK._contractLoadedAt = 0; // 越过契约重载 TTL：等价于壳在运行中重投了一份过期证据的契约
+      const selK2 = await dmK.selectRegistry(true);
+      check('C-k 反向：证据过期就自己重测（真的发出请求，而不是拿两小时前的结论糊弄面板）',
+        selK2.source !== 'shell-probe' && hits > 0, JSON.stringify({ source: selK2.source, hits }));
+    } finally {
+      fs.rmSync(tmpK, { recursive: true, force: true });
+      // undici 池化 keep-alive 套接字：只 close() 要等空闲超时，测试进程跟着挂住（同 C-h 的教训）。
+      if (typeof server.closeAllConnections === 'function') server.closeAllConnections();
+      await new Promise((r) => server.close(r));
+    }
+  });
+}
+
+// -- C-m：跨仓同表 —— 内核与壳对「一个镜像源/一个非公网主机」必须逐条同答案（P0-C）--
+//   两仓语言不同（JS 的 WHATWG URL / Rust 的 tauri::Url），判据只能各写一遍，
+//   所以答案由这张共享表钉死：表若分叉，先红在这里与壳的 golden vectors。
+//   真实分叉案例：127/8 整段与 0/8，壳（Rust is_loopback/is_unspecified）判非公网、
+//   内核（只写了 127.0.0.1 与 0.0.0.0）放过 127.0.0.2 —— 于是同一份契约两侧选源结论不同。
+{
+  const ref = require(path.join(ROOT, 'src', 'platform', 'distribution', 'registry-ref.js'));
+  // 与壳 mirror.rs::registry_base_golden_vectors 同表（逐条照抄，改动必须同步改两处）。
+  const accepted = [
+    ['https://registry.npmmirror.com', 'https://registry.npmmirror.com'],
+    ['  https://registry.npmmirror.com/  ', 'https://registry.npmmirror.com'],
+    ['https://repo.huaweicloud.com/repository/npm/', 'https://repo.huaweicloud.com/repository/npm'],
+    ['https://mirrors.cloud.tencent.com/npm', 'https://mirrors.cloud.tencent.com/npm'],
+    ['https://x.example/a//', 'https://x.example/a'],
+    ['http://192.168.1.10:4873', 'http://192.168.1.10:4873'],
+    ['http://localhost:4873', 'http://localhost:4873'],
+  ];
+  const rejected = [
+    '', '   ', 'not-a-url', 'ftp://mirror.example/pub',
+    'https://user:pass@registry.example.com', 'https://registry.example.com?token=1',
+    'https://registry.example.com/doc/#frag', 'https://registry.example.com /npm',
+  ];
+  const acceptedBad = accepted.filter(([raw, want]) => {
+    const p = ref.parseRegistryBase(raw);
+    return !(p.ok && p.base === want);
+  }).map(([raw]) => raw);
+  check('C-m 形态表·合法基址逐条过闸且归一结果相同（含带 path 的国内镜像与端口）',
+    accepted.length === 7 && acceptedBad.length === 0, acceptedBad.join(' | ') || '7/7');
+  const rejectedBad = rejected.filter((raw) => ref.parseRegistryBase(raw).ok);
+  check('C-m 形态表·非法基址逐条被拒（凭证/查询串/片段/空白/协议）',
+    rejected.length === 8 && rejectedBad.length === 0, rejectedBad.join(' | ') || '8/8');
+  // 表若非空转：把一条已知非法的写法喂给判据，它必须给出「拒」且带得出拒因。
+  const credBase = ref.parseRegistryBase('https://u:p@r.example.com');
+  check('C-m 反向：凭证基址被这把尺真的判拒（表不是恒真）', credBase.ok === false, JSON.stringify(credBase.ok));
+  check('C-m 反向：判拒时给出可读拒因（面板要能解释为什么这个源不能用）',
+    !!credBase.violation, credBase.violation || 'null');
+
+  // 与壳 mirror.rs::private_host_literal_golden_vectors 同表。
+  const privateHosts = [
+    '127.0.0.1', '127.0.0.2', '10.1.2.3', '172.16.0.1', '192.168.1.10',
+    '169.254.169.254', '100.64.1.2', '100.127.0.1', '0.0.0.0', '0.1.2.3',
+    '224.0.0.1', '239.1.2.3', 'localhost', 'verdaccio.internal', 'nas.local', 'intranet.home.arpa',
+  ];
+  const publicHosts = [
+    'registry.npmmirror.com', 'cdn.jsdelivr.net', '1.1.1.1', '8.8.8.8',
+    '172.32.0.1', '100.128.0.1', '169.253.1.1',
+  ];
+  const leaked = privateHosts.filter((h) => ref.hostViolation(h) === null);
+  check('C-m 主机表·回环/RFC1918/链路本地/CGNAT/组播/保留段与特殊后缀全部判非公网',
+    privateHosts.length === 16 && leaked.length === 0, leaked.join(' | ') || '16/16');
+  const overreach = publicHosts.filter((h) => ref.hostViolation(h) !== null);
+  check('C-m 主机表·公网地址不被误判（172.32 与 100.128 是边界外，砍掉等于杀掉镜像）',
+    publicHosts.length === 7 && overreach.length === 0, overreach.join(' | ') || '7/7');
+  const ipv6Bad = ['::1', 'fe80::1', '[::1]', '[fd00::1]', 'intranet', '']
+    .filter((h) => ref.hostViolation(h) === null);
+  check('C-m 主机表·IPv6 整族、单标签短名与空主机一律非公网信任集',
+    ipv6Bad.length === 0, ipv6Bad.join(' | ') || '6/6');
+  check('C-m 主机表·大小写归一（配置原文可能是大写）',
+    ref.hostViolation('LocalHost') !== null && ref.hostViolation('LOCAL.INTERNAL') !== null, '拒');
+
+  // 两把尺的分工与壳一致：形态尺不含主机闸（局域网 Verdaccio 是正当的目录条目），
+  // 主机闸只在「远端替我们选主机」处施加（跳转目标、写入口）。每条只测一个子句并回显判据值。
+  check('C-m 形态尺不内嵌主机闸：私网基址在形态上合法（与壳 registry_base 同答案）',
+    ref.parseRegistryBase('http://192.168.1.10:4873').ok === true,
+    JSON.stringify(ref.parseRegistryBase('http://192.168.1.10:4873').violation));
+  check('C-m 主机闸独立可拒：同一主机交给 hostViolation 仍判非公网',
+    ref.hostViolation('192.168.1.10') !== null, ref.hostViolation('192.168.1.10') || 'null');
+  const hopPublic = ref.targetHostViolation('https://cdn.example.com/a.tgz', 'https://api.example.com/x');
+  check('C-m 跳转复验·跨主机跳到公网 CDN 放行（镜像站常态，一刀切会把健康镜像判死）',
+    hopPublic === null, JSON.stringify(hopPublic));
+  const hopSame = ref.targetHostViolation('https://api.example.com/y/a.tgz', 'https://api.example.com/x');
+  check('C-m 跳转复验·同主机跳转放行', hopSame === null, JSON.stringify(hopSame));
+  const hopPrivate = ref.targetHostViolation('http://127.0.0.2/a.tgz', 'https://mirror.example.com/x');
+  check('C-m 跳转复验·跨主机跳到回环段拒绝（127/8 整段，不只 127.0.0.1）',
+    hopPrivate !== null, JSON.stringify(hopPrivate));
+  const hopCred = ref.targetHostViolation('https://u:p@host.example.com/a.tgz', 'https://h.example.com/x');
+  check('C-m 跳转复验·跳转目标携带凭证拒绝', hopCred !== null, JSON.stringify(hopCred));
 }
 
 // -- 反向：解析结果确实可执行（本机验证，非 Windows 分支）--

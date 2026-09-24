@@ -56,7 +56,7 @@ async function probeOrigin(state, origin) {
 function registryOrigins(state) {
   const seen = new Set();
   const out = [];
-  for (const raw of policies.effectiveOrigins(state.registryConfig, state.defaultRegistries)) {
+  for (const raw of policies.effectiveOrigins(state.registryConfig, state.contract, state.defaultRegistries)) {
     const parsed = ref.parseRegistryBase(raw);
     const base = parsed.ok ? parsed.base : ref.normalizeBase(raw);
     if (seen.has(base)) continue;
@@ -76,6 +76,18 @@ async function probeAllOrigins(state, origins) {
   return results;
 }
 
+/** 逐源结论优先采用壳投放的测速证据（与内核同一探测规格、同一轮测完）：命中就省掉一次全量网络
+ *  往返，面板首屏不用转圈。采用条件由 policies.shellProbeResults 把关（新鲜 + 覆盖全部候选 +
+ *  逐源过形态闸），任何一条不满足就回退自测 —— 自测才是真相，证据只是加速。 */
+async function probeOrAdopt(state, origins) {
+  const c = state.contract;
+  if (c && c.ok) {
+    const adopted = policies.shellProbeResults(origins, c.measurements, Math.floor(Date.now() / 1000));
+    if (adopted) return adopted;
+  }
+  return probeAllOrigins(state, origins);
+}
+
 /** 排成消费序列：primary 第一，其余按延迟，非法基址一律不入选。
  *  primary 是「本次该用的那一个」，序列是「取不到时顺延的顺序」—— 两者必须同源，
  *  否则面板显示的源和实际下载的源会再次分叉。 */
@@ -92,12 +104,12 @@ function orderFor(primary, origins, results) {
 
 /** 选源。返回 {origin, ordered, source, manual, probes}：origin=本次用的一个（全不可达时取候选首位
  *  并留下探测结论，交消费阶段顺延），ordered=消费阶段按序尝试的候选，probes=逐源结论（必须保留，
- *  「不可达」要能指名是哪个源、为什么）。
+ *  「不可达」要能指名是哪个源、为什么）。source 取值 manual | shell-probe | probe | unreachable。
  *  manual 的语义从「短路一切探测、只用这一个」改为「置顶这一个，仍测速、仍回退」—— 旧语义下面板
  *  一旦固定成死源就再也拿不到任何诊断，且延迟列全空。 */
 async function selectRegistry(state, force) {
-  // 契约必须能重载：壳会在运行中重写 registry.json（catalog/probe/selected/mode）。内核进程若
-  //   只看启动瞬间的契约，会出现「两侧选源不一致」与「手动设了不生效」。
+  // 契约与选择文档都要能重载：壳会在运行中重写 registry.json（catalog/probe/measurements），面板
+  //   也会改 mode/手动源。内核进程若只看启动瞬间的状态，会出现「两侧选源不一致」与「手动设了不生效」。
   config.reloadContractIfStale(state);
   const rc = state.registryConfig || {};
   const origins = registryOrigins(state);
@@ -112,36 +124,14 @@ async function selectRegistry(state, force) {
   if (!force && cached && cached.checkedAt && (now - cached.checkedAt) < 30 * 60 * 1000) {
     return cached;
   }
-  // 优先采用壳投放的选择结果（壳已完成同轮测速，且用同一探测规格）：正常路径零重复网络。
-  // 但采用前必须过同一道基址闸：壳的目录允许基址带路径，而历史契约里也可能留下当时合法、
-  // 如今内核不认的形态 —— 不校验就直接采用，等于把选源正确性寄托在对方不发新版。
-  const c = state.contract;
-  if (!force && !manual && c && c.ok && c.selected) {
-    const age = Math.floor(Date.now() / 1000) - c.selected.checkedAt;
-    const adopted = ref.parseRegistryBase(c.selected.origin);
-    if (age >= 0 && age < 30 * 60 && adopted.ok) {
-      const origin = adopted.base;
-      state.selectedRegistry = {
-        origin, ordered: orderFor(origin, origins, null), source: 'shell', manual: false,
-        checkedAt: now, latencyMs: Number.isFinite(c.selected.latencyMs) ? c.selected.latencyMs : null,
-        probes: [{ origin, ok: true, latencyMs: c.selected.latencyMs, error: null, from: 'shell-contract' }],
-      };
-      if (state.events) {
-        try { state.events.append('dist_registry_selected', { origin, source: 'shell-contract' }); } catch { /* 事件失败不阻断 */ }
-      }
-      return state.selectedRegistry;
-    }
-    if (!adopted.ok && state.logger && state.logger.warn) {
-      state.logger.warn('dist: 契约 selected 基址非法，改为自行测速（' + adopted.violation + '）');
-    }
-  }
-  const results = await probeAllOrigins(state, origins);
+  const results = await probeOrAdopt(state, origins);
   const firstReachable = results.find((r) => r.ok);
+  const fromShell = results.length > 0 && results.every((r) => r.from === 'shell-contract');
   const primary = manual ? manualBase : ((firstReachable && firstReachable.origin) || null);
   const selected = {
     origin: primary,
     ordered: orderFor(primary, origins, results),
-    source: manual ? 'manual' : (firstReachable ? 'probe' : 'unreachable'),
+    source: manual ? 'manual' : (firstReachable ? (fromShell ? 'shell-probe' : 'probe') : 'unreachable'),
     manual,
     checkedAt: firstReachable || manual ? now : null, // 全不可达不缓存坏选择：下次调用仍会重测
     latencyMs: (firstReachable && firstReachable.origin === primary) ? firstReachable.latencyMs : null,
@@ -197,6 +187,8 @@ async function registryInfo(state) {
     // 预设 = 壳投放的目录；契约不可用时为空数组，UI 应展示 candidates。
     presets: (c && c.ok) ? c.catalog : [],
     catalogSource: (c && c.ok) ? (c.writtenBy || 'shell') : 'fallback',
+    // 契约 schema 必须可见：v2（选择字段还在契约里）与 v3（各写各的文件）在诊断时是两回事。
+    contractSchema: (c && c.ok) ? c.schema : null,
     latencyMs: sel.latencyMs || null,
     checkedAt: sel.checkedAt || null,
     manual: !!sel.manual,

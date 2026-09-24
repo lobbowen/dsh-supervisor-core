@@ -4,6 +4,34 @@
 格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，
 版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [未发布]
+
+### 镜像契约 schema3 与两文件所有权拆分（P0-C，跨仓与桌面壳同批）
+
+面板上「镜像源一个都不亮、取不到版本」的另一半病根在**两份配置的所有权**：契约
+`registry.json` 里既住壳的目录（catalog/probe）又住内核的选择（mode/origins/manualOrigin），
+两个写者只能互相让步 —— 内核每次保存都要「读回原文、只覆盖自己那三键」，而壳一旦读到
+`mode=manual` 就**干脆不再重写整份契约**。后果是用户在面板固定过一次源之后，镜像目录与探测
+规格永久停在那一刻：新镜像上线、目录里某个源死掉，内核都再也拿不到。
+
+- 按「谁写哪份」拆成两份：`registry.json` 壳有、内核**只读**（schema3 只剩
+  catalog/probe/measurements）；`registry-choice.json` 内核有、**唯一写者**
+  （mode/manualOrigin/origins + 自己的 schema 与 updatedAt）。两份各自落盘，两个让步一起删掉。
+- 壳的证据采用条件写在 `policies.shellProbeResults`：新鲜（30 分钟窗口）+ 覆盖本轮**全部**候选
+  （按归一基址比对）+ 逐源过同一道形态闸，三条任一不满足即回退内核自测 —— 采用它的唯一理由是
+  省一次全量网络往返，条件松一点就会出现「面板显示一个源、下载用另一个」。
+- 升级上来的第一次载入做一次性迁移：旧契约里内核当年写下的 manual 意图接进选择文档并**当轮落盘**
+  （否则壳升到 schema3 把那些字段删掉后就再无来源）。
+- 跨仓同表钉死「一个镜像源到底是什么」：内核 `test/npm-resolution-test.js` 的 C-m 与壳
+  `mirror.rs` 的 golden vectors 是同一张表（形态表 + 私网主机表 + 跳转复验）。真实分叉案例：
+  127/8 与 0/8 —— Rust 的 `is_loopback` 认整段、内核只写了 127.0.0.1，同一份契约两侧答案不同。
+- 面板 `/dist/registry` 只往响应里加事实：`source` 增加 `shell-probe` 一档、回显 `contractSchema`
+  （v2 与 v3 在排障时是两回事：选择字段是否还住在契约里）。
+- 门禁随所有权改锚：`J-j` 由「内核写 registry.json 要保留壳字段」改为「内核一个字节都不写壳有的
+  契约」，并补行为级证据（壳文件逐字节不变 + 选择文档不夹带 catalog/probe）。
+- 未在本批处理：壳探测传输仍走 ureq 默认跟随跳转（内核侧已是逐跳复验的有界传输，两侧对齐在下一批）；
+  HTTP 层超时与 npm 长动作时长的口径冲突。
+
 ## [0.1.6-BETA.9]（2026-09-24）
 
 ### 安装/卸载执行口收口（P0-B）：同一次 npm 动作不再有两套执行方式
@@ -63,7 +91,7 @@
   「镜像源全挂」与「确实没有更新」无法区分，UI 会把前者显示成后者。
 - 9 处选源/取版本消费者迁移（app/native、instance 安装与升级、plugin cli/market/updater、router pkg-cache/proxy/apps-registry），
   只要「本次用哪个源」的走 `registryOrigin`，需要顺延序列或失败原因的走 `selectRegistry`/`fetchNpmLatest`；
-  安装路径里手工拼 `npm_config_registry` 的死 env 清除，镜像注入只��� `runNpmInstall` 负责。
+  安装路径里手工拼 `npm_config_registry` 的死 env 清除，镜像注入只由 `runNpmInstall` 负责。
 - 面板响应只做加法：`/dist/registry` 新增 `ordered`/`source`/`registries`（逐源形态与判定），
   `RegistryCard` 在无延迟处以 title 显示拒因（非法基址与不可达是两种处置）。
 - 按 DF-2（单文件 ≤300 行）把分发层再切两刀：`registry-config.js`（契约载入与「谁的字段谁写」的落盘）、
@@ -93,7 +121,7 @@
 本地缓存与 registry 前置缓存里都按 `max-age=300` 复用，于是每一轮重试都读回首那份「尚无此版本」的元数据，
 重试预算等于空转（末轮从起 npm 到报错只用了约 0.2 秒，即缓存命中的直接证据）。
 
-- `release/scripts/install-smoke-core.sh`：registry 形态的装命令带 `--prefer-online`（实测该旗标会��请求
+- `release/scripts/install-smoke-core.sh`：registry 形态的装命令带 `--prefer-online`（实测该旗标会让请求
   绕过前置缓存，`cf-cache-status` 由 HIT 转 MISS）；本地目录形态不带，避免把无谓的网络往返塞进 build job 的冒烟。
 - `.github/workflows/build.yml` 的 `published-smoke`：重试窗口由 6 轮 x 45 秒（270 秒，短于缓存生命周期）
   改为 10 轮 x 75 秒（750 秒）；且**只对「registry 看不到该版本」这一类失败重试**，装上了却挂在
@@ -133,7 +161,7 @@
   死 hook）、`ctl/facades.js` 的 `_makeCtlFacade`、`audit/orphan-scan` 的 host 兼容外壳（12 项惰性 deps
   与 `collaborators.js` 同一语义维护两遍）、`providers/model.js` 与 `policies/freeze.js` 各一处恒假的
   `selectedProxyKeyId` 读分支（`store.js` 那处是旧持久化数据的兼容迁移入口，保留）。
-- **`publish-core.sh` ��� `--all` 自递归发布块**：它在单个 runner 内把四平台各发一遍，与「所有发布仅 CI
+- **`publish-core.sh` 的 `--all` 自递归发布块**：它在单个 runner 内把四平台各发一遍，与「所有发布仅 CI
   各 runner」的硬标准直接矛盾，且没有任何调用方传该开关。
 - 取证推翻的一条审计结论：`_orphanAudit` 被标为死代码——**实现体不能删**（`control/scheduler.js` 是真实
   消费点，且被 GD-6 钉住覆盖面），本批只删无人调用的兼容外壳。
@@ -196,7 +224,7 @@ B2 状态与意图单源（PR #39）。内核运行时依赖仍为 0；验证全
 审计的核心错位：同一事实存在两处落点（意图、端口账、退避计数），两边都能「对一半」，
 而治理决策还按实例数乘法放大。
 
-- **B2-1 ���箱运行意图第二落点废止**：`inst.state.desired` 整体退役（意图 = guardian 旗标 ×
+- **B2-1 沙箱运行意图第二落点废止**：`inst.state.desired` 整体退役（意图 = guardian 旗标 ×
   启停动作本身），`.state.desired` 写口全域清零（GD-7 执法），model 仅留 `delete` 一次性残留剔除口。
 - **B2-2 guardian 退出目录面**：申报不带、`createEntry` 不物化、目录面三文件去注释零 guardian token
   （GD-1 申报/运行期/源码三层）；权威只在 `dsh-main.json` / `inst.guardian`，消费者直读源。
@@ -207,7 +235,7 @@ B2 状态与意图单源（PR #39）。内核运行时依赖仍为 0；验证全
   旧键清理由别名字典驱动（`getConfigAliases`），仅当新旧键都在盘上才删旧键。
 - **B2-5 端口第二本账退场**：`ports-lan.json` 废止并入 `ports.json` 单本账（启动期按 owner 前缀
   一次性迁移 `relay:*`，幂等）；注册表写口/冲突判读口按 mtime+size 指纹自动对时（分配锁内再对一次），
-  陈旧快照不再抢注「已配置但当前停止」的静默端口、全量覆盖不再丢��（ports-claim 补真跨进程夹具）；
+  陈旧快照不再抢注「已配置但当前停止」的静默端口、全量覆盖不再丢写（ports-claim 补真跨进程夹具）；
   实例启动对配置端口被他方登记即时显式拒绝 `PORT_TAKEN:<by>`，不等 systemd bind 失败。
 - **B2-6 五项小收口**：journal 令牌回填加 `_attachGen` 世代守卫（迟到死令牌不再在 detach 后回灌）；
   OAuth 回调/浏览器监视按 `_ccLoginRound` 轮次比对，旧轮迟到回调一律 410（旧凭据绝不注入新轮）；
@@ -240,7 +268,7 @@ B2 状态与意图单源（PR #39）。内核运行时依赖仍为 0；验证全
 
 ### ports.json 的 `supervisor-api` 立成同 role 唯一（KI1）
 
-登记表以端口���为键，`EADDRINUSE` 避让成功时新端口是**追加**记录；旧记录只有
+登记表以端口号为键，`EADDRINUSE` 避让成功时新端口是**追加**记录；旧记录只有
 `release(prev,'system:supervisor-api')` 真生效才消失，而那个调用被 `catch {}` 包住且忽略返回值。
 留两条时「按 role 取号」的两种读法可以给出不同答案，其中一个是没人监听的端口 —— 而壳读的正是这个文件。
 
@@ -293,7 +321,7 @@ iframe 被 CSP 拒绝不触发 `error` 事件，前端拿不到失败信号，�
 
 - 读侧：`app/daemons/supervise.js` 的保活判据、`app/audit/orphan-scan.js` 的游离判据只看持久化/结构性意图本身。
 - 写侧补齐分叉口：`ManagedLifecycle.start()` 的异常分支与 `ok:false` 同语义复位 `desired`；
-  adapters 缺 `setRouterRunning` 写口时显式拒绝，���再退回直调内嵌 router
+  adapters 缺 `setRouterRunning` 写口时显式拒绝，不再退回直调内嵌 router
   （内嵌回退本就在 `setRouterRunning` 内部，能力零损失）。
 - 停止路径的两处裸赋值改走早就存在的 `wantStopped()` 出口（与启动路径的 `wantRunning()` 对称）。
 - 判据：GD-6 在去注释源码上断言两分支与两条 want 判据不读 `desired`（含正反合成样本）；
@@ -343,7 +371,7 @@ linux 的 unit 与 win32 的守卫任务在自启路径上无人看守。新增 
 
 现场（Windows 真机 + 壳 1.2.2）：壳直接拉起 `node .../bin/dsh-supervisor`，守卫打印
 「已有守卫实例在运行（锁 ...guard.lock），本进程退出」并以 1 退出，而端口始终不可达 ——
-让位对象是一个**不存在的**守卫，壳端只���报「启动超时（端口不可达）」。
+让位对象是一个**不存在的**守卫，壳端只能报「启动超时（端口不可达）」。
 
 - 判据此前只有 `process.kill(holder, 0)`：Windows 上 pid 会复用，被杀进程句柄未释放时该调用同样成功，
   EPERM 也一律当存活；而锁里只有一个 pid，没有任何身份可比。
@@ -361,7 +389,7 @@ linux 的 unit 与 win32 的守卫任务在自启路径上无人看守。新增 
 
 ### 全仓注释压缩：论文式长块清零，注释行 6369 降至 4394（-31%）
 
-- **规模**：323 个源文件（285 ��被改，28 个本已合规）注释行 6369 降至 4394，净删 2008 行；
+- **规模**：323 个源文件（285 个被改，28 个本已合规）注释行 6369 降至 4394，净删 2008 行；
   含尾随注释的行占比 21.0% 降至 15.8%（非空代码行 25955 不变）。
 - **块形**：注释块长度分布改为 1 行 1759 / 2 行 571 / 3 行 307 / 4 行 143，**5 行及以上清零**
   （原 118 个长块全部拆解）。执行口径量化下发为「任意注释块 4 行内、文件头 3 行内」。
@@ -408,7 +436,7 @@ linux 的 unit 与 win32 的守卫任务在自启路径上无人看守。新增 
 - **模型**：每受管对象（main 与各沙箱）一份 `remoteMode: off|lan|wan`，是远程意图的唯一
   落盘字段。`frp.json` 只剩 frps 连接参数（`enabled` 总闸随三态废止：frpc 生命周期单一
   条件 = 是否存在 wan 意图）。legacy 磁盘态经 `legacyRemoteMode` 一次性推导（`true`+`true`
-  →wan、`true` →lan、其余 →off），首次写盘后旧键即��失，读侧不留双轨。
+  →wan、`true` →lan、其余 →off），首次写盘后旧键即消失，读侧不留双轨。
 - **端口**：公网口与 relay 口**恒同号**（`remotePort = wanPort`），不存在第二套端口分配，
   也没有 override 字段。绑定权威只在注册表（`byOwner` 复用）——关远程只停 server 不
   `releaseOwner`，重开自动复用同口；`inst.wanPort` 镜像字段删除，lan-state 协议不再带端口。
@@ -421,7 +449,7 @@ linux 的 unit 与 win32 的守卫任务在自启路径上无人看守。新增 
 - **API**：意图面收为 `POST /remote/{set-mode|set-token|frp-server|frp-install}`
   （`{ok:false}` 一律非 2xx，安全闸拒因如实回显）；状态面 `GET /lan-access`（remote 视图）
   `GET /remote/frp`。旧 `/lan/frp/*` 五条路由**不留兼容直接删**。`/native/settings` 白名单
-  收窄为仅 `guardian`，`/instances` 不再���饰任何远程字段（此前它另算一套 `lanUrl`，与
+  收窄为仅 `guardian`，`/instances` 不再装饰任何远程字段（此前它另算一套 `lanUrl`，与
   `projectRemoteView` 构成第二处访问判定来源，判定不一致即由此产生）。
 - **UI（与后端同批改，无半成品中间态）**：`LanPage` 一行一状态一开关——模式开关只在
   off/lan 间切换，wan 由「局域网 / 公网」分段控件选择，两者写同一 `remoteMode`；二维码
@@ -434,7 +462,7 @@ linux 的 unit 与 win32 的守卫任务在自启路径上无人看守。新增 
   `token-boundary` 的 `listLan` 白名单换为现役非机密字段并加 remote 视图结构判据；
   `domain-structure-gate` DG-14 写目标清单删 `setFrp`、增 `setRemoteMode`/`setRemoteToken`；
   `frp-resilience` R1 加「非 wan 意图不出隧道」与同号反向例；`lan-daemon` 集成测试不再硬编码
-  期望端口，改由 `ctl list` 回读实测绑定口（注册表权威��必然结果）。
+  期望端口，改由 `ctl list` 回读实测绑定口（注册表权威的必然结果）。
 - **事件**：`dsh_frp_changed`/`lan_frp_changed` 随总闸废止删除；新增
   `dsh_remote_changed`/`inst_remote_changed`（载荷 `mode`）与 `dsh_remote_token_changed`，
   令牌类事件只记 `tokenSet` 布尔（TK-5 零明文纪律）。
@@ -464,7 +492,7 @@ linux 的 unit 与 win32 的守卫任务在自启路径上无人看守。新增 
   滞留（等待区不是零存在），且 DEAD 态与 pid 字段互相矛盾（probe 子进程 error 只清 pid
   不改 status）。标准见 PROXY-LIFECYCLE-STANDARD.md（已入 README/standards 登记）。
 - **锁的旧形状 -> 新不变量**（拆迁逐项，判据同批落地）：
-  - `R1 常驻1+���>=80% 才补）备胎` -> **期望集恒为 在用1+预热1**，按 registeredAt 登记序
+  - `R1 常驻1+（>=80% 才补）备胎` -> **期望集恒为 在用1+预热1**，按 registeredAt 登记序
     （裁决 2）；pool.js 纯决策（ACTIVE_SLOTS/PREWARM_SLOTS 引擎常量），restart.js 消费执行。
   - `R2 selected/额度择优归属` -> **selected 提为在用、预热槽 sticky 留任**（裁决 4），
     退位者走停止仲裁回收、下一拍端口归零。
@@ -477,7 +505,7 @@ linux 的 unit 与 win32 的守卫任务在自启路径上无人看守。新增 
   - `prewarmAsync/needSpare/_switchBudgetMs/DEFAULT_MAX_HOT·WARM/proxyInstanceLimits/
     createPoolPolicy/residentAccount/stopInstanceIfAny` -> **全部删除**，零消费方；
     PG-4 判据从「maxHot/maxWarm 存在且被引用」反转为「假配置面零残留 + 门面 + 事件表」。
-  - `E6 DEAD 矛盾` -> probe 子进程 error 置 `pid=null + status=COLD`（COLD 可再拉起）��
+  - `E6 DEAD 矛盾` -> probe 子进程 error 置 `pid=null + status=COLD`（COLD 可再拉起），
     reconcile 对 DEAD 残留态收敛。`E11 孤儿记录` -> discard 钩子剪枝 instances + reconcile
     对残余孤儿补剪。
 - **测试拆迁**：reconcile-instance-test R1–R4/R9 按新契约重写（registeredAt 显式化、
@@ -493,7 +521,7 @@ linux 的 unit 与 win32 的守卫任务在自启路径上无人看守。新增 
   `decide()` 里 `alive > 0` 直接短路，真壳**永不**被拉起；`restartShell` 共用同一谓词，漏项还会
   让它把运维进程当壳 SIGKILL（同一缺陷此前已因内联弱过滤修过一次）。
 - **修法**：排除表提为 `domains/shell/core.js` 的 `HEADLESS_FLAGS`（冻结清单 + 由它生成正则），
-  与壳侧 `main.rs`「Tauri 初始化之前 exit」的分支一���对应；契约写进 `KERNEL-DAEMON-CONTRACT.md` D-9。
+  与壳侧 `main.rs`「Tauri 初始化之前 exit」的分支一一对应；契约写进 `KERNEL-DAEMON-CONTRACT.md` D-9。
   纯核心纪律不变（清单仍是零出度的无 IO 事实）。
 - **验证**：`test/shell-watchdog-test.js` 新增 W2-f/g/h（三个漏项各自被排除）、W2-i（清单可枚举
   且逐项生效）、W2-j 反空转（未登记的同名 flag 仍判为壳 ⇒ 证明 false 来自排除表而非名字没匹配）。
@@ -520,7 +548,7 @@ linux 的 unit 与 win32 的守卫任务在自启路径上无人看守。新增 
   （apps-registry 第二份删除），密钥仍只经 env（PG-6 不变）。
 - **机器牙齿**：CP-5..CP-8（域内零裸 process.kill、零 /proc 字面、负 pid 只在 os/process、
   零 .cmd/_npx 字面，各带反向合成）+ CP-9（门禁真读标准正文，锁三层职责与条款编号防漂移）；
-  CI 契约冒烟 P3-a..f 并入 `cross-platform-test.js`（假供应��真 spawn/探活/锚点归属/foreign
+  CI 契约冒烟 P3-a..f 并入 `cross-platform-test.js`（假供应商真 spawn/探活/锚点归属/foreign
   不误杀/终止端口释放/确认停止，四平台矩阵裁决）；D-6 监控判据断言同步改 carrier 形状。
 - **标准成文**：`PROXY-ISOLATION-STANDARD.md` 入册（L0/L1/L2 职责 + 禁项表 + 新增供应商纯 L2
   验收单），standards-uniqueness 登记（reads:true 经 CP-9 属实），README 索引与矩阵 C4 行同步。
@@ -551,7 +579,7 @@ linux 的 unit 与 win32 的守卫任务在自启路径上无人看守。新增 
 - **注释残留**：base.js「process-pool 子类」措辞改「能力方（mixin ctor 装配钩子）」；
   `usageOf` 基座 docstring 不再自称派生 warming（该派生已归 mixin 覆写）。
   contract.js `exempt` 登记面收敛：基座只剩 detectAccount 一个抽象占位，proxy.js 的
-  「DG-5c 继��� SCC」条目随 DG-4 归零作废删除。
+  「DG-5c 继承 SCC」条目随 DG-4 归零作废删除。
 - **测试面搬移补漏**：`router-circuit-breaker-test` 的 R-a/R-b/R-c/R-d 源码判据原读
   proxy.js，池方法已迁 mixin 后会静默假红/假绿——改读 process-pool.js（含 4 空格缩进的
   函数体闭合判据与沙箱求值取尾）；`probe-gate-and-ownership-test` 删除搬移后遗留的
@@ -566,7 +594,7 @@ linux 的 unit 与 win32 的守卫任务在自启路径上无人看守。新增 
 - 验证：node --check 全绿；静态门禁复跑（domain-structure DG-4=0、provider-gateway
   31/31、circuit-breaker 58/58、probe-gate 36/36、round13 53/53）。
 
-### 实例沙箱 W4 呈现定版：前端类型补齐 + 行展示配额/占用 + 档位如实标注（ARCHITECTURE-PLAN-instance-sandbox-governor���
+### 实例沙箱 W4 呈现定版：前端类型补齐 + 行展示配额/占用 + 档位如实标注（ARCHITECTURE-PLAN-instance-sandbox-governor）
 
 - **前端类型滞后补齐**（tsc 不会报这类缺口，故必须机器把尺）：`types.ts` 的 `InstanceState` 增
   `usage?: { memMb, cpuPct, at } | null`（后端 viewRow 自 W2 已产出）、新增 `SandboxBudget` 接口并挂到
@@ -615,7 +643,7 @@ linux 的 unit 与 win32 的守卫任务在自启路径上无人看守。新增 
 - 门禁/测试同步：判定性测试并入既有文件、**未新增链条目**——`platform-layer-portability-test`
   重写 X-3（dispatch 不变式 `kind === (hasSystemdRun ? 'systemd' : 'portable')` + `_testProviders`
   方法集对账），新增 X-3b（require.cache 注入假 pidlookup、空闲 PID 探测防真实信号，23 项语义断言）、
-  X-3c（真实��主拉起→监听→认领→停止闭环，每平台 runner 各跑一次）；`exec-return-contract` A4b/A5
+  X-3c（真实宿主拉起→监听→认领→停止闭环，每平台 runner 各跑一次）；`exec-return-contract` A4b/A5
   扩 setLimits 与分档不变式；`instance-state-test` 7A 扩 stop ctx、新增 7E（启动 ctx 同源、
   动态下发、不变不重复下发、supportsUnits 闸）；`capability-profile`、`four-platform-behavior-matrix`
   P-5、`platform-capability-audit` A2/A3、`cross-platform` 判据随 W3 事实翻转。
@@ -628,7 +656,7 @@ linux 的 unit 与 win32 的守卫任务在自启路径上无人看守。新增 
   的余量；占用达预留的 0.9 倍才按 `since`（启动时刻）先到先得领用突发，追加封顶 1 倍预留，
   内存软顶 `MemoryHigh = 0.9×MemoryMax` 随 `unitProps` 落单元属性（CPU 可抢占、不设突发）。
   目标值调整带迟滞：10% 死区内维持上轮值不动，跨死区单步最多增减 25%，防配额震荡。
-- **违规处置链**：内存连续 3 拍 / CPU 连续 5 拍超限判违规——先记��件 `inst_resource_violation`
+- **违规处置链**：内存连续 3 拍 / CPU 连续 5 拍超限判违规——先记事件 `inst_resource_violation`
   （带实际值/目标值），再 `stopUnit` 收割，最后走既有状态机 `restart` 进 BACKOFF 自愈；
   超限到重试上限仍归 FAILED（与崩溃链共用，不因放宽预算而静默清零）。采样缺失（探测失败、
   进程未起）一律重置违规计数——**无证据不判违规**；每拍只处置本实例，他实例由其自身拍负责。
@@ -640,7 +668,7 @@ linux 的 unit 与 win32 的守卫任务在自启路径上无人看守。新增 
   （linux 直读 /proc、darwin `ps` 表、win32 `Get-CimInstance` JSON；解析器为纯函数、文本夹具可测），
   单次采样 2s 有界且必须走 `exec.runOutAsync`（同步 execFileSync 会冻结监督拍整个 tick）；
   cpuPct 为两拍间 delta（单核=100），采样失败保留上轮缓存、绝不当零。
-- **接线与展示**：supervise 的 RUNNING 分支同拍完成「观测→决策→下发/处置���展示值」——
+- **接线与展示**：supervise 的 RUNNING 分支同拍完成「观测→决策→下发/处置→展示值」——
   配额变更写回 `state.allocation`（当前口径：展示值 + 下次启动生效；运行期 set-property 动态化属 W3，
   该口径已被下方 W3 段取代），
   实时占用写 `state.usage`（`viewRow` 透出）；`stop()` 清 usage 与运行期缓存。
@@ -656,7 +684,7 @@ linux 的 unit 与 win32 的守卫任务在自启路径上无人看守。新增 
 ### 实例沙箱 W1 地基纠偏：能力字段拆分 + 动态限额 + win32 布局（ARCHITECTURE-PLAN-instance-sandbox-governor）
 
 - **能力单字段混装修正**：`multiInstance` 废止，拆为 `sandboxLaunch: boolean`（能否运行实例舱）与
-  `sandboxEnforcement: 'cgroup'|'supervise'|'none'`（限额由��执行）两字段——合并声明会掩盖
+  `sandboxEnforcement: 'cgroup'|'supervise'|'none'`（限额由谁执行）两字段——合并声明会掩盖
   「mac/win 可跑舱、仅缺内核强制」的真实形状（C11–C14 拆行教训）。W1 期间三平台取值不变形：
   linux=launch/cgroup，darwin/win32/未知=false/none，无任何虚报。`sandbox.supported()`、
   `/env/status`、面板能力门、不支持文案全部改问新字段。
@@ -668,7 +696,7 @@ linux 的 unit 与 win32 的守卫任务在自启路径上无人看守。新增 
 - **win32 npm `-g --prefix` 布局修正**：依赖落点原硬编码 POSIX 形 `<install>/lib/node_modules`，
   win32 实为 `<install>/node_modules`——新增 `sandbox.nodeModulesDir/dshEntry` 按平台分派，
   启动命令、入口存在性检查、版本探测与测试夹具统一改走该推导（入口仍 node 直启 `lib/bin.js`，不经 `.cmd` 垫片）。
-- **隔离维度补齐**：沙箱实例独立 `TMPDIR=<根>/tmp`（win32 另设 `TMP/TEMP`；Linux 保留 PrivateTmp 双保险��；
+- **隔离维度补齐**：沙箱实例独立 `TMPDIR=<根>/tmp`（win32 另设 `TMP/TEMP`；Linux 保留 PrivateTmp 双保险）；
   实例根目录经 `fileProtect.ensurePrivateDir` 收紧（0700 / icacls），ensureDirs 一次到位。
 - 门禁/测试同步：`platform-capability-audit`（A1 枚举档位、A2 sandboxLaunch 实现产物含 governor、A3 显式 false+none）、
   `four-platform-behavior-matrix`（14 键规范清单 + enforcement 档位穷举）、`capability-profile`、`cross-platform`、
@@ -710,7 +738,7 @@ linux 的 unit 与 win32 的守卫任务在自启路径上无人看守。新增 
   `install.js::fetchNpmLatest` 只做 GET，无 `Authorization`），链上唯一凭据是 CI 发布步的 `NPM_TOKEN`；
   把「拉不到最新版」归因于换令牌会掩盖真实成因（`latest` tag 陈旧，即本节下一条 RC-6）。
   2026-09-21 逐源实测：四个平台包在五源均为 `latest = beta = 0.1.5-BETA.11`，`dist.tarball` 可取回。
-- ���布通道根因修复：**`latest` 不再只由「发布的是 RC」驱动**（`RELEASE-CHANNEL-CONTRACT.md` §2/RC-6、
+- 发布通道根因修复：**`latest` 不再只由「发布的是 RC」驱动**（`RELEASE-CHANNEL-CONTRACT.md` §2/RC-6、
   `release/scripts/publish-core.sh::reconcile_latest_tag`、门禁 `test/release-channel-gate-test.js` RC-G4-i..o）。
   旧口径下 BETA 档 `npm publish --tag beta` 之后再没人写 `latest`，而客户端选版链第 3 步只读 `latest`、
   第 4 步兜底又排除 `-BETA.` —— 两条相加的后果是「切档之后的全部版本对自动升级的机器不可达」
@@ -735,7 +763,7 @@ linux 的 unit 与 win32 的守卫任务在自启路径上无人看守。新增 
 ## [0.1.5-BETA.11]（2026-09-21）
 
 本版是 **AUDIT-2026-09-19 第 3/4/5 批全量落地**：B 类安全与生命周期（§G）、C 类健壮性 P2 全量 +
-§E.1/E.2/E.4 立项收口（§H）、注释纪律门��与 `--prefix` 闸对称性 + 插件域 killTree 收口 + `cred.sh`
+§E.1/E.2/E.4 立项收口（§H）、注释纪律门禁与 `--prefix` 闸对称性 + 插件域 killTree 收口 + `cred.sh`
 行为级测试（§I），逐条裁决登记于 `AUDIT-REPORT-2026-09-19.md`。同批含第 3 轮起的文档与产线残留纠正
 （3b…3g：把「做不到 / 没在做」写成「已具备」的假现状、结构判定假象、单平台构建旁路、一次性证据当现状）、
 注释纪律（CS-1 字符白名单 / CS-2 过程叙事禁用）与两仓主干的分支保护落成。内核运行时依赖仍为 0。
@@ -766,7 +794,7 @@ linux 的 unit 与 win32 的守卫任务在自启路径上无人看守。新增 
 
 | 文件 | 行 | 注释行 | 逻辑判断 |
 |---|---|---|---|
-| `src/domains/router/handlers/forward.js` | 324 -> 317 | 31 -> 24 | 单一��责（上游 IO + 重试循环 + 透传收口），重试循环长但线性，不拆 |
+| `src/domains/router/handlers/forward.js` | 324 -> 317 | 31 -> 24 | 单一职责（上游 IO + 重试循环 + 透传收口），重试循环长但线性，不拆 |
 | `src/app/control/registry.js` | 308 -> 287 | 83 -> 62 | 目录 CRUD + 持久化，调度已归 `heartbeat.js`，视图/查询/变更各一组，不拆 |
 | `src/app/main/process.js` | 302 -> 297 | 44 -> 39 | 一个方法 = 一次生命周期迁移（spawn/adopt/observe/restart/stop），不拆 |
 
@@ -779,7 +807,7 @@ linux 的 unit 与 win32 的守卫任务在自启路径上无人看守。新增 
 - 拆文件路线图：`registry.js` 两段「已拆到 managed-object.js / heartbeat.js（registry <=400）」——
   行数上限不是拆分理由，且导出面与 require 行本身就说明了归属。
 - 重复表述：`process.js` 头注与 deps 内两次写「等价于原经 this 的调用」、令牌脱敏两次写「journald 不留
-  明文」；`registry.js` 的崩溃字段单一副本与 guardian 归一各���两处（_load/_save、_load/update）重复。
+  明文」；`registry.js` 的崩溃字段单一副本与 guardian 归一各在两处（_load/_save、_load/update）重复。
   每处只保留一份。
 
 同批的一处代码清理：`forward-core.js` 组装 `createForwarder` 时传了 `canPersist`，而 `handlers/forward.js`
@@ -797,7 +825,7 @@ linux 的 unit 与 win32 的守卫任务在自启路径上无人看守。新增 
 `96DE3EF26F389F70` = 内置公钥）。按现状改写：
 
 - `CROSS-PLATFORM-BUILD-AND-UPDATE.md` §一 G3：原「自更新签名私钥至今未配置，所以可自更新只对非签名
-  路径成立」→ 签名链路**曾产线工作、现断供**：迁仓后新仓无 secret、本机无副本，故签��出存量客户端
+  路径成立」→ 签名链路**曾产线工作、现断供**：迁仓后新仓无 secret、本机无副本，故签不出存量客户端
   会接受的新产物（壳冻结在 1.1.11）；内核自更新走 npm + registry 完整性，不经 minisign，不受牵制。
 - 同文件 §八 C1（minisign 私钥丢失）：由「风险」改为**已成真**并给出证据链 —— 当年只做本机单点备份。
 - 同文件 §九 F2：「密钥本身仍缺失」限定为「**新仓**没有该 secret」，并注明旧仓曾配置、≤1.1.11 签名在线。
@@ -826,7 +854,7 @@ linux 的 unit 与 win32 的守卫任务在自启路径上无人看守。新增 
   2026-09-14 起 `build` 每次 push / PR 都跑，该理由消失；「四平台全由 CI 产出」是硬标准，
   设为 required 才由服务端兜住。`release`（内核）/ `publish`（壳）在 PR 上 `skipped`，**永不设 required**。
 - **审批数设 0**：放行裁决者是 CI，单人仓设 ≥1 会把「CI 绿后合入」变成死锁；保护的实际作用是
-  关掉不经 PR 的直推（`DEVELOPMENT-TRACK.md` §7 保留 2026-09-13 的���测：直推路径也评估 required）。
+  关掉不经 PR 的直推（`DEVELOPMENT-TRACK.md` §7 保留 2026-09-13 的实测：直推路径也评估 required）。
 
 登记维护规则：**改 `build.yml` 平台矩阵必须在同一次变更里同步 required contexts** —— 矩阵 job 显示名
 内嵌 `os/arch/bundles` 参数，旧语境永不出现即所有 PR 卡死。据此纠正：`DEVELOPMENT-TRACK.md` §7（含
@@ -842,7 +870,7 @@ V3、`release/runbooks/publish-and-verify.md` §0（改为「服务器端配置�
   用量读写散在 `forward-core.js`、流式成功路径不补做延后重启），并挂着改造前的行号锚点。
   三条**都已落地**：写权收敛为 `src/domains/router/store.js` 的唯一闸 `canPersist()`，
   用量读写进同一 store，延后重启由 `model/inflight.js` 发 `flushRestartPending` effect、
-  `handlers/forward.js` 统一���发。改写为事实 + 按当前实现重取锚点，并修正
+  `handlers/forward.js` 统一派发。改写为事实 + 按当前实现重取锚点，并修正
   `providers/base.js` 的抽象占位段区间。
 - `INCIDENT-2026-09-13-credential-overwrite.md` §6 把 `release-core.sh --publish` 列为「尚未过同类审计」的
   破坏性操作 —— 该脚本**已删除**。改为现役真实面：只有 `publish-core.sh --publish` 不可逆
@@ -865,7 +893,7 @@ V3、`release/runbooks/publish-and-verify.md` §0（改为「服务器端配置�
 - `release/runbooks/publish-and-verify.md`：`build-ui` 缺失的后果写成「直接跑 `npm test` 会得到 503」，
   在本机禁跑测试的硬标准下这是对不存在的动作下判据。改为「链上缺这一步 → **CI 的** `npm test` 得到 503」。
 - 同表的 `RELEASE-CHANNEL-CONTRACT.md` 行抄着「RC-1..6」，而正文在 A3-b 修复后已有 **RC-7**
-  （rollback 防降级下限）—— 索引抄编号必然再漂移��故改为指向正文 §3「关键不变量」表并声明不抄条数。
+  （rollback 防降级下限）—— 索引抄编号必然再漂移，故改为指向正文 §3「关键不变量」表并声明不抄条数。
   （`DG-1..DG-16` / `R1..R12` / `TK-1..8` / 能力矩阵 14 项 × 3 平台等其余索引计数已逐条复核为实。）
 
 另核三条无需改动的：`RELEASE-CHANNEL-CONTRACT.md` §5.4 说 `@dsh-sup/canary-allowlist` 尚未发布 ——
@@ -907,7 +935,7 @@ registry 实测 404，说法成立；`release/README.md` 与两份标准文档�
   `publish-core.sh` 缺产物时提示「请先构建：npm run build:launcher」、`release.sh` 结尾也如此建议。
   现把守卫**上移到参数解析之前**、覆盖全部调用形态（新增门禁 T2-a4 以「守卫在 while 之前」这一结构事实钉住，
   并配反向合成样本），三处提示与命令表同步改为「仅 CI 内」。
-  `README.md` 里仍以现在时态把 `npm run build:launcher` 当本机入��的三处（构建条目、平台生产分工条、
+  `README.md` 里仍以现在时态把 `npm run build:launcher` 当本机入口的三处（构建条目、平台生产分工条、
   单写入者节的发布条），以及 `RELEASE-STANDARD.md` §0 表格里只承诺「本地不得**全平台**构建」的那一行，
   一并改为「任何调用形态仅 CI 内」，并把门禁列指向 T2-a2 / T2-a4。
 - **分支保护假象**：`bump.sh` 成功后打印「master 有分支保护」，`DEVELOPMENT-TRACK.md` §7 一边写
@@ -932,7 +960,7 @@ registry 实测 404，说法成立；`release/README.md` 与两份标准文档�
 
 ### 文档纠正：以现在时态写着的假现状（第 3 轮残留清扫）
 
-- **指引本机跑测试��引导性最强的一条）**：`PLATFORM-CAPABILITY-MATRIX.md` §七「如何运行审计」直接给出
+- **指引本机跑测试（引导性最强的一条）**：`PLATFORM-CAPABILITY-MATRIX.md` §七「如何运行审计」直接给出
   `node test/…js # 任意平台可跑`，`RELEASE-STANDARD.md` §3 把 `ci-core.sh`（内含 `npm test` 与构建）、
   `build:launcher`、`publish:core` 列为本机入口 —— 全部与 `ACCEPTANCE-STANDARD.md` §0/§4 正面对撞。
   现逐条改为「仅 CI 内」，只读项（`verify:versions`、`cred.sh doctor`）保留本机可跑；
@@ -1010,7 +1038,7 @@ registry 实测 404，说法成立；`release/README.md` 与两份标准文档�
 - **单一解析口**：`platform/contract/runtime.js` 的 `npmBin()`（只回程序）换成 `npmLauncher()`，
   成对返回 `{ program, args, version, source }`；`read()` 补出 `npmVersion` / `nodeVersion` / `source` / `installedAt`。
   分发安装、原生管理（`app/native/npm.js::npmLaunch`，保留 `_npmBin`/`_npmBinArgs` 注入且「注入即接管整对」）、
-  环境探测三处消费者一律经该口��程序与前缀参数同源一次解析。
+  环境探测三处消费者一律经该口，程序与前缀参数同源一次解析。
 - **版本探测带上 args**：`env-catalog` 的 `whichVersion/cachedWhichVersion` 增加参数维（缓存键含 args），
   npm 条目改经解析口；不再退回裸 'npm'，也不再在契约指向的文件跑不通时静默退回 PATH 洗成「就绪」。
 - **三段事实对齐**：`/env/status` 的 `npm` 与 `node` 同构为 `{ detected, runtime, path }`
@@ -1048,7 +1076,7 @@ registry 实测 404，说法成立；`release/README.md` 与两份标准文档�
   macOS 上真实 home 解析成裸账号名而非绝对路径 -> `REAL_STORE` 变相对路径，
   `持久化-3` 判红或 R 组静默 SKIP（门禁在其本应守护的平台上空转）。
 - **文档纠错**：DEVELOPMENT-TRACK 与 release/README 曾把 `matrix.supportsProcessGroup()` 当作
-  进程组操作入口（照着写就会自组负 pid ��号），改指 `platform/os/process.killTree`；
+  进程组操作入口（照着写就会自组负 pid 信号），改指 `platform/os/process.killTree`；
   ACCEPTANCE-STANDARD §9 补第五把尺子；CREDENTIALS-STANDARD 的门禁标签由虚构的 C-1~C-9 改为
   脚本内真实可 grep 的 D / S / R / 持久化 标签，并删掉与自身「不固化条数」声明矛盾的「18 断言」。
 - **CI 取证（第一轮四平台同判红 + 一处隐藏红，裁决见 §I-9）**：本批的注释精简把 J-o 用**字符串**匹配的缺口块
@@ -1059,7 +1087,7 @@ registry 实测 404，说法成立；`release/README.md` 与两份标准文档�
   ACCEPTANCE-STANDARD §7 边界补该条、§10 增第 6 种失效形态「判据的对象可能是注释措辞」、
   §2 第 4 条与 §5 补「链截断后按未执行段做只读复算」的口径。
 - **第二轮取证抓到的产品缺陷（windows-only，裁决见 §I-10）**：`cred.sh backup` 的「禁把凭据备份进
-  ephemeral 实例子目录」闸用 POSIX glob 匹配，Windows 的反斜杠���径整体漏判（闸太窄，与第 3 批那次
+  ephemeral 实例子目录」闸用 POSIX glob 匹配，Windows 的反斜杠路径整体漏判（闸太窄，与第 3 批那次
   字符集闸误杀 win32 盘符路径互为反向）。改为归一分隔符后再判，判据与文案不变；
   夹具补一条以反斜杠合成路径为目标的跨平台判据，并把 D-10 的退出码与理由文案拆成两条独立断言。
 - **第三轮取证的夹具假失败（linux-only，裁决见 §I-11）**：`p2p-api-test` 的 P9 把自身 20s 轮询上限当成
@@ -1094,7 +1122,7 @@ registry 实测 404，说法成立；`release/README.md` 与两份标准文档�
   出示（重启/换令牌即会话全失效）。
 - **平台层**：日志与事件写放大治理（记账 + 节流，轮转即时落 meta）；`reclaimByCmdMark` 空参双闸
   fail-closed；可执行判定补 X_OK（0644 半截安装不再判「已安装」）；浏览器降级链改 spawn 前预检
-  （ENOENT 是异步事件，旧递归返回值被丢弃）；镜像探测加宿主��持闸 + platformTag 空值守卫；
+  （ENOENT 是异步事件，旧递归返回值被丢弃）；镜像探测加宿主支持闸 + platformTag 空值守卫；
   异步 exec 面收编进 `runAsync/runOutAsync`（Windows 不再弹黑框，K-W2 判据扩到六词形）；
   第三方包选版改判 latest 优先（旧「全量最高」会装到他人杂 tag）。
 - **生命周期（D-1…D-13）**：在途计数幂等收口（不再恒判「不可停」）；上游失败先停实例再清 pid；
@@ -1137,7 +1165,7 @@ registry 实测 404，说法成立；`release/README.md` 与两份标准文档�
   `{ok:true, code:"0"}`，「可用 ⇒ `protectFile/protectDir` 绝不谎报 `mode=none`」成立；上一轮靠推演立的前提
   换成实测事实，同时如实登记 win32 那一支「不可用 ⇒ 如实 none」是恒不触发的蕴含式（其证据在 POSIX 宿主伪造
   win32 + 清空 PATH 那一支）。
-- **架构越界收口（DS-G1：为消灭重复而跨域，第 4 批 A 组自己带进来的）**：C-3 把远程��牌强度下限
+- **架构越界收口（DS-G1：为消灭重复而跨域，第 4 批 A 组自己带进来的）**：C-3 把远程令牌强度下限
   `remoteTokenStrength` 落在 `domains/relay/core.js`，再让 `domains/instance/ops.js` 直接 require 兄弟域——
   **单一事实源做对了、域边界踩破了**（五 job 同点红，平台无关一次即定性）。修法走本仓既有裁决而非新造规则：
   纯判定上移新建的 L0 `src/shared/credential.js`（零 require/IO/平台分支/域知识），relay 与 instance 两域 +
@@ -1148,7 +1176,7 @@ registry 实测 404，说法成立；`release/README.md` 与两份标准文档�
 - **架构越界收口（CP-1 首次判红即真违规）**：第 4 批 D 组在 `domains/router/providers/probe.js` 自带的
   `sameProcessGroup` 含 `process.platform === 'win32'` 与 `/proc/<pid>/stat` 读取——平台知识的家只有一处。
   实现下沉 `platform/os/pidlookup`（与 `isAlive`/`readCmdline` 同族）并经门面导出，业务域改调
-  `pidlook.sameProcessGroup(...)`；逐��搬运不改判（macOS 无 `/proc` 仍返回 false，与迁移前同形）。
+  `pidlook.sameProcessGroup(...)`；逐字搬运不改判（macOS 无 `/proc` 仍返回 false，与迁移前同形）。
   D-6 判据随搬家重写：平台文件取本体求值（注入 `fs`/`isWindows`）+ 两条反向（业务域不留副本、门面必须导出）。
 - **链推进的正向证据**：run `35489972031`（head `931d734`）**四平台全绿** —— #1–#129 整条链在 ubuntu 的
   `test` job（`xvfb-run -a npm test`）与四个 `build` job 各自的 `ci-core.sh`（含 `npm test`）里全部走通，
@@ -1158,7 +1186,7 @@ registry 实测 404，说法成立；`release/README.md` 与两份标准文档�
   #115 D-9 块与 #116/#121/#129 的门禁判据），上一轮的 X-1/X-2/X-9 三处全部转绿。
   同一 run 的其余正向证据：run `35487214678` 把链推到 #104 —— test job 与 ubuntu + 两个 macos 在
   #78–#103 全绿（26 个此前从未被 CI 执行的门禁文件，含 frp 单源写盘三段判据、glibc E-2 静态断言），
-  windows 因 #102 断链而覆盖到 #78–#101；链位 #113 的 API 重绑异步夹具在预清阶段以本机探针复现「���步读异步事实」
+  windows 因 #102 断链而覆盖到 #78–#101；链位 #113 的 API 重绑异步夹具在预清阶段以本机探针复现「同步读异步事实」
   并改写成可观测的重试环（跑满 10 次快重试 → 降级 30s + 留痕 → 退出意图即中止），未消耗额外 run。
 - **浏览器隔离打开的测试缝与判据（§H-7-10）**：`launchIsolated` 的 chain 分支并入 `_spawnDetached`
   单一路径并新增 `opts.spawn` 注入点；X-9 条 4 原判据把「linux 下 single/chain 恰好同形」当普适，
@@ -1172,7 +1200,7 @@ registry 实测 404，说法成立；`release/README.md` 与两份标准文档�
 - **令牌/面板域（B-1…B-8）**：remoteToken 热换触发 `onRemoteChange` + reconcile 漂移兜底；
   ctl 通道来源闸（application/json + 回环 Origin，403 fail-closed）；令牌池 `clear()` 截断旧代
   stdout 行缓冲（TK-1）；lan-state 令牌空值显式写入（TK-8 失效广播闭环）；frp.json tmp 带 pid+0600；
-  FRP `authToken` 不再明��回显（只报 `authTokenSet`）；UI 携带访问密钥并本机缓存（401 可自助恢复）；
+  FRP `authToken` 不再明文回显（只报 `authTokenSet`）；UI 携带访问密钥并本机缓存（401 可自助恢复）；
   TK-7 契约改述（remoteToken = instances[] 行投影，门禁同步）。
 - **平台层（B-9…B-14）**：PowerShell 通知改单引号串语义（堵 `$(...)` 插值执行）；`hasTool` 改解析判存在
   不 spawn；npm 安装入参白名单（包名/semver/argv 禁用字符，win32 盘符绝对路径整体豁免——
@@ -1183,7 +1211,7 @@ registry 实测 404，说法成立；`release/README.md` 与两份标准文档�
   插件变更路径自检 `exitIntended`（补 INV-S1 旁路）；SIGTERM 外部关停落盘退出意图（9-18 谱系收口）；
   credits 解冻基线显式判空；用量账本键上限+截断+脏标记异步落盘；冻结反代 5min 有界强制停；
   升级 hold 早退路径统一 resume；lan 停止补 `classify()` 归属闸；**N2/B-21**：安装成功后立即
-  `_bindNativeDshCommand`（首装免重启守卫）；E-3 意图轴收敛为两级谓词��`_exitIntended` 通用自愈 /
+  `_bindNativeDshCommand`（首装免重启守卫）；E-3 意图轴收敛为两级谓词（`_exitIntended` 通用自愈 /
   `_shellExitIntended` 仅壳看护，P2-A/P2-D 实验裁决）。
 - **发布链（B-23…B-26）**：version 串进构建前硬闸（点分数字/x-prerelease）；NODE_GEN 改环境变量注入
   （os/cpu 保留）；幂等发布改 unpackedSize+sha1 双项核对（缺失/不一致 exit 1，禁静默跳过）；
@@ -1217,7 +1245,7 @@ registry 实测 404，说法成立；`release/README.md` 与两份标准文档�
   消除 9-13 凭据覆盖事故的运行时同型根因；受管目录 `managed-objects.json` 损坏时
   改名 `.bad-<ts>` 保全 + 以未加载态启动（`registry.js`，事件 `managed_registry_corrupt`）。
 - **A2 frpc 安装 fail-closed**：取不到官方 sha256（GitHub 直连不可达/校验表缺项）即**拒绝安装**，
-  ��再降级放行未校验二进制（`frp-install.js`）；离线一次不污染缓存，可重试。
+  不再降级放行未校验二进制（`frp-install.js`）；离线一次不污染缓存，可重试。
 - **A4 win32 浏览器打开去 cmd 注入面**：`open`/`launchIsolated` 不再借道 `cmd /c start`
   （URL 中 `& ^ " ( )` 会被 cmd.exe 二次解析执行），改直启 `chrome.exe`（探测标准安装路径）
   或 `explorer.exe`；入口统一 `isSafeHttpUrl` 仅放行 http(s) 绝对 URL（`platform/os/browser.js`）。
@@ -1289,7 +1317,7 @@ registry 实测 404，说法成立；`release/README.md` 与两份标准文档�
 ### 契约
 
 - instance `command` **运行时执行边界复校**（`EXECUTION-CONTRACT.md` §8.6 由「待决」改「定案」）：
-  api 写时闸与启动期 realpath 复校共用单一纯函数��ENOENT fail-closed，**适用范围仅 sandbox**；
+  api 写时闸与启动期 realpath 复校共用单一纯函数，ENOENT fail-closed，**适用范围仅 sandbox**；
 - `command` 契约成文为 SSOT（`EXECUTION-CONTRACT.md` §8）；N11 加码（node 族必须给 DSH 入口且绝对路径）；
 - 历史 `inst.state.version` 键在加载期做内存幂等清理。
 
@@ -1328,7 +1356,7 @@ registry 实测 404，说法成立；`release/README.md` 与两份标准文档�
 - `NativeManager.detected()/binPath()`：以检测结果为准，未装**如实 false**，绝不伪造路径；
 - 插件 CLI 经 `target.runtime` 承载（原生绑定后与沙箱的 `lib/bin.js` 都可跑，Windows 亦成立）；
 - 壳体感契约同步：`runtime.json` 增 `npmArgs`（npm 仅包内 JS 时 program=node、args=[npm-cli.js]）；
-  内核 `env-catalog` 的 npm 探测改为**契约优���**（Windows 裸 `npm` 是 ENOENT）。
+  内核 `env-catalog` 的 npm 探测改为**契约优先**（Windows 裸 `npm` 是 ENOENT）。
 - 门禁：`test/native-dsh-binding-test.js`（检测 / 绑定 / 版本 / 如实未装 / 结构不变量）。
 
 ## [0.1.5-BETA.6]（2026-09-15）
@@ -1371,7 +1399,7 @@ registry 实测 404，说法成立；`release/README.md` 与两份标准文档�
 ### 内核读运行期启动契约 —— npm/PATH 与壳同源（Phase 2）
 
 问题：内核自身也要执行 npm（自更新 / 装 DSH / 插件），旧实现用 ambient PATH 的裸 `npm`
-与 `process.env`；GUI / 服务环境常找不到 npm，���现为「壳能装、内核自己装不了」。
+与 `process.env`；GUI / 服务环境常找不到 npm，表现为「壳能装、内核自己装不了」。
 
 - 新增 `src/platform/runtime-contract.js`（壳写内核读，schema 2）：`read()` / `npmBin()` / `withPath()`；
 - `domains/dist` 的 `runNpmInstall` 用契约里的**绝对** npm 并注入 PATH（模板 npm 分支同源解析）；
@@ -1577,7 +1605,7 @@ Idle，卡死线程无法回收 → 每次重试 +1 条）；镜像「测试」�
 ### 发布工程
 
 `release/README.md` 规范化：新增 §0「两仓构建决策」（为什么必须分两个仓、跨仓契约、
-跨仓发布时序��与 §1「产线实证与已知边界」；修正全篇「私有仓额度」的过时前提。
+跨仓发布时序）与 §1「产线实证与已知边界」；修正全篇「私有仓额度」的过时前提。
 
 ### 计数
 
@@ -1651,7 +1679,7 @@ E2E   契约 catalog 生效（3 条而非兜底 2 条）
 
 修复：内核**只做 `launchctl enable/disable` + `bootstrap/bootout`，绝不写/删该文件**。
 `launchctl enable/disable` 持久化到 launchd 覆盖库 —— 这才是「关闭」能生效的机制。
-定义缺��时**显式报错**（「请先启动一次桌面壳」），不越权创建。
+定义缺失时**显式报错**（「请先启动一次桌面壳」），不越权创建。
 
 顺带删除内核中已成死代码的 `macPlist()`（守卫定义归壳，保留副本只会漂移）。
 
@@ -1683,7 +1711,7 @@ win32    壳原生自启=Y（schtasks）      壳自愈=Y（守卫看护）
 ```
 
 「原生自启」与「崩溃自愈」是**两个独立字段**：前者管「重启后自己回来」，
-后者管「运行中崩了被拉起」。二者互补、不��相替代。
+后者管「运行中崩了被拉起」。二者互补、不互相替代。
 
 #### 五、验证
 
@@ -1797,7 +1825,7 @@ tag 一推，CI 的 build 矩阵立即启动；而 CI 在「tag 触发 + 有 `NP
 `ci-core.sh --publish` —— 即 **CI 会真发布自己平台的子包**。
 于是本地与 CI 同时 PUT 同一个包 → 409。
 
-实测发生顺序（时间戳为证）��
+实测发生顺序（时间戳为证）：
 
 | 平台 | 发布者 | 时间（UTC） |
 |---|---|---|
@@ -1861,7 +1889,7 @@ win-x64        ✅ beta=0.1.5-BETA.1
 三把**未加密私钥**（虽被 `.gitignore` 忽略、未被跟踪，但放在仓目录内属重大风险 ——
 本仓曾发生私钥被 `git add -A` 误提交的事故）。
 
-已迁移到标准位置 `~/.ssh/`��复制 → 哈希校验 → 更新两仓 `core.sshCommand` →
+已迁移到标准位置 `~/.ssh/`（复制 → 哈希校验 → 更新两仓 `core.sshCommand` →
 `ls-remote` 连通验证 → 删除仓内副本）。
 
 #### 三、双仓隔离的最后残留（本次清掉）
@@ -1903,7 +1931,7 @@ win-x64        ✅ beta=0.1.5-BETA.1
 #### 六、文档纠错
 
 - **`release/runbooks/publish-and-verify.md` 整篇重写** —— 原版基于已废弃架构，通篇是
-  `build:sea`（全平台弃 SEA 后已不存在）、`export-shell.sh`（已删）、错���的仓库名
+  `build:sea`（全平台弃 SEA 后已不存在）、`export-shell.sh`（已删）、错误的仓库名
   （`lobbowen/dsh-supervisor`）、过期的待办（`lobbowen` 的 Secrets）；
 - `README.md`：`DESIGN.md` **断链**（该文件不在本仓）→ 指向实际存在的架构文档；
   `build:sea` → `build:launcher`；`verify:shell` → 正确命令；
@@ -1924,7 +1952,7 @@ win-x64        ✅ beta=0.1.5-BETA.1
 #### 事实澄清（先纠正我的失误）
 
 `v0.1.4-BETA.1` 的 CI **确实失败**（Windows job，5 个断言），而我在汇报时只说了「已发布成功」、
-**没有检查 tag 触发的 CI 结果** —��� 这是我的疏漏。产品本身没有问题（npm 4/4 已发布、四平台
+**没有检查 tag 触发的 CI 结果** —— 这是我的疏漏。产品本身没有问题（npm 4/4 已发布、四平台
 `core.cjs` 同源），失败的是**测试**。
 
 #### 根因（已实测复现）
@@ -2062,7 +2090,7 @@ o  the Dynamic Ports, also known as the Private or Ephemeral Ports, from 49152-6
 
 **VALUE**: 本次改动使「壳引导阶段选中的最快镜像」与「内核后续使用的镜像」保持一致，
 避免两条链路各选一处（用户此前会遇到壳快内核慢或反之）。
-### 修复：桌面壳与内核的完整流程审计 —— 守卫服务注册断裂（架构级��
+### 修复：桌面壳与内核的完整流程审计 —— 守卫服务注册断裂（架构级）
 
 用户要求「把整个桌面壳调查清楚，从检测环境到自动下载运行环境、桌面壳自更新、
 内核拉取更新，这些流程是不是都是通的」。逐环节审计后确认：**原设计在首次安装场景下必然断裂**。
@@ -2081,7 +2109,7 @@ o  the Dynamic Ports, also known as the Private or Ephemeral Ports, from 49152-6
 - `src/platform/os/autostart.js`：Windows 任务名**职责分离** ——
   `DSH-Supervisor` 改由壳建立并指向**守卫守护进程**（原先指向 GUI 壳，导致壳的
   `schtasks /Run` 只会再开一次壳、守卫永远起不来）；GUI 自启改用 `DSH-Supervisor-GUI`。
-  关闭 autostart 时改为 `/DISABLE` 守卫任务而非删除（它是服务定义）���
+  关闭 autostart 时改为 `/DISABLE` 守卫任务而非删除（它是服务定义）。
 - `bin/dsh-supervisor`：**包根解析 off-by-one** —— 发行态（esbuild bundle）下 `__dirname`
   是包根而非 `bin/`，旧实现 `path.join(__dirname, "..")` 指向包外，导致模板路径错位、
   `BIN_PATH` 指向不存在的文件。改为逐级向上找 `package.json` 定位包根，两种形态均正确。
@@ -2142,7 +2170,7 @@ macOS Node 安装改用 `.pkg`（原 `.tar.gz` 与 `installer -pkg` 格式不匹
 
 **② 网络请求无超时 → 永久挂起**
 
-`tauri-plugin-updater` 的 `Config`（tauri.conf.json）**没有 timeout 字��**，只能在 Builder 上设；
+`tauri-plugin-updater` 的 `Config`（tauri.conf.json）**没有 timeout 字段**，只能在 Builder 上设；
 而底层 `reqwest` **默认无总超时**。于是网络不可达/连接挂起时（本项目端点用 unpkg CDN，
 在部分网络环境下连接会长时间停滞），`check()` 既不返回也不报错 → 前端 Promise 既不 resolve
 也不 reject → `.catch` 不触发 → 页面**永久停在「正在检查桌面更新」**，且当时**没有跳过入口**。
@@ -2162,7 +2190,7 @@ macOS Node 安装改用 `.pkg`（原 `.tar.gz` 与 `installer -pkg` 格式不匹
 否则一旦底层挂起，用户除了杀进程别无选择。
 
 **下载进度可视化**：此前进度回调体是空的（`let _ = (chunk, total);`），4MB+ 安装包在慢网下
-长时间零反馈，��户无法区分「正在下载」与「卡死」。现每秒级上报已下载/总字节并按百分比显示。
+长时间零反馈，用户无法区分「正在下载」与「卡死」。现每秒级上报已下载/总字节并按百分比显示。
 
 #### 附带修复
 
@@ -2207,7 +2235,7 @@ macOS Node 安装改用 `.pkg`（原 `.tar.gz` 与 `installer -pkg` 格式不匹
 
 - **新增 `release/scripts/_platforms.sh`**：平台矩阵的**单一事实源**（读取
   `package.json#npmPublish.packages`）。此前平台清单散落在三个脚本 + workflow 硬编码矩阵，
-  四处不同步就会产出「少一个平台」的��布。
+  四处不同步就会产出「少一个平台」的发布。
 - **`build-launcher.sh --all-platforms`**：一次 esbuild → 派生 4 个平台目录，并**断言四份
   `core.cjs` 逐字节一致**（不一致即失败）。这从构造上消除了「同版本不同平台代码不同」的风险
   —— 该风险曾真实发生（BETA.2 的 linux/darwin 缺 frpc 修复而 win 有）。
@@ -2245,7 +2273,7 @@ macOS Node 安装改用 `.pkg`（原 `.tar.gz` 与 `installer -pkg` 格式不匹
 - **问题**：对比 npm 上 BETA.2 的四个平台子包，`core.cjs` 存在**代码级差异**：
   - `linux-x64` / `darwin-arm64` / `darwin-x64`：`sha256=ad46dda5…`（**缺少 frpc 崩溃修复**）
   - `win-x64`：`sha256=9d68744f…`（含 frpc 崩溃修复）
-- **成因**：BETA.2 发���时，修复 `frpc spawn 崩溃` 的提交只在 **Windows job** 先跑完并发布；
+- **成因**：BETA.2 发布时，修复 `frpc spawn 崩溃` 的提交只在 **Windows job** 先跑完并发布；
   而 mac/win 三平台在更早的相对时间点已完成构建（含更早的 linux 本地发布）。
   npm 不允许覆盖同版本，因此同一版本号下不同平台承载了不同代码。
 - **影响**：Linux（本项目主要平台）用户拿到的是**未修复**的版本 —— 当 `frpc` 不可执行时，
@@ -2358,7 +2386,7 @@ macOS Node 安装改用 `.pkg`（原 `.tar.gz` 与 `installer -pkg` 格式不匹
   现有安装不受影响：已持久化的 wanPort 走 hasPersistedBinding 原样复用。
 - **回归守卫**：ports-capacity-test.js 新增源码级断言，禁止该硬编码复活。
 
-### 修复：发布编排漏推分支，导致 tag ���送不触发 CI
+### 修复：发布编排漏推分支，导致 tag 推送不触发 CI
 - **缺陷**：release-core.sh 只执行 git push --tags，从不推分支。
   实测后果：tag 指向的提交不在任何分支上时，**GitHub 不为该 tag 触发 workflow**（匹配 run 数为 0）。
 - **修复**：改为 git push origin HEAD --tags；相关文档/提示同步修正。
@@ -2440,7 +2468,7 @@ macOS Node 安装改用 `.pkg`（原 `.tar.gz` 与 `installer -pkg` 格式不匹
 - **四个命令**：`shell_identity` / `shell_update_check` / `shell_update_apply` / `shell_restart`（+ `shell_set_phase`）。
   **三平台同一代码路径**：check → download → **minisign 验签（强制）** → 平台安装 → 重启；平台差异（Linux `pkexec dpkg -i` / macOS `.app` 替换 / Windows NSIS `passive`）**全部由插件内部处理，壳侧无平台分支**。
 - **引导页门 0**（`bootstrap.html`）：
-  - 步骤条新增「壳更新」并置于**最前**（��更新 → 环境 → Node → 内核 → 守卫 → 面板）——新壳才可能带有新的 Node/内核安装要求。
+  - 步骤条新增「壳更新」并置于**最前**（壳更新 → 环境 → Node → 内核 → 守卫 → 面板）——新壳才可能带有新的 Node/内核安装要求。
   - **失败选择页**（用户定案）：显示【重试更新】【继续使用当前版本】；**【继续】始终可用**（有界失败即放行的用户可见形式）。
   - 离线/清单不可达/已拉黑 → **失败放行**，不阻断。
   - `stepPanel()` 上报 `phase=ready` = **健康确认信号**（内核据此确认壳更新成功并清 journal）。
@@ -2456,7 +2484,7 @@ macOS Node 安装改用 `.pkg`（原 `.tar.gz` 与 `installer -pkg` 格式不匹
 - **三平台统一配置**（`tauri.conf.json`）：`createUpdaterArtifacts: true` + `plugins.updater.pubkey`(152 字符) + 双 CDN 静态清单端点（unpkg 主 / jsdelivr 备）+ Windows `installMode: passive`。
 - **关键设计修正**：Tauri 的 `{{target}}`(linux|windows|darwin) 与 `{{arch}}`(x86_64|aarch64) **与 npm 包命名不同**（linux|win|darwin、x64|arm64）——把变量直接拼进包名会产生不存在的包。故改用**静态清单**，让 URL 构造只发生在一处。
 - **两个发布工具（单源，内核 `shell-release/`，经 `export-shell.sh` 导出到壳仓）**：
-  - `assemble-shell-pkg.js`：把「安装包 + `.sig`」成对组装为 npm 包；**缺 `.sig` 即失败**（防静默发布不��更新产物）。
+  - `assemble-shell-pkg.js`：把「安装包 + `.sig`」成对组装为 npm 包；**缺 `.sig` 即失败**（防静默发布不可更新产物）。
   - `make-manifest.js`：汇总各平台条目 → Tauri 静态清单 `shell-manifest.json`（含平台键映射与签名）。
 - **已用真实产物端到端验证**：`tauri build --bundles deb` → `deb 3.8MB` + `.deb.sig 420B`（base64 minisign）→ 组装为 `@dsh-sup/shell-linux-x64` → 生成清单，`linux-x86_64` 正确映射到 `shell-linux-x64` 的 unpkg URL。
 - **⛔ 实测关键约束**：本密钥为 `rsign encrypted secret key` 格式，**不设 `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` 会签名失败**（`failed to decode secret key: incorrect updater private key password`）——CI 必须显式提供该 secret（空值也要设）。
@@ -2490,7 +2518,7 @@ macOS Node 安装改用 `.pkg`（原 `.tar.gz` 与 `installer -pkg` 格式不匹
 - **⛔ F1 缺陷决定性确证**：下载 Ubuntu 22.04 的 `libc6 2.35` 并解包，用其 `ld.so` **真实加载**本机构建的产物 → `version GLIBC_2.39 not found` → **确认无法在 Ubuntu 22.04 运行**（非推测）。
 - **🎯 根因定位（最小复现，两行代码）**：`fn main(){}` 仅需 GLIBC_2.34；加入一次 `Command::new("/bin/true").status()` 即跳到 **GLIBC_2.39**（含 2 个 pidfd 弱符号）。根因链：**Rust 官方预编译 std 的 `process` 模块**含对 `pidfd_spawnp`/`pidfd_getpid`（glibc 2.39 新增）的**弱引用**；在 glibc 2.39 基座链接时被本机 `libc.so.6` 解析成功 → 记录**硬性 verneed**；在 2.35 基座上该符号不存在 → 弱引用未被解析 → **不产生版本需求** → 二进制通用于旧系统。排查中**排除**了 tokio（仅注释中提及）、libc crate 与本项目代码。
 - **修复方案确证充分**：CI 基座改 `ubuntu-22.04`（glibc 2.35）——根因是**链接期弱符号解析**，换基座即从根上消除，无需任何 hack。与 Chrome / VS Code 的「在最老受支持基座上构建」一致。
-- **新增防线（已落地并验证）**：`ci/check-glibc.sh`（断言产物最高 GLIBC 符号 ≤ 上限，并用真��产物验证能正确拦截）+ `test/glibc-gate-test.js`（7 断言，含平台守卫）；经 `export-shell.sh` **单源导出**到壳仓 `ci/`，避免两处漂移。
+- **新增防线（已落地并验证）**：`ci/check-glibc.sh`（断言产物最高 GLIBC 符号 ≤ 上限，并用真实产物验证能正确拦截）+ `test/glibc-gate-test.js`（7 断言，含平台守卫）；经 `export-shell.sh` **单源导出**到壳仓 `ci/`，避免两处漂移。
 - 全量回归：**38 文件 747 passed / 0 failed**。
 ### 跨平台审计：修正「只按本机 Linux 想」的产品缺陷（用户批评驱动）
 - **缺口承认**：此前方案只按本机（Linux Mint 22.3 / Ubuntu 24.04 基座）考虑，把 Linux 当单一形态，且未展开 macOS/Windows 的构建、签名与自更新全链路。作为一个**公开发行的跨平台桌面产品**，这是缺陷。
@@ -2511,11 +2539,11 @@ macOS Node 安装改用 `.pkg`（原 `.tar.gz` 与 `installer -pkg` 格式不匹
 - **新增权威文档**：`RELEASE-AND-UPDATE-MECHANISM.md` —— 发布与更新机制总纲（两条独立发布链、产物矩阵、端到端时序、与内核更新机制的边界、风险登记）。
 - 新增待实测 V1（Tauri 是否为 deb/rpm 生成 `.sig`；若无则自行 `tauri signer sign`）、V2（deb 缺依赖时的 `dpkg -i` 报错形态）；新增开放项 N2b（是否加 rpm）、N4（是否发布 apt/yum 仓库）。
 ### 壳更新通道定案（实测驱动）：npm CDN，而非 GitHub Release
-- **实测结论**：GitHub Release 直连**不��用**——`objects.githubusercontent.com` 15s 完全超时；真实产物下载实测仅 **15–28 KB/s**（3.8MB deb 15.6s 只下 231KB）。77MB AppImage 需约 45 分钟，且 **Tauri 传输超时会先触发 → 更新永远失败**（不是「慢」而是「不成」）。
+- **实测结论**：GitHub Release 直连**不可用**——`objects.githubusercontent.com` 15s 完全超时；真实产物下载实测仅 **15–28 KB/s**（3.8MB deb 15.6s 只下 231KB）。77MB AppImage 需约 45 分钟，且 **Tauri 传输超时会先触发 → 更新永远失败**（不是「慢」而是「不成」）。
 - **对照**：npmmirror（内核在用）1.44 MB/s；**npm CDN（unpkg）大文件实测 1.71 MB/s**，与内核镜像同级。这一发现**恰好印证内核既有机制的正确性**——内核/DSH 早就因同样原因走 npm 镜像。
 - **源码级验证**：Tauri `ReleaseManifestPlatform { pub url: Url }` 为**通用 URL、无域名白名单**，且 `verify_signature` 独立于托管位置 → 换 CDN 不影响安全性；同时 `endpoints` 改公网 HTTPS 后**不再需要** `dangerousInsecureTransportProtocol`（去掉一个安全妥协）。
 - **定案**：壳产物发布为 npm 包 `@dsh-sup/shell-<os>-<arch>`，清单 `shell-manifest.json` 经 unpkg/jsdelivr 直链提供；**零新增基础设施**（复用已有 npm 发布流程与凭据）。
-- **重大修正**：先前判断「Linux 只有 AppImage 可自更新、deb 用户出局」**是错的**——Tauri `install_deb` 通过 `pkexec dpkg -i` **支持 deb 自更新**。而 **deb 仅 3.8MB，比 AppImage 小 20 倍**（更新耗时 45 秒 → 约 2 秒），代价是一次密码确认。新增决策项 N2��
+- **重大修正**：先前判断「Linux 只有 AppImage 可自更新、deb 用户出局」**是错的**——Tauri `install_deb` 通过 `pkexec dpkg -i` **支持 deb 自更新**。而 **deb 仅 3.8MB，比 AppImage 小 20 倍**（更新耗时 45 秒 → 约 2 秒），代价是一次密码确认。新增决策项 N2。
 - 新增风险 K13（npm CDN 第三方可用性 → 多 CDN 回退 + 内核本地缓存兜底）、K14（deb 提权被拒 → 选择页重试/继续）。
 ### 设计修正（用户确认驱动）：壳更新失败选择页 + 内核更新机制不可触碰
 - **定案 1（用户确认）**：壳更新失败**不静默放行**，改为显示选择页 **【重试】【继续使用当前版本】**；【继续】必须始终可用（有界失败放行的用户可见形式）；离线与 `installKind=deb` 不进选择页，直接放行 + 提示。
@@ -2626,7 +2654,7 @@ macOS Node 安装改用 `.pkg`（原 `.tar.gz` 与 `installer -pkg` 格式不匹
 
 ### 账号锁定语义定稿（2026-09-05 A）：锁只对可用账号有意义——死锁不落盘/不复活/可拒锁
 - 背景：遗留 selectedAccountKeyId 指向早已冻结的账号（8AEkNh，月额度耗尽，与其余限额账号同一冻结状态机），
-  无任何逻辑让其跟随账号生命周期（仅 banned/discarded 清锁、无解锁入口）→ UI 死��徽标/持久化死锁残留。
+  无任何逻辑让其跟随账号生命周期（仅 banned/discarded 清锁、无解锁入口）→ UI 死锁徽标/持久化死锁残留。
 - 语义（用户拍板 A）：账号因任何原因冻结（额度任意窗口/封号/作废/不存在）即锁失效；恢复后由用户按需重新显式锁定。
 - 落地：base._reconcileLock()（serialize 前置收敛 + _setStatus 冻结/封号/作废即清锁 + 加载后收敛丢弃死锁）；
   aux.setSelectedProxyKey 拒绝锁定不可用账号；死锁不落盘、重启不复活。
@@ -2688,7 +2716,7 @@ macOS Node 安装改用 `.pkg`（原 `.tar.gz` 与 `installer -pkg` 格式不匹
 
 ### 上游 insufficient credits 自动切换（2026-09-04）
 - 根因（用户指正）：Command 预付 credits 耗尽时上游回 400 insufficient credits/billing/balance；
-  forward-core 旧逻辑把 400 一律当业务拒绝��传 → 一直打到空余额 key，不切换。
+  forward-core 旧逻辑把 400 一律当业务拒绝透传 → 一直打到空余额 key，不切换。
 - 修复：classifyUpstreamLimited 按 状态+响应体 区分 credits(预付余额)/window(时间窗配额)/none；
   400/402/429/403 出现 credits 信号 → markCreditsExhausted（冻结+10min 周期回探）+ 本请求换下一账号重试；
   isAccountUsable/applyDetection 纳入余额阈值（monthlyRemaining<0.5 即不可选/保持冻结，充值后自动解冻）；
@@ -2744,7 +2772,7 @@ macOS Node 安装改用 `.pkg`（原 `.tar.gz` 与 `installer -pkg` 格式不匹
   杜绝测试在探测不可见环境把 router-daemon 拉成 stray。
 - 清理：本会话早期未门控测试曾向生产 Command 供应商写入 pk-2 测试账号（已 discarded）——经 daemon 路径移除，
   账号恢复 14 零丢失。
-- 验证：守卫重启 #6 �� lan/router daemon pid 不变（守卫重启不影响被管模块，L3a/L3b 语义实证）；relay
+- 验证：守卫重启 #6 后 lan/router daemon pid 不变（守卫重启不影响被管模块，L3a/L3b 语义实证）；relay
   40000/40001 代理 200；全量回归：p2p-api 27、smoke 34、lan-daemon 10、adopt 13、guard-update 23 等全绿。
 ## [未发布]
 
@@ -2756,7 +2784,7 @@ macOS Node 安装改用 `.pkg`（原 `.tar.gz` 与 `installer -pkg` 格式不匹
 - **daemon 模式三重门判定（隔离修复）**：routerDaemonActive() = routerAutostart ∧ 管理锁（stateFile 同域
   router-daemon.lock）∧ 43011 监听为 router-daemon；spawn/接管落锁、停止清锁；异主 daemon（测试内嵌等）一律
   退回内嵌语义。根治 p2p-api-test 误接生产 daemon（曾把测试 provider 写操作打到线上、/router/stop 误杀生产 daemon）。
-- **守卫 30s 监督 tick**：router-daemon 期望运行但失联 → 自动重新拉起��事件 router_daemon_supervised；实测
+- **守卫 30s 监督 tick**：router-daemon 期望运行但失联 → 自动重新拉起（事件 router_daemon_supervised；实测
   kill 后 15s 内自动恢复）。
 - **#3 前端迁移统一 /lifecycle**：OverviewPage DSH 启停、RouterPage 路由启停改调 /lifecycle/{id}/start|stop
   （client.ts 增 lifecycle*、删旧 start/stop/restart/routerStart/routerStop；types.ts 增 Lifecycle 类型）；
@@ -2772,17 +2800,17 @@ macOS Node 安装改用 `.pkg`（原 `.tar.gz` 与 `installer -pkg` 格式不匹
 - **取证法**：守卫重启先按 Stopping 有无分类；signal 死亡查 code=killed, status=9/KILL。
 ## [未发布]
 
-### 守卫重启后��程访问令牌不可达修复（2026-09 第四轮：adopt 令牌接管）
+### 守卫重启后远程访问令牌不可达修复（2026-09 第四轮：adopt 令牌接管）
 - **问题**：守卫重启（systemd KillMode=process）后，新守卫 `_adopt()` 接管旧守卫 spawn 的主 DSH——被接管进程非新守卫 spawn，其启动令牌只打印在旧守卫已断开的 stdout 管道里（令牌服务不落盘）→ 主令牌永久不可达 → relay 无法用令牌向回环 DSH 换 `dsh-auth-*` cookie → LAN 远程控制全 401（实况：主进程被接管后 `/status` dshTokenCaptured=false、`/lan-access` main dshToken=EMPTY，而 sandbox 实例走 journald 不受影响）。
 - **修复**：RUNNING tick 新增 `_maybeReclaimAdoptToken()`——被接管（`adoptedPid && !child`）且主令牌空置时启动观察窗（`config.tokenReclaimGraceMs`，默认 20s，覆盖 adopt 后 journald/补获可能），窗口内令牌迟到即复位不干预；窗口过仍空置 → 受控重建一次（`_beginRestart('adopt_token_reclaim', {countCrash:false})`：杀 adopt 进程 → 状态机回 RESTARTING → 自 spawn 建新 stdout 管道 → 令牌必然可捕获）。`_tokenReclaimTried` 保证每次接管仅重建一次，防重启循环；令牌就绪/本守卫 spawn 时复位观察。
-- **回归测试**：新增 `test/adopt-token-reclaim-test.js`（13 断言：观察窗语义/单次重建防循环/令牌就绪与自 spawn 不干预/窗口���迟到复位/默认窗 20000ms）并入 npm test；smoke makeConfig 显式拉满观察窗（mock 不打令牌，防 adopt 场景误触发重建），冒烟保持确定性。smoke 34/34。
+- **回归测试**：新增 `test/adopt-token-reclaim-test.js`（13 断言：观察窗语义/单次重建防循环/令牌就绪与自 spawn 不干预/窗口内迟到复位/默认窗 20000ms）并入 npm test；smoke makeConfig 显式拉满观察窗（mock 不打令牌，防 adopt 场景误触发重建），冒烟保持确定性。smoke 34/34。
 
 ### 智能路由 COMMAND 全量审计修复（2026-09 第三轮，见 docs/ROUTER-AUDIT.md）
 - **额度恢复不同步修复（问题①）**：`resetsAt` 统一归一 `normalizeResetTs`（ISO 字符串/epoch 秒/毫秒均支持）——原 `_nextResetAt` 对 ISO 串 `Number()=NaN` → 30 天兜底，把精确恢复点（如月窗口 09-21）覆写成 +30 天，且恢复探测只按该错误 nextResetAt 触发 → 到真实重置点账号不被探测恢复（实况：OpenCode 6 账号全 frozen、nextResetAt=10-03 远晚于 09-21 真实重置）。direct/proxy 检测落库前归一；`_nextResetAt` 返回 `{t, precise}`；`applyDetection` 仍满额分支防回推（纯兜底不得覆写精确值）。
 - **前端无法定位当前账号修复（问题②）**：`selected` 派生口径分裂——账号行只认 `selectedAccountKeyId`、头部回退 `activeAccount`，且 `activeAccount` 为内存态不持久 → 路由实际在用的账号列表不亮。修复：统一 `selectedKeyId()`（锁定可用→锁定；锁定冻结/失效→实际在用 activeAccount）；视图新增 `activeKeyId`/`locked` 同源锚点；`switchToAccount` 同时写持久化锁定；`_deserializeProvider` 恢复直连/反代锁定（兼容旧 selectedProxyKeyId）；锁定仅对永久失效（封号/作废/删除）清空，临时冻结保留（恢复后自动续用）；前端账号行「当前在用账号（锁定）」与「当前在用账号」区分。
 - **预热池/启停风暴修复（问题③）**：实例启动前增加端口释放等待（≤3s，旧进程 SIGTERM→SIGKILL 1.5s 内未退即放弃并明确报错）——根除同端口并发 spawn 的 EADDRINUSE 秒退循环（实况：41012 端口 ~10s 一次启停数十次）；10min 额度刷新不再临时拉起全部 ready 账号（改为只探测已在运行的 primary/selected/prewarmed/在用实例）——消除周期性批量启停风暴。
 - **回归测试**：router-test 12→16（normalizeResetTs/_nextResetAt 精确解析/selected 派生统一/锁定持久化）、p2p-router-test 37→40（F 段：临时冻结不清锁/解冻后锁定优先/封号清锁）；全量 npm test EXIT=0。
-- **Command Code 额度获取修复（问题① Command 侧）**：`detectInstanceQuota` commandcode-billing 分支窗口耗尽判定改为纯 `used/cap` 推导（>=100%→rate-limited），不再依赖上游可选的 `exceeded` 标志（实况：三账号 weekly 100% 却存 status=ok 的矛盾记录）；支持 `{data:{windowLimits,credits}}` 信封解包、used/cap 字符��解析、credits 缺席时 monthlyRemaining=null。对照开源参考 opencodex quota.ts 逐字段核验。新增 `test/commandcode-quota-test.js`（8 断言）并入 npm test。
+- **Command Code 额度获取修复（问题① Command 侧）**：`detectInstanceQuota` commandcode-billing 分支窗口耗尽判定改为纯 `used/cap` 推导（>=100%→rate-limited），不再依赖上游可选的 `exceeded` 标志（实况：三账号 weekly 100% 却存 status=ok 的矛盾记录）；支持 `{data:{windowLimits,credits}}` 信封解包、used/cap 字符串解析、credits 缺席时 monthlyRemaining=null。对照开源参考 opencodex quota.ts 逐字段核验。新增 `test/commandcode-quota-test.js`（8 断言）并入 npm test。
 
 ### 决策定案落地（2026-09 第二轮：D1-D6 拍板 → 剩余 Phase 3 落地）
 - **决策记录（docs/DECISIONS.md 定案）**：D1 废 release.sh 自更新旁路统一 npm；D2/D5 单一 SEA（daemon+CLI 合一、全静态）确认；D3 **选 A 砍 useSystemdForMain**（守卫统一自 spawn，三端语义等价最短路径）；D4 壳更新形态 = npm 平台子包；D6 阶段门禁确认；版本双轨独立 + CHANGELOG 过期「壳同号跟随内核」句标注废弃。
@@ -2796,7 +2824,7 @@ macOS Node 安装改用 `.pkg`（原 `.tar.gz` 与 `installer -pkg` 格式不匹
 - **发布链测试污染治理**：guard-update-test require 路径修复（self-update 迁移到 domain/dist 后断链）；smoke/upgrade-test 清理改 SIGCONT+SIGKILL（SIGTERM 杀不掉 detached/SIGSTOP 残留 mock → 占端口致链序偶发断）
 - **补丁层数据破坏修复（Blocker）**：setBundleEnabled 禁用只置 disabled 保留用户行/insert 行，启用只删本插件 disabled 行（原 filter 整删同 id 所有行静默丢数据）；JSON 深比较替代长度比较；回归测试 F0 6 断言
 - **原生卸载数据安全（HIGH）**：manifest dataPaths 改显式认领制——首装且 ~/.dsh 干净才认领；升级/回滚继承既有认领；默认空数组（不再默认写 ~/.dsh 凭据/会话路径防误删）
-- **逻辑健壮性**：instance tick save() 纳入 try/catch（磁盘错不再经 uncaughtException 触发守卫 3 次退出重启）；restartCount 稳定运行 5min 后清零（偶发重启不再跨时间累计到 20 上限永久 FAILED）；waitPortHealthy 超时精确化（稳定期预算检���，不再溢出 timeoutMs+15s）；INSTALLING/FAILED 死锁自愈（安装超时竞态后成功恢复拉起）
+- **逻辑健壮性**：instance tick save() 纳入 try/catch（磁盘错不再经 uncaughtException 触发守卫 3 次退出重启）；restartCount 稳定运行 5min 后清零（偶发重启不再跨时间累计到 20 上限永久 FAILED）；waitPortHealthy 超时精确化（稳定期预算检查，不再溢出 timeoutMs+15s）；INSTALLING/FAILED 死锁自愈（安装超时竞态后成功恢复拉起）
 - **逻辑单轨化**：TaskRegistry 观测层单一事实源（upgradeStatus/updateJob 用 current() 精确优先，running 期间不误显旧任务）；唯一 npm 安装执行器（native._runInstall 删重复实现，dist.runNpmInstall 支持 commandTemplate）
 - **平台等价（Phase 3）**：frp 平台化（三镜像硬编码 linux_amd64 → frpPlatformTag 动态 os/arch 产物 + frpc.exe 支持 + 不支持平台明确拒绝）；平台能力门 capabilities() 真实矩阵 + /env/status 暴露（原硬编码全 true 与 win/mac 现实不符）；dshBin 统一解析（PluginManager 不再硬编码裸 'dsh'，与 InstanceManager 同源取 config.command[1] 绝对路径防 PATH shim 劫持）；pidlookup readCmdline 补 mac(ps)/win(wmic+CIM)（原非 Linux 返 null 致接管校验防线静默失效）
 - **授权边界收口（F1）**：/instances 的 authUrl 仅回环 Host 请求附带 DSH 会话 token（token 永不出本机）；LAN/私网 Host 只给免认证 lanUrl + tokenPresent:false；api-contract 新增 F1 双断言防回归；setLanPanel(0.0.0.0) 记 lan_panel_exposed 风险事件
@@ -2808,19 +2836,19 @@ macOS Node 安装改用 `.pkg`（原 `.tar.gz` 与 `installer -pkg` 格式不匹
 - **frpc 孤儿清理平台化**：pgrep（Linux/mac）→ win32 走 wmic/PowerShell CIM 按 Name+CommandLine 找残留 frpc
 
 ### 移除（Command Code 免费通道彻底下线）
-- **背景**：免费通道（-free 模型免额度档）干扰正常付费账号稳定性（频繁中断付费流量），用户决策彻底移除，清除��部免费通道逻辑。
+- **背景**：免费通道（-free 模型免额度档）干扰正常付费账号稳定性（频繁中断付费流量），用户决策彻底移除，清除全部免费通道逻辑。
 - **后端**：providers/base.js（freeCooldownMs/freeSelectedAccountKeyId/freeActiveAccount/freeCursor/freeModels 字段、isFreeAccountUsable/freeCooldownRemaining/markFreeLimited 方法、序列化 free 字段）；providers/proxy.js（markFreeLimited 覆写/_prewarmNextFree/实例仲裁免费分支，恢复单通道 _canStopInstance）；switch.js（免费双通道池，恢复纯付费引擎）；forward-core.js（免费模型分流/isFreeModel/proxyForFree 整方法）；router/index.js（hasFreeChannel/免费视图字段/免费模型周期刷新/实例回收免费分支）；router/aux.js（refreshFreeModels/_refreshFreeModelsIfDue/setFreeSelectedAccountKey）；proxy-apps.js（freeChannel/freeApiBase/freeModelFallback）；api.js（/router/providers/free/select|refresh 端点）。
 - **前端**：ui/views-router.js（免费标签区/免费块/事件绑定）、app.css（free-* 样式）、core.js（6 条免费事件映射）。
 - **测试**：删除 test/free-channel-test.js 并移出 npm test 链。
 - **验证**：npm test 全套 exit=0（含 router/proxy/p2p 套件零回归）；重启守卫后 /router/providers 视图无任何免费通道字段（仅余官方模型名 ox-alpha-free 定价行，无关）。
 ### 新增（版本管理规范 v2：单一事实源 + 全派生链）
-- **版本规范定稿（DESIGN §16）**：SemVer 2.0 纯数字、禁预发布后缀（自更新字符串比较前提）；单一事实源=仓�� package.json.version；
+- **版本规范定稿（DESIGN §16）**：SemVer 2.0 纯数字、禁预发布后缀（自更新字符串比较前提）；单一事实源=仓库 package.json.version；
   派生链只读单源；v 前缀只出现在发布通道外层（manifest/tag/版本目录），npm 子包例外=裸版本（npm 强制）。
 - ~~**壳版本策略（已拍板）**：Cargo.toml + tauri.conf.json **同号跟随内核**；补丁整包发布（内核 0.10.1 → 壳同步 0.10.1，一个 tag 出全平台整包）。~~ **[已废弃]** 同日下条「版本双轨独立（DESIGN §16.4）」裁定替代：壳 0.1.x 起独立、公开仓 Release 极少更；内核 0.10.x npm 热更。以下行/相关代码以双轨为准。
 - **修复（SEA 版本不自包含，历史断点）**：`src/infra/version.js` 支持 `__DSH_VERSION__` 编译期注入常量；build-sea.sh 以 `esbuild --define` 注入单源版本。
   实证：此前 SEA 脱离 dist/sea 目录自报 `guardVersion=unknown`；修复后源码形态 / dist/sea / 孤立目录三态均自报 0.10.0。
 - **SEA 产物命名带版本**：`dsh-supervisor-<ver>-<platform>-<arch>`（不再无版本）。
-- **版本双轨独立（替代早期同号策略，DESIGN §16.4）**：双仓库拆分开后发布通道解耦——内核走 npm（频繁热更新）、壳走公开仓 Release（稀少）；`bump.sh` 改为 `--core`/`--shell` 双模式（互不 bump、拒回退）；`verify-versions.js` 双轨自洽（内核 package.json 单源 / 壳 Cargo=tauri.conf 互锁）��壳版本 **0.1.0 起**；私有仓 CI 剥离壳 Release（只产 SEA + npm 子包），壳构建仅留集成冒烟。
+- **版本双轨独立（替代早期同号策略，DESIGN §16.4）**：双仓库拆分开后发布通道解耦——内核走 npm（频繁热更新）、壳走公开仓 Release（稀少）；`bump.sh` 改为 `--core`/`--shell` 双模式（互不 bump、拒回退）；`verify-versions.js` 双轨自洽（内核 package.json 单源 / 壳 Cargo=tauri.conf 互锁）；壳版本 **0.1.0 起**；私有仓 CI 剥离壳 Release（只产 SEA + npm 子包），壳构建仅留集成冒烟。
 - **`scripts/bump.sh`（版本提升唯一入口）**：校验 SemVer（拒预发布）→ package.json → Cargo.toml → tauri.conf.json → 一致性强制校验 → 人类清单。
 - **`scripts/verify-versions.js` + `npm run verify:versions`**：三处同号校验；接入 `verify:shell` 第 0 步与 bump.sh 尾步（防壳脱轨回归）。
 - **双仓库方案落地（壳开源 / 内核闭源）**：壳解耦——tauri.conf resources 仅 bootstrap/icons（不再内嵌内核资产）；main.rs 定位已安装内核（PATH/~/.local/bin/~/.npm-global/bin/旧资源兜底）daemon 拉起（SEA 自足不依赖 Node）；引导页新增 core_status 显示内核安装状态。公开壳仓 `dsh-supervisor-launcher`（MIT）：`scripts/export-shell.sh` 导出（壳+产品主页 README+MIT LICENSE+公开仓 CI），导出目录独立 cargo build 验证通过（clone 即构建）。许可定案：内核 **UNLICENSED**（主 package.json + 根 LICENSE + npm 子包继承），壳 **MIT**。
@@ -2829,7 +2857,7 @@ macOS Node 安装改用 `.pkg`（原 `.tar.gz` 与 `installer -pkg` 格式不匹
 - **`bin/dsh-supervisor self-check`**：SEA/源码双形态自检子命令（guardVersion/node/platform 三段）。
 - **Linux x64 验证**：注入 done、`self-check: OK`（guardVersion=0.10.0）；`strings` 无 `class RouterService` 明文（字节码生效），仅字符串常量池可见——闭源构建物口径成立（知悉非绝对防逆向）。
 - **发布形态**：公开 npm 内核子包（按平台 `@scope/dsh-core-<os>-<arch>`，内核版本号对齐）、私有 GitHub 存源码、壳开源引流。文档：README「内核发布：SEA 构建物化」+ `scripts/publish-and-verify.md` 双轨重写。
-### 重构（前端架构分层：数据层 / 状态中心 / 视图层，工业���单向数据流）
+### 重构（前端架构分层：数据层 / 状态中心 / 视图层，工业级单向数据流）
 - **分层**：HTTP API（后端）→ syncAll 一次并行拉取（数据层）→ Store（唯一事实源）→ renderActive 渲染当前活跃视图（视图层）。
 - **消除重复请求**：/status、/instances 由多次独立拉取合并为 syncAll 一次快照（此前 /instances 每周期拉 3 次、/status 拉 2 次）；
   swActiveProv/Key 从 Store.providers 读取，不再第 3 次拉取 /router/providers。
@@ -2840,7 +2868,7 @@ macOS Node 安装改用 `.pkg`（原 `.tar.gz` 与 `installer -pkg` 格式不匹
 
 ### 修复（前端状态架构：状态中心 + 视图联动 + 启动链路根治）
 - **前端状态中心 Store（单向数据流）**：所有视图状态统一存 Store（status/instances/lan/frp/switcher/providers/events），
-  refresh* 拉取写入、render* 只读渲染；unifiedTick 全量覆���含远程控制（LAN/FRP）——停止 DSH 时后端联动停 relay，
+  refresh* 拉取写入、render* 只读渲染；unifiedTick 全量覆盖含远程控制（LAN/FRP）——停止 DSH 时后端联动停 relay，
   LAN 页开关/代理状态随同一状态快照联动刷新，消除「A 页变了 B 页不知道」的断链。
 - **远程控制联动语义**：开关 = 实例运行中 ∧ remoteEnabled ∧ relay 实际监听；实例未运行时开关禁用并明示「实例未运行」，
   不再只是 remoteEnabled 配置位。
@@ -2865,7 +2893,7 @@ macOS Node 安装改用 `.pkg`（原 `.tar.gz` 与 `installer -pkg` 格式不匹
   （state / installLog / lastInstall / lastUninstall），hero 区实时进度卡（标题 + npm 输出日志尾 +
   禁用重复操作按钮），完成/失败自动刷新全视图——不再需要手动刷新。
 - **卸载不再冻结守卫事件循环**：uninstall() 由同步 execFileSync 改为异步 spawn。
-- **写操作后全量即时刷新**：安装/卸载/升级终态统���触发 unifiedTick()（hero/按钮态/版本卡一次到位）。
+- **写操作后全量即时刷新**：安装/卸载/升级终态统一触发 unifiedTick()（hero/按钮态/版本卡一次到位）。
 - **DOM 重建去重**：refreshInstances / refreshProviders 数据未变不重建（2s 轮询下防闪烁与事件重复绑定）。
 
 ### 修复（底层架构治理，审计后）
@@ -2882,7 +2910,7 @@ macOS Node 安装改用 `.pkg`（原 `.tar.gz` 与 `installer -pkg` 格式不匹
 - **实例持久化写放大治理**：`instances.json` 内容未变不写盘。
 - **中转费用估算落地**：按实际使用供应商的 models.dev 官方单价累计 `costUsd`（无单价不虚报）。
 - **前端清理**：删除 qrcode.js 死引用与死元素调用（swCool/swActive 等）；`wire()` 统一判空绑定；反代版本更新由「打开面板自动重启实例」改为显式「更新」按钮 + 用户确认。
-- **overlay 治理**：插件覆盖层只记录 `disabled:true` ��目，启用=删除记录，不再无限累积。
+- **overlay 治理**：插件覆盖层只记录 `disabled:true` 条目，启用=删除记录，不再无限累积。
 
 ### 重构（信息架构 → 桌面管理台形态）
 - 采用侧边导航 + 工作区的桌面软件标准布局：概览 / 大模型中转 /
@@ -2935,7 +2963,7 @@ macOS Node 安装改用 `.pkg`（原 `.tar.gz` 与 `installer -pkg` 格式不匹
   死 CSS（.sw-add/.sep/.lan-url）、未使用的 killWaitMs 配置项
   （DEFAULTS/config 模板/README/DESIGN 同步清理）。
 - 统一：CLI `events` 命令改用与自定义配置一致的日志路径解析。
-- 中转代���成功路径生命周期重构：区分客户端断开（仅销毁上游连接）与
+- 中转代理成功路径生命周期重构：区分客户端断开（仅销毁上游连接）与
   上游异常断流（怀疑冷却+事件），并处理上游过早关闭（aborted 事件）。
 - usage 提取支持嵌套子对象（括号计数），修复统计恒为零。
 
@@ -3008,7 +3036,7 @@ macOS Node 安装改用 `.pkg`（原 `.tar.gz` 与 `installer -pkg` 格式不匹
 ### 修复
 - **局域网源 RPC 全废的根因**：`crypto.randomUUID` 为 secure-context-only API，
   非回环 HTTP 源上不存在，而 DSH 客户端用它铸造每个 RPC id——缺失导致所有请求抛错、
-  WS 就绪握手失败。反代现向 HTML 注入等价 polyfill（</head> 前���行），
+  WS 就绪握手失败。反代现向 HTML 注入等价 polyfill（</head> 前执行），
   实测 workspace.list/settings.describe 等经代理与直连返回一致。
 - 令牌门卫顺序错误导致"URL 令牌放行并种 Cookie"分支不可达。
 - HTML 响应附加 `Cache-Control: no-store` 防设备陈旧页面。
@@ -3054,7 +3082,7 @@ macOS Node 安装改用 `.pkg`（原 `.tar.gz` 与 `installer -pkg` 格式不匹
 - **期望停止时不再"失明"**：发现无主运行实例进入 OBSERVED 观测模式——
   如实展示运行状态与 pid、不强杀不拉起；「启动」同一实例无缝转正纳管，
   「停止」显式终止。修复"DSH 明明在跑，守卫却显示没检测到"。
-- GUI 启动时若��卫未运行，自动尝试 systemctl 拉起。
+- GUI 启动时若守卫未运行，自动尝试 systemctl 拉起。
 
 ## [0.3.0] - 2025-08-22
 
@@ -3089,7 +3117,7 @@ macOS Node 安装改用 `.pkg`（原 `.tar.gz` 与 `installer -pkg` 格式不匹
   `healthUrl` 非法改为 fail-fast。
 - CLI 控制命令此前无视 `-c`/`DSH_SUPERVISOR_CONFIG` 自定义配置。
 - RESTARTING/BACKOFF 重启前复查端口占用，不再对占端口的不健康进程反复 spawn 计崩溃。
-- 守卫 shutdown 清理升级定时器；崩���窗口跨守卫重启持久化。
+- 守卫 shutdown 清理升级定时器；崩溃窗口跨守卫重启持久化。
 - 非法版本号不再被静默当作"已是最新"。
 
 ### 变更

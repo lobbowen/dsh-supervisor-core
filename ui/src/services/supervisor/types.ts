@@ -420,13 +420,14 @@ export interface RegistryInfo {
   manual?: boolean;
   manualOrigin?: string;
   candidates?: Array<{ origin: string }>;
-  presets?: Array<{ label: string; origin: string }>;
+  /** 镜像目录（基址字符串，来自壳投放的契约） */
+  presets?: string[];
   latencyMs?: number;
   checkedAt?: number;
   probes?: Array<{ origin: string; ok: boolean; latencyMs: number | null; error?: string | null }>;
   /** 消费顺延序列（primary 第一，其余按延迟） */
   ordered?: string[];
-  /** 本次选择依据：shell（采用壳契约选择）| probe（自测速）| manual | unreachable */
+  /** 本次选择依据：shell-probe（采用壳契约里的同轮测速证据）| probe（内核自测速）| manual | unreachable */
   source?: string;
   /** 逐源形态判定与探测结论（非法基址也要指名，否则用户只看到「取不到版本」） */
   registries?: Array<{
@@ -434,6 +435,8 @@ export interface RegistryInfo {
     reachable: boolean | null; latencyMs: number | null; error: string | null;
   }>;
   rejectedOrigins?: string[];
+  /** 契约 schema（不可用时 null）：v2 与 v3 在排障时是两回事（选择字段是否还住在契约里） */
+  contractSchema?: number | null;
   error?: string;
 }
 export interface SelfUpdateStatus {

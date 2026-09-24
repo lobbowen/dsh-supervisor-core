@@ -3,7 +3,7 @@
 // 统一的「包发布/安装/更新」平台能力，归 platform/，与 platform/contract、platform/os 同层（消费者横跨 root/daemon/instance）。
 // 本文件是薄门面，只做组合与导出，不含算法/IO：
 //   registry-ref.js 镜像基址的定义与传输单口、release.js 选版（纯）、policies.js 纯策略、
-//   registry-config.js 镜像配置载入与落盘、registry.js 探测与选源（IO）、
+//   registry-config.js 两份镜像文件的载入与落盘（契约只读、选择文档只由内核写）、registry.js 探测与选源（IO）、
 //   version-check.js 目标版本查询（IO）、install.js npm 安装执行 + 端口健康验证（IO）。
 
 const policies = require('./policies');
@@ -16,7 +16,8 @@ const install = require('./install');
 const { semverCompare, VERSION_RE } = require('../../shared/version');
 
 /** 统一分发管理器：门面。状态字段由本实例持有，实现函数显式收参（零跨文件 this）。
- *  @param opts - registries: 候选镜像源（默认来自 config.registries）；registryFile: 全局镜像配置持久化路径；
+ *  @param opts - registries: 候选镜像源兜底（默认来自 config.registries）；registryFile: 壳投放的镜像契约
+ *  （只读）；registryChoiceFile: 内核自持的选择文档（唯一写者，见 registry-config.js 的所有权说明）；
  *  events / logger；canary: 本机灰度事实（默认 false） */
 class DistributionManager {
   constructor(opts) {
@@ -24,12 +25,14 @@ class DistributionManager {
     this.events = opts.events || null;
     this.logger = opts.logger || console;
     this.registryFile = opts.registryFile || null;
+    this.choiceFile = opts.registryChoiceFile || null;
     // 最小兜底（仅契约不可用时用；见 policies.FALLBACK_REGISTRIES）。
     this.defaultRegistries = (opts.registries && opts.registries.length) ? opts.registries : [...policies.FALLBACK_REGISTRIES];
-    // 壳投放的镜像契约（目录 + 选择结果 + 探测规格）。
-    this.contract = { ok: false, reason: 'not-loaded', catalog: [], probe: null, selected: null };
-    // 全局镜像配置：mode auto|manual，origins 候选，manualOrigin 手动固定。从 registryFile 加载。
-    this.registryConfig = { mode: 'auto', origins: [...this.defaultRegistries], manualOrigin: this.defaultRegistries[0] || '' };
+    // 壳投放的镜像契约（目录 + 探测规格 + 壳本轮测速证据）。
+    this.contract = { ok: false, reason: 'not-loaded', catalog: [], probe: null, measurements: [], legacyChoice: null };
+    // 内核自持的选择：mode auto|manual，manualOrigin 手动固定，origins 用户在面板里显式维护的候选
+    // （空=不覆盖壳目录）。落盘只写 choiceFile。
+    this.registryConfig = { mode: 'auto', manualOrigin: '', origins: [] };
     // 灰度事实：组装根注入「本机配置 canary:true / DSH_CANARY=1」。
     this.canary = opts.canary === true;
     this.selectedRegistry = null; // { origin, ordered, source, manual, checkedAt, latencyMs, probes }

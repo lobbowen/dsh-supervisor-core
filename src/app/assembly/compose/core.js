@@ -144,10 +144,13 @@ function composeCore(host, rawConfig, configPath) {
       if (host.lan) { try { host.lan.applyToken(id, token); } catch (e) { host.logger.warn && host.logger.warn('lan applyToken(' + id + '): ' + e.message); } }
     });
     const swDir = path.dirname(host.config.stateFile);
-    // 包发布/安装/更新的唯一通道：DSH 自升级与反代子应用共用此实例，镜像源配置全局一份（registry.json）。
+    // 包发布/安装/更新的唯一通道：DSH 自升级与反代子应用共用此实例。镜像配置全局两份文件：契约
+    // registry.json 由壳写、内核只读；选择 registry-choice.json 由内核写（只有面板的 setRegistryConfig
+    // 走到落盘），反代 daemon 侧只读同一份，两侧才不会一个按手动源、一个按目录选。
     host.dist = new DistributionManager({
       registries: (host.config.registries && host.config.registries.length) ? host.config.registries : ['https://registry.npmjs.org'],
       registryFile: path.join(swDir, 'registry.json'),
+      registryChoiceFile: path.join(swDir, 'registry-choice.json'),
       events: host.events,
       logger: host.logger,
       // 灰度事实由本机配置注入（canary:true）；仅 @dsh-sup/* 包消费该开关。

@@ -29,24 +29,30 @@ function registryOriginViolation(origin) {
   return registryRef.hostViolation(parsed.host);
 }
 
-/** 生效的候选 registry 列表：配置优先，空则回退兜底。 */
-function effectiveOrigins(registryConfig, defaultRegistries) {
-  const o = (registryConfig && registryConfig.origins) || [];
-  const list = o.filter((x) => typeof x === 'string' && x.trim());
-  return list.length ? list : [...defaultRegistries];
+/** 生效的候选 registry 列表（纯）。顺序即所有权：
+ *  1) 内核选择文档里的 origins —— 用户在面板里显式维护的候选，最该被尊重；
+ *  2) 契约 catalog —— 壳投放的「这台机器上验证过的镜像目录」；
+ *  3) defaultRegistries —— 兜底（构造参数，缺省即最小兜底）。
+ *  把目录排在用户之前会让候选编辑在壳下次重写契约时静默失效，所以这一版按上面的顺序取第一个非空。 */
+function effectiveOrigins(registryConfig, contract, defaultRegistries) {
+  const user = ((registryConfig && registryConfig.origins) || [])
+    .filter((x) => typeof x === 'string' && x.trim());
+  if (user.length) return user;
+  const catalog = (contract && contract.ok && contract.catalog.length) ? contract.catalog : [];
+  if (catalog.length) return catalog;
+  return [...(defaultRegistries || [])];
 }
 
-/** 由契约 / 旧文档 / 兜底重建内核持有的 registryConfig（纯）。
- *  优先级：契约 catalog（壳是所有者）> 旧 origins > 兜底。 */
-function rebuildRegistryConfig(doc, contract, defaultRegistries) {
-  const fromContract = (contract && contract.ok) ? contract.catalog : [];
-  const fromDoc = (Array.isArray(doc.origins) && doc.origins.length) ? doc.origins : [];
-  const origins = fromContract.length ? fromContract : (fromDoc.length ? fromDoc : [...defaultRegistries]);
+/** 由内核自持的选择文档重建内存态（纯）。这份文档只有内核写，所以不再需要「读回原文档保留壳字段」
+ *  的义务；缺失字段按默认值：auto + 不固定手动源 + 空候选（候选来自契约目录）。
+ *  @param {object} [doc] 选择文档；null/损坏由调用方处理 */
+function rebuildRegistryConfig(doc) {
+  const d = (doc && typeof doc === 'object' && !Array.isArray(doc)) ? doc : {};
+  const origins = Array.isArray(d.origins) ? d.origins.filter((x) => typeof x === 'string' && x.trim()) : [];
   return {
-    mode: (doc.mode === 'manual') ? 'manual' : 'auto',
+    mode: d.mode === 'manual' ? 'manual' : 'auto',
+    manualOrigin: typeof d.manualOrigin === 'string' ? d.manualOrigin.trim() : '',
     origins,
-    manualOrigin: (typeof doc.manualOrigin === 'string' && doc.manualOrigin)
-      ? doc.manualOrigin : (origins[0] || ''),
   };
 }
 
@@ -75,12 +81,53 @@ function isInCanaryList(state) {
   return state.canary === true;
 }
 
+/** 壳测速证据的可采用时长（秒）。与内核自身选源缓存同量级：过期即自己重测，因为「上次谁最快」
+ *  不等于「现在谁最快」；而窗口内的重复全量测速会让面板白等一轮网络往返。 */
+const SHELL_PROBE_MAX_AGE_SEC = 30 * 60;
+
+/** 把壳投放的测速证据折成内核的逐源结论（纯），返回形状与 probeAllOrigins 一致，或 null 表示
+ *  不能用（无证据 / 过期 / **未覆盖本轮全部候选**）。最后一条是采用它的全部理由：只有全覆盖时
+ *  「信壳测过」才等于「自己不用再测」，缺一个源就下结论会把面板的逐源卡变成半空。
+ *  采用前仍逐条过形态闸：证据来自文件，且壳的目录形态可能比本内核宽。 */
+function shellProbeResults(origins, measurements, nowSec, maxAgeSec) {
+  if (!Array.isArray(measurements) || !measurements.length) return null;
+  const ttl = Number.isFinite(maxAgeSec) ? maxAgeSec : SHELL_PROBE_MAX_AGE_SEC;
+  const byBase = new Map();
+  for (const m of measurements) {
+    if (!m || typeof m.origin !== 'string') continue;
+    const age = nowSec - Number(m.checkedAt);
+    if (!(age >= 0) || age > ttl) continue;
+    const parsed = registryRef.parseRegistryBase(m.origin);
+    if (parsed.ok && !byBase.has(parsed.base)) byBase.set(parsed.base, m);
+  }
+  if (!byBase.size) return null;
+  const results = [];
+  for (const o of origins || []) {
+    const parsed = registryRef.parseRegistryBase(o);
+    if (!parsed.ok) continue;
+    const m = byBase.get(parsed.base);
+    if (!m) return null;
+    results.push({
+      origin: parsed.base,
+      ok: m.ok === true,
+      latencyMs: Number.isFinite(m.latencyMs) ? m.latencyMs : 0,
+      error: m.error || null,
+      from: 'shell-contract',
+    });
+  }
+  if (!results.length) return null;
+  results.sort((a, b) => (a.ok === b.ok ? a.latencyMs - b.latencyMs : (a.ok ? -1 : 1)));
+  return results;
+}
+
 module.exports = {
   FALLBACK_REGISTRIES,
   NPM_TIMEOUT_MS,
+  SHELL_PROBE_MAX_AGE_SEC,
   registryOriginViolation,
   effectiveOrigins,
   rebuildRegistryConfig,
   resolveProbe,
+  shellProbeResults,
   isInCanaryList,
 };

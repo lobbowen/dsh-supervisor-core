@@ -316,42 +316,82 @@ const readDomain = (dir) => fs.readdirSync(path.join(ROOT, dir)).filter((f) => f
     distViaPlatformKillTree, distViaPlatformKillTree ? '是' : '否');
 }
 
-// -- J-j：内核写 registry.json 时必须保留壳的 v2 字段（P2 双写）--
-//   该文件所有权在壳（registry-contract.js 声明），跨仓 .shell-work 也会读回（行号跨仓不可核验）；
-//   内核若整份覆盖，会抹掉 catalog/probe/selected，削弱壳的镜像解析。
+// -- J-j：两份镜像文件各写各的 —— 内核一个字节都不写壳有的契约 --
+//   旧形状是两个写者共用 registry.json，内核每次保存都要「读回原文、只覆盖自己那三键」，壳则用
+//   mode=manual 为条件跳过整份契约更新。拆成两份之后，判据应当是**契约文件字节不变**（行为级），
+//   而不是旧版那种「壳字段有没有被我温柔地保留下来」。
 {
-  const dmSrc = readDomain('src/platform/distribution');
-  // 落盘实现已归 registry-config.js（配置所有权），判据对象是聚合源里的该函数体。
-  const m = dmSrc.match(/function saveRegistryConfig\([\s\S]*?\n\}/);
-  check('J-j 定位到 saveRegistryConfig', !!m, m ? 'ok' : '未找到');
-  check('J-j 写前读回原文档（保留未知字段）', /readFileSync\(f, 'utf8'\)/.test(dmSrc), '有');
-  check('J-j 只覆盖内核拥有的三键',
-    /doc\.mode = /.test(dmSrc) && /doc\.origins = /.test(dmSrc) && /doc\.manualOrigin = /.test(dmSrc), '有');
-  check('J-j 不再整份序列化 registryConfig',
-    !/JSON\.stringify\(this\.registryConfig, null, 2\)/.test(dmSrc), '已改');
-  // 行为级：壳字段必须存活，内核字段必须更新
+  const dmSrc = require('./_strip').stripComments(readDomain('src/platform/distribution'));
+  const body = (dmSrc.match(/function saveRegistryConfig\([\s\S]*?\n\}/) || [])[0] || '';
+  check('J-j 定位到 saveRegistryConfig 函数体（判据只问这一处，不问目录聚合）', body.length > 0, body ? 'ok' : '未找到');
+  check('J-j 落盘目标是内核选择文档', /writeAtomic\(\s*state\.choiceFile/.test(body), '有');
+  check('J-j 落盘函数里不出现契约路径（写面与读面分家）', !/state\.registryFile/.test(body), '无');
+  check('J-j 只读挂载（无 choiceFile）时直接不写', /if \(!state\.choiceFile\) return/.test(body), '有');
+  check('J-j 选择文档带自己的 schema 常量', /schema: CHOICE_SCHEMA/.test(body), '有');
+
   const { DistributionManager } = require(path.join(ROOT, 'src', 'platform', 'distribution', 'index.js'));
   const tmpR = fs.mkdtempSync(path.join(os.tmpdir(), 'regj-'));
   const rf = path.join(tmpR, 'registry.json');
-  fs.writeFileSync(rf, JSON.stringify({
-    schema: 2, writtenBy: 'shell', catalog: ['https://a.example/', 'https://b.example/'],
+  const cf = path.join(tmpR, 'registry-choice.json');
+  const contractDoc = {
+    schema: 2, writtenBy: 'shell@1.2.8',
+    catalog: ['https://a.example', 'https://b.example'],
     probe: { kind: 'package-metadata', pathTemplate: 'x', timeoutMs: 6000 },
-    selected: { origin: 'https://a.example/', latencyMs: 12, checkedAt: 1 },
-    mode: 'auto', origins: ['https://a.example/'], manualOrigin: 'https://a.example/',
-  }, null, 2));
-  const dm = Object.create(DistributionManager.prototype);
-  dm.registryFile = rf;
-  dm.logger = { warn() {}, info() {}, debug() {} };
-  dm.registryConfig = { mode: 'manual', origins: ['https://c.example/'], manualOrigin: 'https://c.example/' };
+    selected: { origin: 'https://a.example', latencyMs: 12, checkedAt: 1 },
+    mode: 'auto', origins: ['https://a.example'], manualOrigin: 'https://a.example/',
+  };
+  fs.writeFileSync(rf, JSON.stringify(contractDoc, null, 2));
+  const contractBytesBefore = fs.readFileSync(rf, 'utf8');
+  const dm = new DistributionManager({
+    registryFile: rf, registryChoiceFile: cf, registries: ['https://fallback.example'],
+    logger: { warn() {}, info() {}, debug() {} },
+  });
+  dm.registryConfig = { mode: 'manual', manualOrigin: 'https://c.example', origins: ['https://c.example'] };
   dm._saveRegistryConfig();
-  const after = JSON.parse(fs.readFileSync(rf, 'utf8'));
-  check('J-j 行为：壳的 v2 字段全部保留',
-    after.schema === 2 && after.writtenBy === 'shell' && (after.catalog || []).length === 2 && !!after.probe && !!after.selected,
-    JSON.stringify({ schema: after.schema, writtenBy: after.writtenBy, catalog: (after.catalog || []).length, probe: !!after.probe, selected: !!after.selected }));
-  check('J-j 行为：内核三键已更新',
-    after.mode === 'manual' && after.origins[0] === 'https://c.example/' && after.manualOrigin === 'https://c.example/',
-    JSON.stringify({ mode: after.mode, origins: after.origins }));
+  check('J-j 行为：内核保存后契约文件逐字节不变',
+    fs.readFileSync(rf, 'utf8') === contractBytesBefore, '一致');
+  const choice = JSON.parse(fs.readFileSync(cf, 'utf8'));
+  check('J-j 行为：选择文档只含内核拥有的字段',
+    choice.mode === 'manual' && choice.manualOrigin === 'https://c.example'
+      && String(choice.origins) === 'https://c.example' && choice.schema === 1,
+    JSON.stringify({ schema: choice.schema, mode: choice.mode, origins: choice.origins }));
+  check('J-j 反向：选择文档里不夹带壳的 catalog/probe（否则双写者的老问题回来）',
+    !('catalog' in choice) && !('probe' in choice) && !('selected' in choice), '干净');
   fs.rmSync(tmpR, { recursive: true, force: true });
+}
+
+// -- J-j2：升级到两份文件的第一次载入，旧契约里的 manual 意图迁一次就落进选择文档 --
+//   不迁移的代价：壳升到 schema3 会删掉那些字段，用户固定过的源在下一次契约重写时静默回到 auto。
+//   只迁 mode/manualOrigin：旧 origins 一直是「契约目录的快照」（rebuild 时目录优先），迁过去等于
+//   把某一时刻的目录冻进用户候选，反而挡住后续目录更新。
+{
+  const tmpM = fs.mkdtempSync(path.join(os.tmpdir(), 'regj2-'));
+  const rf = path.join(tmpM, 'registry.json');
+  const cf = path.join(tmpM, 'registry-choice.json');
+  fs.writeFileSync(rf, JSON.stringify({
+    schema: 2, writtenBy: 'shell@1.2.8', catalog: ['https://a.example', 'https://b.example'],
+    mode: 'manual', manualOrigin: 'https://a.example', origins: ['https://a.example'],
+  }));
+  const { DistributionManager } = require(path.join(ROOT, 'src', 'platform', 'distribution', 'index.js'));
+  const dm = new DistributionManager({
+    registryFile: rf, registryChoiceFile: cf, registries: ['https://fallback.example'],
+    logger: { warn() {}, info() {}, debug() {} },
+  });
+  check('J-j2 首次载入即把旧契约的 manual 意图接上',
+    dm.registryConfig.mode === 'manual' && dm.registryConfig.manualOrigin === 'https://a.example',
+    JSON.stringify(dm.registryConfig));
+  check('J-j2 迁移当轮就落盘（否则下次读到 schema3 契约就没有来源了）', fs.existsSync(cf), '有');
+  const migrated = JSON.parse(fs.readFileSync(cf, 'utf8'));
+  check('J-j2 迁移不搬旧 origins（那是目录快照，搬过去会冻住候选）',
+    Array.isArray(migrated.origins) && migrated.origins.length === 0, JSON.stringify(migrated.origins));
+  // 契约升到 schema3（不再带选择字段）后，内存态必须继续按迁移过的选择走。
+  fs.writeFileSync(rf, JSON.stringify({ schema: 3, writtenBy: 'shell@1.2.9', catalog: ['https://b.example'] }));
+  dm._loadRegistryConfig();
+  check('J-j2 schema3 契约下选择仍来自内核文档',
+    dm.registryConfig.mode === 'manual' && dm.registryConfig.manualOrigin === 'https://a.example'
+      && dm.contract.ok && dm.contract.legacyChoice === null,
+    JSON.stringify({ mode: dm.registryConfig.mode, manual: dm.registryConfig.manualOrigin }));
+  fs.rmSync(tmpM, { recursive: true, force: true });
 }
 
 // -- J-k：镜像源写入口 SSRF 闸 —— 私网/元数据字面量不得落盘 --

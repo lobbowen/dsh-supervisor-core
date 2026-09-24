@@ -9,20 +9,20 @@
 // `registryContract.read()` 与 `DistributionManager._loadRegistryConfig()` 原先
 // **只在构造器各调用一次**，无任何 reload / watch。
 // 而壳会在**运行中**重写 registry.json（真实触发点：mirror.rs::export_on_boot
-// 每次壳启动、commands/mod.rs:514 的 mirror_set、node.rs:146 选中镜像后落盘）。
+// 每次壳启动、commands/mod.rs 的 mirror_set、node.rs 选中镜像后落盘）。
 //
-// 后果：内核进程生命周期内永远看不到壳的新 catalog / **探测规格** / selected / mode：
-//   - 用**旧探测方法**自己重测 -> 正是 registry-contract.js:23-28 声称已修复的
-//     「两侧选源不一致」（用户看到面板显示一个源、实际用另一个）；
+// 后果：内核进程生命周期内永远看不到壳的新 catalog / **探测规格** / 测速证据：
+//   - 用**旧探测方法**自己重测 -> 面板显示一个源、实际用另一个；
 //   - 手动设 manual 后内核仍按 auto 走；
 //   - 主进程与 router-daemon 若启动时刻不同 -> 两侧契约长期不一致（一台机器两个决策）。
 //
 // ## 修法
-// 在读入口（selectRegistry / registryInfo）加 TTL 重载（60s）。
+// 在读入口（selectRegistry / registryInfo）加 TTL 重载（60s）。选择字段搬进内核自持的
+// registry-choice.json 之后，重载同时覆盖契约与选择文档 —— 面板改过的东西也不会被内存态冻住。
 //
 // ## 门禁
 //   A 结构：存在 TTL 重载入口，且读入口确实调用它
-//   B 行为：TTL 内不重载、TTL 过后重载（并拿到新的 catalog 与 **probe 规格**）
+//   B 行为：TTL 内不重载、TTL 过后重载（并拿到新的 catalog 与 **探测规格**）
 //   C 反向：不因每次调用都重读而回归（TTL 内多次调用只读一次盘）
 // ---------------------------------------------------------------------------
 
