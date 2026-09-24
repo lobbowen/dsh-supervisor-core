@@ -64,7 +64,7 @@ schema3 按写者拆开后，两处让步一起删除——**壳只投证据，�
 | `registry.json` `catalog` | 壳 | 候选镜像目录；每条仍在内核侧过形态闸 `src/platform/distribution/registry-ref.js::parseRegistryBase`（允许带 path，拒凭证/query/片段） |
 | `registry.json` `probe` | 壳 | 探测规格（超时等），内核按同一规格自测 |
 | `registry.json` `measurements[]` | 壳 | 逐源实测 `{origin,ok,latencyMs,error,checkedAt}`。**采用条件三条同时成立**（`src/platform/distribution/policies.js::shellProbeResults`）：新鲜（`SHELL_PROBE_MAX_AGE_SEC` = 30 分钟）、覆盖本轮全部候选、每源过形态闸；否则整批回退内核自测（选源结果 `source` 记 `shell-probe` / `probe`） |
-| `registry-choice.json` `mode` / `manualOrigin` / `origins` / `updatedAt` | **内核唯一**（`src/platform/distribution/registry-config.js`） | 壳只读 `mode === "manual"` 时的 `manualOrigin`（置顶自己的候选列表），其余键忽略 |
+| `registry-choice.json` `mode` / `manualOrigin` / `origins` / `updatedAt` | **内核唯一**（`src/platform/distribution/registry-config.js`，`CHOICE_SCHEMA = 1`，落盘 0600） | 内核：`mode==='manual'` + `manualOrigin` 即固定源（选源结果 `source` 记 `manual`），`origins` 是候选首位（`policies.effectiveOrigins`）。壳（`src-tauri/src/core.rs::kernel_choice`）读同一对键 —— `manual` 时的 `manualOrigin` 与 `origins` —— 好让内核的安装/更新打在用户固定的同一个源上；`updatedAt` 壳忽略 |
 
 **跨仓同表**：形态表与私网主机表在内核与壳各有一份实现（JS 与 Rust），由内核
 `test/npm-resolution-test.js` 与壳 `src-tauri/src/mirror.rs` 的 golden vectors 单测钉住同一张表——
