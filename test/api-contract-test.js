@@ -7,7 +7,7 @@
 
 // API 契约断言测试：对 createServer 的响应对未来回归设防。
 // 覆盖审计修复的关键契约：202 异步受理带 ok、key/use 路由 await（Promise 序列化回归）、
-// 实例/插件写操作状态码与 ok 字段、open-web 的外部打开三档结果原样透传（OW 组）。全部用最小 stub Supervisor（Proxy 兜底方法）。
+// 实例/插件写操作状态码与 ok 字段、open-web 与面板代开端点的外部打开三档结果原样透传（OW/OU 组）。全部用最小 stub Supervisor（Proxy 兜底方法）。
 
 const path = require('node:path');
 const http = require('node:http');
@@ -167,6 +167,27 @@ function req(method, p, body, hostHeader, extraHeaders, via) {
     r = await req('POST', '/instances/open-web', JSON.stringify({ id: 'sb1' }));
     check('OW 出口抛错也回结构化 500（不能让请求挂死或回 200），且地址仍在场',
       r.code === 500 && r.body.ok === false && r.body.reason === 'spawn-failed' && !!r.body.url, r.code + ' ' + JSON.stringify(r.body));
+
+    // OU 组：面板代开端点与 open-web 同一出口、同一状态码语义。它是壳内面板唯一的活路
+    //   （webview 丢弃 window.open 与 target=_blank），本组失配即那条按钮又回到无人应答的形态。
+    owCase = CONFIRMED;
+    r = await req('POST', '/env/open-url', JSON.stringify({ url: 'http://127.0.0.1:3099/' }));
+    check('OU 成功档 → 200 且三档字段原样在场（本域不重造结果）',
+      r.code === 200 && r.body.ok === true && r.body.confirmed === true && r.body.evidence.bin === 'xdg-open',
+      r.code + ' ' + JSON.stringify(r.body));
+    check('OU 地址原样交给出口（面板给什么就开什么，端点不加工 URL）',
+      argvUrls[argvUrls.length - 1] === 'http://127.0.0.1:3099/', String(argvUrls[argvUrls.length - 1]));
+    r = await req('POST', '/env/open-url', JSON.stringify({}));
+    check('OU 缺 url → 400（空地址不得走到出口，也不得回 200）', r.code === 400 && r.body.ok === false, r.code + ' ' + JSON.stringify(r.body));
+    owCase = (url) => ({ ok: false, confirmed: false, handedOff: false, reason: 'no-launcher', error: '未找到可用的浏览器启动命令，请手动打开该地址', message: null, url, evidence: null });
+    r = await req('POST', '/env/open-url', JSON.stringify({ url: 'http://a.b/' }));
+    check('OU 失败档 → 500 且 reason/url 一起到场（面板据此给复制入口）',
+      r.code === 500 && r.body.ok === false && r.body.reason === 'no-launcher' && r.body.url === 'http://a.b/',
+      r.code + ' ' + JSON.stringify(r.body));
+    owCase = 'throw';
+    r = await req('POST', '/env/open-url', JSON.stringify({ url: 'http://a.b/' }));
+    check('OU 出口抛错 → 结构化 500 且地址仍在场',
+      r.code === 500 && r.body.reason === 'spawn-failed' && r.body.url === 'http://a.b/', r.code + ' ' + JSON.stringify(r.body));
   } finally {
     brMod.openBrowser = realOpenBrowser;
   }
@@ -179,6 +200,15 @@ function req(method, p, body, hostHeader, extraHeaders, via) {
     rr.write(JSON.stringify({ id: 'i1' })); rr.end();
   });
   check('跨站 Origin 写请求拒绝 403', evil === 403, String(evil));
+
+  // 代开端点同受 CSRF 闸约束：任意网页对 127.0.0.1 的一次单击就能在用户机器上弹浏览器，
+  //   那是白送的动作面，不是产品能力。
+  const evilOpen = await new Promise((resolve) => {
+    const rr = http.request({ host: '127.0.0.1', port: API_PORT, path: '/env/open-url', method: 'POST', headers: { 'Content-Type': 'application/json', 'Origin': 'http://evil.example', 'Host': '127.0.0.1:' + API_PORT } }, (res) => { res.resume(); res.on('end', () => resolve(res.statusCode)); });
+    rr.on('error', () => resolve(0));
+    rr.write(JSON.stringify({ url: 'http://evil.example/' })); rr.end();
+  });
+  check('跨站 Origin 的 /env/open-url 拒绝 403', evilOpen === 403, String(evilOpen));
 
   // F1 授权收口契约：/instances 的 authUrl 仅回环 Host 请求带 DSH token，
   // LAN 分支的语义已在 P3-C（fail-closed，FIX-1 B2 执行侧）变更：
@@ -248,6 +278,12 @@ function req(method, p, body, hostHeader, extraHeaders, via) {
   check('F2 已认证 LAN GET /instances → 200 且不下发 token（安全属性转移自 F1）',
     !LAN_IP || (kr.code === 200 && !!instLanAuthed && instLanAuthed.authUrl.indexOf('token=') < 0 && instLanAuthed.tokenPresent === false),
     LAN_IP ? (kr.code + ' ' + JSON.stringify(instLanAuthed && instLanAuthed.authUrl)) : '（无 LAN 地址，跳过）');
+  // 代开端点的回环闸：已认证 LAN 访客的浏览器不在这台机器上，请内核开浏览器既无用又是白送的动作面。
+  //   面板据同一判据（页面来源是否回环）改走访客自己的 window.open，故这里必须如实拒绝而非静默成功。
+  kr = await reqKey('POST', '/env/open-url', null, { Authorization: 'Bearer ' + KEY }, 'lan');
+  check('OU 非回环来源 → 403 且给出可复制地址的说法',
+    !LAN_IP || (kr.code === 403 && kr.body.ok === false && /复制/.test(String(kr.body.error))),
+    LAN_IP ? (kr.code + ' ' + JSON.stringify(kr.body)) : '（无 LAN 地址，跳过）');
   serverKey.close();
 
   server.close();

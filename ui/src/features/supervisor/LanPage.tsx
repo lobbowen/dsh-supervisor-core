@@ -11,6 +11,8 @@ import { Label } from "../../framework/ui/label";
 import { supervisorApi, useSupervisorData } from "../../services/supervisor";
 import type { LanItem, RemoteMode, RemoteView } from "../../services/supervisor/types";
 import { useSupervisorAction } from "./useSupervisorAction";
+import { runOpenExternal } from "./openExternal";
+import { handOffFromPanel } from "../../services/supervisor/externalOpen";
 import { Card, CardTitle, DomainBadge, Pill } from "./widgets";
 
 import { cn } from "../../framework/utils";
@@ -137,9 +139,10 @@ export function LanPage() {
                       端口 {it.port}{mode !== "off" && proxy?.wanPort ? " · 访问端口 " + proxy.wanPort + (mode === "wan" ? "（公网同号）" : "") : ""}
                     </div>
                     {url ? (
-                      <a className="inline-flex max-w-full items-center gap-1 truncate text-xs text-primary hover:underline" href={url} target="_blank" rel="noreferrer">
+                      <button type="button" onClick={() => void runOpenExternal(() => handOffFromPanel(url))}
+                        className="inline-flex max-w-full items-center gap-1 truncate text-xs text-primary hover:underline" title="在系统浏览器中打开该地址">
                         <ExternalLink className="size-3 shrink-0" />{url}
-                      </a>
+                      </button>
                     ) : (
                       <div className="text-xs text-muted-foreground/70">
                         {!running ? "实例未运行，启动后可开启远程"

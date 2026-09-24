@@ -33,24 +33,29 @@
   通道）并在失败时作废该一次性授权码（残留可用码等于给一次从未发生的浏览留门）；`proxyLoginStart` 交出
   `{ok, url=authUrl, reason, error, isolated}`，成功档的 `confirmed/handedOff` 直接取自平台层结果对象而不是
   在消费方重写死值；`router/ops/browser.js` 返回 `{profile, result}`——只回 profile 就是只回 `ok:true` 的同一失效形态。
-- **S-4 面板**：`ui/src/services/supervisor/externalOpen.ts`（分档判据，只看字段不看文案）+
+- **S-4 面板**：`ui/src/services/supervisor/externalOpen.ts`（选路 + 分档判据，只看字段不看文案）+
   `ui/src/features/supervisor/openExternal.tsx`（唯一呈现口 `runOpenExternal`）。**三档每一档都渲染可点、可复制的地址行**，
-  失败响应体里的地址也照样呈现（catch 里优先取 `err.body`）；DSH Web / 概览 / 反代登录三处入口全部改经该入口。
-  面板自建窗口同样单点（`openViaWindow`，被拦截即 `ok:false`）；壳内经 postMessage 桥请壳代开
-  （`dsh:open-url` / `dsh:open-url-result`，与内核更新桥共用协议版本常量与 `ev.source === window.parent` 来源硬判据），
-  **壳无回执即判失败**并提示复制。
+  失败响应体里的地址也照样呈现（catch 里优先取 `err.body`）；DSH Web / 概览 / 反代登录 / 远程访问地址四处入口全部改经该入口。
+  新增 `POST /env/open-url`：面板请内核用**内核所在机器**的默认浏览器打开地址，三档结果原样回传、`ok:false` 映射 500、
+  只受理回环来源（跨站 403 由既有 CSRF 闸给）。选路只有一条判据 `servedByKernelHost()`（页面来源是否回环，
+  面板由内核托管故等价于「浏览器与内核同机」）：回环一律请内核开，非回环（局域网/公网访客）用访客自己的
+  `openViaWindow`（被拦截即 `ok:false`，全仓唯一一处）。
+  **删掉中途形态**：面板经 postMessage 桥请壳主帧代开（`dsh:open-url`）——壳与内核恒在同一台机器上，
+  同一件事的两套语义（回执有无、超时算不算成功各说各话）没有第二套的必要，代开方归内核。
 
 门禁与标准（新增判据全部并入既有条链目，未新增链条目）：X-8（计划与取证档位）· X-10（三档行为 + `observeSpawn` 本体，
 假 spawn/假时钟，CI 不真起浏览器）· X-11（唯一出口的源码级不变量，含面板最后一环：`window.open` 只允许出现在
-`externalOpen.ts`）；`four-platform-behavior-matrix` P-5 补 `openBrowser` 声明位与 `trustExit` 档位；
-`platform-capability-audit` A1·A2·A3 补能力位、实现产物与未知平台显式失败；`api-contract` 新增 OW 组（真 HTTP 三档透传、
-500、地址在场、一次性码作废）；`token-contract-gate` TK-G6 的动词集改为与 `browser.js` 真实 argv 出口对齐并加反向断言
-（改名会让扫描静默零命中＝门禁空转）；`ui` 的 `externalOpen.test.ts` 锁分档判据与桥的来源校验、无回执降级。
+`externalOpen.ts` 的回环分支、`target=_blank` 与 `dsh:open-url` 全仓零出现、`/env/open-url` 处理体整段切片判定）；
+`four-platform-behavior-matrix` P-5 补 `openBrowser` 声明位与 `trustExit` 档位；
+`platform-capability-audit` A1·A2·A3 补能力位、实现产物与未知平台显式失败；`api-contract` 新增 OW/OU 两组
+（真 HTTP 三档透传、500、地址在场、一次性码作废、跨站 403、已认证 LAN 访客的代开请求 403）；
+`token-contract-gate` TK-G6 的动词集改为与 `browser.js` 真实 argv 出口对齐并加反向断言
+（改名会让扫描静默零命中＝门禁空转）；`ui` 的 `externalOpen.test.ts` 锁分档判据、回环选路与弹窗被拦截判失败。
 两份平台门禁按 E-2 补「覆盖缺口」登记：假件证明不了真机 argv 行为与窗口是否出现，源码正则保证「只有一条路」
 而非「运行期只走了这条路」。标准成文于 PLATFORM-CAPABILITY-MATRIX.md §九（含四条反模式）。
 
-**未收口**：壳侧 `dsh:open-url` 的接收端（`tauri-plugin-opener` + `on_new_window`）在壳仓配套 PR；
-用户那台 Windows 机「什么都不弹」究竟落在哪一档仍未取证——本批只保证它不会再被显示成成功。
+**未收口**：用户那台 Windows 机「什么都不弹」究竟落在哪一档仍未取证——本批只保证它不会再被显示成成功。
+壳侧 `on_new_window`（webview 对 `window.open` 的默认丢弃）不改：面板已不再依赖它。
 
 ### 读端点不再等长动作：市场重建与更新检测改「快照 + 后台跑」（真机取证驱动）
 

@@ -6,11 +6,12 @@ import { toast } from "sonner";
 import { classifyOpenResult, handOffFromPanel } from "../../services/supervisor/externalOpen";
 import type { OpenExternalResult } from "../../services/supervisor";
 
-/** 地址条：点开（壳内请壳代开、壳外 window.open）+ 复制；复制失败时明示要手动选中。 */
+/** 地址条：点开（本机内核托管时请内核开浏览器，否则用访客自己的浏览器）+ 复制；
+ *  复制失败时明示要手动选中。 */
 function OpenUrlRow({ url }: { url: string }) {
   async function onOpen() {
-    const r = await handOffFromPanel(url);
-    if (!r.ok) toast.error(r.error || "未能打开，请复制下方地址手动打开");
+    // 与端点同一套呈现：三档各说一句，任何一档地址都仍在眼前（这里不另造成败说法）。
+    await runOpenExternal(() => handOffFromPanel(url));
   }
   function onCopy() {
     const fallback = () => toast.error("复制失败，请手动选中地址");

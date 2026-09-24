@@ -259,4 +259,7 @@ export const supervisorApi = {
   guardChangelog: () => getText("/guard/changelog"),
   envStatus: () => get<EnvStatus>("/env/status"),
   nodeLts: () => get<NodeLtsStatus>("/env/node-lts"),
+  /** 请内核用它所在机器的默认浏览器打开地址（外部打开唯一出口；三档结果原样回传）。
+   *  非 2xx 时 http() 把响应体挂在 err.body 上，失败档的 url 才有抵达面板的路。 */
+  envOpenUrl: (url: string) => post<OpenExternalResult>("/env/open-url", { url }),
 };

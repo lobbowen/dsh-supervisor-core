@@ -38,7 +38,8 @@
 //   X-5  反向：判据能识别宿主泄漏与静默误声明（门禁非空转）
 //   X-10 openBrowser 的三档结果语义（confirmed / handedOff / ok:false）+ observeSpawn 本体
 //        —— 唯一异步出口，故尾部汇总排在它之后
-//   X-11 外部打开「唯一出口」的源码级不变量（旧出口不得重现、名单取自档位表、消费方原样透传）
+//   X-11 外部打开「唯一出口」的源码级不变量（旧出口不得重现、名单取自档位表、消费方原样透传、
+//        面板那一环只经 /env/open-url 与唯一的 window.open 分支）
 //
 // ## 覆盖缺口（E-2 制度化登记）：本门禁绿了仍然不成立的方面
 //   1. X-8/X-10 的 spawn 与 observe 全是注入的假件：证明的是「计划与分档的纯逻辑」，
@@ -858,6 +859,20 @@ async function x10() {
   const brOpSrc = fs.readFileSync(path.join(ROOT, 'src', 'domains', 'router', 'ops', 'browser.js'), 'utf8');
   check('X-11 隔离打开的调用方交出 result 而非只取 profile（丢弃结果即丢弃失败原因）',
     /=\s*platform\.browser\.launchIsolated\(/.test(brOpSrc) && /return \{ profile: null, result:/.test(brOpSrc), 'ok');
+  // 面板那条路的前提：内核得有一个「只受理本机来源」的代开端点。没有它，壳内面板只能自己 window.open
+  //   （webview 丢弃 = 死单击），远程访问者则会把浏览器弹窗推到内核所在机器上。
+  const guardSrc = fs.readFileSync(path.join(ROOT, 'src', 'api', 'domains', 'guard.js'), 'utf8');
+  const om = /if \(req\.method === 'POST' && pathname === '\/env\/open-url'\) \{([\s\S]*?)\n {4}\}/.exec(guardSrc);
+  const ob = om ? om[1] : '';
+  check('X-11 代开端点存在且整段处理体被切片判定（切片为空即判据失去对象）', ob.length > 200, 'len=' + ob.length);
+  check('X-11 代开端点走唯一出口、失败映射非 2xx、抛错路径仍带地址',
+    /platform\.browser\.openBrowser\(url\)/.test(ob) && /send\(r\.ok \? 200 : 500, r\)/.test(ob) && /, url \}\)/.test(ob), 'ok');
+  check('X-11 代开端点只受理回环来源（跨站与远程访客各有一闸，缺一即白送动作面）',
+    /identity\.loopback/.test(ob) && /originAllowed\(req, sup\.config\.apiPort\)/.test(ob), 'ok');
+  const badOpenUrl = "\n  const u = JSON.parse(body).url; require('node:child_process').exec(u);\n  return send(200, { ok: true });\n    }";
+  check('X-11 反向：判据能识别旁路 spawn、恒 200 与无来源闸（否则上面两条恒绿）',
+    !/platform\.browser\.openBrowser\(url\)/.test(badOpenUrl) && !/send\(r\.ok \? 200 : 500, r\)/.test(badOpenUrl)
+      && !/identity\.loopback/.test(badOpenUrl), 'hit');
 
   // 最后一环在面板：外部打开地址的窗口创建必须只有一个出口，且各页面必须经统一入口消费结果。
   //   为什么平台门禁要读到 ui/：这条能力的判据如果只覆盖内核，面板照样能把 handedOff 显示成成功；
@@ -877,15 +892,32 @@ async function x10() {
   const entry = readUi('features/supervisor/openExternal.tsx');
   check('X-11 面板结果分档只有一处，且失败也渲染地址行（假成功在结构上无法出现）',
     /classifyOpenResult\(/.test(entry) && /description:\s*url \? <OpenUrlRow url=\{url\} \/>/.test(entry), 'ok');
-  const pages = ['features/supervisor/InstancesPage.tsx', 'features/supervisor/OverviewPage.tsx', 'features/supervisor/RouterPage.tsx']
+  const pages = ['features/supervisor/InstancesPage.tsx', 'features/supervisor/OverviewPage.tsx', 'features/supervisor/RouterPage.tsx', 'features/supervisor/LanPage.tsx']
     .filter((p) => !/runOpenExternal\(/.test(readUi(p)));
-  check('X-11 三处外部打开入口都经统一入口消费结果（各自表述成败即病根）',
+  check('X-11 四处外部打开入口都经统一入口消费结果（各自表述成败即病根）',
     pages.length === 0, pages.join(',') || 'ok');
   // 失败档的地址要能活着走到面板：后端把 ok:false 映射为非 2xx，若 http() 只抛一句文案，
   //   面板就拿不到 url，用户在最需要的这一档反而只剩「重新点一次」。
   const cliSrc = readUi('services/supervisor/client.ts');
   check('X-11 非 2xx 抛错随附响应体（失败档的 url/reason 才有抵达面板的路）',
     /err\.body = data/.test(cliSrc) && /instanceOpenWeb: .*OpenExternalResult/.test(cliSrc), 'ok');
+  // 代开只有一条路：面板问内核。postMessage 桥那套（dsh:open-url）与 target=_blank 都在壳内 webview
+  //   里静默失效过，留着就是第二套语义（回执有无、超时算成功与否各说各话）。
+  const reBridge = /dsh:open-url/;
+  const bridged = uiJsx.filter((f) => reBridge.test(fs.readFileSync(f, 'utf8'))).map((f) => path.relative(ROOT, f));
+  check('X-11 面板不再经 postMessage 桥代开（dsh:open-url 在 ui/src 零出现）',
+    bridged.length === 0, bridged.join(',') || ('扫描 ' + uiJsx.length + ' 个文件'));
+  check('X-11 反向：判据能识别桥消息形态', reBridge.test('const T = "dsh:open-url";'), 'hit');
+  const reBlank = /target="_blank"/;
+  const blanked = uiJsx.filter((f) => reBlank.test(fs.readFileSync(f, 'utf8'))).map((f) => path.relative(ROOT, f));
+  check('X-11 面板不用 target=_blank 开外部地址（壳内静默丢弃 = 死单击）',
+    blanked.length === 0, blanked.join(',') || 'ok');
+  check('X-11 反向：判据能识别锚点直开形态', reBlank.test('<a href={url} target="_blank">x</a>'), 'hit');
+  const eoSrc = readUi('services/supervisor/externalOpen.ts');
+  check('X-11 面板选路判据只有一条（来源回环与否），本机路径唯一出口是内核端点',
+    /servedByKernelHost\(\)/.test(eoSrc) && /supervisorApi\.envOpenUrl\(url\)/.test(eoSrc), 'ok');
+  check('X-11 /env/open-url 在客户端只登记一次（第二处即第二个调用方）',
+    (cliSrc.match(/\/env\/open-url/g) || []).length === 1, String((cliSrc.match(/\/env\/open-url/g) || []).length));
 }
 
 x10().catch((e) => check('X-10 异步判据自身未抛错', false, String((e && e.stack) || e))).then(finish);

@@ -310,25 +310,35 @@ pidlookup 的认领/停止语义矩阵）· X-3c（真实宿主拉起→监听�
 | 消费方 | 交出形态 |
 |---|---|
 | `POST /instances/open-web` | 三档结果原样透传；`ok:false` 映射 **500**（恒 200 会让面板显示成功）；失败即作废一次性授权码 |
+| `POST /env/open-url` | 面板请内核代开：三档结果原样透传；`ok:false` 映射 **500**；非回环来源 403 |
 | 智能路由一键登录 `proxyLoginStart` | `{ok, opened, confirmed, handedOff, reason, url=authUrl, isolated}`；打不开时文案直接接「请手动打开下方地址完成授权」 |
 | 隔离窗口调用方（`router/ops/browser.js`） | 返回 `{profile, result}`，不再只回一个 profile（丢弃 result 即丢弃失败原因） |
 
-### S-4 面板：任何一档都要把地址交到眼前
+### S-4 面板：一条选路判据 + 任何一档都把地址交到眼前
 
-`ui/src/services/supervisor/externalOpen.ts`（分档判据）+ `ui/src/features/supervisor/openExternal.tsx`
+`ui/src/services/supervisor/externalOpen.ts`（选路与分档判据）+ `ui/src/features/supervisor/openExternal.tsx`
 （唯一呈现口 `runOpenExternal`）。三档各有一句说法，且**每一档都渲染可点击、可复制的地址行**——
 假成功在结构上无法出现。判据取 `ok`/`confirmed` 字段，绝不取文案（文案可变，档位是契约）。
 
-面板自己创建窗口也只有一个出口（`externalOpen.ts#openViaWindow`）：壳内容 iframe 内 Tauri IPC 只注入
-主帧、webview 默认丢弃 `window.open`，故壳内改经 postMessage 桥请壳代开（`dsh:open-url` /
-`dsh:open-url-result`，与内核更新桥同一协议版本与同一来源校验口径 `ev.source === window.parent`）。
-**壳不回回执即判失败**并提示复制——绝不把「请求已发出」说成「已打开」。
+面板自己那条路只有**一条判据**：`servedByKernelHost()`（页面来源是否回环）。面板由内核自己托管，
+所以「回环」等价于「看面板的浏览器与内核同一台机器」：
+
+| 来源 | 由谁开浏览器 | 结果 |
+|---|---|---|
+| 回环（含桌面壳内） | 内核 `POST /env/open-url` | 三档证据齐全；壳的 webview 丢弃 `window.open` 与 `target=_blank`，历史上正是这条死单击 |
+| 非回环（局域网/公网访问者） | 访客浏览器的新标签（`openViaWindow`，唯一实现处） | 拿到窗口句柄即 `confirmed`（新标签在访客眼前），被拦截即 `ok:false` |
+
+两条路的结局一律归一成 `OpenExternalResult`，界面上不存在第二种说法。**曾存在过的第三条路已删**：
+面板经 postMessage 桥请壳主帧代开（`dsh:open-url` / `dsh:open-url-result`）。它与内核那条是同一件事的
+两套语义（回执有无、超时算不算成功各说各话），而壳与内核恒在同一台机器上，故代开方归内核。
 
 ### 反模式（本标准的四条禁止项，都有历史实例）
 
 1. 同步 `return true` / 「spawn 没抛错就算成功」。
 2. 端点恒 200，把失败折算成布尔或干脆丢掉结果。
 3. 各处自己 `window.open` / `shell.openExternal` / 自己拼 `cmd /c start`（第二出口 = 第二套语义）。
+   面板侧的例外只有一个、且有意保留：非回环来源时访客的浏览器根本不在内核那台机器上，
+   此时 `openViaWindow` 是唯一正确的执行方（全仓只允许这一处，X-11 钉死）。
 4. 失败时不交出地址，让用户只能重复点击。
 
 ### 验证
@@ -336,7 +346,7 @@ pidlookup 的认领/停止语义矩阵）· X-3c（真实宿主拉起→监听�
 `platform-layer-portability-test` X-8（计划与取证档位）· X-10（三档行为 + `observeSpawn` 本体，
 全部注入假 spawn/observe，CI 不真起浏览器）· X-11（唯一出口的源码级不变量，含面板最后一环）；
 `four-platform-behavior-matrix` P-5；`platform-capability-audit` A1·A2·A3；
-`api-contract` OW 组（HTTP 契约：三档透传、500、地址在场、失败作废一次性码）；
+`api-contract` OW/OU 两组（HTTP 契约：三档透传、500、地址在场、失败作废一次性码、跨站与已认证 LAN 访客的 403）；
 `token-contract-gate` TK-G6（令牌不得进 argv，动词集与真实出口对齐）；
-`ui` `externalOpen.test.ts`（分档判据 + 桥来源校验 + 无回执降级）。
+`ui` `externalOpen.test.ts`（分档判据 + 回环选路 + 弹窗被拦截判失败）。
 

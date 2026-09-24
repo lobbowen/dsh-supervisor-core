@@ -3,11 +3,14 @@
 // 域：守卫/设置 API（changelog / guard 版本 / autostart / settings / self-update / env / ports）。
 const fs = require('node:fs');
 const path = require('node:path');
+// 外部打开的唯一出口在平台层；本域只做「面板请内核开浏览器」的边界，不解释 argv 结局。
+const platform = require('../../platform/os/index');
 
 function owns(pathname) {
   return pathname === '/changelog' || pathname.startsWith('/guard/') || pathname === '/autostart'
     || pathname.startsWith('/settings/') || pathname.startsWith('/self-update/')
     || pathname === '/env/dsh' || pathname === '/env/status' || pathname === '/env/node-lts'
+    || pathname === '/env/open-url'
     || pathname === '/ports' || pathname === '/shutdown';
 }
 
@@ -28,7 +31,7 @@ function fetchDshChangelog(res, sup) {
 }
 
 function handle(ctx) {
-  const { sup, req, res, pathname, send, collectBody, originAllowed } = ctx;
+  const { sup, req, res, pathname, identity, send, collectBody, originAllowed } = ctx;
     if (req.method === 'GET' && pathname === '/changelog') {
       return fetchDshChangelog(res, sup);
     }
@@ -173,6 +176,24 @@ function handle(ctx) {
     if (req.method === 'GET' && pathname === '/env/node-lts') {
       // Node LTS 本地判定（偶数主版本~LTS；6h 缓存，无远端查询，见 supervisor.nodeLtsStatus）
       return sup.nodeLtsStatus().then((r) => send(200, r)).catch((e) => send(500, { ok: false, error: e.message }));
+    }
+    // 面板请内核把地址交给**内核所在机器**的系统浏览器（桌面壳的 webview 丢弃 window.open 与
+    //   target=_blank，壳内面板唯一可行的代开方就是同机的内核）。三档结果原样回传，本域不解释结局。
+    // 回环限定：远程访问者的浏览器不在这台机器上，让它驱动本机弹窗既无用（open-web 的一次性码地址
+    //   本就只在回环可达）又白送一个「在服务器上开浏览器」的动作面；面板据同一判据改走自己的 window.open。
+    if (req.method === 'POST' && pathname === '/env/open-url') {
+      if (!identity.loopback) { req.resume(); return send(403, { ok: false, error: '仅内核所在机器可请内核调起浏览器，请复制或自行打开该地址' }); }
+      if (!originAllowed(req, sup.config.apiPort)) { req.resume(); return send(403, { ok: false, error: 'cross-origin request rejected' }); }
+      collectBody(req, res, 4096, (body) => {
+        let url = null;
+        try { const j = body ? JSON.parse(body) : {}; if (typeof j.url === 'string') url = j.url; } catch {}
+        if (!url) return send(400, { ok: false, error: '需要 {"url":"http(s)://…"}' });
+        // 地址恒随结果交出（含抛错路径）：拿不到地址的失败只剩「再点一次」，用户无路可走。
+        return Promise.resolve(platform.browser.openBrowser(url))
+          .then((r) => send(r.ok ? 200 : 500, r))
+          .catch((e) => send(500, { ok: false, reason: 'spawn-failed', error: '打开浏览器失败：' + ((e && e.message) || e), url }));
+      });
+      return;
     }
 
     // 统一端口管理清单（全系统端口登记：固定/实例/分配，含 owner 对应关系 + 激活探测）——经 sup 门面取数
