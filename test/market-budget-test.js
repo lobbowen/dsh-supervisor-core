@@ -42,6 +42,10 @@ const ROOT = path.join(__dirname, '..');
 const results = [];
 const check = (n, c, x) => { results.push(!!c); console.log((c ? 'PASS' : 'FAIL') + ' ' + n + (x !== undefined && x !== '' ? '  ← ' + x : '')); };
 
+// 等在飞构建真正收尾：摘除 `_inFlight` 登记挂在 raw 收尾链的**下一条微任务**上，
+// 只 `await m._inFlight` 会读到尚未摘除的登记（M-i/Q3 因此在四平台同时判红）。
+const settleBuild = async (m) => { if (!m._inFlight) return; await m._inFlight.catch(() => {}); await new Promise((r) => setImmediate(r)); };
+
 // 步骤8a（DIRECTORY-STRUCTURE-DESIGN）：pluginmarket.js 改名归位为 market.js
 const SRC = path.join(ROOT, 'src', 'domains', 'plugin', 'market.js');
 const src = fs.readFileSync(SRC, 'utf8');
@@ -215,10 +219,7 @@ const { PluginMarket } = require(SRC);
     check('M-i 快照不被构建阻塞（200ms 构建仍在飞时已返回）', dt < 50 && builds >= 1, dt + 'ms builds=' + builds);
     check('M-i 在飞期间快照 building=true（面板据此轮询）', s1.building === true && s2.building === true, s1.building + '/' + s2.building);
     check('M-i force 请求复用同一在途构建（_inFlight 登记态）', m._inFlight !== null, String(m._inFlight));
-    await m._inFlight;
-    // 摘除在飞登记是 raw 结算链上的**下一条微任务**：`await m._inFlight` 的续体排在它之前，
-    // 故必须等一个宏任务才观察得到「已结算」——这不是被测语义，是观察点位置。
-    await new Promise((r) => setImmediate(r));
+    await settleBuild(m);
     check('M-i 连续 force 只发起一次构建', builds === 1, String(builds));
     check('M-i 结算后 _inFlight 归零（不误挂消化后的 promise）', m._inFlight === null, String(m._inFlight));
     check('M-i 结算后快照 building=false', (await m.getIndex()).building === false, '');
@@ -237,7 +238,7 @@ const { PluginMarket } = require(SRC);
     check('M-j 冷启动回合法空快照 + building=true（已后台点火）',
       cold.ok === true && cold.plugins.length === 0 && cold.indexedAt === 0 && cold.building === true,
       JSON.stringify({ n: cold.plugins.length, i: cold.indexedAt, b: cold.building }));
-    await m._inFlight.catch(() => {});
+    await settleBuild(m);
     const after = await m.getIndex();
     check('M-j 构建失败：error 如实上报（不得显示成「没有插件」）',
       /镜像源不可达/.test(String(after.error)) && after.plugins.length === 0, JSON.stringify(after.error));
@@ -245,7 +246,7 @@ const { PluginMarket } = require(SRC);
       after.building === false && builds === 1, 'builds=' + builds + ' building=' + after.building);
     await m.getIndex(true);
     check('M-j 反向：force（用户点刷新）绕开退避立即重试', builds === 2, 'builds=' + builds);
-    await m._inFlight.catch(() => {});
+    await settleBuild(m);
     fs.rmSync(dir, { recursive: true, force: true });
   }
 

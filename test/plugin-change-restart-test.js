@@ -36,11 +36,20 @@ async function waitJob(pm, jobId, timeoutMs) {
   return pm.installStatus(jobId);
 }
 
-/** 检测读端点已不等 registry 往返（见 Q 组）：测试要读结论就显式等在飞收尾，再读一次快照。 */
+/** 检测读端点已不等 registry 往返（见 Q 组）：测试要读结论就显式等在飞收尾，再读一次快照。
+ *  setImmediate 是必需的：`_updInFlight` 的摘除挂在在飞 promise 收尾链的**下一条微任务**上，
+ *  只 await 它本身会读到尚未摘除的登记（Q3 因此在四平台同时判红）。 */
 async function checkDone(pm, force) {
   await pm.checkUpdates(force);
-  if (pm._updInFlight) await pm._updInFlight.catch(() => {});
+  await settleInFlight(pm);
   return pm.checkUpdates();
+}
+
+/** 等在飞检测真正收尾并摘除登记（无在飞即直接返回）。 */
+async function settleInFlight(pm) {
+  if (!pm._updInFlight) return;
+  await pm._updInFlight.catch(() => {});
+  await new Promise((r) => setImmediate(r));
 }
 
 function initProfileDir(dir, deps, bundles) {
@@ -359,7 +368,7 @@ const eventsOf = (arr, type) => (arr || []).some((e) => e.t === type);
     await pm.checkUpdates(true);
     check('Q2 force 连点复用同一在飞检测（不叠加 registry 风暴）', pm._updInFlight !== null, String(pm._updInFlight));
     release();
-    await pm._updInFlight;
+    await settleInFlight(pm);
     const done = await pm.checkUpdates();
     check('Q3 在飞收尾后快照给出结论且 refreshing=false',
       done.refreshing === false && done.checkedAt > 0 && done.error === null
