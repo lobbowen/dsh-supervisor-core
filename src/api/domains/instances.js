@@ -142,9 +142,13 @@ function handle(ctx) {
       const decorate = (it) => {
         const tok = tokOf(it.id);
         const out = Object.assign({}, it);
-        // main 视图含 remoteToken（进程内供 LanManager mainOf 消费），API 边界必须剔除。
-        delete out.remoteToken;
+        // 远程控制令牌的边界：默认剔除，只留 tokenSet 布尔（main 视图含 remoteToken 供 LanManager
+        // mainOf 进程内消费，沙箱记录同字段）。回环来源例外交出明文：本机面板要能查看/修改已分配的
+        // 令牌，才能把「开启远程控制时自动补齐的凭据」闭环——判据与下方 authUrl 同一条（identity.loopback，
+        // socket 层现取）。LAN/公网访客仍只见布尔，放宽的是呈现形态而非可达面。
         const loopback = identity.loopback;
+        out.tokenSet = !!String(it.remoteToken || '').trim();
+        if (!loopback) delete out.remoteToken;
         out.authUrl = (tok && loopback)
           ? ('http://127.0.0.1:' + it.port + '/?token=' + encodeURIComponent(tok))
           : ('http://127.0.0.1:' + it.port + '/');

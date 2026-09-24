@@ -205,8 +205,8 @@ console.log('== 批4 C-3 remoteTokenStrength（shared/credential）/ backoffGate
 }
 
 // --：C-3b projectRemoteView（relay/core）逐子句钉 --
-// 这是「二维码跟随真实访问态」的单一事实源：off 短路、reasons 优先级、host 按 mode 选、
-// 端口缺席不拼半截 URL——每个分句一条例，判据值回显整段视图。
+// 这是「二维码跟随真实访问态」的单一事实源：off 短路、reasons 优先级、访问令牌只计入 wan、
+// accessUrl 与 ready 正交、host 按 mode 选、端口缺席不拼半截 URL——每个分句一条例，判据值回显整段视图。
 console.log('== 批4 C-3b projectRemoteView（访问视图唯一事实源）==');
 {
   const core = require(path.join(ROOT, 'src', 'domains', 'relay', 'core.js'));
@@ -223,21 +223,34 @@ console.log('== 批4 C-3b projectRemoteView（访问视图唯一事实源）==')
     check('C-3b 非法 mode 归一为 off（normalizeRemoteMode 单一入口）', v.mode === 'off', JSON.stringify(v));
     check('C-3b mode 缺省（undefined）同样归 off', pv({}).mode === 'off', JSON.stringify(pv({})));
   }
-  // 未就绪逐条给因 + 优先级：relay 未监听 在 令牌/注入 之前
+  // 未就绪逐条给因 + 优先级：relay 未监听 在 会话注入 之前（else-if 不重复报）
   {
     const v = pv({ mode: 'lan' });
-    check('C-3b lan 全缺 → 首因是 relay 未监听（不是令牌）',
-      v.reasons[0] === '远程服务未就绪（relay 未监听）' && v.reasons.includes('未设访问令牌'), JSON.stringify(v));
+    check('C-3b lan 全缺 → 唯一因是 relay 未监听（缺令牌不计入 lan）',
+      v.reasons.join('|') === '远程服务未就绪（relay 未监听）', JSON.stringify(v));
   }
   {
     const v = pv({ mode: 'lan', relayListening: true, tokenSet: false, cookieReady: false });
-    check('C-3b 监听后缺令牌 → 未设访问令牌（cookie 例走 else-if 不重复报）',
-      v.reasons.join('|') === '未设访问令牌', JSON.stringify(v));
+    check('C-3b lan 监听后会话未注入 → 只报注入一条',
+      v.reasons.join('|') === '正在注入 DSH 会话…', JSON.stringify(v));
+  }
+  // 门卫空令牌恒放行（tokenGateDecision），所以缺令牌对 lan 不构成访问不通；
+  // 把它计入 lan 未就绪 = 明明能扫码打开却被判成不可用。
+  {
+    const v = pv(Object.assign({}, greenLan, { tokenSet: false }));
+    check('C-3b lan 缺令牌仍就绪且出地址（令牌只属于 wan 的判据）',
+      v.ready === true && v.accessUrl === 'http://192.168.3.64:22001/', JSON.stringify(v));
   }
   {
-    const v = pv({ mode: 'lan', relayListening: true, tokenSet: true, cookieReady: false });
-    check('C-3b 有令牌但会话未注入 → 正在注入 DSH 会话…',
-      v.reasons.join('|') === '正在注入 DSH 会话…', JSON.stringify(v));
+    const v = pv(Object.assign({}, greenLan, { mode: 'wan', tokenSet: false, serverAddr: '203.0.113.9', frpcRunning: true }));
+    check('C-3b wan 缺令牌 → 未设访问令牌计入未就绪（公网口无令牌即裸奔）',
+      v.ready === false && v.reasons.join('|') === '未设访问令牌', JSON.stringify(v));
+  }
+  // 未就绪也要给出可复制地址：relay 尚未监听时端口/地址已定，用户需要的是同一入口。
+  {
+    const v = pv(Object.assign({}, greenLan, { relayListening: false }));
+    check('C-3b 未就绪（relay 未监听）仍出 accessUrl（地址与 ready 正交）',
+      v.ready === false && v.accessUrl === 'http://192.168.3.64:22001/', JSON.stringify(v));
   }
   // wan 附加两因：未配地址 / 隧道未建（可并存，各报一条）
   {
@@ -266,13 +279,17 @@ console.log('== 批4 C-3b projectRemoteView（访问视图唯一事实源）==')
     check('C-3b lanAddress 空 → accessUrl=null 但就绪判定不受影响',
       v2.accessUrl === null && v2.ready === true, JSON.stringify(v2));
   }
-  // 反向防空转：ready 的判据必须真依赖 reasons 全清（漏一条原因字段必被检出）
+  // 反向防空转：ready 的判据必须真依赖 reasons 全清（漏一条原因字段必被检出）。
+  // base 取 wan 全就绪：五个原因字段各翻一次，任何一因子被吞掉即红。
   {
-    const base = { mode: 'lan', relayListening: true, tokenSet: true, cookieReady: true, lanAddress: 'h', wanPort: 1 };
+    const base = { mode: 'wan', relayListening: true, tokenSet: true, cookieReady: true, serverAddr: '203.0.113.9', frpcRunning: true, lanAddress: 'h', wanPort: 1 };
+    check('C-3b 反向：wan 全就绪基线本身为 ready', pv(base).ready === true, JSON.stringify(pv(base)));
     const flips = [
       ['relayListening=false', Object.assign({}, base, { relayListening: false })],
       ['tokenSet=false', Object.assign({}, base, { tokenSet: false })],
       ['cookieReady=false', Object.assign({}, base, { cookieReady: false })],
+      ['serverAddr=空', Object.assign({}, base, { serverAddr: '' })],
+      ['frpcRunning=false', Object.assign({}, base, { frpcRunning: false })],
     ];
     for (const [label, f] of flips) {
       const v = pv(f);

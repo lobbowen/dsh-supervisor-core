@@ -1,8 +1,8 @@
 'use strict';
 
 // 域：远程控制 API。/lan-access 为只读脱敏列表（见 app/facade/lan.js）；/remote/* 为唯一意图面：
-// set-mode 是远程控制唯一写入口、set-token 是访问令牌唯一写入口，另有 frp 状态/配置/安装。
-// 写动作全部经 supervisor 门面（app/domain-actions/lan.js），本层不做域判断。
+// set-mode 是远程控制唯一写入口（缺令牌即在此分配）、set-token 是访问令牌显式改写的唯一入口，
+// 另有 frp 状态/配置/安装。写动作全部经 supervisor 门面（app/domain-actions/lan.js），本层不做域判断。
 function owns(pathname) {
   return pathname === '/lan-access' || pathname === '/remote/frp' || pathname.startsWith('/remote/');
 }

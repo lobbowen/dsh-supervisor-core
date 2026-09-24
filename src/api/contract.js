@@ -49,7 +49,7 @@ const SURFACE = [
   { path: '/native/settings',     methods: ['POST'], domain: 'native', category: 'public', consumers: ['UI(OverviewPage)'], note: 'main 元数据补丁（仅 guardian；远程意图唯一入口在 /remote/*）' },
 
   // 沙箱实例（instances.js）
-  { path: '/instances',           methods: ['GET'],  domain: 'instances', category: 'public', consumers: ['UI(InstancesPage)'], note: '实例列表（+ POST /instances/{action}）' },
+  { path: '/instances',           methods: ['GET'],  domain: 'instances', category: 'public', consumers: ['UI(InstancesPage)'], note: '实例列表（+ POST /instances/{action}）；远程访问令牌明文仅回环来源下发（其余只见 tokenSet 布尔），authUrl 的 ?token= 同判据' },
   // /open 是 open-web 的落地跳转：由系统浏览器直接访问（非 UI fetch），
   // 凭一次性码换取 dsh-auth cookie 后 303 到 DSH 页面。
   { path: '/open',                methods: ['GET'],  domain: 'instances', category: 'public', consumers: ['UI(open-web → 本机系统浏览器一次性码跳转)'], note: '一次性码换取 dsh-auth cookie 并回跳实例 DSH 页面（令牌不进 URL/argv，TK-G6）' },
@@ -93,7 +93,7 @@ const SURFACE = [
   // 远程控制（relay.js：/lan-access 只读列表 + /remote/* 意图面）。
   // 写动作按 act 切片分派（pathname.startsWith('/remote/')），四个 POST 子动作归 /remote/ 前缀行登记；
   // 精确行必须在源码以 pathname === 字面出现，act 切片形态列精确行即幽灵条目。
-  { path: '/lan-access',       methods: ['GET'],  domain: 'relay', category: 'public', consumers: ['UI(LanPage)'], note: '远程代理列表（脱敏；remote 视图为访问 URL/就绪判定的单一来源）' },
+  { path: '/lan-access',       methods: ['GET'],  domain: 'relay', category: 'public', consumers: ['UI(LanPage)'], note: '远程代理列表（脱敏：任何令牌字段都不外传；remote 视图为访问 URL/就绪判定的单一来源）' },
   { path: '/remote/frp',       methods: ['GET'],  domain: 'relay', category: 'public', consumers: ['UI(LanPage)'], note: 'frpc 状态（设置 + 运行态 + wan 暴露清单）' },
 
   // 任务（tasks.js）
@@ -121,7 +121,7 @@ const PREFIXES = [
   { prefix: '/logs',         domain: 'lifecycle', category: 'operational', consumers: ['诊断/审计'], note: '/logs/{tail|export}（events-tail 已删除：与 /events 语义重复）' },
   { prefix: '/native/',      domain: 'native',    category: 'public',      consumers: ['UI', 'CLI'], note: '/native/{status|install|uninstall|upgrade|...}' },
   { prefix: '/plugins/',     domain: 'plugins',   category: 'public',      consumers: ['UI'], note: '/plugins/{install|enable|disable|uninstall|update}' },
-  { prefix: '/remote/',      domain: 'relay',     category: 'public',      consumers: ['UI'], note: '/remote/{set-mode|set-token|frp-server|frp-install}（意图唯一入口；wan 前置闸=访问令牌 ≥8 位，空串=清除）' },
+  { prefix: '/remote/',      domain: 'relay',     category: 'public',      consumers: ['UI'], note: '/remote/{set-mode|set-token|frp-server|frp-install}（意图唯一入口；set-mode 开启时无令牌即自动分配并回执 tokenAutoAllocated，wan 前置闸=访问令牌 ≥8 位；set-token 空串=显式清除）' },
   { prefix: '/router/',      domain: 'router',    category: 'public',      consumers: ['UI'], note: '/router/... （ports/domain-summary 为 internal，见 SURFACE）' },
   { prefix: '/shell/',       domain: 'shell',     category: 'public',      consumers: ['壳', 'UI'], note: '/shell/{status|health|update-pending|check-update|restart}（壳更新强制，无回退）；⚠ health/update-pending 实为壳零调用的排障入口，见上方条目' },
   { prefix: '/self-update/', domain: 'guard',     category: 'public',      consumers: ['UI'], note: '/self-update/status（只读）；apply|restart-guard 已下架=410' },

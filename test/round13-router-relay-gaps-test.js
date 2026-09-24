@@ -65,61 +65,109 @@ console.log('== ① 远程控制 wan 安全闸收口 ==');
   // 反向自检（合成样本）：绕道字段一旦出现即命中，判据不是恒真。
   check('① 反向：污染样本会被识别', /remoteMode|remoteEnabled|remoteToken|frp/i.test('meta.remoteToken = p.remoteToken'), 'hit');
 
-  // 行为：注入假 deps 构造 setRemoteMode/setRemoteToken 全链（main 路径），断言闸与落盘次序
+  // 行为：注入假 deps 构造 setRemoteMode/setRemoteToken 全链（main 路径），断言闸与落盘次序。
+  // 每例一份新鲜夹具：写次数账本一旦跨例共享，判据就变成「执行顺序正确」而非「这条动作做对」。
   const { createLanActions } = require(path.join(ROOT, 'src', 'app', 'domain-actions', 'lan.js'));
-  const written = [];
-  const meta = { guardian: false, remoteMode: 'off', remoteToken: '' };
-  const eventsSeen = [];
-  const evData = [];
-  const actions = createLanActions({
-    getDaemons: () => ({ enabled: () => false, syncLanState: () => {} }),
-    getCtl: () => null,
-    getLifecycleManager: () => null,
-    getLan: () => ({ syncProxy: () => Promise.resolve() }),
-    getState: () => ({
-      readMainMeta: () => ({ ...meta }),
-      writeMainMeta: (m) => { Object.assign(meta, m); written.push(m); },
-    }),
-    getViews: () => ({ dshMain: () => ({ id: 'main' }) }),
-    getInstances: () => null,
-    getEvents: () => ({ append: (t, d) => { eventsSeen.push(t); evData.push(d); } }),
-    getLogger: () => ({ warn() {} }),
-  });
-  const bad = actions.setRemoteMode('main', 'wan');
-  check('① 行为：无令牌开 wan → 被拒（ok:false）', bad && bad.ok === false, JSON.stringify(bad));
-  check('① 行为：被拒时**未落盘**（不产生半改状态）', written.length === 0, String(written.length));
-  const off = actions.setRemoteMode('main', 'off');
-  check('① 行为：off 是安全方向，不被闸拦（且与现值同则不重复落盘）',
-    off && off.ok === true && written.length === 0, JSON.stringify(off));
-  const lan = actions.setRemoteMode('main', 'lan');
-  check('① 行为：lan 模式无令牌前置（局域网侧有来源闸），正常落盘',
-    lan && lan.ok === true && written.length === 1 && written[0].remoteMode === 'lan', JSON.stringify(written));
+  function mk(meta0) {
+    const meta = Object.assign({ guardian: false, remoteMode: 'off', remoteToken: '' }, meta0 || {});
+    const written = [];
+    const eventsSeen = [];
+    const evData = [];
+    const actions = createLanActions({
+      getDaemons: () => ({ enabled: () => false, syncLanState: () => {} }),
+      getCtl: () => null,
+      getLifecycleManager: () => null,
+      getLan: () => ({ syncProxy: () => Promise.resolve() }),
+      getState: () => ({
+        readMainMeta: () => ({ ...meta }),
+        writeMainMeta: (m) => { Object.assign(meta, m); written.push(m); },
+      }),
+      getViews: () => ({ dshMain: () => ({ id: 'main' }) }),
+      getInstances: () => null,
+      getEvents: () => ({ append: (t, d) => { eventsSeen.push(t); evData.push(d); } }),
+      getLogger: () => ({ warn() {} }),
+    });
+    return { meta, written, eventsSeen, evData, actions };
+  }
+  // 开启远程控制即分配令牌：「先去别处设凭据」留在流程里会产出开关已开、无二维码、
+  // 用户也不知凭据为何的半截状态，所以分配必须与模式同一次落盘完成。
+  {
+    const f = mk();
+    const r = f.actions.setRemoteMode('main', 'wan');
+    check('① 行为：无令牌开 wan → 自动分配合规令牌、与模式一次落盘（零二次写入）',
+      r.ok === true && r.tokenAutoAllocated === true && f.written.length === 1
+      && f.written[0].remoteMode === 'wan' && typeof f.written[0].remoteToken === 'string',
+      JSON.stringify({ r, w: f.written }));
+    check('① 行为：分配的令牌达 wan 闸强度下限且 URL-safe（relay 以 ?token= 一次性出示）',
+      /^[A-Za-z0-9_-]{8,}$/.test(f.meta.remoteToken) && f.meta.remoteToken === f.written[0].remoteToken,
+      'len=' + f.meta.remoteToken.length);
+    check('① 行为：TK-5 事件脱敏 —— 自动分配只记布尔，事件载荷零令牌明文',
+      f.eventsSeen.includes('dsh_remote_token_changed')
+      && f.evData.some((d) => d && d.tokenSet === true && d.autoAllocated === true)
+      && !JSON.stringify(f.evData).includes(f.meta.remoteToken), JSON.stringify(f.evData));
+  }
+  {
+    const f = mk();
+    const r = f.actions.setRemoteMode('main', 'lan');
+    check('① 行为：无令牌开 lan 同样分配（lan 无前置闸，但凭据一次到位才谈得上后面升级 wan）',
+      r.ok === true && r.tokenAutoAllocated === true && f.meta.remoteMode === 'lan'
+      && /^[A-Za-z0-9_-]{8,}$/.test(f.meta.remoteToken), JSON.stringify(f.written));
+  }
+  // 已有令牌（含过弱的历史值）一律不覆盖；被拒必须零写入。
+  {
+    const f = mk({ remoteToken: 'tok' });
+    const r = f.actions.setRemoteMode('main', 'wan');
+    check('① 行为：已有弱令牌开 wan → 仍被拒（不静默改写用户自设凭据）',
+      r.ok === false && f.written.length === 0 && f.meta.remoteToken === 'tok', JSON.stringify({ r, m: f.meta }));
+  }
+  {
+    const f = mk({ remoteToken: 'remote-tok-0123' });
+    const r = f.actions.setRemoteMode('main', 'wan');
+    check('① 行为：合规令牌已设 → wan 放行、不重复分配也不回写令牌字段',
+      r.ok === true && r.tokenAutoAllocated === false && f.meta.remoteMode === 'wan'
+      && f.meta.remoteToken === 'remote-tok-0123' && f.written[0].remoteToken === undefined
+      && f.eventsSeen.includes('dsh_remote_changed'), JSON.stringify({ r, w: f.written }));
+  }
+  {
+    const f = mk({ remoteMode: 'lan', remoteToken: 'remote-tok-0123' });
+    const off = f.actions.setRemoteMode('main', 'off');
+    check('① 行为：off 是安全方向，不过闸也不分配（与现值同则不重复落盘）',
+      off.ok === true && off.tokenAutoAllocated === false && f.written.length === 0, JSON.stringify(off));
+    const f2 = mk({ remoteMode: 'wan', remoteToken: 'remote-tok-0123' });
+    const off2 = f2.actions.setRemoteMode('main', 'off');
+    check('① 行为：off 改模式时只写模式字段',
+      off2.ok === true && f2.written.length === 1 && f2.written[0].remoteToken === undefined, JSON.stringify(f2.written));
+  }
   // B1-2：mode/token 必须显式给出——缺省曾被归成 'off'/清除，漏字段请求=静默关远程控制/清凭据。
-  const noMode = actions.setRemoteMode('main');
-  check('① 行为：缺 mode → 拒（不再隐式归 off）', noMode && noMode.ok === false, JSON.stringify(noMode));
-  const bogusMode = actions.setRemoteMode('main', 'WAN');
-  check('① 行为：非法 mode（大小写不符）→ 拒', bogusMode && bogusMode.ok === false, JSON.stringify(bogusMode));
-  const noTok = actions.setRemoteToken('main');
-  check('① 行为：缺 token → 拒（不当作清除）', noTok && noTok.ok === false, JSON.stringify(noTok));
-  const clr = actions.setRemoteToken('main', '');
-  check('① 行为：空串仍是显式清除（ok 且落盘 remoteToken=""）',
-    clr && clr.ok === true && meta.remoteToken === '', JSON.stringify(clr));
-  check('① 行为：显式拒绝路径均不落盘（上面三次非法调用零写入）',
-    written.length === 2 && written[1].remoteToken === '', String(written.length));
-  // 弱令牌在**写入口**即拒（与 wan 闸同一强度下限；此前设置面仅 '非空白' 一票闸）
-  const wBefore = written.length;
-  const weak = actions.setRemoteToken('main', 'tok');
-  check('C-3 行为：4 位令牌写 main → 写入口即拒（ok:false）', weak && weak.ok === false, JSON.stringify(weak));
-  check('C-3 行为：被拒后未再多落一次盘（写次数不变）', written.length === wBefore, 'before=' + wBefore + ' after=' + written.length);
-  const good = actions.setRemoteToken('main', 'remote-tok-0123');
-  check('① 行为：合规令牌写入通过（写入口 ok:true 且落盘）',
-    good && good.ok === true && meta.remoteToken === 'remote-tok-0123', JSON.stringify(good));
-  check('① 行为：TK-5 事件脱敏 —— 全部事件载荷零令牌明文',
-    eventsSeen.includes('dsh_remote_token_changed') && !JSON.stringify(evData).includes('remote-tok-0123'),
-    JSON.stringify(evData));
-  const wan2 = actions.setRemoteMode('main', 'wan');
-  check('① 行为：令牌已设 → wan 放行并落盘（dsh_remote_changed 携带 mode）',
-    wan2 && wan2.ok === true && meta.remoteMode === 'wan' && eventsSeen.includes('dsh_remote_changed'), JSON.stringify(wan2));
+  {
+    const f = mk();
+    const noMode = f.actions.setRemoteMode('main');
+    check('① 行为：缺 mode → 拒（不再隐式归 off）且零写入',
+      noMode && noMode.ok === false && f.written.length === 0, JSON.stringify(noMode));
+    const f2 = mk();
+    const bogusMode = f2.actions.setRemoteMode('main', 'WAN');
+    check('① 行为：非法 mode（大小写不符）→ 拒（严格三态，不做归一）',
+      bogusMode && bogusMode.ok === false && f2.written.length === 0, JSON.stringify(bogusMode));
+    const f3 = mk();
+    const noTok = f3.actions.setRemoteToken('main');
+    check('① 行为：缺 token → 拒（不当作清除）', noTok && noTok.ok === false && f3.written.length === 0, JSON.stringify(noTok));
+    const f4 = mk({ remoteToken: 'remote-tok-0123' });
+    const clr = f4.actions.setRemoteToken('main', '');
+    check('① 行为：空串仍是显式清除（ok 且落盘 remoteToken=""）',
+      clr && clr.ok === true && f4.meta.remoteToken === '' && f4.written.length === 1, JSON.stringify(f4.written));
+    const f5 = mk();
+    const wBefore = f5.written.length;
+    const weak = f5.actions.setRemoteToken('main', 'tok');
+    check('C-3 行为：4 位令牌写 main → 写入口即拒（ok:false、零落盘）',
+      weak && weak.ok === false && f5.written.length === wBefore, JSON.stringify(weak));
+    const f6 = mk();
+    const good = f6.actions.setRemoteToken('main', 'remote-tok-0123');
+    check('① 行为：合规令牌写入通过（写入口 ok:true 且落盘）',
+      good && good.ok === true && f6.meta.remoteToken === 'remote-tok-0123', JSON.stringify(good));
+    check('① 行为：TK-5 事件脱敏 —— 显式设置同样零令牌明文',
+      f6.eventsSeen.includes('dsh_remote_token_changed')
+      && !JSON.stringify(f6.evData).includes('remote-tok-0123'), JSON.stringify(f6.evData));
+  }
 }
 
 // -- 2) relay 门卫令牌必须可热换 --

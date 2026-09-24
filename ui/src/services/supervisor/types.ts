@@ -156,6 +156,11 @@ export interface SupervisorInstance {
   authUrl?: string;
   /** 后端实例装饰（src/api/domains/instances.js）：loopback 时为 true；属后端返回契约。 */
   tokenPresent?: boolean;
+  /** 远程访问令牌是否已设（布尔，任何来源都下发）；远程控制页的钥匙状态以此为准。 */
+  tokenSet?: boolean;
+  /** 远程访问令牌明文：仅内核所在机器（回环来源）下发，与 authUrl 的 ?token= 同一判据。
+   *  远程访客读到的是 undefined，令牌的查看/修改因此只在本机面板闭环。 */
+  remoteToken?: string;
 }
 /** /instances 响应：instances[] 仅沙箱（管理对象）；native 为原生主干 main 的只读条目。
  *  main 的生命周期/升级不属沙箱 API：启停走 /lifecycle/dsh/*，安装/升级走 /native/*。 */
@@ -168,7 +173,8 @@ export interface InstancesResponse {
 /** 远程控制三态（唯一意图字段；写入口 /remote/set-mode）。 */
 export type RemoteMode = "off" | "lan" | "wan";
 /** 远程访问单一视图：后端 relay/core.projectRemoteView 是唯一事实源，前端零判定直消费。
- *  ready = 可扫码即用（relay 监听 + cookie 已注入，wan 另要求 frpc 隧道存活）；reasons = 未就绪原因（按优先级）。 */
+ *  ready = 可扫码即用（relay 监听 + cookie 已注入；wan 另要求已设令牌 + frps 地址 + frpc 隧道存活）；
+ *  reasons = 未就绪原因（按优先级）。accessUrl 与 ready 正交：端口/地址已定即给出，未就绪也可复制访问。 */
 export interface RemoteView {
   mode: RemoteMode;
   ready: boolean;
@@ -181,7 +187,7 @@ export interface LanItem {
   dshPort: number;
   wanPort?: number | null;
   running: boolean;
-  /** 访问令牌是否已设（布尔，后端不下发明文）——wan 模式的安全前置。 */
+  /** 访问令牌是否已设（布尔，后端不下发明文）——wan 模式的就绪前置。 */
   tokenSet?: boolean;
   /** 远程单一视图（mode/ready/accessUrl/reasons）；off 实例后端不下发条目时为 null。 */
   remote?: RemoteView | null;

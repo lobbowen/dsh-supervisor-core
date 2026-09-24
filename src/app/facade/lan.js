@@ -17,6 +17,7 @@ module.exports = { methods: {
 
   // 远程控制委托：全部转发给 LanManager；daemon 监督模式经 43108 ctl 委托（异步），本地模式走 LanManager（同步）。
   // 令牌收敛：listLan 输出必须剔除 token/dshToken —— /lan-access 允许 LAN/私网 Host 访问，直出会把 DSH 会话令牌泄漏给局域网，权威仍在 DshTokenService。
+  // 远程访问令牌的明文也不在此下发：它是实例意图字段，只随 /instances 的回环分支交给本机面板（api/domains/instances.js#decorate）。
   // remote（projectRemoteView 产物）为后端单一推导视图 {mode,ready,accessUrl,reasons}，不含机密，整段放行给 UI。返回形如 {items,addresses}。
   listLan() {
     const d = depsOf(this);
@@ -27,7 +28,7 @@ module.exports = { methods: {
         const out = {
           id: it.id, name: it.name, dshPort: it.dshPort, wanPort: it.wanPort,
           running: !!it.running,
-          // 令牌状态（布尔，不泄明文）：wan 模式的安全闸要求已设令牌，UI 据此引导。
+          // 令牌状态（布尔，不泄明文）：UI 据此引导，明文的查看/修改走 /instances 的回环分支。
           tokenSet: !!String(it.token || '').trim(),
           remote: it.remote || null,
         };

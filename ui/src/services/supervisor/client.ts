@@ -220,8 +220,9 @@ export const supervisorApi = {
   pluginInstallStatus: (jobId: string) => get<PluginJobStatus>(qs("/plugins/install-status", { job: jobId })),
 
   // -- 远程控制（/remote/*：main 与沙箱同口，按 id 路由）--
-  /** 远程控制唯一写入口：三态 off|lan|wan（wan 前置闸=访问令牌，拒因在响应 error）。 */
-  remoteSetMode: (id: string, mode: RemoteMode) => post<GenericOk>("/remote/set-mode", { id, mode }),
+  /** 远程控制唯一写入口：三态 off|lan|wan。开启时缺令牌由后端自动分配（回执 tokenAutoAllocated），
+   *  wan 的拒因在响应 error（如已有过弱令牌）。 */
+  remoteSetMode: (id: string, mode: RemoteMode) => post<GenericOk & { tokenAutoAllocated?: boolean }>("/remote/set-mode", { id, mode }),
   /** 访问令牌唯一写入口（空串=清除）。 */
   remoteSetToken: (id: string, token: string) => post<GenericOk>("/remote/set-token", { id, token }),
   // frps 连接配置：authToken 留空时必须整体缺省该字段（提交 '' 会被后端清除现值）。
