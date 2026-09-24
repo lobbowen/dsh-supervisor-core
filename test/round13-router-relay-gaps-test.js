@@ -342,7 +342,7 @@ const runUpstream = (headers, chunks, chunkMs) => new Promise((resolve) => {
     const watchers = [];
     const ops = createOAuthOps({
       ports: { allocate: async () => freePort(), unregister: () => {}, allocateMark: () => {} },
-      openInBrowser: (url, onClose) => { watchers.push(onClose); return '/tmp/oauth-b26b-profile'; },
+      openInBrowser: (url, onClose) => { watchers.push(onClose); return { profile: '/tmp/oauth-b26b-profile', result: { ok: true, isolated: true } }; },
     });
     const cred = (state, key) => ({ apiKey: key, userId: 'u-' + key, userName: 'n', keyName: 'k', state });
     const post = (port, body) => new Promise((resolve, reject) => {

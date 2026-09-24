@@ -7,7 +7,9 @@
 
 // API 契约断言测试：对 createServer 的响应对未来回归设防。
 // 覆盖审计修复的关键契约：202 异步受理带 ok、key/use 路由 await（Promise 序列化回归）、
-// 实例/插件写操作状态码与 ok 字段。全部用最小 stub Supervisor（Proxy 兜底方法）。
+// 实例/插件写操作状态码与 ok 字段、open-web 与面板代开端点的外部打开三档结果原样透传（OW/OU 组）。
+// 全部用最小 stub Supervisor（Proxy 兜底方法）。外部打开出口经 createServer 第二参在构造期注入假件，
+// 因此本文件从不真起浏览器，也不 patch 任何模块导出。
 
 const path = require('node:path');
 const http = require('node:http');
@@ -36,9 +38,10 @@ const nativeManager = {
 const routerApi = () => ({ switchToKey: async () => ({ ok: true, selected: 'k1' }) });
 const instances = {
   stopInstance: (id) => ({ ok: true, id: typeof id === 'object' ? id.id : null }),
-  list: () => [{ id: 'main', port: 3080, name: '主实例', domain: 'native' }],
+  // sb1 = 沙箱实例条目：open-web 只对「有真实端口的条目」放行（防开放重定向），main 走 dshMainView。
+  list: () => [{ id: 'main', port: 3080, name: '主实例', domain: 'native' }, { id: 'sb1', port: 3099, name: '沙箱实例', domain: 'sandbox' }],
   // DG-11 查询接口（消费方不再直读 .instances.instances）
-  find: (id) => [{ id: 'main', port: 3080, name: '主实例', domain: 'native' }].find((x) => x.id === id),
+  find: (id) => [{ id: 'main', port: 3080, name: '主实例', domain: 'native' }, { id: 'sb1', port: 3099, name: '沙箱实例', domain: 'sandbox' }].find((x) => x.id === id),
   all: () => [],
 };
 const pluginManager = { install: async () => ({ ok: true }) };
@@ -63,7 +66,19 @@ const sup = new Proxy({}, {
 });
 
 const { createServer } = require(path.join(ROOT, 'src', 'api', 'index'));
-const server = createServer(sup);
+// 外部打开的出口在测试里由网关**构造期注入**（createServer 第二参）：真出口会 spawn 浏览器，
+//   而三档结果必须由用例指定才谈得上「端点是否原样透传」。不去 patch 模块导出——那是
+//   test-safety-gate A 条记的形态（值绑定是否生效取决于消费方写法，patch 静默失效就跑真实副作用）。
+const argvUrls = [];
+let owCase = null; // (url) => 三档结果，或 'throw' 模拟出口抛错
+const fakeBrowser = {
+  openBrowser: async (url) => {
+    argvUrls.push(url);
+    if (owCase === 'throw') throw new Error('spawn blew up');
+    return owCase(url);
+  },
+};
+const server = createServer(sup, { browser: fakeBrowser });
 
 // 本机非回环 IPv4（P0-1 结构修复后的真实 LAN 身份来源：socket 层，不再伪造 Host 头）
 const os = require('node:os');
@@ -115,6 +130,73 @@ function req(method, p, body, hostHeader, extraHeaders, via) {
   r = await req('POST', '/plugins/install', JSON.stringify({ spec: '@x/p' }));
   check('POST /plugins/install → 200 且 ok:true', r.code === 200 && r.body.ok === true, r.code + ' ' + JSON.stringify(r.body));
 
+  // OW 组：open-web 把内核外部打开的三档结果**原样**交给面板（confirmed / handedOff / ok:false）。
+  //   病根即此端点：旧实现只要 spawn 没抛错就 send 200 ok:true，屏幕上什么都没有却显示成功。
+  const CONFIRMED = (url) => ({ ok: true, confirmed: true, handedOff: false, reason: null, error: null, message: '已在系统浏览器打开', url, evidence: { bin: 'xdg-open', via: 'dispatcher', exitCode: 0, exitSignal: null, error: null } });
+  try {
+    owCase = CONFIRMED;
+    r = await req('POST', '/instances/open-web', JSON.stringify({ id: 'sb1' }));
+    check('OW 成功档（confirmed）→ 200 且三档字段原样在场',
+      r.code === 200 && r.body.ok === true && r.body.confirmed === true && r.body.handedOff === false
+      && r.body.message === '已在系统浏览器打开' && r.body.url === argvUrls[0],
+      r.code + ' ' + JSON.stringify(r.body));
+    check('OW 交给浏览器的地址只带一次性码、不带会话令牌（令牌进 argv 即同机可读）',
+      /\/open\?code=[0-9a-f-]{20,}$/.test(argvUrls[0]) && !/token=/.test(argvUrls[0]), argvUrls[0]);
+    const firstCode = argvUrls[0];
+    r = await req('POST', '/instances/open-web', JSON.stringify({ id: 'sb1' }));
+    check('OW 每次调用重新签发一次性码（成功路径不烧码：码要留给浏览器回 /open 换 cookie）', argvUrls[1] !== firstCode && r.code === 200, argvUrls[1]);
+
+    owCase = (url) => ({ ok: true, confirmed: false, handedOff: true, reason: null, error: null, message: '已把地址交给系统，但无法确认窗口', url, evidence: { bin: 'explorer.exe', via: 'dispatcher', exitCode: 0, exitSignal: null, error: null } });
+    r = await req('POST', '/instances/open-web', JSON.stringify({ id: 'sb1' }));
+    check('OW 移交档（win32 explorer.exe 恒返 0）→ 200 但 confirmed:false，面板据此不说「已打开」',
+      r.code === 200 && r.body.ok === true && r.body.confirmed === false && r.body.handedOff === true
+      && r.body.evidence.bin === 'explorer.exe', JSON.stringify(r.body));
+
+    owCase = (url) => ({ ok: false, confirmed: false, handedOff: false, reason: 'no-launcher', error: '未找到可用的浏览器启动命令，请手动打开该地址', message: null, url, evidence: { bin: 'xdg-open', via: 'dispatcher', exitCode: null, exitSignal: null, error: null } });
+    r = await req('POST', '/instances/open-web', JSON.stringify({ id: 'sb1' }));
+    const failUrl = argvUrls[argvUrls.length - 1];
+    check('OW 失败档 → 非 2xx（不得恒 200）且带 reason/error',
+      r.code === 500 && r.body.ok === false && r.body.reason === 'no-launcher' && !!r.body.error, r.code + ' ' + JSON.stringify(r.body));
+    check('OW 失败响应把地址交回面板（用户仍可复制手动打开）', r.body.url === failUrl, String(r.body.url));
+    const dead = await new Promise((resolve) => {
+      const rr = http.request({ host: '127.0.0.1', port: API_PORT, path: failUrl.replace(/^http:\/\/127\.0\.0\.1:\d+/, ''), method: 'GET', headers: { Origin: 'http://127.0.0.1:' + API_PORT, Host: '127.0.0.1:' + API_PORT } },
+        (res) => { let b = ''; res.on('data', (c) => (b += c)); res.on('end', () => resolve({ code: res.statusCode, text: b })); });
+      rr.on('error', (e) => resolve({ code: 0, text: String(e) }));
+      rr.end();
+    });
+    check('OW 反向：打开失败即作废该一次性码（残留可用码 = 给一次从未发生的浏览留门）',
+      dead.code === 400 && /授权码无效或已过期/.test(dead.text), dead.code + ' ' + dead.text);
+
+    owCase = 'throw';
+    r = await req('POST', '/instances/open-web', JSON.stringify({ id: 'sb1' }));
+    check('OW 出口抛错也回结构化 500（不能让请求挂死或回 200），且地址仍在场',
+      r.code === 500 && r.body.ok === false && r.body.reason === 'spawn-failed' && !!r.body.url, r.code + ' ' + JSON.stringify(r.body));
+
+    // OU 组：面板代开端点与 open-web 同一出口、同一状态码语义。它是壳内面板唯一的活路
+    //   （webview 丢弃 window.open 与 target=_blank），本组失配即那条按钮又回到无人应答的形态。
+    owCase = CONFIRMED;
+    r = await req('POST', '/env/open-url', JSON.stringify({ url: 'http://127.0.0.1:3099/' }));
+    check('OU 成功档 → 200 且三档字段原样在场（本域不重造结果）',
+      r.code === 200 && r.body.ok === true && r.body.confirmed === true && r.body.evidence.bin === 'xdg-open',
+      r.code + ' ' + JSON.stringify(r.body));
+    check('OU 地址原样交给出口（面板给什么就开什么，端点不加工 URL）',
+      argvUrls[argvUrls.length - 1] === 'http://127.0.0.1:3099/', String(argvUrls[argvUrls.length - 1]));
+    r = await req('POST', '/env/open-url', JSON.stringify({}));
+    check('OU 缺 url → 400（空地址不得走到出口，也不得回 200）', r.code === 400 && r.body.ok === false, r.code + ' ' + JSON.stringify(r.body));
+    owCase = (url) => ({ ok: false, confirmed: false, handedOff: false, reason: 'no-launcher', error: '未找到可用的浏览器启动命令，请手动打开该地址', message: null, url, evidence: null });
+    r = await req('POST', '/env/open-url', JSON.stringify({ url: 'http://a.b/' }));
+    check('OU 失败档 → 500 且 reason/url 一起到场（面板据此给复制入口）',
+      r.code === 500 && r.body.ok === false && r.body.reason === 'no-launcher' && r.body.url === 'http://a.b/',
+      r.code + ' ' + JSON.stringify(r.body));
+    owCase = 'throw';
+    r = await req('POST', '/env/open-url', JSON.stringify({ url: 'http://a.b/' }));
+    check('OU 出口抛错 → 结构化 500 且地址仍在场',
+      r.code === 500 && r.body.reason === 'spawn-failed' && r.body.url === 'http://a.b/', r.code + ' ' + JSON.stringify(r.body));
+  } finally {
+    // 反空转：注入的出口若一次都没被叫到，整组三档断言都只是对着空气判绿。
+    check('OW/OU 两组真的驱动了注入出口（出口未被调用即整组空转）', argvUrls.length >= 7, 'calls=' + argvUrls.length);
+  }
+
   // 跨站 Origin 仍拒绝（安全契约不回归）
   r = await req('POST', '/instances/stop', JSON.stringify({ id: 'i1' }));
   const evil = await new Promise((resolve) => {
@@ -123,6 +205,15 @@ function req(method, p, body, hostHeader, extraHeaders, via) {
     rr.write(JSON.stringify({ id: 'i1' })); rr.end();
   });
   check('跨站 Origin 写请求拒绝 403', evil === 403, String(evil));
+
+  // 代开端点同受 CSRF 闸约束：任意网页对 127.0.0.1 的一次单击就能在用户机器上弹浏览器，
+  //   那是白送的动作面，不是产品能力。
+  const evilOpen = await new Promise((resolve) => {
+    const rr = http.request({ host: '127.0.0.1', port: API_PORT, path: '/env/open-url', method: 'POST', headers: { 'Content-Type': 'application/json', 'Origin': 'http://evil.example', 'Host': '127.0.0.1:' + API_PORT } }, (res) => { res.resume(); res.on('end', () => resolve(res.statusCode)); });
+    rr.on('error', () => resolve(0));
+    rr.write(JSON.stringify({ url: 'http://evil.example/' })); rr.end();
+  });
+  check('跨站 Origin 的 /env/open-url 拒绝 403', evilOpen === 403, String(evilOpen));
 
   // F1 授权收口契约：/instances 的 authUrl 仅回环 Host 请求带 DSH token，
   // LAN 分支的语义已在 P3-C（fail-closed，FIX-1 B2 执行侧）变更：
@@ -192,6 +283,12 @@ function req(method, p, body, hostHeader, extraHeaders, via) {
   check('F2 已认证 LAN GET /instances → 200 且不下发 token（安全属性转移自 F1）',
     !LAN_IP || (kr.code === 200 && !!instLanAuthed && instLanAuthed.authUrl.indexOf('token=') < 0 && instLanAuthed.tokenPresent === false),
     LAN_IP ? (kr.code + ' ' + JSON.stringify(instLanAuthed && instLanAuthed.authUrl)) : '（无 LAN 地址，跳过）');
+  // 代开端点的回环闸：已认证 LAN 访客的浏览器不在这台机器上，请内核开浏览器既无用又是白送的动作面。
+  //   面板据同一判据（页面来源是否回环）改走访客自己的 window.open，故这里必须如实拒绝而非静默成功。
+  kr = await reqKey('POST', '/env/open-url', null, { Authorization: 'Bearer ' + KEY }, 'lan');
+  check('OU 非回环来源 → 403 且给出可复制地址的说法',
+    !LAN_IP || (kr.code === 403 && kr.body.ok === false && /复制/.test(String(kr.body.error))),
+    LAN_IP ? (kr.code + ' ' + JSON.stringify(kr.body)) : '（无 LAN 地址，跳过）');
   serverKey.close();
 
   server.close();

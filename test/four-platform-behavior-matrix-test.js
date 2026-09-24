@@ -94,13 +94,13 @@ function underFake(platform, arch, body) {
   const sets = plats.map((p) => Object.keys(osLayer.capabilityProfile(p, 'x64')).sort());
   const base = JSON.stringify(sets[0]);
   const bad = plats.filter((p, i) => JSON.stringify(sets[i]) !== base);
-  check('P-4 四平台能力键集合完全一致（14 项）',
-    bad.length === 0 && sets[0].length >= 14,
+  check('P-4 四平台能力键集合完全一致（15 项）',
+    bad.length === 0 && sets[0].length >= 15,
     bad.length ? ('不一致: ' + bad.join(', ')) : (sets[0].length + ' 键一致'));
   // 逐项列出，便于人工核对（也证明不是空集合）
   const expectedKeys = [
     'platform', 'arch', 'sandboxLaunch', 'sandboxEnforcement', 'pidAdoption', 'processTreeKill',
-    'desktopNotify', 'autostart', 'frpExpose', 'hostService', 'guardAutostart', 'guardSelfHeal',
+    'desktopNotify', 'autostart', 'frpExpose', 'openBrowser', 'hostService', 'guardAutostart', 'guardSelfHeal',
     'shellAutostart', 'shellSelfHeal',
   ].sort();
   check('P-4 键集合 = 规范清单（防新增能力只加在一个平台）',
@@ -133,6 +133,27 @@ function underFake(platform, arch, body) {
   check('P-5 未知平台全 false（显式 Unsupported，绝不静默成功）',
     Object.entries(U).every(([k, v]) => (k === 'platform' || k === 'arch' || k === 'hostService' || k === 'sandboxEnforcement') || v === false),
     JSON.stringify(U));
+  // 外部打开：三端声明可开，但**取证档位不同**（win32 的 explorer.exe 恒返 0）。差异必须落在
+  //  计划的 trustExit 这一个判据上，不得由调用方各自按平台猜成败 —— 那是「按钮无反应却报成功」的成因。
+  check('P-5 三平台 openBrowser=true 而未知平台 false（声明面，unknown 不静默尝试）',
+    L.openBrowser === true && D.openBrowser === true && W.openBrowser === true && U.openBrowser === false,
+    [L, D, W, U].map((x) => x.openBrowser).join(','));
+  {
+    const br = osLayer.browser;
+    const u = 'http://127.0.0.1:28111/open?code=x';
+    check('P-5 外部打开计划取证档位：win32 调度器不可取证，linux/darwin 调度器与三端直启浏览器可取证',
+      br.openPlan('win32', u, {}).trustExit === false
+      && br.openPlan('linux', u, {}).trustExit === true
+      && br.openPlan('darwin', u, {}).trustExit === true
+      && br.openPlan('win32', u, { defaultBrowser: { bin: 'C:\\Program Files\\Microsoft\\Edge\\msedge.exe' } }).trustExit === true
+      && br.openPlan('win32', u, { defaultBrowser: { bin: 'C:\\Program Files\\Microsoft\\Edge\\msedge.exe' } }).via === 'browser',
+      JSON.stringify([br.openPlan('win32', u, {}), br.openPlan('linux', u, {})]));
+    check('P-5 反向：未知平台不得进入计划（openBrowser 位为 false 即被唯一出口拒绝）',
+      Object.keys(require(path.join(ROOT, 'src', 'platform', 'os', 'capability-profile.js')))
+        .filter((k) => k !== 'unknown').every((k) => br.openCommand(k, u)) === true
+      && br.openPlan('win32', u, { defaultBrowser: { bin: 'safari' } }).via === 'dispatcher',
+      'other 引擎只走调度器，不冒充直启');
+  }
   //  重要区分：capabilityProfile.processTreeKill（含 Windows taskkill /T）与
   //   matrix.supportsProcessGroup（仅 POSIX kill(-pid)）**语义不同**，不得混用。
   check('P-5 processTreeKill 三平台皆真（Windows 经 taskkill /T）而 supportsProcessGroup 仅 POSIX',

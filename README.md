@@ -122,6 +122,7 @@ xdg-open http://127.0.0.1:36360/   # 浏览器直接开面板（默认端口；�
 | 幂等收敛 | 守卫自身重启后读期望状态调和，不叠加实例；接管既有实例时通过 /proc 识别其 pid，可正常 stop/升级 |
 | 观测模式 | 期望停止时发现无主运行实例 → 进入 OBSERVED：如实展示运行状态与 pid，**不强杀不拉起**；点「启动」同一实例无缝转正纳管 |
 | 一键升级 | **先停后装**：停 DSH → npm 安装 → 自动拉起 → 健康验证；失败自动回滚旧版本并恢复运行 |
+| 外部打开 | 把地址交给系统浏览器只有一个出口（`src/platform/os/browser.js`）：结果分三档 `confirmed`（有 0 退出且退出可信的证据）/ `handedOff`（只证明交出去了，win32 `explorer.exe` 恒返 0 即此类）/ `ok:false`（带 `reason` 码）。可用性由能力位 `openBrowser` 声明（Linux 按图形会话实测覆写），三档与 `url` 一路原样透传到面板——**任何一档都把地址交到用户眼前**。面板自己那条路只有一条选路判据（来源是否回环：本机请内核经 `POST /env/open-url` 代开，远程访客用自己的浏览器），标准见 PLATFORM-CAPABILITY-MATRIX.md §九 |
 
 ## 安装
 
@@ -193,6 +194,8 @@ GET  /env/node-lts           Node 当前 vs 官方最新 LTS
 # 实例管理（沙箱）
 GET  /instances              实例列表（含运行状态/安装进度）
 POST /instances/{add|remove|update|start|stop|check-update|open-web|upgrade}
+     open-web 回外部打开三档结果 {ok,confirmed,handedOff,reason,error,url,evidence}；失败映射 500 且作废该一次性码
+     面板地址行同源另一条路：POST /env/open-url {url} 请内核用**本机**默认浏览器打开（只受理回环来源，非回环 403）
 # 插件
 GET  /plugins/market|installed|check-updates   市场索引 / 已装 / 更新检测（前与后者只回快照：
      重建/registry 往返在后台跑，响应 building/refreshing=true 时前端轮询，绝不等在这个请求上）

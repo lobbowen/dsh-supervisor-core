@@ -94,7 +94,7 @@ function createOAuthOps(deps) {
     // commandcodeLoginWait 用的仍是同一 promise 本体，其 await/Promise.race 依旧收到同一 reject。
     promise.catch(() => {});
     st._ccLoginPromise = promise;
-    const tmpProfile = openInBrowser(authUrl, () => {
+    const opened = openInBrowser(authUrl, () => {
       // 旧轮浏览器的退出监视迟到时不得误杀新一轮登录。
       if (st._ccLoginRound !== roundId) return;
       if (st._ccLoginReject) {
@@ -104,17 +104,30 @@ function createOAuthOps(deps) {
         try { r(new Error('浏览器已关闭，登录已取消')); } catch {}
       }
     });
-    if (!tmpProfile) {
+    const evidence = opened.result || {};
+    if (!opened.profile) {
       st._ccLoginPromise = null;
       st._ccLoginResolve = null;
       st._ccLoginReject = null;
       try { server.close(); } catch {}
       try { ports.unregister('oauth:' + state); } catch {}
       st._ccLogin = null;
-      return { ok: false, error: '无法调起浏览器（未找到可用浏览器），请手动打开: ' + authUrl };
+      // authUrl 与 error 分字段回：面板必须能把地址原样交给用户（复制/手动打开），
+      // 不再把 URL 埋在错误文案里。
+      return {
+        ok: false, authUrl, url: authUrl, opened: false, confirmed: false, handedOff: false,
+        reason: evidence.reason || 'no-launcher',
+        error: (evidence.error || '无法调起系统浏览器') + '，请手动打开下方地址完成授权',
+      };
     }
-    st._ccLogin = { state, port, server, tmpProfile };
-    return { ok: true, authUrl, state, port, waitMs: 180000 };
+    st._ccLogin = { state, port, server, tmpProfile: opened.profile };
+    // 三档字段（confirmed/handedOff/reason/message/evidence）只由平台层解释：这里只补登录专有字段。
+    // 自行宣称 confirmed 就是第二个解释 argv 结局的地方，也正是「面板说已打开、屏幕什么都没有」的成因。
+    return Object.assign({}, evidence, {
+      ok: true, authUrl, url: authUrl, state, port, waitMs: 180000, opened: true,
+      // 非隔离引擎（Safari/snap 包装器）由平台层降级：账号隔离不成立，换账号只能靠超时重发或手动窗口。
+      isolated: evidence.isolated === true,
+    });
   }
 
   async function commandcodeLoginWait(timeoutMs) {

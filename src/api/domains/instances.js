@@ -1,6 +1,5 @@
 'use strict';
 
-const platform = require('../../platform/os/index');
 // 执行边界的单一事实源：形态/路径类判定与启动期复校共用 exec-path 的同一纯函数。
 const execPath = require('../../platform/os/exec-path');
 
@@ -130,8 +129,8 @@ function commandShapeError(command, dshBin) {
 }
 
 function handle(ctx) {
-  const { sup, req, res, pathname, identity, send, collectBody, originAllowed, tokOf } = ctx;
-  function openInSystemBrowser(url) { return platform.browser.open(url); }
+  const { sup, req, res, pathname, identity, send, collectBody, originAllowed, tokOf, browser } = ctx;
+  function openInSystemBrowser(url) { return browser.openBrowser(url); }
 
     // /open 落地页不属 /instances 前缀，但消费本域签发的一次性码、与 tokOf 同源，故不再建第二份实现。
     if (req.method === 'GET' && pathname === '/open') return handleOpen(ctx);
@@ -207,9 +206,16 @@ function handle(ctx) {
               if (!(Number(it.port) > 0)) return send(400, { ok: false, error: '非法端口' });
               const code = issueOpenWebCode(j.id);
               const url = 'http://127.0.0.1:' + sup.config.apiPort + '/open?code=' + code;
-              const ok = openInSystemBrowser(url);
-              if (!ok) dropOpenWebCode(code);
-              return send(ok ? 200 : 500, { ok, url });
+              // 三档结果（confirmed / handedOff / ok:false）原样透传：面板据此区分「已在浏览器打开」
+              // 与「只是把地址交了出去」，并把 url 呈现为可复制文本 —— 旧实现把 spawn 未抛错当成功，
+              // 屏幕上什么都没有却显示成功。
+              return Promise.resolve(openInSystemBrowser(url)).then((r) => {
+                if (!r.ok) dropOpenWebCode(code);
+                return send(r.ok ? 200 : 500, r);
+              }).catch((e) => {
+                dropOpenWebCode(code);
+                return send(500, { ok: false, reason: 'spawn-failed', error: '打开浏览器失败：' + ((e && e.message) || e), url });
+              });
             } catch (e) { return send(500, { ok: false, error: e.message }); }
           }
           // 沙箱实例版本更新：检查 / 升级（job 模型，前端轮询 upgrade/status）

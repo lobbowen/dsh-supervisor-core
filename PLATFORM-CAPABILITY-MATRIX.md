@@ -1,8 +1,8 @@
 # 内核跨平台能力矩阵（可执行审计）
 
-> 生成日期：2026-09-11　末次校准：2026-09-21（W3/W4 实例舱档位落地后）
+> 生成日期：2026-09-11　末次校准：2026-09-25（外部打开能力收口为单一出口 + 三档结果语义，见 §九）
 > 范围：内核仓 `src/platform/os/`（跨平台能力面）+ 实例舱档位（`domains/instance` × provider 分档，见 §八）
-> 配套测试：**`test/platform-capability-audit-test.js`**（A1–A6 组；条数不在此维护，写了就是会过期的数。三平台 CI 均运行）
+> 配套测试：**`test/platform-capability-audit-test.js`**（A1–A9 组；条数不在此维护，写了就是会过期的数。三平台 CI 均运行）
 
 ---
 
@@ -53,7 +53,7 @@ macOS 的**壳自启 / 壳自愈从项目奠基提交（`8867942`, 2026-09-01）
 | C5 | 端口 → PID 反查 | ✅ `/proc` + `ss` 兜底 | ✅ `lsof` | ✅ `netstat -ano` | `platform/os/pidlookup/index.js` | A2 |
 | C6 | 进程列表 / 命令行读取 | ✅ `pgrep -af` | ✅ `pgrep` + `ps` | ✅ CIM | `platform/os/pidlookup/index.js` | A2 |
 | C7 | 桌面通知 | ✅ `notify-send` | ✅ `osascript` | ✅ PowerShell 气泡 | `platform/os/notify.js` | A2 |
-| C8 | 打开浏览器（含隔离 profile；引擎 = **系统默认浏览器**，隔离参数按解析结果的引擎族展开） | ✅ `xdg-settings`+`.desktop` Exec 解析 → `xdg-open` 兜底 | ✅ LaunchServices 解析直启 → `open` 兜底 | ✅ 注册表 `Clients\StartMenuInternet` 解析直启 → `explorer.exe` 兜底 | `platform/os/browser.js` | A2 · AUDIT-REPORT §A4（win32 argv 不经 shell；原 `cmd /c start` 的 URL 二次解析注入面已消灭） |
+| C8 | 打开浏览器（外部打开）：**唯一出口** `openBrowser`（非隔离）/ `launchIsolated`（登录隔离窗口，引擎 = **系统默认浏览器**，隔离参数按解析结果的引擎族展开），两者共用同一结果词汇 `{ok, confirmed, handedOff, reason, error, message, url, evidence}`。三档语义：`confirmed`=拿到「命令 0 退出且该形态退出可信」的证据；`handedOff`=只证明交出去了（win32 `explorer.exe` 恒返 0 即此类）；`ok:false`=显式失败并带 reason 码 | ✅ `xdg-settings`+`.desktop` Exec 解析 → `xdg-open` 兜底；无图形会话时 `capabilities()` 实测把 `openBrowser` 覆写为 false 并报 `no-desktop-session` | ✅ LaunchServices 解析直启 → `open` 兜底 | ✅ 注册表 `Clients\StartMenuInternet` 解析直启 → `explorer.exe` 兜底（**只有解析到浏览器才可能 confirmed**） | `platform/os/browser.js`（结果词汇唯一构造点 `outcome()`；argv 永不裹 shell，win32 用 `explorer.exe` 直启而非 `cmd /c start`，URL 不被二次解析） | A1·A2（能力位 + 实现产物）· A3（未知平台显式 `unsupported-platform`）· P-5（声明 + `trustExit` 取证档位）· X-8/X-10/X-11（计划、三档行为、唯一出口）· `api-contract` OW 组（HTTP 原样透传）· `ui` `externalOpen.test.ts`（面板分档判据） |
 | C9 | 宿主服务单元管理（systemd 单元语义：daemonReload / 持久单元 / failed 复位） | ✅ systemd | ❌ **显式**（launchd 无 provider；实例舱由 `portable` 档承担，见 C10，不冒充服务管理器） | ❌ **显式**（同左；Windows 服务无 provider，实例舱走 `portable` 档） | `platform/os/service.js` | A3 |
 | C10 | 沙箱实例舱（两维拆分声明：拉起 `sandboxLaunch` / 限额执行 `sandboxEnforcement`；provider 分档见 `service.current()`） | ✅ 拉起 + 限额 `cgroup`（`systemd-run` transient；运行期动态限额 `systemctl --user set-property --runtime`）；无 user-systemd 的容器/WSL1 自动落 `portable` 软档 | ✅ 拉起 + 限额 `supervise`（`portable` provider：端口反查 + cmdline 锚点认领，软档无内核强制） | ✅ 拉起 + 限额 `supervise`（同 macOS；未知平台仍**显式** launch=false、enforcement=none） | `platform/os/{service,portable}.js`（provider 分档与 dispatch） + `platform/os/capability-profile.js` + `domains/instance/{sandbox,governor}.js` + `platform/os/resstats.js`（W2 采样观测；governor 决策/准入三平台同跑；W3 落地运行期限额动态化：systemd `setLimits` 下发，portable `setLimits` 恒 false = 档位声明而非缺陷） | A1·A2·A3 · P-5 · X-3·X-3b·X-3c·X-3d |
 | C11 | **守卫**开机自启 | ✅ systemd + linger | ✅ LaunchAgent | ✅ schtasks | `platform/os/autostart/index.js` | A2 |
@@ -61,9 +61,10 @@ macOS 的**壳自启 / 壳自愈从项目奠基提交（`8867942`, 2026-09-01）
 | C13 | **壳**开机自启（原生机制） | ✅ XDG `.desktop` | ✅ LaunchAgent `com.dsh.supervisor.gui` | ✅ schtasks `DSH-Supervisor-GUI` | `platform/os/autostart/index.js` | A4 · A8 · P1–P5 |
 | C14 | **壳**崩溃自愈 | ✅ 守卫看护 | ✅ 守卫看护 | ✅ 守卫看护 | `domains/shell/watchdog.js` | A7 · W1–W5 · E2E |
 
-**运行时声明**：`capabilityProfile()` 输出 `guardAutostart` / `guardSelfHeal` / `shellAutostart` / `shellSelfHeal`
-四个字段（2026-09-11 新增），经 `/env/status` 暴露给壳与面板 —— 消费者据此做能力感知与降级提示，
-**不再依赖注释或文档描述**。
+**运行时声明**：`capabilityProfile()` 输出 `guardAutostart` / `guardSelfHeal` / `shellAutostart` /
+`shellSelfHeal` / `openBrowser` 等布尔能力位，经 `/env/status` 暴露给壳与面板 —— 消费者据此做能力
+感知与降级提示，**不再依赖注释或文档描述**。`openBrowser` 在 Linux 由 `capabilities()` 用图形会话
+实测覆写（静态档位只说「能试」，不说「这次成了」）。
 
 ---
 
@@ -224,6 +225,9 @@ npm test        # 只在 CI 内跑；本机一律不得执行（ACCEPTANCE-STAND
 | **A4 行为一致** | 模块的跨平台行为与 `capabilityProfile()` 声明一致（真实调用，非文本扫描）|
 | **A5 自愈真伪** | 自愈类能力的声明匹配实际机制（不得声称存在而实现被条件屏蔽）|
 | **A6 无回归** | 历史错误声明不得重现（剥离注释后检查代码）|
+| **A7 壳自愈** | 声明 ↔ 看护机制一致（三平台一套机制，纯策略不得按宿主分支）|
+| **A8 自启产权** | 内核不得越权写/删守卫服务定义（定义归壳）|
+| **A9 守卫自启** | `guardAutostart=true` 即要求内核有真正作用于守卫的关闭路径 |
 
 ---
 
@@ -264,3 +268,89 @@ portable 档 `setLimits` 恒 `false` —— 这是**档位声明**而非缺陷�
 pidlookup 的认领/停止语义矩阵）· X-3c（真实宿主拉起→监听→认领→停止闭环，每平台 runner 各跑一次）；
 `instance-state-test` 7A/7E（启停 ctx 同源、动态下发、不变不重发）；
 `exec-return-contract` A4b/A5；`four-platform-behavior-matrix` P-5；本文件 A1·A2·A3。
+
+---
+
+## 九、外部打开标准（把地址交给系统浏览器）
+
+**为什么单独立标准**：这不是「一个小按钮点不动」的缺陷，而是**跨平台基础能力长期没有分层**的
+结果——面板、反代登录、实例 Web 各自调 `spawn`/`window.open`，各自把「没报错」解释成「已打开」。
+用户看到的就是「面板显示成功，屏幕上什么都没有」，而且再也拿不到那个地址。
+
+### S-1 唯一出口 + 三档诚实语义
+
+内核侧外部打开**只有一个出口**：`platform/os/browser.js#openBrowser`（非隔离）与
+`#launchIsolated`（登录用的隔离窗口）。两者共用同一结果词汇，调用方与面板不再各自解释 argv 结局。
+
+| 档位 | 判据（不是文案） | 允许说 | 禁止说 |
+|---|---|---|---|
+| `confirmed` | 子进程 0 退出**且该形态的退出可信**（`openPlan().trustExit`） | 「已在系统浏览器打开」 | —— |
+| `handedOff` | 命令已交出、无报错，但结局不可取证（win32 `explorer.exe` 恒返 0；观测窗口内仍存活） | 「已把地址交给系统，无法确认窗口」 | 「已打开」 |
+| `ok:false` | 明确失败 | 一句给用户的说法 + `reason` 码 + **地址** | 静默 `ok:true` |
+
+`reason` 码是契约、文案是呈现：`unsafe-url` / `no-launcher` / `spawn-failed` / `exit-nonzero` /
+`killed-by-signal` / `no-desktop-session` / `unsupported-platform`。
+
+结果必须等子进程的 `error`/`exit` 才能定，而 Node 的 ENOENT **只在异步 `error` 事件里出现**——
+所以 `openBrowser` 是异步的：同步返回布尔的实现形态本身就不诚实。
+
+出口交到调用方手里的方式也只有一种：HTTP 网关 `createServer(sup, deps)` **缺省**装本出口并随请求上下文
+`ctx.browser` 交出，`deps.browser` 仅供契约测试在构造期注入假件。调用方不得自己 patch 模块导出——
+patch 是否生效取决于消费方是解构还是按属性取用，静默失效的那一次就会真去 spawn 浏览器。
+
+### S-2 能力位与降级
+
+`capabilityProfile().openBrowser` 是唯一的声明面：三平台 `true`（Linux 由 `capabilities()` 用
+图形会话**实测**覆写），未知平台 `false`。名单从档位表推导，`browser.js` 内**不得**再写第二份
+平台判断——档位与行为分叉就是「声明能开、实际乱试」。
+
+档位说不开时出口**显式失败**（`unsupported-platform`），而不是尽力试一次 `xdg-open` 再冒成功。
+`openCommand` 对未知平台仍退化 `xdg-open`：那是低层映射，不构成本产品对外宣称的能力。
+
+### S-3 消费方一律回 `{ok, reason, url}`
+
+任何调用外部打开的端点/域动作都必须把三档结果原样交出，且 **`url` 恒在场**：
+
+| 消费方 | 交出形态 |
+|---|---|
+| `POST /instances/open-web` | 三档结果原样透传；`ok:false` 映射 **500**（恒 200 会让面板显示成功）；失败即作废一次性授权码 |
+| `POST /env/open-url` | 面板请内核代开：三档结果原样透传；`ok:false` 映射 **500**；非回环来源 403 |
+| 智能路由一键登录 `proxyLoginStart` | `{ok, opened, confirmed, handedOff, reason, url=authUrl, isolated}`；打不开时文案直接接「请手动打开下方地址完成授权」 |
+| 隔离窗口调用方（`router/ops/browser.js`） | 返回 `{profile, result}`，不再只回一个 profile（丢弃 result 即丢弃失败原因） |
+
+### S-4 面板：一条选路判据 + 任何一档都把地址交到眼前
+
+`ui/src/services/supervisor/externalOpen.ts`（选路与分档判据）+ `ui/src/features/supervisor/openExternal.tsx`
+（唯一呈现口 `runOpenExternal`）。三档各有一句说法，且**每一档都渲染可点击、可复制的地址行**——
+假成功在结构上无法出现。判据取 `ok`/`confirmed` 字段，绝不取文案（文案可变，档位是契约）。
+
+面板自己那条路只有**一条判据**：`servedByKernelHost()`（页面来源是否回环）。面板由内核自己托管，
+所以「回环」等价于「看面板的浏览器与内核同一台机器」：
+
+| 来源 | 由谁开浏览器 | 结果 |
+|---|---|---|
+| 回环（含桌面壳内） | 内核 `POST /env/open-url` | 三档证据齐全；壳的 webview 丢弃 `window.open` 与 `target=_blank`，历史上正是这条死单击 |
+| 非回环（局域网/公网访问者） | 访客浏览器的新标签（`openViaWindow`，唯一实现处） | 拿到窗口句柄即 `confirmed`（新标签在访客眼前），被拦截即 `ok:false` |
+
+两条路的结局一律归一成 `OpenExternalResult`，界面上不存在第二种说法。**曾存在过的第三条路已删**：
+面板经 postMessage 桥请壳主帧代开（`dsh:open-url` / `dsh:open-url-result`）。它与内核那条是同一件事的
+两套语义（回执有无、超时算不算成功各说各话），而壳与内核恒在同一台机器上，故代开方归内核。
+
+### 反模式（本标准的四条禁止项，都有历史实例）
+
+1. 同步 `return true` / 「spawn 没抛错就算成功」。
+2. 端点恒 200，把失败折算成布尔或干脆丢掉结果。
+3. 各处自己 `window.open` / `shell.openExternal` / 自己拼 `cmd /c start`（第二出口 = 第二套语义）。
+   面板侧的例外只有一个、且有意保留：非回环来源时访客的浏览器根本不在内核那台机器上，
+   此时 `openViaWindow` 是唯一正确的执行方（全仓只允许这一处，X-11 钉死）。
+4. 失败时不交出地址，让用户只能重复点击。
+
+### 验证
+
+`platform-layer-portability-test` X-8（计划与取证档位）· X-10（三档行为 + `observeSpawn` 本体，
+全部注入假 spawn/observe，CI 不真起浏览器）· X-11（唯一出口的源码级不变量，含面板最后一环）；
+`four-platform-behavior-matrix` P-5；`platform-capability-audit` A1·A2·A3；
+`api-contract` OW/OU 两组（HTTP 契约：三档透传、500、地址在场、失败作废一次性码、跨站与已认证 LAN 访客的 403）；
+`token-contract-gate` TK-G6（令牌不得进 argv，动词集与真实出口对齐）；
+`ui` `externalOpen.test.ts`（分档判据 + 回环选路 + 弹窗被拦截判失败）。
+

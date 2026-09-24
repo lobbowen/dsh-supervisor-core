@@ -15,6 +15,7 @@ import {
 import { formatCount } from "./format";
 import { Card, Metric, Pill, QuotaBox, MonoEllipsis, ToneDot } from "./widgets";
 import { useSupervisorAction } from "./useSupervisorAction";
+import { runOpenExternal } from "./openExternal";
 import { cn } from "../../framework/utils";
 
 function quotaFull(q?: ProviderAccount["quota"]): boolean {
@@ -315,13 +316,14 @@ function EditKeysDialog({ open, onOpenChange, p }: {
   const [saving, setSaving] = useState(false);
   const [loggingIn, setLoggingIn] = useState(false);
   const isProxy = p.kind === "proxy";
-  /** 一键登录（仅反代 Command Code 类）：后端已调起浏览器，轮询等待回调拿到 Key 后自动加入。 */
+  /** 一键登录（仅反代 Command Code 类）：内核已调起隔离浏览器，此处只如实呈现打开结果并轮询回调。
+   *  授权地址恒可见：内核报不出「窗口已出现」时（拿不到浏览器退出证据/旧壳未回执）用户仍可复制或手动打开。 */
   async function oneClickLogin() {
     setLoggingIn(true);
     try {
-      const s = await supervisorApi.proxyLoginStart();
-      if (!s.ok) { toast.error(s.error || "登录发起失败"); return; }
-      toast.info("已打开浏览器，请在 Command Code 页面完成授权…", { duration: 4000 });
+      const s = await runOpenExternal(() => supervisorApi.proxyLoginStart());
+      if (!s || s.ok !== true) return;
+      if (s.isolated === false) toast.warning("默认浏览器不支持隔离窗口：本次登录会带现有登录态，换账号请先在该浏览器退出", { duration: 8000 });
       const w = await supervisorApi.proxyLoginWait(s.waitMs ?? 180000);
       if (!w.ok || !w.apiKey) { toast.error(w.error || "登录未完成"); return; }
       await supervisorApi.proxyAddKey(p.id, w.apiKey);

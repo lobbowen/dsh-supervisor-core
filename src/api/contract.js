@@ -32,6 +32,7 @@ const SURFACE = [
   { path: '/env/dsh',              methods: ['GET'],  domain: 'guard', category: 'public',      consumers: ['README 文档化（外部脚本）'], note: 'DSH 本体安装/纳管判定（bin/binOk/managed/phase）' },
   { path: '/env/status',           methods: ['GET'],  domain: 'guard', category: 'public',      consumers: ['UI(InstancesPage 能力矩阵)'], note: '环境 + 平台能力矩阵 + catalog' },
   { path: '/env/node-lts',         methods: ['GET'],  domain: 'guard', category: 'public',      consumers: ['UI(OverviewPage)'], note: 'Node 当前 vs 官方最新 LTS' },
+  { path: '/env/open-url',         methods: ['POST'], domain: 'guard', category: 'public',      consumers: ['UI(externalOpen 地址行)'], note: '请内核用系统默认浏览器打开 http(s) 地址（三档结果原样回传；仅回环来源，壳内 webview 丢弃 window.open 时代的唯一代开方）' },
   { path: '/settings/access-key',  methods: ['GET', 'POST'], domain: 'guard', category: 'public', consumers: ['UI(StartupCard)'], note: '访问密钥' },
   { path: '/settings/close-action', methods: ['GET', 'POST'], domain: 'guard', category: 'public', consumers: ['UI(StartupCard)', '壳(读取执行)'], note: '关窗行为（hide/exit）' },
   { path: '/settings/lan',         methods: ['GET', 'POST'], domain: 'guard', category: 'public', consumers: ['UI(StartupCard)'], note: '面板局域网访问开关' },
@@ -114,7 +115,7 @@ const SURFACE = [
 const PREFIXES = [
   { prefix: '/dist/',        domain: 'dist',      category: 'public',      consumers: ['UI'], note: '/dist/registry/{refresh|set}' },
   { prefix: '/guard/',       domain: 'guard',     category: 'public',      consumers: ['UI'], note: '/guard/version|changelog 等' },
-  { prefix: '/instances/',   domain: 'instances', category: 'public',      consumers: ['UI'], note: '/instances/{add|remove|update|start|stop|check-update|open-web|upgrade}' },
+  { prefix: '/instances/',   domain: 'instances', category: 'public',      consumers: ['UI'], note: '/instances/{add|remove|update|start|stop|check-update|open-web|upgrade}；open-web 回 platform.browser.openBrowser 的三档结果 {ok,confirmed,handedOff,reason,error,url,evidence}，url 恒在场供面板复制/手动打开' },
   { prefix: '/lifecycle',    domain: 'lifecycle', category: 'public',      consumers: ['UI', 'CLI'], note: '/lifecycle/{id}[/{action}]（唯一启停入口）' },
   { prefix: '/lifecycle/',   domain: 'lifecycle', category: 'public',      consumers: ['UI', 'CLI'], note: '同上（显式前缀）' },
   { prefix: '/logs',         domain: 'lifecycle', category: 'operational', consumers: ['诊断/审计'], note: '/logs/{tail|export}（events-tail 已删除：与 /events 语义重复）' },

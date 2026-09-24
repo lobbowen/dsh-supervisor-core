@@ -574,6 +574,10 @@ const readDomain = (dir) => fs.readdirSync(path.join(ROOT, dir)).filter((f) => f
     'test/token-contract-gate-test.js',
     'test/no-console-window-gate-test.js',
     'test/exec-bounded-gate-test.js',
+    // 外部打开收口时新增的两处**源码级**判据族（X-11、A2/A3）：它们读源码正则，
+    // 绿了不等于运行期只走了那条路，故与上面四份同列，缺口块被删即判红。
+    'test/platform-layer-portability-test.js',
+    'test/platform-capability-audit-test.js',
   ];
   // 判据：头部注释区里出现标记，且其后连续注释块内至少 3 条编号项（防空壳标题）。
   const gapBlock = (src) => {

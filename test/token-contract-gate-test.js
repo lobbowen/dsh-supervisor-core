@@ -320,9 +320,33 @@ function tokenCacheHitsIn(code) {
   return hits;
 }
 
-// -- TK-G6：令牌不进 argv/URL（browser.js 调用点）--
-// browser.js 的 open/launchIsolated 会把 url 原样塞进 spawn argv——?token= 一进 argv，
+// -- TK-G6：令牌不进 argv/URL（browser 出口调用点）--
+// browser.js 的 openBrowser/launchIsolated 会把 url 原样塞进 spawn argv——?token= 一进 argv，
 // 同机任意进程都能经 ps 看到会话令牌（浏览器打开 URL 属「令牌进 URL」，见 SSOT TK-G6）。
+// 动词集必须与 browser.js 的真实出口同步（下方 TK-G6 有对齐断言）：漏一个动词 = 该出口无人守，
+//  且门禁仍显示绿——这正是「判据空转」的定义。
+var BROWSER_EXIT_VERBS = ['openBrowser', 'launchIsolated'];
+var BROWSER_VERB_RE = new RegExp('browser\\s*\\.\\s*(?:' + BROWSER_EXIT_VERBS.join('|') + '|open)\\s*\\(', 'g');
+// browser.js 里真正把 url 交给 spawn 的出口（首形参为 url 且函数体内有 spawn 调用）。
+// 必须传入 structOf 产物：字符串抹平后大括号才配平。
+function browserArgvExitsIn(structCode) {
+  var out = [];
+  var re = /function\s+([A-Za-z_$][\w$]*)\s*\(\s*url\b/g;
+  var m;
+  while ((m = re.exec(structCode))) {
+    var openParen = structCode.indexOf('(', m.index);
+    var closeParen = parenClose(structCode, openParen);
+    var brace = closeParen >= 0 ? structCode.indexOf('{', closeParen) : -1;
+    if (brace < 0) continue;
+    var d = 0, body = null;
+    for (var i = brace; i < structCode.length; i++) {
+      if (structCode[i] === '{') d++;
+      else if (structCode[i] === '}') { d--; if (d === 0) { body = structCode.slice(brace, i + 1); break; } }
+    }
+    if (body && /detachedIgnored|spawnWith\s*\(|\bspawn\s*\(/.test(body)) out.push(m[1]);
+  }
+  return out;
+}
 // 取函数头文本（方法/函数声明所在行，含左花括号）。
 function fnHeaderOf(code, range) {
   var lineStart = code.lastIndexOf('\n', range.start) + 1;
@@ -367,12 +391,14 @@ function splitTopLevelArgs(text) {
   if (cur.trim() !== '') out.push(cur.trim());
   return out;
 }
-// 找出「把某个形参原样转交给 browser.open/launchIsolated」的中间函数。
+// 找出「把某个形参原样转交给 browser.openBrowser/launchIsolated」的中间函数。
+// 动词集合与 browser.js 的导出面同源：新增出口必须同时加进这里，否则该出口成为无人守的 argv 通道。
 // 为什么要跨这一跳：令牌只要经中间函数最终进了 spawn argv，危害与直接拼接相同；
 // 只看调用点文本会被「先存变量、再交给 helper」绕过（api/domains/instances.js 的真实形态）。
 function tokenForwardersIn(code) {
   var out = [];
-  var re = /browser\s*\.\s*(?:open|launchIsolated)\s*\(/g;
+  // 每次新建实例：带 g 标志的正则有 lastIndex 状态，跨文件复用同一对象会漏扫（本闸逐文件调用）。
+  var re = new RegExp(BROWSER_VERB_RE.source, 'g');
   var m;
   while ((m = re.exec(code))) {
     var openP = code.indexOf('(', m.index);
@@ -401,16 +427,16 @@ function tokenForwardersIn(code) {
 //   会一律看不到 ?token= —— 门禁会假绿（本门禁初版即踩此坑，由 G8 反向断言抓出）。
 //
 // 覆盖两层路径：
-//   1) 直接调用 platform.browser.open/launchIsolated 且实参含令牌；
+//   1) 直接调用 platform.browser.openBrowser/launchIsolated 且实参含令牌；
 //   2) 经中间封装转交（本仓真实形态 api/domains/instances.js）：
 //        const url = '...?token=' + tok;  openInSystemBrowser(url);
-//        function openInSystemBrowser(url) { return platform.browser.open(url); }
+//        function openInSystemBrowser(url) { return platform.browser.openBrowser(url); }
 //      此时违规发生在**封装的调用点**，故须反查每个调用方传进来的实参。
 function browserTokenScanIn(rel, code) {
   var hits = [];
   var sites = 0;
   var forwarders = tokenForwardersIn(code);
-  var re = /browser\s*\.\s*(?:open|launchIsolated)\s*\(/g;
+  var re = new RegExp(BROWSER_VERB_RE.source, 'g');
   var m;
   while ((m = re.exec(code))) {
     var openP = code.indexOf('(', m.index);
@@ -726,6 +752,12 @@ console.log('== TK-G6 令牌不进 argv/URL：browser.js 调用点 ==');
   }
   check('TK-G6 定位到 browser 调用点（判据非空转）', browserSites > 0, browserSites + ' 处调用点');
   check('TK-G6 browser 调用点不得拼接 ?token=', g6.length === 0, g6.slice(0, 6).join(' | ') || 'clean');
+  // 动词集与真实出口对齐：browser.js 新增一个「把 url 交给 spawn」的出口而本闸未列出，
+  // 后果是该出口的令牌路径**永久无人判**且门禁仍绿 —— 故这里必须红。
+  var exits = browserArgvExitsIn(structOf('src/platform/os/browser.js')).sort();
+  check('TK-G6 扫描动词集覆盖 browser.js 全部 argv 出口（新增出口须同步登记）',
+    JSON.stringify(exits) === JSON.stringify(BROWSER_EXIT_VERBS.slice().sort()),
+    '真实出口=[' + exits.join(',') + '] 登记=[' + BROWSER_EXIT_VERBS.join(',') + ']');
 }
 
 /* --------------------- TK-G7 --------------------- */
@@ -766,11 +798,26 @@ console.log('== TK-G8 反向：判据能识别旧形态 ==');
   check('TK-G8 G5 判据不误报令牌服务引用', tokenCacheHitsIn('this.tokenService = new DshTokenService({});').length === 0, 'ok');
   check('TK-G8 G5 判据不误报用户配置字段', tokenCacheHitsIn("inst.remoteToken = 'u';").length === 0, 'ok');
   check('TK-G8 G6 判据识别 browser 调用点拼接令牌',
-    browserTokenScanIn('(snippet)', "var url = 'http://127.0.0.1:1/?token=SECRET'; platform.browser.open(url);").hits.length > 0, 'hit');
+    browserTokenScanIn('(snippet)', "var url = 'http://127.0.0.1:1/?token=SECRET'; platform.browser.openBrowser(url);").hits.length > 0, 'hit');
   check('TK-G8 G6 判据识别实参直拼令牌',
-    browserTokenScanIn('(snippet)', "platform.browser.open('http://127.0.0.1:1/?token=S');").hits.length > 0, 'hit');
+    browserTokenScanIn('(snippet)', "platform.browser.openBrowser('http://127.0.0.1:1/?token=S');").hits.length > 0, 'hit');
   check('TK-G8 G6 判据对无令牌调用点不误报（但仍计入站点数）',
-    (function () { var r = browserTokenScanIn('(snippet)', 'platform.browser.open(cleanUrl);'); return r.hits.length === 0 && r.sites === 1; })(), 'ok');
+    (function () { var r = browserTokenScanIn('(snippet)', 'platform.browser.openBrowser(cleanUrl);'); return r.hits.length === 0 && r.sites === 1; })(), 'ok');
+  // 封装转交形态（本仓 instances.js 的真实形状）：违规在调用点，动词改名后必须仍能抓到
+  check('TK-G8 G6 判据识别「先存令牌变量、再交封装」的转交路径',
+    (function () {
+      var snip = "function openInSystemBrowser(url) { return platform.browser.openBrowser(url); }\n"
+        + "var u = 'http://127.0.0.1:1/open?token=' + tok; openInSystemBrowser(u);";
+      var r = browserTokenScanIn('(snippet)', snip);
+      return r.hits.length > 0 && r.sites >= 1;
+    })(), 'hit');
+  check('TK-G8 G6 旧动词 browser.open 仍被识别（改名不得留下无人守的出口）',
+    browserTokenScanIn('(snippet)', "platform.browser.open('http://1/?token=S');").hits.length > 0, 'hit');
+  // 动词集对齐判据本身要能红：合成一个未登记的新 argv 出口，必须被识别出来
+  check('TK-G8 G6 出口对齐判据识别未登记的新 spawn 出口',
+    browserArgvExitsIn("function openElsewhere(url, o) { return spawnWith(o.bin, [url]); }").join(',') === 'openElsewhere', 'hit');
+  check('TK-G8 G6 出口对齐判据不误报纯映射函数',
+    browserArgvExitsIn("function openCommand(platform, url) { return { cmd: 'xdg-open', args: [url] }; }\nfunction isSafeHttpUrl(url) { return true; }").length === 0, 'ok');
   check('TK-G8 G5 判据不误报函数内局部变量（按需读取）',
     tokenCacheHitsIn("function h(req) { const queryToken = new URL(req.url).searchParams.get('token'); return queryToken; }").length === 0, 'ok');
   check('TK-G8 G5 判据不误报不同函数中的同名局部变量',
