@@ -22,7 +22,7 @@
 //   U-a  ci-core.sh 必须在**构建之前**执行前端 verify（或至少 test）
 //   U-b  必须存在可被真正调用的前端测试入口（ui/package.json 的 test）
 //   U-c  CI 注释不得再指向不存在的阶段号（[3/7]）—— 防再次误导
-//   U-d  弹窗统一：原生 confirm/alert/prompt 在 ui/src 归零，危险动作确认只有框架一个出口
+//   U-d  弹窗统一：原生 confirm/alert/prompt 在 ui/src 归零；危险动作确认只有框架一个出口，且不得自拼确认 Dialog
 // ---------------------------------------------------------------------------
 
 const path = require('node:path');
@@ -97,7 +97,8 @@ check('U-b verify 串包含 typecheck/lint/test/build 四步',
 
 // -- U-d：面板弹窗统一（原生弹窗归零 + 确认出口唯一）--
 //  病灶：卸载/安装 DSH 这类高危动作直接调浏览器原生 confirm()，样式与主题脱节、多行只能拼 \n，
-//   而同一件事在别处又有 state+Dialog 的第二套形态。规范成文于 ui/FRAMEWORK.md「弹窗统一标准」。
+//   而同一件事在别处又有 state+Dialog 的第二套形态。两类形态现都已归零并被下面的判据各自咬住。
+//  规范成文于 ui/FRAMEWORK.md「弹窗统一标准」。
 //  扫描必须报**分母**（真扫到多少个文件）：只报「零命中」的闸在被扫空目录时同样绿，那是空转。
 //  注释行不算证据：说明文字里会**引用**「原生 confirm」这个词，裸扫必假阳性（U-c 同族教训）。
 {
@@ -136,11 +137,33 @@ check('U-b verify 串包含 typecheck/lint/test/build 四步',
   const providers = fs.readFileSync(path.join(ROOT, 'ui', 'src', 'app', 'providers.tsx'), 'utf8');
   check('U-d AppProviders 挂载 ConfirmProvider（未挂载则 useConfirm 必抛）',
     /<ConfirmProvider>/.test(providers), 'ok');
-  // 分母驱动：8 处原生 confirm 迁完后，经出口的危险动作确认条数不得少于迁移前。
+  // 分母驱动：实测 12 处 = 8 处原生 confirm 迁移 + 自拼确认收编出的 4 次询问（删实例、停主干 DSH、
+  //  开远程、切公网）。原三处 state+Dialog 里 LanPage 那一个共用 Dialog 同时服务两条开启路径，
+  //  拆开后各问各的，故 3 处形态对应 4 次询问。下限取 11 不留等号：新增危险动作也该经出口，
+  //  等号会让「顺手加一处」变成必须同步改闸。
   const asked = uiFiles.reduce((n, p) => n + ((codeOf(p).match(/await\s+\w*[cC]onfirm\s*\(\s*\{/g) || []).length), 0);
-  check('U-d 危险动作确认确实经统一出口（>=8 处）', asked >= 8, asked + ' 处');
+  check('U-d 危险动作确认确实经统一出口（>=11 处）', asked >= 11, asked + ' 处');
   check('U-d 确认队列有行为测试（纯逻辑，不依赖 DOM 测试设施）',
     fs.existsSync(path.join(ROOT, 'ui', 'src', 'framework', 'ui', 'confirm-queue.test.ts')), 'ok');
+
+  // 第二批：是/否确认不得由 features 自拼 Dialog。两条判据各咬一面，缺一面就漏：
+  //  标题面（疑问句写进 DialogTitle）与状态面（一个 confirm/pending 命名的 useState 去驱动 Dialog）。
+  const isQuestionTitle = (src) => /<DialogTitle>[^<]*？/.test(src);
+  const isConfirmState = (src) => /const \[(confirm[A-Za-z]*|pending[A-Za-z]*|will[A-Za-z]*), set\1\]\s*=\s*useState/.test(src)
+    && /<Dialog\b/.test(src);
+  const qHits = uiFiles.filter((p) => isQuestionTitle(codeOf(p))).map(relOf);
+  const sHits = uiFiles.filter((p) => isConfirmState(codeOf(p))).map(relOf);
+  check('U-d 无疑问句标题的自拼确认 Dialog（是/否动作必须走 useConfirm）',
+    qHits.length === 0, qHits.join(', ') || '零出现');
+  check('U-d 无 confirm/pending 命名的状态驱动 Dialog（旧自拼确认形态归零）',
+    sHits.length === 0, sHits.join(', ') || '零出现');
+  check('U-d 反向：两种自拼确认形态都会被识别',
+    isQuestionTitle('<Dialog open={x}><DialogTitle>删除实例？</DialogTitle></Dialog>')
+    && isConfirmState('const [confirmId, setConfirmId] = useState(null); <Dialog open={!!confirmId}>'), '命中');
+  check('U-d 反向：表单 Dialog 不误报（陈述句标题 + addOpen/tokenFor 这类命名）',
+    !isQuestionTitle('<Dialog open={addOpen}><DialogTitle>添加 DSH 实例</DialogTitle></Dialog>')
+    && !isConfirmState('const [addOpen, setAddOpen] = useState(false); <Dialog open={addOpen}>')
+    && !isConfirmState('const [tokenFor, setTokenFor] = useState(null); <Dialog open={!!tokenFor}>'), '不误报');
 }
 
 // -- 反向：build-ui 只构建不测试（说明为何必须由 ci-core 补上 verify）--
