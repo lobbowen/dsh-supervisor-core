@@ -318,8 +318,11 @@ const eventsOf = (arr, type) => (arr || []).some((e) => e.t === type);
     check('P3 失败结论不落进检测缓存', pm._updCache['@x/p'] === undefined, JSON.stringify(pm._updCache));
     const chk = await pm.checkUpdates();
     const row = (chk.plugins || []).find((x) => x.name === '@x/p');
-    check('P4 检测：取不到时 latest 为 null 且 updateAvailable=false（不猜版本）',
-      !!row && row.latest === null && row.updateAvailable === false, JSON.stringify(row));
+    check('P4a 检测：取不到时逐目标 latest 为 null（不猜版本、不拿已装版充当）',
+      !!row && row.targets.length === 2 && row.targets.every((t) => t.latest === null), JSON.stringify(row));
+    check('P4b 检测：取不到时逐目标与行级 updateAvailable 全为 false（正向对照见 L1/L2）',
+      !!row && row.updateAvailable === false && row.targets.every((t) => t.updateAvailable === false),
+      JSON.stringify(row && { u: row.updateAvailable, t: row.targets.map((x) => x.updateAvailable) }));
     await pm.checkUpdates();
     check('P5 门禁非空转：失败后每次检查都重新查询，而不是被负缓存挡掉', distCalls.length === 3, String(distCalls.length));
     const { pm: pm2, distCalls: calls2 } = makePM({ running: true, distLatest: { '@x/p': '2.0.0' } });
