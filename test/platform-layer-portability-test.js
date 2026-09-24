@@ -900,7 +900,8 @@ async function x10() {
   walkUi(path.join(ROOT, 'ui', 'src'));
   const reWinOpen = /window\.open\s*\(/;
   const openers = uiJsx.filter((f) => reWinOpen.test(fs.readFileSync(f, 'utf8')))
-    .map((f) => path.relative(path.join(ROOT, 'ui', 'src'), f));
+    // 相对路径按平台分隔符产出（win32 给反斜杠），与字面量比对前先归一。
+    .map((f) => path.relative(path.join(ROOT, 'ui', 'src'), f).split(path.sep).join('/'));
   check('X-11 面板创建外部窗口只有一个出口（window.open 只允许在 externalOpen.ts）',
     JSON.stringify(openers) === JSON.stringify(['services/supervisor/externalOpen.ts']), openers.join(','));
   check('X-11 反向：判据能识别页面里裸 window.open（壳内 webview 会静默丢弃它，正是要钉的形态）',
