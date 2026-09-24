@@ -35,6 +35,8 @@ function main() {
   const dist = new DistributionManager({
     registries: (config.registries && config.registries.length) ? config.registries : ['https://registry.npmjs.org'],
     registryFile: path.join(swDir, 'registry.json'),
+    // 选择文档在此进程只读：本 daemon 的 ctl 方法表里没有镜像写入口，写它的是守卫面板那条路径。
+    registryChoiceFile: path.join(swDir, 'registry-choice.json'),
     events,
     logger,
   });

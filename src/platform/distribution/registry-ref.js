@@ -30,8 +30,10 @@ function hostViolation(host) {
   return null;
 }
 
-/** 配置的镜像基址：协议白名单 + 无凭证/查询/片段 + 主机非私网字面量。**允许 path**。
- *  拒绝 `@` 之外的 userinfo、`?`/`#` 夹带与空白是攻击面；拒绝 path 只是形态洁癖，代价是杀掉合法镜像。
+/** 配置的镜像基址：**只做形态判定**（协议白名单 + 无凭证/查询/片段 + 允许 path）。
+ *  主机维度不在此处：私网字面量闸在写入口（policies.registryOriginViolation）与跨主机跳转
+ *  （targetHostViolation）两处施加。把两者混在这一把尺里的旧形态，会让「合法带 path 的镜像」
+ *  与「夹带凭证的基址」得到同一个答案 —— 前者被误杀、后者被放过。
  *  @returns {{ok:boolean, base:string, protocol:string, host:string, violation:string|null}} */
 function parseRegistryBase(raw) {
   const base = normalizeBase(raw);
@@ -174,6 +176,7 @@ module.exports = {
   normalizeBase,
   hostViolation,
   parseRegistryBase,
+  targetHostViolation,
   registryEnvPair,
   registryPackagePath,
   registryUrl,

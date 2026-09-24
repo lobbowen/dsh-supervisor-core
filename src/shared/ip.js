@@ -42,6 +42,7 @@ function isPrivateHostLiteral(host) {
   if (v4) {
     const o = Number(v4[1]), t = Number(v4[2]);
     if (o === 0 || o >= 224) return true;                 // 未指定 / 组播 / 保留
+    if (o === 127) return true;                           // 整个 127/8 都是回环，不只 127.0.0.1
     if (o === 169 && t === 254) return true;              // 链路本地（含云元数据）
     if (o === 100 && t >= 64 && t <= 127) return true;    // CGNAT
   }
