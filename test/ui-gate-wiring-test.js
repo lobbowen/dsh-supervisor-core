@@ -149,17 +149,25 @@ check('U-b verify 串包含 typecheck/lint/test/build 四步',
   // 第二批：是/否确认不得由 features 自拼 Dialog。两条判据各咬一面，缺一面就漏：
   //  标题面（疑问句写进 DialogTitle）与状态面（一个 confirm/pending 命名的 useState 去驱动 Dialog）。
   const isQuestionTitle = (src) => /<DialogTitle>[^<]*？/.test(src);
-  const isConfirmState = (src) => /const \[(confirm[A-Za-z]*|pending[A-Za-z]*|will[A-Za-z]*), set\1\]\s*=\s*useState/.test(src)
-    && /<Dialog\b/.test(src);
+  const CONFIRM_STATE = /const \[((?:confirm|pending|will)[A-Za-z]*), set([A-Za-z]*)\]\s*=\s*useState/;
+  const isConfirmState = (src) => {
+    const m = src.match(CONFIRM_STATE);
+    // setter 必须与状态同名（首字母大写）才算一条确认态；不用 \1 回引是因为回引会拿小写状态名去拼
+    //  setConfirmId 这类大写 setter，正则永不匹配 -> 判据静默空转（本次 CI 就是这么暴露的）。
+    return !!m && m[2] === m[1].charAt(0).toUpperCase() + m[1].slice(1) && /<Dialog\b/.test(src);
+  };
   const qHits = uiFiles.filter((p) => isQuestionTitle(codeOf(p))).map(relOf);
   const sHits = uiFiles.filter((p) => isConfirmState(codeOf(p))).map(relOf);
   check('U-d 无疑问句标题的自拼确认 Dialog（是/否动作必须走 useConfirm）',
     qHits.length === 0, qHits.join(', ') || '零出现');
   check('U-d 无 confirm/pending 命名的状态驱动 Dialog（旧自拼确认形态归零）',
     sHits.length === 0, sHits.join(', ') || '零出现');
-  check('U-d 反向：两种自拼确认形态都会被识别',
-    isQuestionTitle('<Dialog open={x}><DialogTitle>删除实例？</DialogTitle></Dialog>')
-    && isConfirmState('const [confirmId, setConfirmId] = useState(null); <Dialog open={!!confirmId}>'), '命中');
+  // 两条反向样本各判各的：合成一条时其中一半空转看不出来（上一版即因此整条红而不知红在哪面）。
+  check('U-d 反向：疑问句标题确实被标题面判据命中',
+    isQuestionTitle('<Dialog open={x}><DialogTitle>删除实例？</DialogTitle></Dialog>'), '命中');
+  check('U-d 反向：confirm 命名状态驱动 Dialog 确实被状态面判据命中',
+    isConfirmState('const [confirmId, setConfirmId] = useState(null); <Dialog open={!!confirmId}>')
+    && isConfirmState('const [pendingOn, setPendingOn] = useState(null); <Dialog open={!!pendingOn}>'), '命中');
   check('U-d 反向：表单 Dialog 不误报（陈述句标题 + addOpen/tokenFor 这类命名）',
     !isQuestionTitle('<Dialog open={addOpen}><DialogTitle>添加 DSH 实例</DialogTitle></Dialog>')
     && !isConfirmState('const [addOpen, setAddOpen] = useState(false); <Dialog open={addOpen}>')
