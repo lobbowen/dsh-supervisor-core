@@ -104,7 +104,9 @@ function shellProbeResults(origins, measurements, nowSec, maxAgeSec) {
   const results = [];
   for (const o of origins || []) {
     const parsed = registryRef.parseRegistryBase(o);
-    if (!parsed.ok) continue;
+    // 候选本身过不了形态闸时**不采用**而不是跳过：跳过等于宣称「壳测过了这一轮的全部候选」，
+    // 而那个候选根本没被比过 —— 面板会少一格源卡且无人报错。回退自测才会给它自己的拒因。
+    if (!parsed.ok) return null;
     const m = byBase.get(parsed.base);
     if (!m) return null;
     results.push({

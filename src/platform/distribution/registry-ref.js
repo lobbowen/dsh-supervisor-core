@@ -176,6 +176,7 @@ module.exports = {
   normalizeBase,
   hostViolation,
   parseRegistryBase,
+  targetHostViolation,
   registryEnvPair,
   registryPackagePath,
   registryUrl,
