@@ -26,6 +26,14 @@
 //   A7 壳自愈    声明必须匹配实际机制（同 A5，覆盖三平台看护）
 //   A8 自启产权  内核不得越权写/删守卫服务定义（定义归壳）
 //   A9 守卫自启  guardAutostart 声明为 true 即要求内核有真正作用于守卫的关闭路径
+//
+// ## 覆盖缺口（E-2 制度化登记）：本门禁绿了仍然不成立的方面
+//   1. A2/A3 的「实现产物」是源码正则：只证明代码里存在该形态，不证明它被执行 ——
+//      外部打开的执行面（三档结局、零 spawn 拒绝）在 platform-layer-portability 的 X-10 与
+//      api-contract 的 OW 组。
+//   2. A1/A3 读的是注入的档位表；真机上把声明改成实测的那些覆写（Linux 图形会话、hasTool 探测）
+//      本门禁不判探测正确性，归 platform-parsers-and-commands 与 four-platform-behavior-matrix。
+//   3. 本门禁不判文案是否用户可读、也不判面板是否按字段分档（后者在 ui 的 externalOpen.test.ts）。
 // ---------------------------------------------------------------------------
 
 const fs = require('node:fs');
@@ -56,7 +64,7 @@ const PLATFORMS = ['linux', 'darwin', 'win32'];
 const UNKNOWN = 'freebsd';
 const CAP_FIELDS = [
   'sandboxLaunch', 'pidAdoption', 'processTreeKill', 'desktopNotify', 'autostart', 'frpExpose',
-  'guardAutostart', 'guardSelfHeal', 'shellAutostart', 'shellSelfHeal',
+  'guardAutostart', 'guardSelfHeal', 'shellAutostart', 'shellSelfHeal', 'openBrowser',
 ];
 // sandboxEnforcement 是枚举档位（限额执行机制），不是布尔能力位，单列校验。
 const ENFORCEMENT_TIERS = ['cgroup', 'supervise', 'none'];
@@ -110,6 +118,13 @@ console.log('== A3 不支持的能力必须显式报告 ==');
   const rU = capabilityProfile(UNKNOWN, 'x64');
   check('A3 未知平台 sandboxLaunch 声明为 false 且档位为 none',
     rU.sandboxLaunch === false && rU.sandboxEnforcement === 'none', JSON.stringify({ launch: rU.sandboxLaunch, enf: rU.sandboxEnforcement }));
+  // openBrowser：档位 false 就必须**显式拒绝**，而不是「照样试一次 xdg-open 再返 ok:true」。
+  //   openCommand 对未知平台仍退化 xdg-open（低层尽力），但那是映射不是能力；出口必须先问档位表。
+  check('A3 未知平台 openBrowser=false 且唯一出口以档位表为准显式报 unsupported-platform',
+    rU.openBrowser === false
+    && /CAPABILITY_PROFILES\[k\]\.openBrowser/.test(readOs('browser.js'))
+    && /SUPPORTED_OPEN_PLATFORMS\.includes\(pl\)/.test(readOs('browser.js'))
+    && /'unsupported-platform'/.test(readOs('browser.js')), 'ok');
   // 未知平台的壳自启必须显式不支持（已在 A4 覆盖行为侧）
 }
 
@@ -148,6 +163,15 @@ console.log('== A2 声明能力必须有实现产物 ==');
   const notifySrc = readOs('notify.js');
   check('A2 notify 三平台实现',
     /notify-send/.test(notifySrc) && /osascript/.test(notifySrc) && /powershell|NotifyIcon/i.test(notifySrc), 'ok');
+  // 外部打开（三平台 openBrowser=true）：声明为 true 就必须有「真起进程 + 真等结局」的产物。
+  //   本组只钉**实现产物在场**；三档语义的行为证据在 platform-layer-portability X-10。
+  const brSrc = readOs('browser.js');
+  check('A2 外部打开有实现产物（argv 直启 + spawn 前可用性预检 + 有界观测子进程结局）',
+    /detachedIgnored/.test(brSrc) && /if \(!avail\(plan\.bin\)\)/.test(brSrc) && /observeSpawn/.test(brSrc), 'ok');
+  check('A2 三档结果有唯一构造点（ok/confirmed/handedOff/reason 不得由调用方各自解释 argv 结局）',
+    /function outcome\(/.test(brSrc) && /ok,\s*confirmed,\s*handedOff,\s*reason/.test(brSrc), 'ok');
+  check('A2 linux 的 openBrowser 声明由图形会话实测覆写（静态档位只说「能试」，不说「这次成了」）',
+    /p\.openBrowser\s*=\s*desktop\.sessionAvailable\(\)/.test(readOs('index.js')), 'ok');
   const fpSrc = readOs('file-protect.js');
   check('A2 fileProtect Unix 分支（chmod）', /chmodSync/.test(fpSrc), 'ok');
   check('A2 fileProtect Windows 分支（icacls）', /icacls/.test(fpSrc), 'ok');

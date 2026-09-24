@@ -114,7 +114,7 @@ const SURFACE = [
 const PREFIXES = [
   { prefix: '/dist/',        domain: 'dist',      category: 'public',      consumers: ['UI'], note: '/dist/registry/{refresh|set}' },
   { prefix: '/guard/',       domain: 'guard',     category: 'public',      consumers: ['UI'], note: '/guard/version|changelog 等' },
-  { prefix: '/instances/',   domain: 'instances', category: 'public',      consumers: ['UI'], note: '/instances/{add|remove|update|start|stop|check-update|open-web|upgrade}' },
+  { prefix: '/instances/',   domain: 'instances', category: 'public',      consumers: ['UI'], note: '/instances/{add|remove|update|start|stop|check-update|open-web|upgrade}；open-web 回 platform.browser.openBrowser 的三档结果 {ok,confirmed,handedOff,reason,error,url,evidence}，url 恒在场供面板复制/手动打开' },
   { prefix: '/lifecycle',    domain: 'lifecycle', category: 'public',      consumers: ['UI', 'CLI'], note: '/lifecycle/{id}[/{action}]（唯一启停入口）' },
   { prefix: '/lifecycle/',   domain: 'lifecycle', category: 'public',      consumers: ['UI', 'CLI'], note: '同上（显式前缀）' },
   { prefix: '/logs',         domain: 'lifecycle', category: 'operational', consumers: ['诊断/审计'], note: '/logs/{tail|export}（events-tail 已删除：与 /events 语义重复）' },

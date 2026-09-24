@@ -6,6 +6,52 @@
 
 ## [未发布]
 
+### 外部打开收口为单一出口 + 三档诚实结果（「面板显示已打开、屏幕上什么都没有」的病灶）
+
+用户实报：DSH Web 按钮、智能路由反代一键登录这类「弹出网页」的动作弹不出来，界面却报成功。根因不在这两个按钮，
+而在**跨平台基础能力没有分层**：面板、`/instances/open-web`、反代登录各自调 `spawn` 或 `window.open`，
+各自把「没抛错」解释成「已打开」。四条同时错的机制事实：
+
+- Node 的 ENOENT **只在子进程的异步 `error` 事件里出现**，`spawn` 返回时一切看起来正常——同步返回布尔的实现
+  形态本身就不诚实（旧 `openBrowser` 就是这个形态）。
+- win32 走 `explorer.exe` 时 ShellExecute **恒返 0**，退出码不构成任何证据。
+- Linux 无图形会话时旧实现仍尽力试一次 `xdg-open`，能力位却对外宣称可打开——声明与行为分叉。
+- 面板跑在桌面壳的内容 iframe 里，Tauri 的 IPC 只注入主帧、webview 默认丢弃 `window.open` 与 `target=_blank`，
+  于是「面板自己再开一个窗」这条降级路在桌面出口上也是静默失败的。
+
+按 S-1..S-4 分层重建（不砍能力：三端仍可打开，只是不再谎报）：
+
+- **S-1 唯一出口**：`src/platform/os/browser.js` 的 `openBrowser`（非隔离）与 `launchIsolated`（登录隔离窗口）
+  成为内核侧仅有的两条外部打开路，共用同一结果词汇 `{ok, confirmed, handedOff, reason, error, message, url, evidence}`
+  与唯一构造点 `outcome()`。三档：`confirmed`（命令 0 退出**且该形态退出可信**，可信性只写在 `openPlan().trustExit`
+  一处）/ `handedOff`（交出去了但结局取不到证）/ `ok:false`（显式失败并带 `reason` 码）。`openBrowser` 改为异步、
+  在 `OPEN_OBSERVE_MS` 有界窗口内观测子进程结局；`spawn` 前加可用性预检，不可用的 bin 不再被 spawn 出去送死。
+- **S-2 能力位**：`capabilityProfile().openBrowser` 是**唯一**声明面（三平台 true、未知平台 false），
+  Linux 由 `capabilities()` 用图形会话实测覆写；可支持平台名单从档位表推导，`browser.js` 内零第二份平台判断。
+  档位说不开即显式 `unsupported-platform`，不再「尽力试一次」。
+- **S-3 消费方一律透传**：`POST /instances/open-web` 原样交出三档、`ok:false` 映射 **500**（恒 200 正是假成功的
+  通道）并在失败时作废该一次性授权码（残留可用码等于给一次从未发生的浏览留门）；`proxyLoginStart` 交出
+  `{ok, url=authUrl, reason, error, isolated}`，成功档的 `confirmed/handedOff` 直接取自平台层结果对象而不是
+  在消费方重写死值；`router/ops/browser.js` 返回 `{profile, result}`——只回 profile 就是只回 `ok:true` 的同一失效形态。
+- **S-4 面板**：`ui/src/services/supervisor/externalOpen.ts`（分档判据，只看字段不看文案）+
+  `ui/src/features/supervisor/openExternal.tsx`（唯一呈现口 `runOpenExternal`）。**三档每一档都渲染可点、可复制的地址行**，
+  失败响应体里的地址也照样呈现（catch 里优先取 `err.body`）；DSH Web / 概览 / 反代登录三处入口全部改经该入口。
+  面板自建窗口同样单点（`openViaWindow`，被拦截即 `ok:false`）；壳内经 postMessage 桥请壳代开
+  （`dsh:open-url` / `dsh:open-url-result`，与内核更新桥共用协议版本常量与 `ev.source === window.parent` 来源硬判据），
+  **壳无回执即判失败**并提示复制。
+
+门禁与标准（新增判据全部并入既有条链目，未新增链条目）：X-8（计划与取证档位）· X-10（三档行为 + `observeSpawn` 本体，
+假 spawn/假时钟，CI 不真起浏览器）· X-11（唯一出口的源码级不变量，含面板最后一环：`window.open` 只允许出现在
+`externalOpen.ts`）；`four-platform-behavior-matrix` P-5 补 `openBrowser` 声明位与 `trustExit` 档位；
+`platform-capability-audit` A1·A2·A3 补能力位、实现产物与未知平台显式失败；`api-contract` 新增 OW 组（真 HTTP 三档透传、
+500、地址在场、一次性码作废）；`token-contract-gate` TK-G6 的动词集改为与 `browser.js` 真实 argv 出口对齐并加反向断言
+（改名会让扫描静默零命中＝门禁空转）；`ui` 的 `externalOpen.test.ts` 锁分档判据与桥的来源校验、无回执降级。
+两份平台门禁按 E-2 补「覆盖缺口」登记：假件证明不了真机 argv 行为与窗口是否出现，源码正则保证「只有一条路」
+而非「运行期只走了这条路」。标准成文于 PLATFORM-CAPABILITY-MATRIX.md §九（含四条反模式）。
+
+**未收口**：壳侧 `dsh:open-url` 的接收端（`tauri-plugin-opener` + `on_new_window`）在壳仓配套 PR；
+用户那台 Windows 机「什么都不弹」究竟落在哪一档仍未取证——本批只保证它不会再被显示成成功。
+
 ### 读端点不再等长动作：市场重建与更新检测改「快照 + 后台跑」（真机取证驱动）
 
 用户面板点「刷新」实报 `请求超时（15s）：/plugins/market?refresh=1`。先把口径弄清：**没有任何服务端会在 120s 砍断它**——

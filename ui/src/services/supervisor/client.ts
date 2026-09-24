@@ -4,7 +4,7 @@
 import type {
   AccessKeyResult, AccessKeyStatus, AutostartStatus, CloseActionStatus, EnvStatus, EventsPage, FrpStatus, GenericOk,
   GuardVersion, InstancesResponse, InstalledPluginsResponse, LanAccessResponse,
-  LanPanelStatus, LifecycleModuleId, MarketResponse, NodeLtsStatus, PluginUpdatesResponse,
+  LanPanelStatus, LifecycleModuleId, MarketResponse, NodeLtsStatus, OpenExternalResult, PluginUpdatesResponse,
   PortsResponse, ProvidersResponse, RegistryInfo, RemoteMode, RouterStatus,
   PluginJobStatus, ProxyUpdateStatus, SelfUpdateStatus, SupervisorInstance, SupervisorStatus, TasksResponse,
   ShellStatus, ShellUpdateCheck,
@@ -90,8 +90,11 @@ async function http<T>(method: string, path: string, body?: unknown, opts?: Http
       res.status === 401
         ? msg + "（访问密钥缺失或已更新：请用带 ?access_key= 的链接重新进入，或在本机 127.0.0.1 面板重新保存密钥）"
         : msg,
-    ) as Error & { status?: number };
+    ) as Error & { status?: number; body?: unknown };
     err.status = res.status; // 轮询层据此区分「401 鉴权失败」与「真离线」
+    // 响应体随错误一起交出：后端把「动作未被接受」映射为非 2xx（GD 条），而有些结果的
+    // 结构化字段（如外部打开的 url/reason）必须呈现给用户，只留一句文案就丢了可复制的地址。
+    err.body = data;
     throw err;
   }
   return data as T;
@@ -171,7 +174,7 @@ export const supervisorApi = {
   instanceRemove: (id: string) => post<GenericOk & { dataPreserved?: boolean; preserveReason?: string }>("/instances/remove", { id }),
   instanceStart: (id: string) => post<GenericOk>("/instances/start", { id }),
   instanceStop: (id: string) => post<GenericOk>("/instances/stop", { id }),
-  instanceOpenWeb: (id: string) => post<GenericOk & { url?: string }>("/instances/open-web", { id }),
+  instanceOpenWeb: (id: string) => post<OpenExternalResult>("/instances/open-web", { id }),
   instanceCheckUpdate: (id: string) => post<GenericOk & { updateAvailable?: boolean; latest?: string; installed?: string }>("/instances/check-update", { id }),
   instanceUpgrade: (id: string) => post<GenericOk>("/instances/upgrade", { id }),
 
@@ -194,7 +197,7 @@ export const supervisorApi = {
   proxyAddKey: (id: string, key: string) => post<GenericOk>("/router/providers/proxy/key", { id, key }),
   proxyRemoveKey: (id: string, keyId: string) => post<GenericOk>("/router/providers/proxy/key/remove", { id, keyId }),
   proxySelect: (id: string, keyId: string) => post<GenericOk>("/router/providers/proxy/select", { id, keyId }),
-  proxyLoginStart: () => post<GenericOk & { authUrl?: string; waitMs?: number }>("/router/proxy/login/start"),
+  proxyLoginStart: () => post<OpenExternalResult & { authUrl?: string; waitMs?: number; state?: string; port?: number; isolated?: boolean }>("/router/proxy/login/start"),
   // 服务端轮询等待（最长可 waitMs~180s）：请求超时需覆盖等待窗口 + 网络余量
   proxyLoginWait: (timeoutMs: number) => post<GenericOk & { apiKey?: string }>("/router/proxy/login/wait", { timeoutMs }, { timeoutMs: Math.max(LONG_TIMEOUT_MS, timeoutMs + 30_000) }),
   proxyUpdateCheck: () => post<GenericOk>("/router/proxy/update/check"),

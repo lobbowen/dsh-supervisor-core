@@ -7,7 +7,7 @@
 
 // API 契约断言测试：对 createServer 的响应对未来回归设防。
 // 覆盖审计修复的关键契约：202 异步受理带 ok、key/use 路由 await（Promise 序列化回归）、
-// 实例/插件写操作状态码与 ok 字段。全部用最小 stub Supervisor（Proxy 兜底方法）。
+// 实例/插件写操作状态码与 ok 字段、open-web 的外部打开三档结果原样透传（OW 组）。全部用最小 stub Supervisor（Proxy 兜底方法）。
 
 const path = require('node:path');
 const http = require('node:http');
@@ -36,9 +36,10 @@ const nativeManager = {
 const routerApi = () => ({ switchToKey: async () => ({ ok: true, selected: 'k1' }) });
 const instances = {
   stopInstance: (id) => ({ ok: true, id: typeof id === 'object' ? id.id : null }),
-  list: () => [{ id: 'main', port: 3080, name: '主实例', domain: 'native' }],
+  // sb1 = 沙箱实例条目：open-web 只对「有真实端口的条目」放行（防开放重定向），main 走 dshMainView。
+  list: () => [{ id: 'main', port: 3080, name: '主实例', domain: 'native' }, { id: 'sb1', port: 3099, name: '沙箱实例', domain: 'sandbox' }],
   // DG-11 查询接口（消费方不再直读 .instances.instances）
-  find: (id) => [{ id: 'main', port: 3080, name: '主实例', domain: 'native' }].find((x) => x.id === id),
+  find: (id) => [{ id: 'main', port: 3080, name: '主实例', domain: 'native' }, { id: 'sb1', port: 3099, name: '沙箱实例', domain: 'sandbox' }].find((x) => x.id === id),
   all: () => [],
 };
 const pluginManager = { install: async () => ({ ok: true }) };
@@ -114,6 +115,61 @@ function req(method, p, body, hostHeader, extraHeaders, via) {
   check('POST /instances/stop → 200 且 ok:true', r.code === 200 && r.body.ok === true, r.code + ' ' + JSON.stringify(r.body));
   r = await req('POST', '/plugins/install', JSON.stringify({ spec: '@x/p' }));
   check('POST /plugins/install → 200 且 ok:true', r.code === 200 && r.body.ok === true, r.code + ' ' + JSON.stringify(r.body));
+
+  // OW 组：open-web 把内核外部打开的三档结果**原样**交给面板（confirmed / handedOff / ok:false）。
+  //   病根即此端点：旧实现只要 spawn 没抛错就 send 200 ok:true，屏幕上什么都没有却显示成功。
+  //   打桩点在 platform/os/browser 的导出对象上（instances.js 按属性动态取用），故不真起浏览器。
+  const brMod = require(path.join(ROOT, 'src', 'platform', 'os', 'browser.js'));
+  const realOpenBrowser = brMod.openBrowser;
+  const argvUrls = [];
+  let owCase = null; // (url) => 三档结果，或 'throw' 模拟出口抛错
+  brMod.openBrowser = async (url) => {
+    argvUrls.push(url);
+    if (owCase === 'throw') throw new Error('spawn blew up');
+    return owCase(url);
+  };
+  const CONFIRMED = (url) => ({ ok: true, confirmed: true, handedOff: false, reason: null, error: null, message: '已在系统浏览器打开', url, evidence: { bin: 'xdg-open', via: 'dispatcher', exitCode: 0, exitSignal: null, error: null } });
+  try {
+    owCase = CONFIRMED;
+    r = await req('POST', '/instances/open-web', JSON.stringify({ id: 'sb1' }));
+    check('OW 成功档（confirmed）→ 200 且三档字段原样在场',
+      r.code === 200 && r.body.ok === true && r.body.confirmed === true && r.body.handedOff === false
+      && r.body.message === '已在系统浏览器打开' && r.body.url === argvUrls[0],
+      r.code + ' ' + JSON.stringify(r.body));
+    check('OW 交给浏览器的地址只带一次性码、不带会话令牌（令牌进 argv 即同机可读）',
+      /\/open\?code=[0-9a-f-]{20,}$/.test(argvUrls[0]) && !/token=/.test(argvUrls[0]), argvUrls[0]);
+    const firstCode = argvUrls[0];
+    r = await req('POST', '/instances/open-web', JSON.stringify({ id: 'sb1' }));
+    check('OW 每次调用重新签发一次性码（成功路径不烧码：码要留给浏览器回 /open 换 cookie）', argvUrls[1] !== firstCode && r.code === 200, argvUrls[1]);
+
+    owCase = (url) => ({ ok: true, confirmed: false, handedOff: true, reason: null, error: null, message: '已把地址交给系统，但无法确认窗口', url, evidence: { bin: 'explorer.exe', via: 'dispatcher', exitCode: 0, exitSignal: null, error: null } });
+    r = await req('POST', '/instances/open-web', JSON.stringify({ id: 'sb1' }));
+    check('OW 移交档（win32 explorer.exe 恒返 0）→ 200 但 confirmed:false，面板据此不说「已打开」',
+      r.code === 200 && r.body.ok === true && r.body.confirmed === false && r.body.handedOff === true
+      && r.body.evidence.bin === 'explorer.exe', JSON.stringify(r.body));
+
+    owCase = (url) => ({ ok: false, confirmed: false, handedOff: false, reason: 'no-launcher', error: '未找到可用的浏览器启动命令，请手动打开该地址', message: null, url, evidence: { bin: 'xdg-open', via: 'dispatcher', exitCode: null, exitSignal: null, error: null } });
+    r = await req('POST', '/instances/open-web', JSON.stringify({ id: 'sb1' }));
+    const failUrl = argvUrls[argvUrls.length - 1];
+    check('OW 失败档 → 非 2xx（不得恒 200）且带 reason/error',
+      r.code === 500 && r.body.ok === false && r.body.reason === 'no-launcher' && !!r.body.error, r.code + ' ' + JSON.stringify(r.body));
+    check('OW 失败响应把地址交回面板（用户仍可复制手动打开）', r.body.url === failUrl, String(r.body.url));
+    const dead = await new Promise((resolve) => {
+      const rr = http.request({ host: '127.0.0.1', port: API_PORT, path: failUrl.replace(/^http:\/\/127\.0\.0\.1:\d+/, ''), method: 'GET', headers: { Origin: 'http://127.0.0.1:' + API_PORT, Host: '127.0.0.1:' + API_PORT } },
+        (res) => { let b = ''; res.on('data', (c) => (b += c)); res.on('end', () => resolve({ code: res.statusCode, text: b })); });
+      rr.on('error', (e) => resolve({ code: 0, text: String(e) }));
+      rr.end();
+    });
+    check('OW 反向：打开失败即作废该一次性码（残留可用码 = 给一次从未发生的浏览留门）',
+      dead.code === 400 && /授权码无效或已过期/.test(dead.text), dead.code + ' ' + dead.text);
+
+    owCase = 'throw';
+    r = await req('POST', '/instances/open-web', JSON.stringify({ id: 'sb1' }));
+    check('OW 出口抛错也回结构化 500（不能让请求挂死或回 200），且地址仍在场',
+      r.code === 500 && r.body.ok === false && r.body.reason === 'spawn-failed' && !!r.body.url, r.code + ' ' + JSON.stringify(r.body));
+  } finally {
+    brMod.openBrowser = realOpenBrowser;
+  }
 
   // 跨站 Origin 仍拒绝（安全契约不回归）
   r = await req('POST', '/instances/stop', JSON.stringify({ id: 'i1' }));

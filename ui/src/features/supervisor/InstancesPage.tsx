@@ -15,6 +15,7 @@ import { Label } from "../../framework/ui/label";
 import { Spinner } from "../../framework/ui/spinner";
 import { supervisorApi, supervisorStore, useSupervisorData, type SupervisorInstance } from "../../services/supervisor";
 import { useSupervisorAction } from "./useSupervisorAction";
+import { runOpenExternal } from "./openExternal";
 import { DomainBadge, Metric, Pill, Card, ToneDot } from "./widgets";
 import { friendlyFailure, instancePhaseMeta } from "./nav";
 import { cn } from "../../framework/utils";
@@ -56,6 +57,10 @@ export function InstancesPage({ onRegisterActions }: { onRegisterActions?: (a: {
 
   /** 动作（busy 键 = 实例 id；操作静默成功，仅刷新快照） */
   const act = (key: string, fn: () => Promise<unknown>) => run(key, fn);
+
+  // DSH Web 的成败与地址由 notifyOpen 呈现（三档语义 + 可复制地址），run 只负责按钮忙碌态，
+  // 故把返回值置空：不让 run 的通用「{ok:false} 即失败」判据再叠一条丢失地址的错误条。
+  const openWeb = (id: string) => run(id, () => runOpenExternal(() => supervisorApi.instanceOpenWeb(id)).then(() => undefined));
 
   async function addInstance() {
     if (sandboxUnsupported) { toast.error("当前平台不支持沙箱实例（见 /env/status 能力矩阵）"); return; }
@@ -179,7 +184,7 @@ export function InstancesPage({ onRegisterActions }: { onRegisterActions?: (a: {
             )}
           </span>
           <div className="ml-auto flex flex-wrap items-center gap-2">
-            <Button disabled={!running} onClick={() => void act(it.id, () => supervisorApi.instanceOpenWeb(it.id))} size="sm" title="打开 DSH Web（自动带认证连接）" variant="outline" className="hidden md:inline-flex">
+            <Button disabled={!running} onClick={() => void openWeb(it.id)} size="sm" title="打开 DSH Web（自动带认证连接）" variant="outline" className="hidden md:inline-flex">
               <ExternalLink className="size-4" />DSH Web
             </Button>
             <Button disabled={updating} onClick={() => void act(it.id, () => (running ? supervisorApi.instanceStop(it.id) : supervisorApi.instanceStart(it.id)))} size="sm" variant="outline">

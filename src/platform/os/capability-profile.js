@@ -4,6 +4,9 @@
 // 实测覆写。分派留在 index.js#capabilityProfile —— cross-platform-architecture-gate CP-3 要求门面
 // 显式列出三平台分支，故本表不带平台判断。
 // guardAutostart/guardSelfHeal/shellAutostart/shellSelfHeal 为服务链的自启与自愈声明。
+// openBrowser 为「把 http(s) 地址交给系统默认浏览器」的可用性声明：三端恒 true（Linux 由
+//   capabilities() 用图形会话实测覆写），未知平台恒 false。它只声明「能不能试」，
+//   真正的成败与证据档位每次调用都由 platform/os/browser.js#openBrowser 如实回报。
 
 /** Linux 档位：期望 systemd（systemd-run/systemctl/notify-send 实测覆写）。 */
 const linux = {
@@ -15,6 +18,7 @@ const linux = {
   desktopNotify: true,   // 期望 notify-send（实测覆写）
   autostart: true,       // 期望 systemctl（实测覆写）
   frpExpose: true,
+  openBrowser: true,     // xdg-open / 解析到的默认浏览器；无图形会话时实测覆写成 false
   hostService: 'systemd',
   guardAutostart: true,  // systemd --user enable + linger
   guardSelfHeal: true,   // unit Restart=always
@@ -31,6 +35,7 @@ const darwin = {
   desktopNotify: true,  // 期望 osascript（实测覆写）
   autostart: true,      // launchctl/LaunchAgent 恒在
   frpExpose: true,
+  openBrowser: true,    // LaunchServices 解析 + open 直启
   hostService: 'launchd',
   guardAutostart: true,  // LaunchAgent RunAtLoad + KeepAlive
   guardSelfHeal: true,   // KeepAlive
@@ -49,6 +54,9 @@ const win32 = {
   desktopNotify: true,   // 期望 powershell（实测覆写）
   autostart: true,       // 期望 schtasks（实测覆写）
   frpExpose: true,
+  // 可打开，但只有注册表解析到默认浏览器时才有退出证据；退到 explorer.exe 调度器即恒返 0，
+  // 每次调用的证据档位由 openBrowser 的 confirmed/handedOff 如实回报，不在此处宣称。
+  openBrowser: true,
   hostService: 'windows-service',
   guardAutostart: true,  // schtasks DSH-Supervisor（ONLOGON，由壳建立）
   guardSelfHeal: true,   // schtasks DSH-Supervisor-Watchdog 每 5 分钟（同样归壳，内核只查询存在性）
@@ -57,11 +65,14 @@ const win32 = {
   shellSelfHeal: true,
 };
 
-/** 未知平台档位：全能力 false，hostService=none（显式失败，不谎报）。 */
+/** 未知平台档位：全能力 false，hostService=none（显式失败，不谎报）。
+ *  未受支持的平台（含无任何图形会话的移动/嵌入式宿主）一律 false：外部打开能力在此显式关闭，
+ *  调用方拿到 ok:false/reason 后必须把地址交给用户自行处理。 */
 const unknown = {
   sandboxLaunch: false, sandboxEnforcement: 'none',
   pidAdoption: false, processTreeKill: false,
   desktopNotify: false, autostart: false, frpExpose: false,
+  openBrowser: false,
   hostService: 'none',
   guardAutostart: false, guardSelfHeal: false,
   shellAutostart: false, shellSelfHeal: false,

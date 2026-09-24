@@ -10,6 +10,8 @@ const os = require('node:os');
 const path = require('node:path');
 const ex = require('../util/exec');
 const execPath = require('./exec-path');
+// 图形会话可用性（只读 env/socket）：capabilities 的 openBrowser 位在 linux 上靠它实测覆写。
+const desktop = require('./desktop');
 // 档位数据在 ./capability-profile.js；门禁 cross-platform-architecture-gate CP-3 要求门面显式列出三平台分支。
 const CAPABILITY_PROFILES = require('./capability-profile');
 
@@ -75,6 +77,9 @@ function capabilities() {
     p.sandboxEnforcement = hasTool('systemd-run') ? 'cgroup' : 'supervise';
     p.desktopNotify = hasTool('notify-send');
     p.autostart = hasTool('systemctl');
+    // 外部打开要真判定：无图形会话时 xdg-open/浏览器必败（只读 env/socket 探测，零 spawn，
+    // 与 desktopNotify 不同源是因为缺 notify-send 只影响提示、缺会话影响整条打开链路）。
+    p.openBrowser = desktop.sessionAvailable();
   } else if (pl === 'darwin') {
     p.desktopNotify = hasTool('osascript');
   } else if (pl === 'win32') {
@@ -97,6 +102,6 @@ module.exports = {
   // 导出模块对象会抛 platform.notify is not a function，把升级终态误判成失败。
   notify: require('./notify').notify,
   browser: require('./browser'),
-  desktop: require('./desktop'),          // 图形会话可用性（Linux 需实测 socket）
+  desktop,                        // 图形会话可用性（Linux 需实测 socket）
   autostart: require('./autostart'),
 };

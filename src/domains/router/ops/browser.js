@@ -46,8 +46,10 @@ function graphicalEnv() {
 
 /** 调起系统默认浏览器做 OAuth 一键登录；引擎支持时叠加无痕 + 随机 profile + 语言/时区/窗口尺寸随机化
  *  （策略在此，引擎方言在平台层）。Safari 等无隔离引擎由平台层降级为非隔离打开，换账号靠登录超时/重新发起与 UI 上的 authUrl 手动兜底。
+ *  结果词汇与 platform.browser.openBrowser 同一套（ok/confirmed/handedOff/reason/error）：
+ *  调用方不得再把「拿不到 profile」这一件事自己编文案，也不得把「已移交」说成「已打开」。
  *  @param {function} [onExit] 浏览器进程退出回调（隔离形态下用户关闭 -> 取消登录）。
- *  @returns {string|null} 临时 profile 路径（供登录后清理）；失败 null。 */
+ *  @returns {{profile:string|null, result:object}} profile=null 表示未起浏览器，result 携带原因。 */
 function openInBrowser(url, onExit) {
   try {
     const tmpProfile = path.join(os.tmpdir(), 'dsh-oauth-' + crypto.randomBytes(8).toString('hex'));
@@ -61,14 +63,16 @@ function openInBrowser(url, onExit) {
     const tz = pick(TZ_POOL);
     const antiEnv = Object.assign({}, sysEnv, { TZ: tz, LANG: lang });
     const r = platform.browser.launchIsolated(url, { profileDir: tmpProfile, size, lang, antiEnv, sysEnv, onExit });
-    if (!r || !r.ok) return null;
+    if (!r || !r.ok) return { profile: null, result: r || { ok: false, reason: 'spawn-failed' } };
     if (r.isolated) {
       // unref：清理定时器最长 30 分钟，不得拖住进程退出。
       const t30 = setTimeout(() => { try { fs.rmSync(tmpProfile, { recursive: true, force: true }); } catch {} }, 30 * 60 * 1000);
       if (t30.unref) t30.unref();
     }
-    return tmpProfile;
-  } catch { return null; }
+    return { profile: tmpProfile, result: r };
+  } catch (e) {
+    return { profile: null, result: { ok: false, reason: 'spawn-failed', error: '浏览器启动失败：' + ((e && e.message) || e) } };
+  }
 }
 
 module.exports = { graphicalEnv, openInBrowser };

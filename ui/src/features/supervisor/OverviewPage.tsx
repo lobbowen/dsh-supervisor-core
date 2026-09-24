@@ -17,6 +17,7 @@ import { cn } from "../../framework/utils";
 import { PortPanel } from "./PortPanel";
 import { EVENT_LABELS, SUP_PHASE_META, friendlyFailure } from "./nav";
 import { useSupervisorAction } from "./useSupervisorAction";
+import { runOpenExternal } from "./openExternal";
 
 const NOISE = new Set(["dist_registry_selected", "gui_autostart_changed", "autostart_changed", "lan_panel_changed", "lan_dsh_token_updated"]);
 
@@ -50,7 +51,8 @@ export function OverviewPage() {
     await run("dsh", () => (running ? supervisorApi.lifecycleStop("dsh") : supervisorApi.lifecycleStart("dsh")), { success: running ? "正在停止 DSH…" : "正在启动 DSH…" });
   }
   async function openWeb() {
-    await run("web", () => supervisorApi.instanceOpenWeb("main"));
+    // 三档结果与地址一律由 notifyOpen 呈现（run 的通用判据会把「只是交出去了」也报成一条丢地址的错误）
+    await run("web", () => runOpenExternal(() => supervisorApi.instanceOpenWeb("main")).then(() => undefined));
   }
   async function checkUpdate() {
     await run("chk", async () => {

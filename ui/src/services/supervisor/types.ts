@@ -584,6 +584,30 @@ export interface NodeLtsStatus {
 
 export interface GenericOk { ok?: boolean; error?: string | null; [k: string]: unknown; }
 
+/** 外部打开（把 http(s) 地址交给系统默认浏览器）的结果契约，与内核 platform/os/browser.js 的
+ *  outcome 同字段。三档语义不得在界面上合并：
+ *    confirmed  —— 内核拿到了成功证据（承载进程 0 退出且该形态的退出可信）
+ *    handedOff  —— 只是把地址交了出去，窗口是否出现无从证明（win32 的 explorer.exe 即此类）
+ *    ok=false   —— 明确失败，error 为内核给出的一句话，url 仍必须呈现给用户
+ *  url 恒在场：任何一档都要能让用户复制/手动打开，不得只报成败。 */
+export interface OpenExternalResult {
+  ok?: boolean;
+  confirmed?: boolean;
+  handedOff?: boolean;
+  reason?: string | null;
+  error?: string | null;
+  message?: string | null;
+  url?: string | null;
+  evidence?: {
+    bin?: string | null;
+    engine?: string | null;
+    via?: string | null;
+    exitCode?: number | string | null;
+    exitSignal?: string | null;
+    error?: string | null;
+  } | null;
+}
+
 // -- /lifecycle----------------------------
 export type LifecycleModuleId = "dsh" | "router" | "lan" | "instances" | "plugins";
 export interface LifecycleModuleState {
