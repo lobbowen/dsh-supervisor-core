@@ -211,13 +211,17 @@ const readDomain = (dir) => fs.readdirSync(path.join(ROOT, dir)).filter((f) => f
   const guards = (pm.match(/重定向到不支持的协议/g) || []).length;
   check('J-g getJson/getText 均校验重定向协议', guards >= 2, guards + ' 处');
   check('J-g 保留跳数上限（防重定向环）', /redirectsLeft <= 0/.test(pm), '有');
-  // registry 为 null 时不得写进 env（Node 会把 null 转成 'null'）
-  check('J-g 仅在 reg 非空时注入 npm_config_registry',
-    /if \(reg\) \{ envBase\.npm_config_registry = reg;/.test(pg), '已改');
+  // registry 为 null 时不得写进 env（Node 会把 null 转成 'null'）。注入形态已收口到
+  //   registry-ref#registryEnvPair 单口，本域只问闸、不写键。
+  const pgCode = require('./_strip').stripComments(pg);
+  check('J-g registry 注入问闸后才落 env（registryEnvPair 单口）',
+    /registryRef\.registryEnvPair\(regRaw\)/.test(pgCode)
+      && pgCode.indexOf('registryEnvPair(regRaw)') < pgCode.indexOf('Object.assign(envBase, rp.env)')
+      && /if \(rp\.ok\) Object\.assign\(envBase, rp\.env\)/.test(pgCode), '已改');
   check('J-g 无可用镜像时如实记日志', /无可用的 registry 镜像/.test(pg), '有');
-  // 反向：确认旧的「无条件注入」写法已消失（那正是缺陷本体）
-  check('J-g 旧的 Object.assign(..., { npm_config_registry: reg }) 已消失',
-    !/npm_config_registry: reg, NPM_CONFIG_REGISTRY: reg \}\);/.test(pg), '已改');
+  // 反向：确认「本域自己写键名」的旧形状已消失（那正是缺陷本体：四个注入点各有各的闸）
+  check('J-g 反向：插件域不再自写 npm_config_registry 键名',
+    !/npm_config_registry/.test(pgCode), '已收口到单点');
 
   // 停用插件的 entryId 匹配不得用子串（会误伤 dsh-tool-extra）
   const m = pg.match(/async _patchEntryIdsForPlugin\(target, name\) \{[\s\S]*?\n  \}/);

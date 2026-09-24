@@ -1,12 +1,9 @@
 'use strict';
 
 // 域：原生 DSH（app/native）—— 安装/卸载/状态/更新检查编排。
-// 纯编排 + 卸载进程治理（spawn + 超时看门狗）；原子操作经 host-first 调用 NativeManager。
+// 纯编排：npm 动作一律经 host._runNpm 下沉到 platform/distribution 的执行器，本文件不自持子进程。
 
 const fs = require('node:fs');
-const spawnOS = require('../../platform/os/spawn');
-const { killTree } = require('../../platform/os/process');
-const { npmLaunch } = require('./npm');
 const policies = require('./policies');
 
 const PKG_DEFAULT = '@deepseek-ai/dsh';
@@ -43,11 +40,13 @@ async function checkUpdate(host) {
       host.lastCheck = { at: new Date().toISOString(), installed: null, latest: null, updateAvailable: false, note: 'not-installed' };
       return policies.versionInfo(host, installed);
     }
-    const latest = await host._latestVersion();
+    const info = await host._latestVersion();
+    const latest = info.ok ? info.version : null;
     host.lastCheck = {
       at: new Date().toISOString(), installed, latest,
       updateAvailable: latest ? policies.isNewer(latest, installed) : false,
-      error: latest ? null : '镜像源不可达或未查询到版本',
+      // 拒因指名到源：「镜像源全挂」与「确实没有更新」显示成两句话是这块的全部意义。
+      error: latest ? null : (info.error || '镜像源不可达或未查询到版本'),
     };
     if (host.events) host.events.append('version_checked', { installed, latest, updateAvailable: host.lastCheck.updateAvailable });
   } catch (e) {
@@ -67,7 +66,7 @@ function beginTask(host, action, meta) {
   return task;
 }
 
-/** 安装执行（安装/升级/回滚共用 _runInstall 核心）。 */
+/** 安装执行（安装/升级/回滚共用 `_runNpm` 出口）。 */
 async function install(host, version) {
   if (!policies.isValidVersion(version)) return { ok: false, error: '非法版本号: ' + version };
   // 并发锁必须在任何 await 之前置位（否则并发 POST 会在 await 间隙同时通过检查）。
@@ -82,20 +81,27 @@ async function install(host, version) {
     if (!env.ok) return { ok: false, error: '环境检查失败: ' + env.errors.join('; ') };
     task = beginTask(host, 'install', { to: version || null, createdBy: 'user' });
     let target = version;
+    let registry = null;
     if (!target) {
-      target = await host._latestVersion().catch(() => null);
-      if (!target) {
+      // 目标版本与下载源**同源**：分开各选一次会让「A 源查到的版本」从「B 源」下载，
+      // B 恰好没有这个版本时表现为安装失败，而面板显示的镜像是 B —— 诊断指向错的那个源。
+      const info = await host._latestVersion().catch(() => null);
+      if (!info || !info.ok || !info.version) {
         host.installing = null;
-        if (task) host.tasks.fail(task.id, '无法从镜像源获取最新版本');
-        return { ok: false, error: '无法从镜像源获取最新版本' };
+        const why = (info && info.error) || '无法从镜像源获取最新版本';
+        if (task) host.tasks.fail(task.id, why);
+        return { ok: false, error: why };
       }
+      target = info.version;
+      registry = info.origin;
     }
-    const registry = await host._selectRegistry();
+    // 调用方钉死了版本时没有查询发生过，源仍需选一次。
+    if (!registry) registry = await host._selectRegistry();
     const pkg = host.config.packageName || PKG_DEFAULT;
     if (task) host.tasks.log(task.id, '安装 ' + pkg + '@' + target + (registry ? ' via ' + registry : ''));
     if (host.events) host.events.append('native_install_started', { version: target, registry });
     if (host.logger.info) host.logger.info('native install: ' + pkg + '@' + target + (registry ? ' via ' + registry : ''));
-    const res = await host._runInstall(target, registry);
+    const res = await host._runNpm({ action: 'install', version: target, registry });
     if (!res.ok) {
       host.installing = null;
       host.lastInstall = { ok: false, version: null, error: res.error, at: new Date().toISOString(), log: host.installLog.slice(-8) };
@@ -162,8 +168,8 @@ function startUninstall(host) {
   return { ok: true, started: true };
 }
 
-/** 卸载：npm uninstall（spawn，不阻塞事件循环），按 manifest 清理数据路径。
- *  超时看门狗：npm 挂起则杀进程树，以明确的「超时」收尾（而非无限等待）。
+/** 卸载：npm 动作经统一执行器（超时看门狗 / 杀进程树 / 在途记账都在那侧），本函数只管
+ *  应用层状态：锁、任务、manifest 清理与 K10（失败保留 manifest 以便重试）。
  *  锁释放由 finally 结构保证（含异常路径）。 */
 async function uninstall(host) {
   if (host.tasks && host.tasks.isBusy('native', 'main')) return { ok: false, error: '已有任务在进行中' };
@@ -192,37 +198,9 @@ async function uninstall(host) {
       host.tasks.start(task.id);
       host.tasks.log(task.id, '卸载 ' + (host.config.packageName || PKG_DEFAULT));
     }
-    const pkg = host.config.packageName || PKG_DEFAULT;
-    const uninstallArgs = ['uninstall', '-g'];
-    if (host.npmRoot) uninstallArgs.push('--prefix', host.npmRoot);
-    uninstallArgs.push(pkg);
-    // 超时可注入（测试用）：默认与 Rust 侧 npm 上限（15min）同量级。
-    const UNINSTALL_TIMEOUT_MS = (typeof host.config.uninstallTimeoutMs === 'number' && host.config.uninstallTimeoutMs > 0)
-      ? host.config.uninstallTimeoutMs : 15 * 60 * 1000;
-    let uninstallTimedOut = false;
-    const exitCode = await new Promise((resolve) => {
-      let child;
-      try {
-        const np = npmLaunch(host); // 程序与前缀参数必须同源于一次解析（拆开读=两份事实）
-        child = spawnOS.piped(np.program, np.args.concat(uninstallArgs));
-      } catch (e) { return resolve(-1); }
-      child.stdout.resume(); child.stderr.resume();
-      let done = false;
-      const finish = (code) => { if (done) return; done = true; clearTimeout(timer); resolve(code); };
-      const timer = setTimeout(() => {
-        uninstallTimedOut = true;
-        host.logger.warn && host.logger.warn('npm uninstall 超时（' + Math.round(UNINSTALL_TIMEOUT_MS / 1000) + 's），终止进程树');
-        try {
-          killTree(child.pid, 'SIGKILL', () => finish(-1));
-        } catch (e) {
-          try { child.kill('SIGKILL'); } catch (e2) {}
-          finish(-1);
-        }
-      }, UNINSTALL_TIMEOUT_MS);
-      if (timer.unref) timer.unref(); // 不因看门狗阻止进程退出
-      child.on('error', () => finish(-1));
-      child.on('exit', (code) => finish(code == null ? -1 : code));
-    });
+    const res = await host._runNpm({ action: 'uninstall' });
+    const exitCode = res.ok === true ? 0 : (Number.isFinite(res.exitCode) ? res.exitCode : -1);
+    const timedOut = res.timedOut === true || res.aborted === true;
     if (exitCode === 0 && m) {
       if (m.packageDir) rm(m.packageDir);
       if (m.binPath) rm(m.binPath);
@@ -235,17 +213,17 @@ async function uninstall(host) {
       host.logger.warn && host.logger.warn('npm uninstall exit ' + exitCode + '，保留 manifest 以便重试（数据路径未删）');
     }
     const uninstallError = exitCode === 0 ? null
-      : (uninstallTimedOut
-        ? ('npm uninstall 超时（' + Math.round(UNINSTALL_TIMEOUT_MS / 1000) + 's）已终止，包可能仍在，可重试')
+      : (timedOut
+        ? ((res.error || 'npm uninstall 超时已终止') + '，包可能仍在，可重试')
         : ('npm uninstall 退出码 ' + exitCode));
-    host.lastUninstall = { ok: exitCode === 0, removed, error: uninstallError, timedOut: uninstallTimedOut, at: new Date().toISOString() };
+    host.lastUninstall = { ok: exitCode === 0, removed, error: uninstallError, timedOut, at: new Date().toISOString() };
     if (host.events) host.events.append('native_uninstalled', { removed });
     if (host.logger.info) host.logger.info('native uninstalled, removed ' + removed.length + ' paths');
     if (task) {
       if (exitCode === 0) { host.tasks.log(task.id, '卸载完成，清理 ' + removed.length + ' 个路径'); host.tasks.succeed(task.id); }
-      else host.tasks.fail(task.id, 'npm uninstall 退出码 ' + exitCode);
+      else host.tasks.fail(task.id, uninstallError || ('npm uninstall 退出码 ' + exitCode));
     }
-    return { ok: exitCode === 0, removed, timedOut: uninstallTimedOut, error: uninstallError };
+    return { ok: exitCode === 0, removed, timedOut, error: uninstallError };
   } finally {
     host.uninstalling = null;
   }

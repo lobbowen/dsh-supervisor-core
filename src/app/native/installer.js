@@ -48,7 +48,7 @@ class NativeManager {
     this.lastUninstall = null;
   }
 
-  /** 追加安装输出（有界，仅任务进行中由 _runInstall 写入）。 */
+  /** 追加安装输出（有界，仅任务进行中由 _runNpm 的行日志写入）。 */
   _appendInstallLog(line) {
     this.installLog.push(line);
     if (this.installLog.length > 60) this.installLog.splice(0, this.installLog.length - 60);
@@ -73,8 +73,11 @@ class NativeManager {
     return manifest.record(this, version, dataPaths, this.npmRoot || await npm.resolveNpmRoot(this));
   }
   _claimDataPaths() { return manifest.claimDataPaths(this); }
-  _runInstall(version, registry) { return npm.runInstall(this, version, registry); }
+  /** npm 动作的唯一出口（装/升/回滚/卸载同源），入参见 npm.runNpm。 */
+  _runNpm(opts) { return npm.runNpm(this, opts); }
+  /** 最新版本 + 给出它的那个镜像源（结构化，回 {ok,version,origin,error}）。 */
   _latestVersion() { return npm.latestVersion(this); }
+  /** 只选源（钉死版本的安装与回滚用）；查询过版本的安装路径走 _latestVersion 的 origin。 */
   _selectRegistry() { return npm.selectRegistry(this); }
   _waitNativeHealthy(port, unit, timeoutMs) { return probe.waitNativeHealthy(this, port, unit, timeoutMs); }
   _targetPort() { return probe.targetPort(this.config); }

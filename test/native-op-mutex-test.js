@@ -71,7 +71,7 @@ check('K-c uninstall 检查 busy()（升级中拒绝）', /if \(this\.busy\(\)\)
     m.upgradeState = 'idle';
     m.stateDir = require('node:os').tmpdir();
     // 若前置拒绝失效，会走到这里 —— 直接抛错让测试暴露
-    m._runInstall = () => { throw new Error('不应到达 _runInstall（前置锁失效）'); };
+    m._runNpm = () => { throw new Error('不应到达 _runNpm（前置锁失效）'); };
     m.checkEnvironment = () => ({ ok: true, errors: [] });
     m._latestVersion = () => { throw new Error('不应到达 _latestVersion（前置锁失效）'); };
     m._selectRegistry = () => { throw new Error('不应到达 _selectRegistry（前置锁失效）'); };

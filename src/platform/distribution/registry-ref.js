@@ -3,8 +3,8 @@
 // 「一个可用的镜像源到底是什么」的单一所有者。此前这句话在两侧各解释一遍：壳的目录允许基址带路径
 // （华为云/腾讯云本来就是这个形态），内核的闸把「不得带 path」当安全判据 —— 结果是一批准许的镜像
 // 在探测阶段判可达、在消费阶段判非法，面板表现为「取不到版本也下载不了」。
-// 本模块把三件事各自定义一次：形态与安全（parseRegistryBase）、包名 URL（registryPackagePath）、
-// 传输与跳转复验（fetchRegistry）。
+// 本模块把四件事各自定义一次：形态与安全（parseRegistryBase）、交给 npm 的注入形态（registryEnvPair）、
+// 包名 URL（registryPackagePath）、传输与跳转复验（fetchRegistry）。
 
 const { isPrivateHostLiteral } = require('../../shared/ip');
 
@@ -74,6 +74,19 @@ function registryUrl(base, ...segments) {
   const tail = segments.filter((s) => s !== '' && s != null)
     .map((s) => String(s).replace(/^\/+/, '').replace(/\/+$/, '')).filter(Boolean).join('/');
   return tail ? parsed.base + '/' + tail : parsed.base;
+}
+
+/** 镜像基址 → 交给 npm 子进程的环境变量对（唯一注入口）。「哪两个键有效」与「什么基址可用」
+ *  必须同源：注入点一旦各写一遍，就会有的过闸有的不过闸，面板显示一个源而子进程用另一个源。
+ *  非法基址回 `{ok:false, violation}` 且**不给半个键** —— 把 null 或非法值写进 env 会让 npm 收到
+ *  字面 'null'，报出与真实原因（镜像不可达/基址非法）无关的错。 */
+function registryEnvPair(base) {
+  const parsed = parseRegistryBase(base);
+  if (!parsed.ok) return { ok: false, violation: parsed.violation, base: null, env: null };
+  return {
+    ok: true, violation: null, base: parsed.base,
+    env: { npm_config_registry: parsed.base, NPM_CONFIG_REGISTRY: parsed.base },
+  };
 }
 
 /** 有界读取响应体；超限返回 null（调用方按「不可用」处理，不猜内容）。 */
@@ -161,6 +174,7 @@ module.exports = {
   normalizeBase,
   hostViolation,
   parseRegistryBase,
+  registryEnvPair,
   registryPackagePath,
   registryUrl,
   fetchRegistry,

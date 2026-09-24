@@ -101,18 +101,29 @@ async function fetchGithubLatest(owner, repo) {
   } catch (e) { return null; }
 }
 
-/** 统一版本检查：channel = 'npm' | 'github'。返回最新版本字符串或 null。
- *  只要「版本号」的调用方走这里；需要失败原因或下载源的调用方直接走 fetchNpmLatest。
- *  @param {object} [opts] { authoritative?: boolean } */
-async function fetchLatestVersion(state, pkg, channel, opts) {
+/** 统一版本检查（结构化）：channel = 'npm' | 'github'。
+ *  @returns {Promise<{ok:boolean, version:string|null, origin:string|null, attempts:Array, error:string|null}>}
+ *  需要「这个版本从哪个源来」的调用方走这里；只要版本字符串的走 fetchLatestVersion。
+ *  github 通道的 origin 恒为 null —— 那是事实（它不经 registry），不是失败降级。 */
+async function fetchVersionInfo(state, pkg, channel, opts) {
   const ch = channel || 'npm';
   const o = opts || {};
   if (ch === 'github') {
     const slash = String(pkg).split('/');
-    if (slash.length >= 2) return fetchGithubLatest(slash[0], slash.slice(1).join('/'));
-    return null;
+    const version = slash.length >= 2 ? await fetchGithubLatest(slash[0], slash.slice(1).join('/')) : null;
+    return {
+      ok: !!version, version: version || null, origin: null, attempts: [],
+      error: version ? null : 'GitHub Releases 未查询到 ' + pkg + ' 的最新版',
+    };
   }
-  const r = await fetchNpmLatest(state, pkg, { authoritative: o.authoritative === true });
+  return fetchNpmLatest(state, pkg, { authoritative: o.authoritative === true });
+}
+
+/** 统一版本检查：channel = 'npm' | 'github'。返回最新版本字符串或 null。
+ *  只要「版本号」的调用方走这里；需要失败原因或下载源的调用方走 fetchVersionInfo。
+ *  @param {object} [opts] { authoritative?: boolean } */
+async function fetchLatestVersion(state, pkg, channel, opts) {
+  const r = await fetchVersionInfo(state, pkg, channel, opts);
   return r.ok ? r.version : null;
 }
 
@@ -120,5 +131,6 @@ module.exports = {
   METADATA_TIMEOUT_MS,
   FETCH_BUDGET_MS,
   fetchNpmLatest,
+  fetchVersionInfo,
   fetchLatestVersion,
 };

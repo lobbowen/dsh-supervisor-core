@@ -186,7 +186,7 @@ const distDir = path.join(ROOT, 'src', 'platform', 'distribution');
 const dist = fs.readdirSync(distDir).filter((f) => f.endsWith('.js')).sort().map((f) => fs.readFileSync(path.join(distDir, f), 'utf8')).join(String.fromCharCode(10));
 check('R-4 分发安装经 npmLauncher 取启动形态', /runtimeContract\.npmLauncher\(\)/.test(dist), 'ok');
 check('R-4 分发安装把契约 args 前插进 argv（不是只取 program）',
-  /launcher\.args/.test(dist) && /\.\.\.launcher\.args, 'install'/.test(dist), 'ok');
+  /launcher\.args/.test(dist) && /\[\.\.\.launcher\.args, action, '-g'\]/.test(dist), 'ok');
 check('R-4 分发安装仍用契约注入 PATH', /runtimeContract\.withPath\(/.test(dist), 'ok');
 const natSrc = fs.readFileSync(path.join(ROOT, 'src', 'app', 'native', 'npm.js'), 'utf8');
 check('R-4 原生管理经 npmLauncher（不再各自解析）',
