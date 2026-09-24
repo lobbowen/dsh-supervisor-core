@@ -150,8 +150,11 @@ const check = (n, c, x) => {
       // 旧第三处是 FRP 总闸开关：三态化收口删总闸（frpc 生命周期由「是否存在 wan 意图」驱动），
       // 高危确认面随之只剩 off->lan 与 ->wan 两条开启路径。
       (lan.match(/setPendingOn\(\{/g) || []).length >= 2 && /Dialog open=\{!!pendingOn\}/.test(lan), 'ok');
-    check('G LanPage 令牌录入走 password Dialog',
-      /Dialog open=\{!!tokenFor\}/.test(lan) && /type="password" autoComplete="new-password" placeholder="输入访问令牌"/.test(lan), 'ok');
+    // 令牌录入的不变式是「默认遮罩」：明文只在该机主动点眼睛时出现，肩窥与截屏不再默认泄漏。
+    //  判据按这条行为写，不钉 placeholder 文案（改文案不该让闸变红）。
+    const maskedJudge = (src) => /Dialog open=\{!!tokenFor\}/.test(src)
+      && /type=\{tokenVisible \? "text" : "password"\}/.test(src);
+    check('G LanPage 令牌录入走 password Dialog（默认遮罩，点眼睛才显明文）', maskedJudge(lan), 'ok');
     check('G B7-UI 不回填 authToken 且留空省略字段（patch 语义）',
       !/setFrpToken\(frp\.settings\.authToken/.test(lan) && /if \(t\) p\.authToken = t/.test(lan), 'ok');
     check('G B7-UI authToken 占位提示按 authTokenSet 切换',
@@ -165,6 +168,9 @@ const check = (n, c, x) => {
       /window\.prompt\(\s*['"`]/.test("const t = window.prompt('为该实例设置远程访问令牌：');"), 'hit');
     check('G 反向：旧回填形态会被判据命中',
       /setFrpToken\(frp\.settings\.authToken/.test('setFrpToken(frp.settings.authToken || "");'), 'hit');
+    // 反向：把显隐切换退回「常显明文」，判据必须转红（否则这条闸只认文案、不认行为）。
+    check('G 反向：令牌明文常显形态会被判据拒绝',
+      !maskedJudge('<Dialog open={!!tokenFor}><Input type="text" value={tokenInput} /></Dialog>'), 'rejected');
   }
 
   const failed = results.filter((r) => !r);
