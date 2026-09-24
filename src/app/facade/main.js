@@ -36,7 +36,7 @@ const methods = {
       kind: 'native',
       guardian: m.guardian,
       remoteMode: m.remoteMode,
-      remoteToken: m.remoteToken, // 进程内消费（LanManager mainOf）；API 边界由 api/domains/instances.js 剔除
+      remoteToken: m.remoteToken, // 进程内消费（LanManager mainOf）；API 边界按回环判据决定去留（api/domains/instances.js#decorate）
       unitName: null, // systemd 托管已废弃：main 由守卫 spawn/观测
       // 实时运行态：native 条目缺 state 会导致远程控制页误判「实例已停止」
       state: {
