@@ -40,12 +40,12 @@ async function pollJobsSummary(jobIds: string[], verb: string, total: number) {
  * busy 为读端点的在飞标记；超时上限须大于服务端构建预算（市场默认 4 分钟）。
  * 注意：force 只能发一次，轮询拍必须读非 force 快照——否则每拍都会再触发一轮构建，永不收敛。
  */
-async function pollSnapshot<T>(fetch: () => Promise<T>, busy: (r: T) => boolean, timeoutMs = 300_000, intervalMs = 2_000): Promise<T> {
-  let r = await fetch();
+async function pollSnapshot<T>(read: () => Promise<T>, busy: (r: T) => boolean, timeoutMs = 300_000, intervalMs = 2_000): Promise<T> {
+  let r = await read();
   const until = Date.now() + timeoutMs;
   while (busy(r) && Date.now() < until) {
     await new Promise((res) => setTimeout(res, intervalMs));
-    r = await fetch();
+    r = await read();
   }
   return r;
 }
