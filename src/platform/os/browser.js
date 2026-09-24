@@ -170,7 +170,9 @@ async function openBrowser(url, o) {
     });
   }
   // 0 退出：只有「退出可信」的形态才算证据；win32 的 explorer.exe 恒 0，仍是一句「已移交」。
-  return outcome({ ok: true, confirmed: plan.trustExit, handedOff: !plan.trustExit, url, evidence });
+  //   另一侧同理：观测窗口内仍存活时压根没有退出可言，trustExit 也无从为真 —— 没证据就不算证据。
+  const exitEvidence = seen.stage === 'exit' && plan.trustExit;
+  return outcome({ ok: true, confirmed: exitEvidence, handedOff: !exitEvidence, url, evidence });
 }
 
 /** detachedIgnored 的无 env 变体：外部打开不注入反取证环境，用宿主环境即可（隔离窗口才需要 antiEnv）。 */

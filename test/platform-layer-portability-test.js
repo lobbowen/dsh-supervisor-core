@@ -742,6 +742,11 @@ async function x10() {
     ['窗口内子进程仍存活 -> handedOff（不宣称失败也不宣称成功）', u,
       { platform: 'darwin', observe: obs({ stage: 'alive' }), spawn: okSpawn, binAvailable: () => true },
       (r) => r.ok === true && r.handedOff === true && r.evidence.exitCode === null],
+    // trustExit 只说明「这种形态的 0 退出可当证据」，不说明「没退出也可当证据」：
+    //   linux 上同样存活必须落 handedOff，否则该判据退化成「按平台无脑报成功」。
+    ['linux 窗口内仍存活 -> 依旧 handedOff（trustExit 不能替无证据背书）', u,
+      { platform: 'linux', observe: obs({ stage: 'alive' }), spawn: okSpawn, binAvailable: () => true },
+      (r) => r.ok === true && r.confirmed === false && r.handedOff === true],
     ['error 事件（ENOENT）-> ok:false/spawn-failed', u,
       { platform: 'linux', observe: obs({ stage: 'error', code: 'ENOENT' }), spawn: okSpawn, binAvailable: () => true },
       (r) => r.ok === false && r.reason === 'spawn-failed' && r.evidence.error === 'ENOENT'],

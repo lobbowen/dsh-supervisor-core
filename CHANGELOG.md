@@ -25,7 +25,8 @@
   成为内核侧仅有的两条外部打开路，共用同一结果词汇 `{ok, confirmed, handedOff, reason, error, message, url, evidence}`
   与唯一构造点 `outcome()`。三档：`confirmed`（命令 0 退出**且该形态退出可信**，可信性只写在 `openPlan().trustExit`
   一处）/ `handedOff`（交出去了但结局取不到证）/ `ok:false`（显式失败并带 `reason` 码）。`openBrowser` 改为异步、
-  在 `OPEN_OBSERVE_MS` 有界窗口内观测子进程结局；`spawn` 前加可用性预检，不可用的 bin 不再被 spawn 出去送死。
+  在 `OPEN_OBSERVE_MS` 有界窗口内观测子进程结局；观测到「仍存活」时压根没有退出可言，故即使该形态 `trustExit` 为真
+  也只落 `handedOff`——`trustExit` 说的是「这种 0 退出算证据」，不是「不退出也算」；`spawn` 前加可用性预检，不可用的 bin 不再被 spawn 出去送死。
 - **S-2 能力位**：`capabilityProfile().openBrowser` 是**唯一**声明面（三平台 true、未知平台 false），
   Linux 由 `capabilities()` 用图形会话实测覆写；可支持平台名单从档位表推导，`browser.js` 内零第二份平台判断。
   档位说不开即显式 `unsupported-platform`，不再「尽力试一次」。
