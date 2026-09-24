@@ -4,7 +4,7 @@
 格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，
 版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
-## [未发布]
+## [0.1.6-BETA.8]（2026-09-24）
 
 ### 镜像源定义层单源：面板「取不到最新版本、也下载不了」的内核侧收口（P0-A）
 
@@ -32,8 +32,14 @@
   `RegistryCard` 在无延迟处以 title 显示拒因（非法基址与不可达是两种处置）。
 - 按 DF-2（单文件 ≤300 行）把分发层再切两刀：`registry-config.js`（契约载入与「谁的字段谁写」的落盘）、
   `version-check.js`（目标版本查询），与 `install.js`（npm 执行）各自单一职责。
+- 传输口对外**只返回 `{ok, error}`，任何情况下不外抛**：响应头已到手、读体读到一半被对端掐线这一路
+  过去会抛给调用方，等于逼每个调用方各长一份 `try/catch` —— 那正是第二套「可达」判据长出来的地方。
+  `npm-resolution` 用假 registry 的截断路由把这条钉成可红门禁。
 - 随迁的门禁判据只改锚点、不改判据语义：`round13` 的读入口重载判据接受 `config.` 限定形式，
-  `npm-resolution` 的「形态闸单源」判据改为要求 URL 解析只住在 `registry-ref.js`。未新增测试链条目。
+  `npm-resolution` 的「形态闸单源」判据改为要求 URL 解析只住在 `registry-ref.js`。
+  「先过包名白名单、再拼 registry URL」的时序判据改在 `fetchNpmLatest` **函数体内**比序：
+  整份文件比序会拿被闸保护的 `versionFromOrigin` 当参照物（它在文件中天然靠前），判据恒假。
+  未新增测试链条目。
 
 壳侧（契约 schema3、探测逐跳复验、两文件所有权）归 P0-C，跨仓且需发版；本批不依赖它即可解除症状。
 
