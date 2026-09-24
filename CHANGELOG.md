@@ -4,7 +4,7 @@
 格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，
 版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
-## [未发布]
+## [0.1.6-BETA.10]（2026-09-24）
 
 ### 镜像契约 schema3 与两文件所有权拆分（P0-C，跨仓与桌面壳同批）
 
