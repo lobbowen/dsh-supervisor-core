@@ -12,6 +12,7 @@
 //    无需重启；启用顺带清理 legacy overlay
 //  - 更新：检测（registry 最高版 vs 已装版）+ 执行（update/add）+ 重启生效；本地/git 型拒绝
 //  - registry 取不到版本：报「取不到 + 原因」而不是静默无更新，且失败结论不落进检测缓存
+//  - 检测读端点「立即回快照 + 后台跑」（Q 组）：面板 15s 计时不去等 N 个插件的 registry 往返
 // 全部用桩（stub CLI/instances/registry），profile 目录用真实临时目录验证文件级行为。
 
 const path = require('node:path');
@@ -33,6 +34,13 @@ async function waitJob(pm, jobId, timeoutMs) {
     await sleep(15);
   }
   return pm.installStatus(jobId);
+}
+
+/** 检测读端点已不等 registry 往返（见 Q 组）：测试要读结论就显式等在飞收尾，再读一次快照。 */
+async function checkDone(pm, force) {
+  await pm.checkUpdates(force);
+  if (pm._updInFlight) await pm._updInFlight.catch(() => {});
+  return pm.checkUpdates();
 }
 
 function initProfileDir(dir, deps, bundles) {
@@ -263,7 +271,7 @@ const eventsOf = (arr, type) => (arr || []).some((e) => e.t === type);
   // -- L. 更新：检测 + 执行 + 重启 --
   {
     const { pm, instances, events } = makePM({ running: true, pnpmResult: true, distLatest: { '@x/p': '2.0.0' } });
-    const chk = await pm.checkUpdates();
+    const chk = await checkDone(pm);
     const uc = (chk.plugins || []).find((x) => x.name === '@x/p');
     check('L1 检测到可更新', !!uc && uc.updateAvailable === true && uc.specType === 'npm', JSON.stringify(uc));
     check('L2 检测含目标明细', !!uc && uc.targets.length === 2 && uc.targets.every((t) => t.updateAvailable), '');
@@ -316,21 +324,47 @@ const eventsOf = (arr, type) => (arr || []).some((e) => e.t === type);
     check('P2 取不到版本时零 CLI、零重启（不得静默走「已是最新」分支）',
       !instances.calls.some((c) => c.startsWith('cli:') || c.startsWith('start:')), instances.calls.join(','));
     check('P3 失败结论不落进检测缓存', pm._updCache['@x/p'] === undefined, JSON.stringify(pm._updCache));
-    const chk = await pm.checkUpdates();
+    const chk = await checkDone(pm);
     const row = (chk.plugins || []).find((x) => x.name === '@x/p');
     check('P4a 检测：取不到时逐目标 latest 为 null（不猜版本、不拿已装版充当）',
       !!row && row.targets.length === 2 && row.targets.every((t) => t.latest === null), JSON.stringify(row));
     check('P4b 检测：取不到时逐目标与行级 updateAvailable 全为 false（正向对照见 L1/L2）',
       !!row && row.updateAvailable === false && row.targets.every((t) => t.updateAvailable === false),
       JSON.stringify(row && { u: row.updateAvailable, t: row.targets.map((x) => x.updateAvailable) }));
-    await pm.checkUpdates();
-    check('P5 门禁非空转：失败后每次检查都重新查询，而不是被负缓存挡掉', distCalls.length === 3, String(distCalls.length));
+    check('P4c 原因随行走：逐插件带原始原因，汇总按「包名: 原因」拼接（面板据此不再显示成「已是最新」）',
+      !!row && row.error === '桩：无该包' && chk.error === '@x/p: 桩：无该包', JSON.stringify({ r: row && row.error, a: chk.error }));
+    await checkDone(pm, true);
+    check('P5 门禁非空转：失败后再 force 检测仍重新查询，而不是被负缓存挡掉', distCalls.length === 3, String(distCalls.length));
     const { pm: pm2, distCalls: calls2 } = makePM({ running: true, distLatest: { '@x/p': '2.0.0' } });
-    await pm2.checkUpdates();
-    await pm2.checkUpdates();
-    check('P6 反向对照：取到版本才写缓存，第二次检查不再触网',
+    await checkDone(pm2);
+    pm2._updSnapshot = null;   // 冷读动态（快照过期/重启后）：是否触网只由逐插件缓存决定
+    await checkDone(pm2);
+    check('P6 反向对照：取到版本才写逐插件缓存，快照过期后仍不触网',
       calls2.length === 1 && pm2._updCache['@x/p'] && pm2._updCache['@x/p'].latest === '2.0.0',
       calls2.length + ' / ' + JSON.stringify(pm2._updCache));
+  }
+
+  // -- Q. 检测读端点不等长动作：立即回快照 + refreshing 标记（与 /plugins/market 同一口径） --
+  {
+    const { pm } = makePM({ running: true, distLatest: { '@x/p': '2.0.0' } });
+    let release;
+    const gate = new Promise((r) => { release = r; });
+    pm.dist.fetchNpmLatest = async (n) => { await gate; return { ok: true, version: '2.0.0', origin: 'https://fake.registry', attempts: [], error: null }; };
+    const t0 = Date.now();
+    const first = await pm.checkUpdates(true);
+    const dt = Date.now() - t0;
+    check('Q1 registry 未回时读端点已返回（旧形态会卡到这里被面板 15s 判失败）',
+      dt < 100 && first.refreshing === true && first.checkedAt === 0 && (first.plugins || []).length === 0,
+      dt + 'ms ' + JSON.stringify({ r: first.refreshing, c: first.checkedAt }));
+    await pm.checkUpdates(true);
+    check('Q2 force 连点复用同一在飞检测（不叠加 registry 风暴）', pm._updInFlight !== null, String(pm._updInFlight));
+    release();
+    await pm._updInFlight;
+    const done = await pm.checkUpdates();
+    check('Q3 在飞收尾后快照给出结论且 refreshing=false',
+      done.refreshing === false && done.checkedAt > 0 && done.error === null
+      && (done.plugins || []).length === 1 && done.plugins[0].updateAvailable === true,
+      JSON.stringify({ r: done.refreshing, n: (done.plugins || []).length }));
   }
 
   const failed = results.filter((r) => !r);

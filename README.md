@@ -194,7 +194,8 @@ GET  /env/node-lts           Node 当前 vs 官方最新 LTS
 GET  /instances              实例列表（含运行状态/安装进度）
 POST /instances/{add|remove|update|start|stop|check-update|open-web|upgrade}
 # 插件
-GET  /plugins/market|installed|check-updates   市场索引 / 已装 / 更新检测
+GET  /plugins/market|installed|check-updates   市场索引 / 已装 / 更新检测（前与后者只回快照：
+     重建/registry 往返在后台跑，响应 building/refreshing=true 时前端轮询，绝不等在这个请求上）
 GET  /plugins/install-status?job=   插件任务进度（前端轮询到终态）
 POST /plugins/{install|enable|disable|uninstall|update}
 # 智能路由（多供应商 Key 轮换）

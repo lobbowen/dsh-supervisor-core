@@ -203,6 +203,8 @@ export const supervisorApi = {
   proxyUpdateStatus: (appId: string) => get<ProxyUpdateStatus>(qs("/router/proxy/update/status", { appId })),
 
   // -- plugins --
+  // 市场索引/更新检测均为「立即回快照 + 后台跑」：响应里 building/refreshing 为真时调用方要轮询，
+  // 而不是把长动作等在这个请求上（默认 15s 计时会先放弃，而服务端仍会跑完）。
   market: (force = false) => get<MarketResponse>("/plugins/market" + (force ? "?refresh=1" : "")),
   pluginsInstalled: () => get<InstalledPluginsResponse>("/plugins/installed"),
   pluginsCheckUpdates: (force = false) => get<PluginUpdatesResponse>("/plugins/check-updates" + (force ? "?refresh=1" : "")),
