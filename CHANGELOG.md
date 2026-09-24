@@ -19,7 +19,7 @@
 转交动作、不属于那个窗口。两处都判不了成败，旧实现却都拿去判了红——这是跨平台差异被当成产品缺陷
 处理的典型：把平台语义读成结论，而不是读成「这一档没有证据」。
 
-- 新规则只写在一处：`platform/os/browser.js#ownsItsWindow(via, platform, engine)`——本次启动是否
+- 新规则只写在一处：`platform/os/browser.js#ownsItsWindow(via, platform)`——本次启动是否
   **确定拥有自己的窗口**。只有为真时退出码才同时具备两种证明力（0 算接收、非 0 算拒绝）；为假时
   两个方向都不许进判决，一律落 `handedOff`。`openPlan` 的 `trustExit` 因此改名 `exitIsEvidence`
   （旧名只说 0 退出可信，正是这个单向读法放大了缺陷），判红与判绿共用同一条 `&&`，分两处写必再分叉。
@@ -35,6 +35,10 @@
   chromium 的 0 退出不得再升 `confirmed`；同时保留「可信形态非 0 仍判 `exit-nonzero`」以证明没砍真失败信号。
   P-5 取证档位断言、`api-contract` 的 OW 移交档夹具（改成真机形态：`ownsWindow:false` + `exit 1`）、
   `ui` 的 `externalOpen.test.ts`（`evidenceDetail` 四例）同步跟上。
+- 顺带收掉一处潜伏的门禁空转：X-10 原名「linux 调度器」「可信形态」的用例没有钉 `defaultBrowser`，
+  于是去解析宿主的真实默认浏览器——CI 的 ubuntu runner 上装着 `google-chrome-stable`，这些用例一直在
+  跑直启浏览器形态，判据却自称测 `xdg-open`。旧字段对直启形态同样为真，所以漂移是静默的。现每条用例
+  都把输入钉成显式值，并把「实际走了哪条形态」（`evidence.via` + `evidence.bin`）纳入判据：再漂移即红。
 - 文案纠正：`exit-nonzero` 的说法改为「系统拒绝了这个地址」，`handedOff` 改为「没拿到窗口出现的证据」——
   两档都仍必须把地址交到用户眼前，这一条不变。
 

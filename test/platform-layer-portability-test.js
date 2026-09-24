@@ -745,57 +745,71 @@ async function x10() {
     return null;
   }
 
+  // 每条用例都把 defaultBrowser 钉成显式输入，并把「实际走了哪条形态」纳入判据。
+  //   不钉就会去解析宿主的真实默认浏览器，而 ubuntu runner 上装着 google-chrome-stable：用例名说
+  //   「调度器」、实际跑的是直启浏览器，改证据规则前这种漂移是静默通过的（本轮 CI 才把它照红）。
+  //   漂移本身是真缺陷：一条说自己测 xdg-open 的用例，结论却来自 chrome 的退出码。
   const cases = [
-    ['linux 调度器 0 退出 -> confirmed', u, { platform: 'linux', observe: obs(EX_OK), spawn: okSpawn, binAvailable: () => true },
-      (r) => r.ok === true && r.confirmed === true && r.handedOff === false],
+    ['linux 调度器 0 退出 -> confirmed', u, { platform: 'linux', defaultBrowser: null, observe: obs(EX_OK), spawn: okSpawn, binAvailable: () => true },
+      (r) => r.ok === true && r.confirmed === true && r.handedOff === false, ['dispatcher', 'xdg-open']],
     ['win32 调度器 0 退出 -> 只到 handedOff（explorer.exe 的退出码不携带信息，不算证据）', u,
-      { platform: 'win32', observe: obs(EX_OK), spawn: okSpawn, binAvailable: () => true },
-      (r) => r.ok === true && r.confirmed === false && r.handedOff === true && r.evidence.ownsWindow === false],
+      { platform: 'win32', defaultBrowser: null, observe: obs(EX_OK), spawn: okSpawn, binAvailable: () => true },
+      (r) => r.ok === true && r.confirmed === false && r.handedOff === true && r.evidence.ownsWindow === false,
+      ['dispatcher', 'explorer.exe']],
     // Windows 真机踩过的假失败：explorer.exe 的返回码不携带信息（现场返回 1），旧形态却无条件把
     //   「非 0」当失败证据，于是页面已经在浏览器里了、面板还说「窗口未出现」。判红与判绿共用同一条闸。
     ['win32 调度器非 0 退出 -> 仍是 handedOff（不可信形态的非 0 不判失败）', u,
-      { platform: 'win32', observe: obs({ stage: 'exit', code: 1, signal: null }), spawn: okSpawn, binAvailable: () => true },
-      (r) => r.ok === true && r.handedOff === true && r.reason === null && r.evidence.exitCode === 1],
+      { platform: 'win32', defaultBrowser: null, observe: obs({ stage: 'exit', code: 1, signal: null }), spawn: okSpawn, binAvailable: () => true },
+      (r) => r.ok === true && r.handedOff === true && r.reason === null && r.evidence.exitCode === 1,
+      ['dispatcher', 'explorer.exe']],
     // 裸 URL 直启浏览器：既有实例吸收 URL 后本次进程秒退，退出码属于转交动作、不属于窗口，两向都不作证据。
     ['解析到 chromium 直启 0 退出 -> handedOff（不再冒领 confirmed）', u,
       { platform: 'linux', defaultBrowser: { bin: 'google-chrome' }, observe: obs(EX_OK), spawn: okSpawn, binAvailable: () => true },
-      (r) => r.ok === true && r.confirmed === false && r.evidence.via === 'browser' && r.evidence.bin === 'google-chrome'
-        && r.evidence.ownsWindow === false],
+      (r) => r.ok === true && r.confirmed === false && r.evidence.bin === 'google-chrome'
+        && r.evidence.ownsWindow === false, ['browser', 'google-chrome']],
     ['win32 直启 msedge 非 0 退出 -> handedOff（真机报错的那条路）', u,
       { platform: 'win32', defaultBrowser: { bin: 'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe' },
         observe: obs({ stage: 'exit', code: 1, signal: null }), spawn: okSpawn, binAvailable: () => true },
-      (r) => r.ok === true && r.handedOff === true && r.evidence.engine === 'chromium' && r.evidence.exitCode === 1],
+      (r) => r.ok === true && r.handedOff === true && r.evidence.engine === 'chromium' && r.evidence.exitCode === 1,
+      ['browser', 'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe']],
     ['窗口内子进程仍存活 -> handedOff（不宣称失败也不宣称成功）', u,
-      { platform: 'darwin', observe: obs({ stage: 'alive' }), spawn: okSpawn, binAvailable: () => true },
-      (r) => r.ok === true && r.handedOff === true && r.evidence.exitCode === null],
+      { platform: 'darwin', defaultBrowser: null, observe: obs({ stage: 'alive' }), spawn: okSpawn, binAvailable: () => true },
+      (r) => r.ok === true && r.handedOff === true && r.evidence.exitCode === null, ['dispatcher', 'open']],
     // exitIsEvidence 只说明「这种形态的退出可当证据」，不说明「没退出也可当证据」：
     //   linux 上同样存活必须落 handedOff，否则该判据退化成「按平台无脑报成功」。
+    //   此处的 ownsWindow 断言是这条用例的全部意义：可信形态 + 无退出 = 依旧不算证据。
     ['linux 窗口内仍存活 -> 依旧 handedOff（证据规则不能替无证据背书）', u,
-      { platform: 'linux', observe: obs({ stage: 'alive' }), spawn: okSpawn, binAvailable: () => true },
-      (r) => r.ok === true && r.confirmed === false && r.handedOff === true],
+      { platform: 'linux', defaultBrowser: null, observe: obs({ stage: 'alive' }), spawn: okSpawn, binAvailable: () => true },
+      (r) => r.ok === true && r.confirmed === false && r.handedOff === true && r.evidence.ownsWindow === true,
+      ['dispatcher', 'xdg-open']],
     ['error 事件（ENOENT）-> ok:false/spawn-failed', u,
-      { platform: 'linux', observe: obs({ stage: 'error', code: 'ENOENT' }), spawn: okSpawn, binAvailable: () => true },
-      (r) => r.ok === false && r.reason === 'spawn-failed' && r.evidence.error === 'ENOENT'],
+      { platform: 'linux', defaultBrowser: null, observe: obs({ stage: 'error', code: 'ENOENT' }), spawn: okSpawn, binAvailable: () => true },
+      (r) => r.ok === false && r.reason === 'spawn-failed' && r.evidence.error === 'ENOENT', ['dispatcher', 'xdg-open']],
     ['可信形态非 0 退出 -> ok:false/exit-nonzero（带退出码；证据规则没砍掉真失败信号）', u,
-      { platform: 'linux', observe: obs({ stage: 'exit', code: 3, signal: null }), spawn: okSpawn, binAvailable: () => true },
-      (r) => r.ok === false && r.reason === 'exit-nonzero' && /3/.test(r.error) && r.evidence.ownsWindow === true],
+      { platform: 'linux', defaultBrowser: null, observe: obs({ stage: 'exit', code: 3, signal: null }), spawn: okSpawn, binAvailable: () => true },
+      (r) => r.ok === false && r.reason === 'exit-nonzero' && /3/.test(r.error) && r.evidence.ownsWindow === true,
+      ['dispatcher', 'xdg-open']],
     ['可信形态信号终止 -> ok:false/killed-by-signal', u,
-      { platform: 'linux', observe: obs({ stage: 'exit', code: null, signal: 'SIGKILL' }), spawn: okSpawn, binAvailable: () => true },
-      (r) => r.ok === false && r.reason === 'killed-by-signal'],
+      { platform: 'linux', defaultBrowser: null, observe: obs({ stage: 'exit', code: null, signal: 'SIGKILL' }), spawn: okSpawn, binAvailable: () => true },
+      (r) => r.ok === false && r.reason === 'killed-by-signal' && r.evidence.exitSignal === 'SIGKILL',
+      ['dispatcher', 'xdg-open']],
   ];
-  for (const [name, url, opts, judge] of cases) {
+  for (const [name, url, opts, judge, form] of cases) {
     const r = await br.openBrowser(url, opts);
-    check('X-10 ' + name, judge(r) && vocabOk(r) === null, (vocabOk(r) || '') + ' ' + JSON.stringify(r));
+    const got = r.evidence ? [r.evidence.via, r.evidence.bin] : [];
+    const formOk = !form || (got[0] === form[0] && (!form[1] || got[1] === form[1]));
+    check('X-10 ' + name, judge(r) && vocabOk(r) === null && formOk,
+      (vocabOk(r) || '') + (formOk ? '' : '形态漂移，实走 ' + got.join('/') + ' ') + JSON.stringify(r));
   }
 
   // 失败路径必须**零 spawn**：预检不过还起进程 = 把必死命令交给系统，且面板无从解释。
   const zero = [
-    ['非 http(s) 地址（file:///）', 'file:///c:/windows/system32/calc.exe', { platform: 'linux', spawn: okSpawn, binAvailable: () => true }, 'unsafe-url'],
-    ['空地址', '', { platform: 'linux', spawn: okSpawn, binAvailable: () => true }, 'unsafe-url'],
+    ['非 http(s) 地址（file:///）', 'file:///c:/windows/system32/calc.exe', { platform: 'linux', defaultBrowser: null, spawn: okSpawn, binAvailable: () => true }, 'unsafe-url'],
+    ['空地址', '', { platform: 'linux', defaultBrowser: null, spawn: okSpawn, binAvailable: () => true }, 'unsafe-url'],
     ['未知平台 freebsd：档位说不开就显式失败（openCommand 仍会试 xdg-open，那是低层映射）', u,
-      { platform: 'freebsd', spawn: okSpawn, binAvailable: () => true, observe: obs(EX_OK) }, 'unsupported-platform'],
-    ['linux 无图形会话', u, { platform: 'linux', spawn: okSpawn, binAvailable: () => true, desktopAvailable: () => false }, 'no-desktop-session'],
-    ['启动命令不在 PATH', u, { platform: 'linux', spawn: okSpawn, binAvailable: () => false }, 'no-launcher'],
+      { platform: 'freebsd', defaultBrowser: null, spawn: okSpawn, binAvailable: () => true, observe: obs(EX_OK) }, 'unsupported-platform'],
+    ['linux 无图形会话', u, { platform: 'linux', defaultBrowser: null, spawn: okSpawn, binAvailable: () => true, desktopAvailable: () => false }, 'no-desktop-session'],
+    ['启动命令不在 PATH', u, { platform: 'linux', defaultBrowser: null, spawn: okSpawn, binAvailable: () => false }, 'no-launcher'],
   ];
   for (const [name, url, opts, reason] of zero) {
     spawned.length = 0;
@@ -806,10 +820,10 @@ async function x10() {
   }
   // spawn 同步抛错 / 返回 null 都不是「成功」
   spawned.length = 0;
-  const rThrow = await br.openBrowser(u, { platform: 'linux', binAvailable: () => true, spawn: () => { throw Object.assign(new Error('denied'), { code: 'EACCES' }); } });
+  const rThrow = await br.openBrowser(u, { platform: 'linux', defaultBrowser: null, binAvailable: () => true, spawn: () => { throw Object.assign(new Error('denied'), { code: 'EACCES' }); } });
   check('X-10 spawn 同步抛错 -> ok:false/spawn-failed（旧形态会把它冒成成功）',
     rThrow.ok === false && rThrow.reason === 'spawn-failed' && rThrow.evidence.error === 'EACCES', JSON.stringify(rThrow));
-  const rNull = await br.openBrowser(u, { platform: 'linux', binAvailable: () => true, spawn: () => null });
+  const rNull = await br.openBrowser(u, { platform: 'linux', defaultBrowser: null, binAvailable: () => true, spawn: () => null });
   check('X-10 spawn 返回空句柄 -> ok:false/spawn-failed', rNull.ok === false && rNull.reason === 'spawn-failed', JSON.stringify(rNull));
   // url 恒在场：面板靠它在任何一档下都能给出可复制地址
   const rUrl = await br.openBrowser(u, { platform: 'win32', defaultBrowser: null, observe: obs(EX_OK), spawn: okSpawn, binAvailable: () => true });
