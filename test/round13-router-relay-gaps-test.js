@@ -129,10 +129,13 @@ console.log('== ① 远程控制 wan 安全闸收口 ==');
       && f.eventsSeen.includes('dsh_remote_changed'), JSON.stringify({ r, w: f.written }));
   }
   {
-    const f = mk({ remoteMode: 'lan', remoteToken: 'remote-tok-0123' });
+    // 夹具从 off 起步且无令牌：这一条要同时咬住「off 不过闸也不凭空补凭据」与「与现值同则不落盘」，
+    //  起点若给成 lan|wan，落盘就是应有动作，断言零写入只会钉住执行顺序而非这条判断。
+    const f = mk({ remoteMode: 'off', remoteToken: '' });
     const off = f.actions.setRemoteMode('main', 'off');
     check('① 行为：off 是安全方向，不过闸也不分配（与现值同则不重复落盘）',
-      off.ok === true && off.tokenAutoAllocated === false && f.written.length === 0, JSON.stringify(off));
+      off.ok === true && off.tokenAutoAllocated === false && f.written.length === 0
+      && !String(f.meta.remoteToken).trim(), JSON.stringify({ r: off, w: f.written }));
     const f2 = mk({ remoteMode: 'wan', remoteToken: 'remote-tok-0123' });
     const off2 = f2.actions.setRemoteMode('main', 'off');
     check('① 行为：off 改模式时只写模式字段',
