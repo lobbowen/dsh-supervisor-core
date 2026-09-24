@@ -2,6 +2,10 @@
 export { Button, type ButtonProps } from "./button";
 export { Checkbox, type CheckboxProps } from "./checkbox";
 export { Collapsible, CollapsibleTrigger, CollapsibleContent } from "./collapsible";
+// 危险动作确认的唯一出口。alert-dialog 的原语**故意不进 barrel**：确认框只应由 useConfirm() 发起，
+//  把 AlertDialog 摊给 features 等于把「统一出口」换回「各自拼一套确认样式」。
+export { ConfirmProvider, useConfirm } from "./confirm";
+export type { ConfirmRequest } from "./confirm-queue";
 export { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "./dialog";
 export { Input } from "./input";
 export { Label } from "./label";

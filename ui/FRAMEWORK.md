@@ -68,7 +68,7 @@ src/
 
 ### 4.2 UI 基件（U1）
 - Select（radix-ui 令牌化，barrel 已导出），PluginsPage / RouterPage 的 4 处裸 <select> 已迁移；
-- 原生 confirm() 保留（同步确认语义在单 WebView 场景可接受）。
+- 原生 confirm() 曾以「同步确认语义在单 WebView 场景可接受」为由保留，该结论**已被推翻**，见 4.5 节。
 
 ### 4.3 质量门禁
 - scripts：typecheck（tsc --noEmit）/ lint（eslint src）/ test（vitest run）/ verify（四者串联）。
@@ -80,4 +80,29 @@ src/
 ### 4.4 版本控制
 - 前端源码入外层 git 仓（2026-09-05 commit 3f87482 以 `skiff-original/` 纳入；2026-09-06 迁至 `dsh-supervisor/ui/`）；dist/ node_modules/ 不入库。
 - `ui-react/` 为构建镜像（统一入口 `release/scripts/build-ui.sh` 从 `ui/` 构建生成；release.sh 与 CI 均经它），gitignore 不入库；`ui/dist`（构建临时产物）亦不入库。
+
+### 4.5 弹窗统一标准（U1 收口，判据在 `test/ui-gate-wiring-test.js` 的 U-d 段）
+面板只允许两类浮层，且各有一个框架出口：
+
+| 用途 | 出口 | 不允许出现 |
+|---|---|---|
+| 是/否危险动作确认（卸载、删除、重启壳、批量操作） | `useConfirm()`（`src/framework/ui/confirm.tsx`，底层 `alert-dialog.tsx`） | 原生 `confirm/alert/prompt`；features 直接 import `alert-dialog` 原语 |
+| 表单/详情/列表编辑 | `Dialog`（`src/framework/ui/dialog.tsx`） | 手写 `position:fixed` 遮罩、`role="dialog"` 自拼弹窗 |
+
+- **为什么消灭原生 confirm**：浏览器原生弹窗不受主题令牌约束（壳里是系统灰底，与全站深色不一致），
+  多行只能靠 `\n` 拼接（插件批量卸载的清单就是这么写的），且它同步阻塞、无法被任何测试覆盖。
+  「同步语义可接受」不是保留它的理由——`await askConfirm({...})` 的调用形态与 `if (!confirm(...)) return;`
+  等价，迁移不改变任何业务时序。
+- **`useConfirm()` 的契约**：入参 `{title, description?, confirmText?, cancelText?, tone?}`，
+  `tone:"destructive"` 把确认按钮换成红标；返回 `Promise<boolean>`，取消与 Esc 都是 `false`。
+  多条确认并发发起时按 FIFO 同屏只出一个（队列在 `confirm-queue.ts`，纯逻辑、node 环境可测）。
+- **`AlertDialog` 原语不进 barrel**：把原语摊给 features 等于把「统一出口」换回「各自拼一套确认样式」。
+  确认层的层级高于表单层（`z-[70]` vs `z-50`），因此**允许从已打开的 Dialog 内发起危险确认**
+  （删除供应商、移除 Key 都在此处），由确认层盖住表单层，不靠挂载顺序巧合决定谁在上面。
+- **尚未收口**：三处 state+Dialog 自拼的是/否确认（LanPage 的 `pendingOn`、InstancesPage 的 `confirmId`、
+  OverviewPage 的 `confirmStopDsh`）仍是第二套形态，须迁到 `useConfirm()`；U-d 目前只保证原生弹窗归零与
+  出口唯一，「yes/no 不得自拼 Dialog」要等迁移完成后才能作为判据写进闸，否则闸当场红。
+- **覆盖缺口（按 E-2 登记）**：假件与纯逻辑测试证明不了弹窗真的出现、也证明不了 Esc 走的是取消分支。
+  vitest 是 node 环境（无 jsdom / testing-library，见 4.3 节），组件层只由 `tsc strict` + 源码形态闸约束；
+  确认框的实际观感需真机面板走查。
 

@@ -6,6 +6,47 @@
 
 ## [未发布]
 
+### 面板弹窗统一标准：危险动作确认收口为单一出口（卸载/安装 DSH 仍弹浏览器原生框的病灶）
+
+用户实报并要求排查：卸载 DSH 与安装 DSH 的确认走的是浏览器原生 `confirm()`，没有用面板统一的弹窗组件。
+逐文件扫 `ui/src` 后确认这不是两处的疏忽，而是**同一件事有三套形态且没有一条闸在看**：
+
+- 原生 `confirm` / `window.confirm` 共 **8 处**（OverviewPage 的装载与卸载 DSH、RouterPage 的删除供应商与
+  移除 Key、PluginsPage 的批量卸载、InstancesPage 的实例升级、AboutCard 的内核更新与重启桌面壳）。原生框
+  不受主题令牌约束（壳里是系统灰底，与全站深色脱节），多行内容只能靠 `\n` 拼（插件批量卸载的清单就是），
+  且同步阻塞、任何测试都覆盖不到。
+- 4.2 节原写的「原生 confirm 保留（同步确认语义在单 WebView 场景可接受）」是**错误结论**：`await` 一个
+  返回 Promise 的确认出口与 `if (!confirm(...)) return;` 在调用点等价，同步语义从来不是保留它的理由。
+- 另有 3 处以 `useState` + `Dialog` 自拼的是/否确认（本批未迁，见下）。全仓没有任何门禁断言弹窗形态，
+  所以「散落成三套」这件事只会由用户看见。
+
+收口方式是**只留一条路并让闸能证明它**（能力零损伤：`ui/package.json` 一字未改，`radix-ui` umbrella 包
+本就带 AlertDialog，无新增依赖）：
+
+- **原语**：`ui/src/framework/ui/alert-dialog.tsx` 与既有 `dialog.tsx` 逐条对齐（`data-slot` 命名、令牌、
+  `cn()` 风格）。分工只有一条：AlertDialog 是「必须给出是/否决定」的出口，故无右上角 X、点遮罩不关、
+  Esc 等价取消；表单/详情这类「可以不做决定就走」的窗口仍用 Dialog。确认层层级 `z-[70]` 高于表单层
+  `z-50`，因此**允许从已打开的 Dialog 内发起危险确认**（删除供应商、移除 Key 都在此处），由层级正名而
+  非「后挂载者盖前者」的顺序巧合。
+- **出口**：`useConfirm()` 是唯一入口，契约 `{title, description?, confirmText?, cancelText?, tone?}` →
+  `Promise<boolean>`，`tone:"destructive"` 走红标按钮（复用既有 CVA variant），取消与 Esc 都是 `false`。
+  `ConfirmProvider` 挂在 `AppProviders` 上；`alert-dialog` 原语**故意不进 barrel**——把原语摊给 features
+  等于把「统一出口」换回「各自拼一套确认样式」。
+- **排队**：`confirm-queue.ts` 是纯逻辑（不含 React 依赖，故可在 vitest 的 node 环境直接测）。多条确认
+  并发发起时按 FIFO 同屏只出一个；决议**按队首 id 校验**，因此上一条关闭动画晚到的 `onOpenChange(false)`
+  不会把下一条误判成「用户取消」——这是批量卸载连点时唯一会真正错的地方。
+
+门禁并入既有条链目（`test/ui-gate-wiring-test.js` 的 U-d 段，不新增链条目）：扫描报**分母**（`ui/src` 下
+ts/tsx 文件数，实测 61），注释行不算证据；原生三形态零出现并配两条反向样本（`confirm(` 与 `window.confirm(`
+都要命中、`askConfirm(` 与 `useConfirm()` 都不误报）；`alert-dialog` 只允许被 `confirm.tsx` 引入；barrel
+导出出口但不导出原语；`providers.tsx` 必须挂 `ConfirmProvider`；经出口的确认条数 `>=8`（迁移前的原生条数，
+防「删掉调用但不接出口」的空绿）；`confirm-queue` 须有行为测试。规范成文于 `ui/FRAMEWORK.md` 4.5 节。
+
+**未收口**：① 3 处 `state` + `Dialog` 自拼的确认仍并存，下一批迁到 `useConfirm()` 后才能把「是/否动作
+不得自拼 Dialog」写成判据（现在写当场红）；② vitest 是 node 环境（无 jsdom / testing-library），组件层
+只由 `tsc strict` + 源码形态闸约束——弹窗真的出现了吗、Esc 走的是取消分支吗、批量卸载的清单在 420px 框里
+好不好看，假件证不了，需发布后在真机面板走查。
+
 ### 远程控制令牌闭环：缺凭据即自动补齐 + 本机可见可改（「开关停在开但没有二维码」的病灶）
 
 用户实报：开启远程控制后二维码压根不显示；补设访问令牌后二维码立刻出现。这不是渲染 bug，而是**一处判定

@@ -9,6 +9,7 @@ import {
 import { toast } from "sonner";
 import { Button } from "../../framework/ui";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "../../framework/ui/dialog";
+import { useConfirm } from "../../framework/ui/confirm";
 import { Input } from "../../framework/ui/input";
 import { Textarea } from "../../framework/ui/textarea";
 import { Label } from "../../framework/ui/label";
@@ -23,6 +24,7 @@ import { cn } from "../../framework/utils";
 export function InstancesPage({ onRegisterActions }: { onRegisterActions?: (a: { onAdd: () => void } | null) => void }) {
   const { snap } = useSupervisorData();
   const { busy: busyId, run } = useSupervisorAction();
+  const askConfirm = useConfirm();
   const [addOpen, setAddOpen] = useState(false);
   const [confirmId, setConfirmId] = useState<string | null>(null);
 
@@ -89,7 +91,11 @@ export function InstancesPage({ onRegisterActions }: { onRegisterActions?: (a: {
   const [updOk, setUpdOk] = useState<Map<string, boolean>>(new Map());
 
   async function upgrade(it: SupervisorInstance) {
-    if (!confirm("将升级该沙箱实例的 DSH 到最新版（实例会短暂重启，进行中的请求中断）。确定升级？")) return;
+    if (!(await askConfirm({
+      title: "升级该沙箱实例的 DSH 到最新版？",
+      description: "实例会短暂重启，进行中的请求中断。",
+      confirmText: "升级",
+    }))) return;
     await run(it.id, () => supervisorApi.instanceUpgrade(it.id), { success: "升级已开始…" });
   }
 

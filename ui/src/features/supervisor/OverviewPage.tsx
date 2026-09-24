@@ -10,6 +10,7 @@ import type { EnvCatalogItem, NodeLtsStatus } from "../../services/supervisor";
 import { toast } from "sonner";
 import { Button } from "../../framework/ui";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "../../framework/ui/dialog";
+import { useConfirm } from "../../framework/ui/confirm";
 import { formatClockTime } from "./format";
 import { supervisorApi, useSupervisorData, type SupervisorEvent } from "../../services/supervisor";
 import { Card, CardTitle, Metric, Pill, ToneDot } from "./widgets";
@@ -24,6 +25,7 @@ const NOISE = new Set(["dist_registry_selected", "gui_autostart_changed", "autos
 export function OverviewPage() {
   const { snap } = useSupervisorData();
   const { busy, run } = useSupervisorAction();
+  const askConfirm = useConfirm();
   const [upgradeOpen, setUpgradeOpen] = useState(false);
   // 停止运行中的主干 DSH 会中断在飞请求，属高危动作：需二次确认
   const [confirmStopDsh, setConfirmStopDsh] = useState(false);
@@ -72,11 +74,20 @@ export function OverviewPage() {
     // 升级为异步任务：状态机经 /status.upgrade 呈现，由 2s 轮询推进
   }
   async function installDsh() {
-    if (!confirm("将在线安装最新版 DeepSeek Harness（需数分钟，自动适配最快镜像源）。确定继续？")) return;
+    if (!(await askConfirm({
+      title: "在线安装最新版 DeepSeek Harness？",
+      description: "需数分钟，自动适配最快镜像源。",
+      confirmText: "安装",
+    }))) return;
     await run("inst", () => supervisorApi.nativeInstall(), { success: "开始安装 DeepSeek Harness…" });
   }
   async function uninstallDsh() {
-    if (!confirm("将彻底卸载 DeepSeek Harness：删除全部文件、数据、缓存与日志，不留残留。确定继续？")) return;
+    if (!(await askConfirm({
+      title: "彻底卸载 DeepSeek Harness？",
+      description: "删除全部文件、数据、缓存与日志，不留残留。",
+      confirmText: "卸载 DSH",
+      tone: "destructive",
+    }))) return;
     await run("uni", () => supervisorApi.nativeUninstall(), { success: "开始卸载…" });
   }
 

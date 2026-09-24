@@ -7,6 +7,7 @@ import { toast } from "sonner";
 import { RefreshCw } from "lucide-react";
 import { Button } from "../../../framework/ui";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "../../../framework/ui/dialog";
+import { useConfirm } from "../../../framework/ui/confirm";
 import { supervisorApi } from "../../../services/supervisor";
 import { hasShellHost, requestKernelUpdate, type KernelUpdateProgress } from "../../../services/supervisor/kernelUpdateBridge";
 import { useSupervisorAction } from "../useSupervisorAction";
@@ -52,6 +53,7 @@ export function AboutCard() {
   // 用户会判定「卡死」并重试——重试即两个进程并发写同一个 npm 全局包。
   const [coreProg, setCoreProg] = useState<KernelUpdateProgress | null>(null);
   const { busy, run } = useSupervisorAction();
+  const askConfirm = useConfirm();
 
   // 更新日志按需拉取文本，失败给出明确提示而非静默。
   const openLog = useCallback(async (kind: "dsh" | "guard") => {
@@ -144,7 +146,11 @@ export function AboutCard() {
   // 必须经消息桥请壳执行 kernel_update_apply（壳装内核 + 由所有者重启守卫）。
   const applyCoreUpdate = async () => {
     if (!hasShellHost()) { toast.error("内核更新由桌面壳执行：请在桌面壳面板中操作。"); return; }
-    if (!window.confirm("发现内核新版本 " + fmt(ver?.latest) + "，是否立即更新？\n\n内核将由桌面壳安装，并自动重启守卫。")) return;
+    if (!(await askConfirm({
+      title: "发现内核新版本 " + fmt(ver?.latest) + "，是否立即更新？",
+      description: "内核将由桌面壳安装，并自动重启守卫。",
+      confirmText: "更新",
+    }))) return;
     await run("upd", async () => {
       setCoreProg({ status: "已向桌面壳发出更新请求，等待响应…" });
       const r = await requestKernelUpdate(setCoreProg);
@@ -158,7 +164,11 @@ export function AboutCard() {
   // 桌面壳自更新发生在启动时（查清单 -> 下载 -> 验签 -> 安装 -> 重启）：
   // 「应用壳更新」= 重启桌面壳，新进程启动门会升到新版本。
   const applyShellUpdate = async () => {
-    if (!window.confirm("将重启桌面壳以应用更新 " + fmt(shell?.latest) + "。\n\n桌面壳窗口会关闭并重新打开；内核与被管实例不受影响。是否继续？")) return;
+    if (!(await askConfirm({
+      title: "将重启桌面壳以应用更新 " + fmt(shell?.latest) + "，是否继续？",
+      description: "桌面壳窗口会关闭并重新打开；内核与被管实例不受影响。",
+      confirmText: "重启桌面壳",
+    }))) return;
     await run("shupd", async () => {
       const r = await supervisorApi.shellRestart();
       if (r?.ok === false) { toast.error(r.error || "重启桌面壳失败"); return; }
