@@ -9,10 +9,12 @@
 import { supervisorApi } from "./client";
 import type { OpenExternalResult } from "./types";
 
-/** 面板是否由本机内核托管；与内核 /env/open-url 的 identity.loopback 判的是同一件事。 */
+/** 面板是否由本机内核托管；与内核 /env/open-url 的 identity.loopback 判的是同一件事。
+ *  回环 IPv4 按四段整体匹配：`^127.` 这种前缀判据会把 `127.example.com` 也认成本机，
+ *  而内核侧按真实 socket 判回环，误判只会让远程访客的面板把动作推给内核、换回一次 403。 */
 export function servedByKernelHost(): boolean {
   const h = String(window.location.hostname || "").toLowerCase();
-  return h === "127.0.0.1" || h === "localhost" || h === "[::1]" || h === "::1" || /^127\./.test(h);
+  return h === "localhost" || h === "[::1]" || h === "::1" || /^127\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(h);
 }
 
 /** 访客自己的浏览器（非回环来源）：被弹窗拦截时 open 返回 null，那是失败不是成功。
