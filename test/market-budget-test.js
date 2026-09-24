@@ -216,6 +216,9 @@ const { PluginMarket } = require(SRC);
     check('M-i 在飞期间快照 building=true（面板据此轮询）', s1.building === true && s2.building === true, s1.building + '/' + s2.building);
     check('M-i force 请求复用同一在途构建（_inFlight 登记态）', m._inFlight !== null, String(m._inFlight));
     await m._inFlight;
+    // 摘除在飞登记是 raw 结算链上的**下一条微任务**：`await m._inFlight` 的续体排在它之前，
+    // 故必须等一个宏任务才观察得到「已结算」——这不是被测语义，是观察点位置。
+    await new Promise((r) => setImmediate(r));
     check('M-i 连续 force 只发起一次构建', builds === 1, String(builds));
     check('M-i 结算后 _inFlight 归零（不误挂消化后的 promise）', m._inFlight === null, String(m._inFlight));
     check('M-i 结算后快照 building=false', (await m.getIndex()).building === false, '');
