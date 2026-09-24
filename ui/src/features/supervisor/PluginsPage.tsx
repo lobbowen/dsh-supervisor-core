@@ -6,6 +6,7 @@ import { Package, Power, RefreshCw, Rocket, Search, Store, Trash2 } from "lucide
 import { toast } from "sonner";
 import { Button, Checkbox, RadioGroup, RadioGroupItem, Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../../framework/ui";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "../../framework/ui/dialog";
+import { useConfirm } from "../../framework/ui/confirm";
 import { Input } from "../../framework/ui/input";
 import { formatSize } from "../../framework/format";
 import {
@@ -278,6 +279,7 @@ function InstalledTab() {
   const [updatable, setUpdatable] = useState<Map<string, string>>(new Map()); // name -> 最新版
   const [checking, setChecking] = useState(false);
   const { busy, run } = useSupervisorAction();
+  const askConfirm = useConfirm();
 
   const load = async () => {
     const r = await supervisorApi.pluginsInstalled().catch(() => null);
@@ -337,7 +339,12 @@ function InstalledTab() {
   }
   async function uninstallSelected() {
     const names = selRows.map((p) => p.name);
-    if (!confirm("将卸载所选 " + names.length + " 个插件：\n" + names.join("\n") + "\n\n确定继续？")) return;
+    if (!(await askConfirm({
+      title: "卸载所选插件？",
+      description: <>将卸载所选 {names.length} 个插件：<ul className="mt-2 max-h-[180px] overflow-auto rounded-md border border-border/70 bg-muted/40 px-3 py-2">{names.map((n) => <li key={n} className="truncate text-foreground">{n}</li>)}</ul></>,
+      confirmText: "卸载",
+      tone: "destructive",
+    }))) return;
     setSelected(new Set());
     await run("uni-sel", async () => {
       const jobIds: string[] = [];

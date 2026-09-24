@@ -22,6 +22,7 @@
 //   U-a  ci-core.sh 必须在**构建之前**执行前端 verify（或至少 test）
 //   U-b  必须存在可被真正调用的前端测试入口（ui/package.json 的 test）
 //   U-c  CI 注释不得再指向不存在的阶段号（[3/7]）—— 防再次误导
+//   U-d  弹窗统一：原生 confirm/alert/prompt 在 ui/src 归零，危险动作确认只有框架一个出口
 // ---------------------------------------------------------------------------
 
 const path = require('node:path');
@@ -92,6 +93,54 @@ check('U-b verify 串包含 typecheck/lint/test/build 四步',
     .filter((l) => !/已删除|删除|原写|校正|不存在|2026-09-13/.test(l));
   check('U-c CI 注释不再把 release-core.sh 当作现行编排器',
     liveClaim.length === 0, liveClaim.length ? liveClaim.join(' | ').slice(0, 80) : '已清理');
+}
+
+// -- U-d：面板弹窗统一（原生弹窗归零 + 确认出口唯一）--
+//  病灶：卸载/安装 DSH 这类高危动作直接调浏览器原生 confirm()，样式与主题脱节、多行只能拼 \n，
+//   而同一件事在别处又有 state+Dialog 的第二套形态。规范成文于 ui/FRAMEWORK.md「弹窗统一标准」。
+//  扫描必须报**分母**（真扫到多少个文件）：只报「零命中」的闸在被扫空目录时同样绿，那是空转。
+//  注释行不算证据：说明文字里会**引用**「原生 confirm」这个词，裸扫必假阳性（U-c 同族教训）。
+{
+  const uiFiles = [];
+  (function walk(d) {
+    for (const e of fs.readdirSync(d, { withFileTypes: true })) {
+      const p = path.join(d, e.name);
+      if (e.isDirectory()) walk(p);
+      else if (/\.tsx?$/.test(e.name)) uiFiles.push(p);
+    }
+  })(path.join(ROOT, 'ui', 'src'));
+  const codeOf = (p) => fs.readFileSync(p, 'utf8')
+    .split(String.fromCharCode(10))
+    .filter((l) => !/^\s*(\/\/|\*|\/\*|\{\/\*)/.test(l))
+    .join(String.fromCharCode(10));
+  const relOf = (p) => path.relative(ROOT, p).split(path.sep).join('/');
+  // 前置字符类把 askConfirm(/useConfirm( 这类包装名排除掉（大小写不同，仍显式写出来防误读）。
+  const NATIVE = /(?:^|[^A-Za-z0-9_$.])(?:window\s*\.\s*)?(?:confirm|alert|prompt)\s*\(/;
+  const hits = uiFiles.filter((p) => NATIVE.test(codeOf(p))).map(relOf);
+  check('U-d 扫描有分母（ui/src 下 ts/tsx 文件数）', uiFiles.length >= 25, uiFiles.length + ' 个文件');
+  check('U-d 原生 confirm/alert/prompt 在 ui/src 零出现', hits.length === 0, hits.join(', ') || '零命中');
+  check('U-d 反向：污染样本会被识别（裸调用与 window. 两种形态都命中）',
+    NATIVE.test('if (!confirm("删除？")) return;') && NATIVE.test('if (!window.confirm("x")) return;'), '命中');
+  check('U-d 反向：统一出口的包装名不算原生调用',
+    !NATIVE.test('if (!(await askConfirm({ title: "x" }))) return;') && !NATIVE.test('const x = useConfirm();'), '不误报');
+
+  // 出口唯一性：确认框只能由框架的 confirm.tsx 拼装，features 直接引原语＝第二套实现开始散落。
+  const adImporters = uiFiles
+    .filter((p) => /from\s+["'][^"']*\/alert-dialog["']/.test(codeOf(p)) && !/\/framework\/ui\/alert-dialog\.tsx$/.test(p))
+    .map(relOf);
+  check('U-d alert-dialog 原语只由框架确认层引入',
+    adImporters.length === 1 && adImporters[0] === 'ui/src/framework/ui/confirm.tsx', adImporters.join(', ') || '无引入者');
+  const barrel = fs.readFileSync(path.join(ROOT, 'ui', 'src', 'framework', 'ui', 'index.ts'), 'utf8');
+  check('U-d barrel 导出确认出口但不导出 AlertDialog 原语',
+    /ConfirmProvider/.test(barrel) && /useConfirm/.test(barrel) && !/export \{[^}]*AlertDialog/.test(barrel), 'ok');
+  const providers = fs.readFileSync(path.join(ROOT, 'ui', 'src', 'app', 'providers.tsx'), 'utf8');
+  check('U-d AppProviders 挂载 ConfirmProvider（未挂载则 useConfirm 必抛）',
+    /<ConfirmProvider>/.test(providers), 'ok');
+  // 分母驱动：8 处原生 confirm 迁完后，经出口的危险动作确认条数不得少于迁移前。
+  const asked = uiFiles.reduce((n, p) => n + ((codeOf(p).match(/await\s+\w*[cC]onfirm\s*\(\s*\{/g) || []).length), 0);
+  check('U-d 危险动作确认确实经统一出口（>=8 处）', asked >= 8, asked + ' 处');
+  check('U-d 确认队列有行为测试（纯逻辑，不依赖 DOM 测试设施）',
+    fs.existsSync(path.join(ROOT, 'ui', 'src', 'framework', 'ui', 'confirm-queue.test.ts')), 'ok');
 }
 
 // -- 反向：build-ui 只构建不测试（说明为何必须由 ci-core 补上 verify）--

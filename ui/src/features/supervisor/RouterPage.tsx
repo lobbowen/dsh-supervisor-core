@@ -8,6 +8,7 @@ import {
 import { toast } from "sonner";
 import { Button, Input, Label, Select, SelectContent, SelectItem, SelectTrigger, SelectValue, Textarea } from "../../framework/ui";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "../../framework/ui/dialog";
+import { useConfirm } from "../../framework/ui/confirm";
 import {
   pollJob, supervisorApi, supervisorStore, useSupervisorData,
   type ProviderAccount, type ProvidersResponse, type RouterProvider,
@@ -125,8 +126,14 @@ function DeleteProviderDialog({ open, onOpenChange, providers }: {
   open: boolean; onOpenChange: (o: boolean) => void; providers: RouterProvider[];
 }) {
   const [busyId, setBusyId] = useState<string | null>(null);
+  const askConfirm = useConfirm();
   async function remove(p: RouterProvider) {
-    if (!confirm("删除供应商「" + p.name + "」？其下全部账号与 Key 将被移除，不可恢复。")) return;
+    if (!(await askConfirm({
+      title: "删除供应商「" + p.name + "」？",
+      description: "其下全部账号与 Key 将被移除，不可恢复。",
+      confirmText: "删除",
+      tone: "destructive",
+    }))) return;
     setBusyId(p.id);
     try {
       await supervisorApi.providerRemove(p.id);
@@ -312,6 +319,7 @@ function EditKeysDialog({ open, onOpenChange, p }: {
   open: boolean; onOpenChange: (o: boolean) => void; p: RouterProvider;
 }) {
   const accs = p.accounts ?? [];
+  const askConfirm = useConfirm();
   const [input, setInput] = useState("");
   const [saving, setSaving] = useState(false);
   const [loggingIn, setLoggingIn] = useState(false);
@@ -372,7 +380,12 @@ function EditKeysDialog({ open, onOpenChange, p }: {
     finally { setSaving(false); }
   }
   async function removeKey(masked: string) {
-    if (!confirm("移除 Key " + masked + "？")) return;
+    if (!(await askConfirm({
+      title: "移除 Key " + masked + "？",
+      description: "该凭据将从供应商中移除，不可恢复。",
+      confirmText: "移除",
+      tone: "destructive",
+    }))) return;
     setSaving(true);
     try {
       if (isProxy) {
