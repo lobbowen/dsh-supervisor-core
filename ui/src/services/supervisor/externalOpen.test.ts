@@ -76,10 +76,13 @@ describe("loginIsolationText：「没用隔离窗口」的两种原因分不开�
     expect(loginIsolationText({ ok: true })).toBe(null);
   });
   it("冷档案注定空白 -> 说清依据并给出可修的那一半（配好系统代理即回到隔离档）", () => {
-    const t = loginIsolationText({
+    // 类型标注不是装饰：它把「面板读的这三个字段确实在内核契约里」钉成编译期判据，
+    //   内核改名或漏字段时这里先红，而不是到真机上才发现提示永远是兜底那句。
+    const s: ProxyLoginStart = {
       ok: true, isolated: false, isolatedBasis: "cold-profile-blocked",
       isolatedDetail: "login.example.test 直连不通且系统没有在用代理",
-    });
+    };
+    const t = loginIsolationText(s);
     expect(t).toContain("login.example.test 直连不通");
     expect(t).toContain("配好代理");
     expect(t).toContain("手动清理账号");
