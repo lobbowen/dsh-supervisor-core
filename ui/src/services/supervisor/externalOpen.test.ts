@@ -65,8 +65,10 @@ describe("classifyOpenResult：三档只看字段，不看文案", () => {
 
 describe("evidenceDetail：把启动形态摊给用户（真机报错只有文案时无人能定位）", () => {
   it("不可信形态标注「退出码不作证据」，并可执行文件名而非全路径", () => {
-    expect(evidenceDetail({ bin: "C:\\Windows\\explorer.exe", via: "dispatcher", ownsWindow: false, exitCode: 1 }))
-      .toBe("explorer.exe | dispatcher | 退出码不作证据 | exit 1");
+    // Windows 只剩「直启探测解析出的本体」这一种形态（那条向系统 shell 冒开的路已整体删除），
+    //   而它可被既有实例吸收，故退出码两个方向都不是证据。
+    expect(evidenceDetail({ bin: "C:\\Windows\\System32\\notepad.exe", via: "browser", ownsWindow: false, exitCode: 1 }))
+      .toBe("notepad.exe | browser | 退出码不作证据 | exit 1");
   });
   it("可信形态只报退出码；只剩 error 码时报 error 码", () => {
     expect(evidenceDetail({ bin: "xdg-open", via: "dispatcher", ownsWindow: true, exitCode: 3 })).toBe("xdg-open | dispatcher | exit 3");
@@ -76,6 +78,32 @@ describe("evidenceDetail：把启动形态摊给用户（真机报错只有文�
     expect(evidenceDetail({ bin: "open", via: "dispatcher", exitCode: 0 })).toBe("open | dispatcher | exit 0");
     expect(evidenceDetail(null)).toBe(null);
     expect(evidenceDetail({})).toBe(null);
+  });
+  it("探测诊断随行摊出：默认项从哪条系统事实读出 + 本机探到哪些候选", () => {
+    const detail = evidenceDetail({
+      bin: "C:\\Program Files\\Mozilla Firefox\\firefox.exe", via: "browser", ownsWindow: false, exitCode: 0,
+      diagnostics: {
+        pick: "userchoice",
+        default: { id: "c:\\program files\\mozilla firefox\\firefox.exe", source: "userchoice" },
+        found: [{ name: "Firefox", engine: "firefox", via: "userchoice" }, { name: "MSEdge", engine: "chromium", via: "startmenu-catalog" }],
+        probed: [{ source: "userchoice", detail: "Firefox" }],
+      },
+    });
+    expect(detail).toBe("firefox.exe | browser | 退出码不作证据 | exit 0 | 默认项来源 userchoice | 候选 2 个：Firefox、MSEdge");
+  });
+  it("选不出启动对象时把「哪条来源答了空」摊出来（否则与探测层失灵无从区分）", () => {
+    const detail = evidenceDetail({
+      bin: null, via: "none", ownsWindow: false,
+      diagnostics: {
+        pick: "none-found", default: null, found: [],
+        probed: [{ source: "userchoice", detail: "empty" }, { source: "app-paths", detail: "指向的文件不可执行" }],
+      },
+    });
+    expect(detail).toBe("未定出启动对象 | none | 退出码不作证据 | 默认项来源 未读出 | 候选 0 个 | 探测读数：userchoice、app-paths");
+  });
+  it("反向：旧内核不带 diagnostics 时不得凭空造出探测结论", () => {
+    expect(evidenceDetail({ bin: "/usr/bin/chromium", via: "browser", ownsWindow: false, exitCode: 0 }))
+      .toBe("chromium | browser | 退出码不作证据 | exit 0");
   });
   it("handed-off 档带着证据细节也不升成成功说法", () => {
     const r = classifyOpenResult({

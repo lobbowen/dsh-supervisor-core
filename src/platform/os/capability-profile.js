@@ -54,8 +54,9 @@ const win32 = {
   desktopNotify: true,   // 期望 powershell（实测覆写）
   autostart: true,       // 期望 schtasks（实测覆写）
   frpExpose: true,
-  // 可打开，但 win32 的两种启动形态（explorer.exe 调度器 / 裸 URL 直启解析到的浏览器）退出码都不携带
-  // 窗口是否出现的信息，故每次调用最多到 handedOff（见 browser.js#ownsItsWindow）。能力位只声明「能交出去」。
+  // 可打开，但 Windows 没有可信调度器（系统调度器只有 darwin 的 open 与 linux 的 xdg-open），
+  // 只能直启探测层解析出的浏览器本体；浏览器已在运行时本次进程只转交地址，退出码与窗口出现与否无关，
+  // 故该平台每次调用最多到 handedOff（判据见 browser.js#ownsItsWindow）。能力位只声明「能交出去」。
   openBrowser: true,
   hostService: 'windows-service',
   guardAutostart: true,  // schtasks DSH-Supervisor（ONLOGON，由壳建立）

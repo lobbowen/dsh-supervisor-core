@@ -1,6 +1,7 @@
 'use strict';
 
 const platform = require('../../../platform/os/index');
+const desktop = require('../../../platform/os/desktop');
 
 // 图形环境 + 打开浏览器（IO：进程/文件系统/平台层）。
 // 调用方只给策略参数，平台差异封装在 platform.browser。
@@ -10,38 +11,11 @@ const os = require('node:os');
 const path = require('node:path');
 const crypto = require('node:crypto');
 
-/** 图形会话环境注入：缺图形变量时（systemd user 常驻拉起等场景）从用户会话探测补齐。 */
+/** 图形会话环境注入：缺图形变量时（systemd user 常驻拉起等场景）从用户会话探测补齐。
+ *  平台事实（X11/Wayland socket 在哪、runtime 目录怎么推）只写在 platform/os/desktop.js 一处，
+ *  本函数原样转交 —— 这里再摸一遍 /tmp 与 /run 就会出现「可用性说没有会话、环境却补齐了」这类分叉。 */
 function graphicalEnv() {
-  const out = {};
-  try {
-    const uid = process.getuid ? String(process.getuid()) : '';
-    const xdgRun = process.env.XDG_RUNTIME_DIR || ('/run/user/' + uid);
-    if (!process.env.DISPLAY && !process.env.WAYLAND_DISPLAY) {
-      const x11 = '/tmp/.X11-unix';
-      try {
-        if (fs.existsSync(x11)) {
-          const socks = fs.readdirSync(x11).filter((f) => /^X\d+$/.test(f)).map((f) => parseInt(f.slice(1), 10)).sort((a, b) => a - b);
-          if (socks.length > 0) {
-            out.DISPLAY = ':' + socks[0];
-            const xauth = path.join(os.homedir(), '.Xauthority');
-            if (fs.existsSync(xauth)) out.XAUTHORITY = xauth;
-          }
-        }
-      } catch {}
-      if (!out.DISPLAY) {
-        try {
-          if (fs.existsSync(xdgRun)) {
-            const wl = fs.readdirSync(xdgRun).filter((f) => f.startsWith('wayland-')).sort();
-            if (wl.length > 0) out.WAYLAND_DISPLAY = wl[0];
-          }
-        } catch {}
-      }
-    }
-    if (!process.env.DBUS_SESSION_BUS_ADDRESS && fs.existsSync(path.join(xdgRun, 'bus'))) {
-      out.DBUS_SESSION_BUS_ADDRESS = 'unix:path=' + path.join(xdgRun, 'bus');
-    }
-  } catch {}
-  return out;
+  return desktop.sessionEnv();
 }
 
 /** 调起系统默认浏览器做 OAuth 一键登录；引擎支持时叠加无痕 + 随机 profile + 语言/时区/窗口尺寸随机化

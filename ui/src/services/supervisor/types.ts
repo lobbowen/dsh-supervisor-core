@@ -613,7 +613,23 @@ export interface OpenExternalResult {
     exitCode?: number | string | null;
     exitSignal?: string | null;
     error?: string | null;
+    /** 探测留痕（内核 platform/os/browser-inventory.js 的清单摘要）：这次交给谁、依据哪条系统事实、
+     *  本机探到哪些候选。真机报「没弹出网页」时这一份就是定档依据，故必须一路走到屏幕上。 */
+    diagnostics?: BrowserDiagnostics | null;
   } | null;
+}
+
+/** 打开动作随结果交出的探测摘要（内核 `platform/os/browser.js#launchDiagnostics` 的产出，
+ *  与只读端点 `GET /env/browsers` 那份完整清单同源）。面板只渲染它，就不必再查一次端点：
+ *  失败时屏幕上那一行必须描述**这次**打开所用的那一份清单，而不是另一次探测的结果。 */
+export interface BrowserDiagnostics {
+  platform?: string | null;
+  /** 这次选路依据：userchoice / scheme-association / mimeapps / launchservices / only-installed / no-default / none-found */
+  pick?: string | null;
+  bin?: string | null;
+  default?: { id: string; source?: string | null } | null;
+  found?: Array<{ name?: string | null; engine?: string | null; via?: string }>;
+  probed?: Array<{ source: string; detail?: string | number | null }>;
 }
 
 // -- /lifecycle----------------------------

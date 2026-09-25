@@ -122,7 +122,7 @@ xdg-open http://127.0.0.1:36360/   # 浏览器直接开面板（默认端口；�
 | 幂等收敛 | 守卫自身重启后读期望状态调和，不叠加实例；接管既有实例时通过 /proc 识别其 pid，可正常 stop/升级 |
 | 观测模式 | 期望停止时发现无主运行实例 → 进入 OBSERVED：如实展示运行状态与 pid，**不强杀不拉起**；点「启动」同一实例无缝转正纳管 |
 | 一键升级 | **先停后装**：停 DSH → npm 安装 → 自动拉起 → 健康验证；失败自动回滚旧版本并恢复运行 |
-| 外部打开 | 把地址交给系统浏览器只有一个出口（`src/platform/os/browser.js`）：结果分三档 `confirmed`（本次启动确定拥有自己的窗口且它以 0 退出）/ `handedOff`（只证明交出去了——win32 两种形态与被既有实例吸收的裸 URL 直启都属此类）/ `ok:false`（带 `reason` 码）。「退出码何时算证据」是一条**双向**规则，只写在 `ownsItsWindow` 一处：不可信形态既不凭 0 冒领成功，也不凭非 0 判失败。可用性由能力位 `openBrowser` 声明（Linux 按图形会话实测覆写），三档与 `url`、`evidence`（`bin`/`via`/`ownsWindow`/`exitCode`）一路原样透传到面板——**任何一档都把地址交到用户眼前**，非 `confirmed` 那两档还把启动形态摊成一行小字，真机报错才有可定位的证据。面板自己那条路只有一条选路判据（来源是否回环：本机请内核经 `POST /env/open-url` 代开，远程访客用自己的浏览器），标准见 PLATFORM-CAPABILITY-MATRIX.md §九 |
+| 外部打开 | 先知道系统里有什么，再谈交给谁：四层各一处——探测（`src/platform/os/browser-inventory.js`，三端多源并集枚举已装浏览器 + 默认项来源，每条来源都留痕）、选路（`pickLauncher`：只认「系统说得出的默认项」与「穷举唯一解」，多候选说不出默认项就显式失败而不按顺序猜）、执行（`src/platform/os/browser.js#openBrowser` / `#launchIsolated`）、消费面（只读 `GET /env/browsers` + 每次打开都带 `evidence.diagnostics`）。结果分三档 `confirmed`（本次启动确定拥有自己的窗口且它以 0 退出）/ `handedOff`（只证明交出去了——被既有实例吸收的裸 URL 直启与 win32 全部形态都属此类）/ `ok:false`（带 `reason` 码 + 探测诊断）。「退出码何时算证据」是一条**双向**规则，只写在 `ownsItsWindow` 一处：不可信形态既不凭 0 冒领成功，也不凭非 0 判失败（Windows 那条「向系统 shell 冒开」的未文档化退路已整体删除）。可用性由能力位 `openBrowser` 声明（Linux 按图形会话实测覆写），三档与 `url`、`evidence`（`bin`/`via`/`ownsWindow`/`exitCode`/`diagnostics`）一路原样透传到面板——**任何一档都把地址交到用户眼前**，非 `confirmed` 那两档还把启动形态与探测结论摊成一行小字，真机报错才有可定位的证据。面板自己那条路只有一条选路判据（来源是否回环：本机请内核经 `POST /env/open-url` 代开，远程访客用自己的浏览器），标准见 PLATFORM-CAPABILITY-MATRIX.md §九 |
 
 ## 安装
 

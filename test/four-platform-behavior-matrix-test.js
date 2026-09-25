@@ -133,29 +133,48 @@ function underFake(platform, arch, body) {
   check('P-5 未知平台全 false（显式 Unsupported，绝不静默成功）',
     Object.entries(U).every(([k, v]) => (k === 'platform' || k === 'arch' || k === 'hostService' || k === 'sandboxEnforcement') || v === false),
     JSON.stringify(U));
-  // 外部打开：三端声明可开，但**取证档位不同**（win32 无论走 explorer.exe 还是直启浏览器，退出码
-  //  都不携带窗口是否出现的信息）。差异必须落在计划的 exitIsEvidence 这一个判据上，且双向生效：
-  //  不可信形态既不能凭 0 冒领成功，也不能凭非 0 判失败 —— 后者正是 Windows 真机报错的成因。
+  // 外部打开：三端声明可开，但**取证档位不同**。差异必须落在计划的 exitIsEvidence 这一个判据上，
+  //  且双向生效：不可信形态既不能凭 0 冒领成功，也不能凭非 0 判失败 —— 后者正是 Windows 真机报错的成因。
+  //  Windows 的特殊性在**没有可信调度器**（explorer.exe 未文档化、返回码不携带信息，已整体删除），
+  //  故它只有直启探测解析出的本体一条路，探测读不到默认项时显式 no-launcher（宁可如实失败）。
   check('P-5 三平台 openBrowser=true 而未知平台 false（声明面，unknown 不静默尝试）',
     L.openBrowser === true && D.openBrowser === true && W.openBrowser === true && U.openBrowser === false,
     [L, D, W, U].map((x) => x.openBrowser).join(','));
   {
     const br = osLayer.browser;
+    const det = br.detector;
     const u = 'http://127.0.0.1:28111/open?code=x';
-    const edge = { defaultBrowser: { bin: 'C:\\Program Files\\Microsoft\\Edge\\msedge.exe' } };
-    check('P-5 外部打开计划取证档位：仅 linux/darwin 调度器可取证，win32 两种形态与三端直启浏览器都不可',
-      br.openPlan('win32', u, {}).exitIsEvidence === false
-      && br.openPlan('linux', u, {}).exitIsEvidence === true
-      && br.openPlan('darwin', u, {}).exitIsEvidence === true
-      && br.openPlan('win32', u, edge).exitIsEvidence === false
-      && br.openPlan('linux', u, { defaultBrowser: { bin: 'google-chrome' } }).exitIsEvidence === false
-      && br.openPlan('win32', u, edge).via === 'browser',
-      JSON.stringify([br.openPlan('win32', u, {}), br.openPlan('linux', u, {})]));
-    check('P-5 反向：未知平台不得进入计划（openBrowser 位为 false 即被唯一出口拒绝）',
-      Object.keys(require(path.join(ROOT, 'src', 'platform', 'os', 'capability-profile.js')))
-        .filter((k) => k !== 'unknown').every((k) => br.openCommand(k, u)) === true
-      && br.openPlan('win32', u, { defaultBrowser: { bin: 'safari' } }).via === 'dispatcher',
-      'other 引擎只走调度器，不冒充直启');
+    /** 探测层夹具（与产品同形状：id 恒为归一 bin）；三端共用一份，避免按平台各造一套字段。 */
+    const brow = (bin) => ({ id: String(bin).toLowerCase(), name: String(bin).split(/[\\/]/).pop(), engine: det.engineOf(bin), bin, sources: ['fixture'] });
+    const inv = (list, defId, defSource) => ({ platform: 'fixture', browsers: list, defaultId: defId || null,
+      defaultSource: defSource || null, probed: [{ source: 'fixture', detail: list.length + ' 项' }] });
+    const EDGE = 'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe';
+    const edgeInv = inv([brow(EDGE)], EDGE.toLowerCase(), 'userchoice');
+    const chromeInv = inv([brow('/usr/bin/google-chrome')]);
+    const empty = inv([]);
+    const pw = br.openPlan('win32', u, { inventory: empty });
+    const pd = br.openPlan('win32', u, { inventory: inv([brow(EDGE), brow('C:\\FF\\firefox.exe')]) });
+    check('P-5 外部打开计划取证档位：仅 linux/darwin 调度器可取证，直启浏览器与 win32 全不可',
+      br.openPlan('win32', u, { inventory: edgeInv }).exitIsEvidence === false
+      && br.openPlan('linux', u, { inventory: empty }).exitIsEvidence === true
+      && br.openPlan('darwin', u, { inventory: empty }).exitIsEvidence === true
+      && br.openPlan('linux', u, { inventory: chromeInv }).exitIsEvidence === false
+      && br.openPlan('win32', u, { inventory: edgeInv }).via === 'browser',
+      JSON.stringify([pw, br.openPlan('linux', u, { inventory: empty })]));
+    // 反向样本（判据必须能红）：Windows 的两条假路都要被识别为「不再存在」。
+    check('P-5 反向：win32 既无调度器可退、也不按清单顺序猜默认项（旧 explorer.exe 冒开的两种残形）',
+      pw.bin === null && pw.via === 'none' && pd.bin === null && pd.pick === 'no-default'
+      && br.ownsItsWindow('dispatcher', 'win32') === false, JSON.stringify([pw, pd]));
+    check('P-5 反向：判据能识别 explorer.exe 兜底回流（源码与能力档位表两处都扫）',
+      /explorer\.exe/.test("return { cmd: 'explorer.exe', args: [url] };")
+      && [path.join(ROOT, 'src', 'platform', 'os', 'browser.js'), path.join(ROOT, 'src', 'platform', 'os', 'capability-profile.js')]
+        .every((f) => !/explorer\.exe/i.test(fs.readFileSync(f, 'utf8'))), 'clean');
+    check('P-5 探测层与档位表同源：openCommand 只在文档化调度器上有值（win32 为 null）',
+      br.openCommand('win32', u) === null && br.openCommand('linux', u).cmd === 'xdg-open'
+      && br.openCommand('darwin', u).cmd === 'open', 'ok');
+    check('P-5 反向：other 引擎（Safari 等）在非 win32 交回调度器，win32 直启本体（那里没有调度器）',
+      br.openPlan('darwin', u, { inventory: inv([brow('/Applications/Safari.app/Contents/MacOS/Safari')]) }).via === 'dispatcher'
+      && br.openPlan('win32', u, { inventory: inv([brow('C:\\Tools\\odd.exe')]) }).via === 'browser', 'ok');
   }
   //  重要区分：capabilityProfile.processTreeKill（含 Windows taskkill /T）与
   //   matrix.supportsProcessGroup（仅 POSIX kill(-pid)）**语义不同**，不得混用。

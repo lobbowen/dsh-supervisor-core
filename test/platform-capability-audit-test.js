@@ -170,6 +170,23 @@ console.log('== A2 声明能力必须有实现产物 ==');
     /detachedIgnored/.test(brSrc) && /if \(!avail\(plan\.bin\)\)/.test(brSrc) && /observeSpawn/.test(brSrc), 'ok');
   check('A2 三档结果有唯一构造点（ok/confirmed/handedOff/reason 不得由调用方各自解释 argv 结局）',
     /function outcome\(/.test(brSrc) && /ok,\s*confirmed,\s*handedOff,\s*reason/.test(brSrc), 'ok');
+  // 声明 openBrowser=true 的机器必须答得出「系统里装了哪些浏览器」：这是外部打开的前提，
+  //   也是本轮 Windows 缺陷的根因所在（旧实现从不枚举，只问一句被系统忽略的默认值）。
+  //   判据按三平台分派逐一钉实现产物 + 留痕，不按当前宿主分叉，也不看导出名。
+  const detSrc = readOs('browser-inventory.js');
+  check('A2 探测层按三平台各有实现（Windows 多源注册表 / macOS LaunchServices / Linux .desktop 与 xdg-settings）',
+    /function probeWin\(/.test(detSrc) && /function probeMac\(/.test(detSrc) && /function probeLinux\(/.test(detSrc)
+    && /function inventory\(/.test(detSrc), 'ok');
+  check('A2 探测层三平台事实齐备（Windows：UserChoice+协议关联+目录+App Paths；macOS：LaunchServices；Linux：mimeapps+desktop+PATH）',
+    /UrlAssociations/.test(detSrc) && /StartMenuInternet/.test(detSrc) && /RegisteredApplications/.test(detSrc)
+    && /App Paths/.test(detSrc) && /URLForApplicationToOpenURL/.test(detSrc)
+    && /mimeapps/.test(detSrc) && /\.desktop/.test(detSrc) && /PATH/.test(detSrc), 'ok');
+  check('A2 探测每条来源都留痕且按平台缓存（probed 抵达面板；面板轮询不得反复查注册表）',
+    /probed/.test(detSrc) && /CACHE/.test(detSrc) && /ttl/.test(detSrc), 'ok');
+  check('A2 探测意外不得变成用户可见的打开失败（异常兜成空清单并记 probe-error）',
+    /catch/.test(detSrc) && /probe-error/.test(detSrc), 'ok');
+  check('A2 浏览器清单有只读消费面（面板/排障据此看到本机探到了什么）',
+    /function listBrowsers\(/.test(brSrc) && /listBrowsers/.test(read('src/api/domains/guard.js')), 'ok');
   check('A2 linux 的 openBrowser 声明由图形会话实测覆写（静态档位只说「能试」，不说「这次成了」）',
     /p\.openBrowser\s*=\s*desktop\.sessionAvailable\(\)/.test(readOs('index.js')), 'ok');
   const fpSrc = readOs('file-protect.js');

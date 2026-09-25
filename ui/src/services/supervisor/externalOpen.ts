@@ -41,18 +41,32 @@ export async function handOffFromPanel(url: string): Promise<OpenExternalResult>
 
 export type OpenTier = "confirmed" | "handed-off" | "failed";
 
-/** 启动形态摊成一行小字：三档里 handedOff 与 failed 的区别只在证据强弱，用户需要知道自己点了什么
- *  才知道该不该信这句结论 —— 内核把 bin/via/ownsWindow/exit 一并交出，此前它在响应体里躺着没人看。 */
+/** 启动形态 + 探测留痕摊成一行小字：三档里 handedOff 与 failed 的区别只在证据强弱，用户需要知道自己点了什么
+ *  才知道该不该信这句结论 —— 内核把 bin/via/ownsWindow/exit 一并交出，此前它在响应体里躺着没人看。
+ *  diagnostics 是探测层留痕的行内摘要（默认项从哪条系统事实读出、本机探到哪些候选）：
+ *  「点了没弹出来」这一类报障，只有带着这一行才谈得上定性，否则界面永远只剩一句「再点一次」。 */
 export function evidenceDetail(ev?: OpenExternalResult["evidence"]): string | null {
   if (!ev || typeof ev !== "object") return null;
   const exe = typeof ev.bin === "string" ? ev.bin.split(/[\\/]/).pop() : null;
   const bits: string[] = [];
   if (exe) bits.push(exe);
+  else if (ev.via === "none") bits.push("未定出启动对象");
   if (ev.via) bits.push(ev.via);
   if (ev.ownsWindow === false) bits.push("退出码不作证据");
   if (ev.exitCode !== undefined && ev.exitCode !== null) bits.push("exit " + String(ev.exitCode));
   else if (ev.exitSignal) bits.push("signal " + ev.exitSignal);
   else if (ev.error) bits.push(String(ev.error));
+  const d = ev.diagnostics;
+  if (d && typeof d === "object") {
+    bits.push("默认项来源 " + ((d.default && d.default.source) || "未读出"));
+    const found = Array.isArray(d.found) ? d.found : [];
+    bits.push(
+      "候选 " + String(found.length) + " 个" +
+      (found.length ? "：" + found.map((f) => f.name || f.via || "?").join("、") : ""),
+    );
+    const probed = Array.isArray(d.probed) ? d.probed : [];
+    if (!found.length && probed.length) bits.push("探测读数：" + probed.map((p) => p.source).join("、"));
+  }
   return bits.length ? bits.join(" | ") : null;
 }
 
