@@ -1350,8 +1350,12 @@ async function x10() {
   //   为什么钉这一条：本轮 Windows 缺陷的根因不是某个分支写错，而是「系统里有什么浏览器」这件事
   //   从来没有一个唯一回答处 —— 选路层顺手查一次注册表、router 侧自己摸 X socket，两份副本必然漂移。
   const detRel = path.join(ROOT, 'src', 'platform', 'os', 'browser-inventory.js');
+  //  允许的第二处只有一个：registry.js —— 它写的是 `reg query` 的**输出排版与键名回显**这一件事，
+  //   且被探测层原样转出口消费；浏览器键的**取用与裁决**仍只在探测层。第三处（任何域自己查注册表）
+  //   仍是违规，故反向样本照旧成立。
+  const regRel = path.join(ROOT, 'src', 'platform', 'os', 'registry.js');
   const factRe = /StartMenuInternet|UrlAssociations|RegisteredApplications|App Paths|urlsForApplicationsToOpenURL|URLForApplicationToOpenURL|mimeapps|x-scheme-handler|xdg-settings/;
-  const factFiles = files.filter((f) => f !== detRel && factRe.test(fs.readFileSync(f, 'utf8'))).map((f) => path.relative(ROOT, f));
+  const factFiles = files.filter((f) => f !== detRel && f !== regRel && factRe.test(fs.readFileSync(f, 'utf8'))).map((f) => path.relative(ROOT, f));
   check('X-11 浏览器探测的平台事实只在 browser-inventory.js 一处（全仓 src/ 零第二份）',
     fs.existsSync(detRel) && factFiles.length === 0, factFiles.join(',') || ('扫描 ' + files.length + ' 个文件'));
   check('X-11 反向：判据能识别探测事实散回选路层（旧 browser.js 里查注册表即此形态）',
@@ -1486,18 +1490,20 @@ async function x10() {
     defaultId: null, defaultSource: null, probed: [{ source: 'fixture', detail: '2 项' }],
   });
   const FKEYS = ['at', 'browsers', 'cached', 'capabilities', 'default', 'identity', 'paths', 'pick',
-    'platform', 'preference', 'probed', 'schema', 'session', 'snapshot'];
+    'platform', 'preference', 'probed', 'schema', 'sections', 'session', 'snapshot'];
   const saved = { home: process.env.DSH_SUPERVISOR_HOME, bound: Object.assign({}, env.bind()) };
 
   const f1 = env.form({ force: true, inventory: fixtureInv(), now: () => 111 });
-  check('X-12 表单字段集固定（平台/身份/落点/会话/档位/偏好/系统默认/候选/分发依据/留痕/快照/时戳/schema/缓存位）',
+  check('X-12 表单字段集固定（平台/身份/落点/会话/档位/偏好/系统默认/候选/分发依据/维度台账/留痕/快照/时戳/schema/缓存位）',
     JSON.stringify(Object.keys(f1).sort()) === JSON.stringify(FKEYS.slice().sort()), Object.keys(f1).join(','));
-  check('X-12 反向：少一个面的表单不足以支撑后续分发（漏 pick 或漏 identity 必须判红，否则字段集是摆设）',
+  check('X-12 反向：少一个面的表单不足以支撑后续分发（漏 pick、漏 identity 或漏维度台账必须判红，否则字段集是摆设）',
     (() => {
       const less = Object.assign({}, f1); delete less.pick;
+      const lessSection = Object.assign({}, f1); delete lessSection.sections;
       const more = Object.assign({}, f1, { explorer: true });
       const k = JSON.stringify(FKEYS.slice().sort());
-      return JSON.stringify(Object.keys(less).sort()) !== k && JSON.stringify(Object.keys(more).sort()) !== k;
+      return JSON.stringify(Object.keys(less).sort()) !== k && JSON.stringify(Object.keys(lessSection).sort()) !== k
+        && JSON.stringify(Object.keys(more).sort()) !== k;
     })(), 'ok');
   check('X-12 每条结论带留痕来源，分发结论随行（section/source/detail 成对；pick 是后续动作的唯一依据）',
     ['browsers', 'session', 'capabilities', 'preference', 'pick'].every((s) => f1.probed.some((p) => p.section === s

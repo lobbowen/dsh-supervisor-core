@@ -445,6 +445,6 @@ module.exports = {
   // 注册表原语住在 ./registry.js（单一实现），此处原样转出：既有门禁与消费方的取用口不变。
   regValueOf: registry.regValueOf, expandEnvVars, safeRegKeyPart, regKeyFull: registry.regKeyFull,
   regValue, regSubkeys, regValueTargets,
-  safeRegKeyPart, browserFromDesktop, desktopDirs, resolveLinuxBin, mimeAppsDefault, linuxDefaultFromMimeApps,
+  browserFromDesktop, desktopDirs, resolveLinuxBin, mimeAppsDefault, linuxDefaultFromMimeApps,
   WIN_APP_PATHS, PROBE_TIMEOUT_MS,
 };
