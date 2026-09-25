@@ -1103,7 +1103,7 @@ async function x10() {
       ['browser', EDGE_WIN]],
     // 浏览器选择权在用户：在产品里选过一次的，普通打开与登录窗口都得听它的，且压过系统默认。
     ['偏好命中压过系统默认：启动用户选的那个，诊断记 user-preference/matched:true', u,
-      { platform: 'win32', inventory: IN([B(EDGE_WIN), B('C:\\FF\\firefox.exe')], 'c:\\edge\\msedge.exe', 'userchoice'),
+      { platform: 'win32', inventory: IN([B(EDGE_WIN), B('C:\\FF\\firefox.exe')], EDGE_WIN.toLowerCase(), 'userchoice'),
         preference: 'c:\\ff\\firefox.exe', observe: obs(EX_OK), spawn: okSpawn, binAvailable: () => true },
       (r) => r.ok === true && r.evidence.bin === 'C:\\FF\\firefox.exe'
         && r.evidence.diagnostics.pick === 'user-preference'
@@ -1111,8 +1111,9 @@ async function x10() {
       ['browser', 'C:\\FF\\firefox.exe']],
     // 偏好所指被卸载：可以回落（否则一次卸载就把功能打死），但必须在面板上说得出来 ——
     //   「你选的火狐已经不在了」与「按系统默认开的」是两件事，静默换人等于把选择权收回产品。
+    //   defaultId 恒为候选条目之一的 id（探测层契约，见 X-8 同源那条），夹具不能自己造一个清单外的默认。
     ['偏好所指已不在候选里 = 回落系统默认并交出 matched:false（不静默换人）', u,
-      { platform: 'win32', inventory: IN([B(EDGE_WIN), B('C:\\FF\\firefox.exe')], 'c:\\edge\\msedge.exe', 'userchoice'),
+      { platform: 'win32', inventory: IN([B(EDGE_WIN), B('C:\\FF\\firefox.exe')], EDGE_WIN.toLowerCase(), 'userchoice'),
         preference: 'c:\\gone\\firefox.exe', observe: obs(EX_OK), spawn: okSpawn, binAvailable: () => true },
       (r) => r.ok === true && r.evidence.bin === EDGE_WIN && r.evidence.diagnostics.pick === 'userchoice'
         && JSON.stringify(r.evidence.diagnostics.preference) === JSON.stringify({ id: 'c:\\gone\\firefox.exe', matched: false }),
