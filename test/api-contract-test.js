@@ -82,7 +82,7 @@ const envCalls = [];
 // 环境表单的契约形状（与 platform/os/environment.js#form 的产物同字段）：端点只负责原样交出，
 //   字段口径由表单定；这里造一份，钉的是「边界没加工、没丢留痕」，不是重新判一遍表单对不对。
 const ENVIRONMENT_FORM = {
-  schema: 1, at: 1700000000000, cached: false, platform: 'win32',
+  schema: 2, at: 1700000000000, cached: false, platform: 'win32',
   identity: { platform: 'win32', arch: 'x64', hostname: 'h', user: 'u', home: 'C:\\Users\\u', node: 'v24' },
   paths: { root: 'C:\\Users\\u\\AppData\\Local\\dsh-supervisor', supervisor: 'C:\\s', shell: 'C:\\k' },
   session: { platform: 'win32', available: true, reason: 'session-scoped-by-launcher' },
@@ -95,6 +95,23 @@ const ENVIRONMENT_FORM = {
     { id: 'c:\\ff\\firefox.exe', name: 'firefox', engine: 'firefox', bin: 'C:\\FF\\firefox.exe', baseArgs: [], sources: ['app-paths'], isDefault: false },
   ],
   pick: { how: 'user-preference', id: 'c:\\ff\\firefox.exe', name: 'firefox', wanted: 'c:\\ff\\firefox.exe', stale: false },
+  // schema 2 的维度台账：每个维度一条 {label, at, source, state, data, error}，端点原样交出。
+  //   这里刻意放三种档位各一条：已判成（runtime/egress）、尚未刷新（dsh pending）、判定为无（browsers empty），
+  //   并把带凭据的代理地址以脱敏后的形态放进夹具 —— 边界要交出的是表单的口径，不是它自己再判一遍。
+  sections: {
+    runtime: { label: '运行时', at: 1700000000000, source: 'registered', state: 'ok', error: null,
+      data: { node: 'v24.18.0', npm: '11.0.0', git: null, registry: { origin: 'https://registry.npmjs.org', mode: 'default' }, prefix: 'C:\\npm' } },
+    dsh: { label: 'DSH', at: null, source: 'registered', state: 'pending', data: null, error: null },
+    browsers: { label: 'browsers', at: 1700000000000, source: 'self', state: 'ok', data: { count: 2, defaultSource: 'userchoice' } },
+    session: { label: 'session', at: 1700000000000, source: 'self', state: 'ok', data: { reason: 'session-scoped-by-launcher' } },
+    egress: { label: '出网条件', at: 1700000000000, source: 'self', state: 'ok', error: null,
+      data: { at: 1700000000000, proxy: { state: 'on', server: 'http://usr:***@127.0.0.1:7890', pac: null, source: 'registry:Internet Settings', cached: false },
+        targets: { 'login.example.test': { ok: false, stage: 'dns', detail: 'ENOTFOUND', at: 1700000000000 } },
+        probed: [{ source: 'registry:Internet Settings', detail: 'proxy=on' }] } },
+    capabilities: { label: 'capabilities', at: 1700000000000, source: 'self', state: 'ok', data: { openBrowser: true } },
+    preference: { label: 'preference', at: 1700000000000, source: 'self', state: 'ok', data: { id: 'c:\\ff\\firefox.exe' } },
+    pick: { label: 'pick', at: 1700000000000, source: 'self', state: 'ok', data: { how: 'user-preference' } },
+  },
   probed: [{ section: 'browsers', source: 'userchoice', detail: 'msedge' }, { section: 'pick', source: 'form', detail: 'user-preference（firefox）' }],
   snapshot: { path: 'C:\\s\\environment.json', written: false, error: null },
 };
@@ -105,8 +122,13 @@ const fakeBrowser = {
     return owCase(url);
   },
 };
-// 表单的假装配：只记调用参数，返回固定形状（真表单要查注册表，CI 上既慢又不可预期）。
-const fakeEnvironment = { form: (o) => { envCalls.push(o || {}); return ENVIRONMENT_FORM; } };
+// 表单的假装配：只记调用参数，返回固定形状（真表单要查注册表/摸网络，CI 上既慢又不可预期）。
+//   异步维度（运行时/DSH/出网）只由 refresh 那一拍补齐，故替身必须两条口都有：少一条就验不到真正跑的路。
+const envRefreshCalls = [];
+const fakeEnvironment = {
+  form: (o) => { envCalls.push(o || {}); return ENVIRONMENT_FORM; },
+  refresh: (o) => { envRefreshCalls.push(o || {}); return Promise.resolve(ENVIRONMENT_FORM); },
+};
 // 偏好门面（app/settings/browser.js）的替身：本文件只判边界，校验与落盘判据在 X-12 里钉。
 const BROWSER_PREF = { ok: true, configured: true, value: 'c:\\ff\\firefox.exe', stale: false, browser: ENVIRONMENT_FORM.browsers[1], candidates: ENVIRONMENT_FORM.browsers, pick: ENVIRONMENT_FORM.pick, platform: 'win32' };
 const envPrefCalls = [];
@@ -250,12 +272,24 @@ function req(method, p, body, hostHeader, extraHeaders, via) {
     const before = argvUrls.length;
     r = await req('GET', '/env/environment');
     check('EF 表单端点 200 且字段原样交出（候选/默认/偏好/分发依据/留痕五层齐备，边界不加工）',
-      r.code === 200 && r.body.platform === 'win32' && r.body.schema === 1
+      r.code === 200 && r.body.platform === 'win32' && r.body.schema === 2
       && r.body.default && r.body.default.source === 'userchoice'
       && r.body.browsers.length === 2 && r.body.browsers.filter((b) => b.isDefault).length === 1
       && r.body.browsers.every((b) => Array.isArray(b.sources) && b.sources.length && b.engine)
       && r.body.preference.configured === true && r.body.preference.matched === true
       && r.body.pick.how === 'user-preference' && r.body.probed.length === 2, r.code + ' ' + JSON.stringify(r.body));
+    // 维度台账是 schema 2 的全部意义：面板要在一处看完「本机实况 + 每条结论的来路与新鲜度」。
+    //   边界要是挑字段回传，异步维度就会静默消失（面板显示成「本机没有」而不是「尚未探测」）。
+    const secs = r.body.sections || {};
+    check('EF 交出整张维度台账（八维齐备且每维带 state/source/at/label，未刷新的那维 at 为 null）',
+      ['runtime', 'dsh', 'browsers', 'session', 'egress', 'capabilities', 'preference', 'pick']
+        .every((id) => secs[id] && typeof secs[id].state === 'string' && typeof secs[id].source === 'string'
+          && typeof secs[id].label === 'string')
+      && secs.dsh.state === 'pending' && secs.dsh.at === null && secs.runtime.state === 'ok',
+      JSON.stringify(Object.keys(secs).map((id) => [id, secs[id].state, secs[id].at])));
+    check('EF 代理地址的凭据在边界外仍为脱敏形态（表单是唯一的抹除处，端点再拼一遍就会把两份口径都弄错）',
+      secs.egress.data.proxy.server === 'http://usr:***@127.0.0.1:7890'
+        && !/pwd/.test(JSON.stringify(secs.egress)), JSON.stringify(secs.egress && secs.egress.data));
     check('EF 反向：表单是只读面，一次都没触到打开出口（argv 里不得多出一条地址）',
       argvUrls.length === before, 'openBrowser 调用 ' + (argvUrls.length - before) + ' 次');
     const evilEnv = await new Promise((resolve) => {
@@ -264,10 +298,12 @@ function req(method, p, body, hostHeader, extraHeaders, via) {
     });
     check('EF 跨站 Origin 拒绝 403（本机装了哪些浏览器、用什么打开不得被任意网页读走）', evilEnv === 403, String(evilEnv));
     r = await req('GET', '/env/environment?force=1');
-    check('EF force=1 透传给表单（刚装/卸载浏览器后绕开缓存重探，并把这一拍落进快照）',
-      r.code === 200 && envCalls.some((c) => c.force === true && c.persist === true), JSON.stringify(envCalls));
-    check('EF 反向：常态读取不带 force/persist（面板轮询不得每次重探系统、也不得反复写盘）',
-      envCalls.some((c) => !c.force && !c.persist), JSON.stringify(envCalls));
+    check('EF force=1 走异步刷新那一拍并落快照（只重跑同步表单等于异步维度永远刷不出来）',
+      r.code === 200 && envRefreshCalls.length === 1
+        && envRefreshCalls[0].force === true && envRefreshCalls[0].persist === true, JSON.stringify(envRefreshCalls));
+    check('EF 反向：常态读取既不触发刷新也不写盘（面板轮询不得每次重探系统、反复写盘）',
+      envRefreshCalls.length === 1 && envCalls.length === 1 && !envCalls[0].force && !envCalls[0].persist,
+      JSON.stringify({ refresh: envRefreshCalls, form: envCalls }));
 
     // PR 组：浏览器偏好的读写边界。判据（id 必须是本机候选）住在表单，本组只钉边界三件事：
     //   GET 原样交出状态、POST 缺字段=400 不走到门面、门面判失败=500 而不是把失败说成成功。
@@ -299,7 +335,8 @@ function req(method, p, body, hostHeader, extraHeaders, via) {
     // 反空转：注入的出口若一次都没被叫到，整组三档断言都只是对着空气判绿。
     check('OW/OU 两组真的驱动了注入出口（出口未被调用即整组空转）', argvUrls.length >= 7, 'calls=' + argvUrls.length);
     check('EF/PR 两组真的驱动了表单与偏好门面（一次都没被叫到即该组空转）',
-      envCalls.length >= 2 && envPrefCalls.length >= 2, 'form=' + envCalls.length + ' pref=' + envPrefCalls.length);
+      envCalls.length + envRefreshCalls.length >= 2 && envPrefCalls.length >= 2,
+      'form=' + envCalls.length + ' refresh=' + envRefreshCalls.length + ' pref=' + envPrefCalls.length);
   }
 
   // 跨站 Origin 仍拒绝（安全契约不回归）

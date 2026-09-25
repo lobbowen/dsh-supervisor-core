@@ -12,8 +12,45 @@ import { useCallback, useEffect, useState } from "react";
 import { ExternalLink, RefreshCw, TriangleAlert } from "lucide-react";
 import { Button, RadioGroup, RadioGroupItem } from "../../../framework/ui";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "../../../framework/ui/dialog";
-import { supervisorApi, type EnvironmentForm } from "../../../services/supervisor";
+import { supervisorApi, type EnvironmentForm, type EnvironmentSection, type EgressSectionData } from "../../../services/supervisor";
 import { cn } from "../../../framework/utils";
+
+/** 运行时条目的显示字（内核 EnvCatalog 条目视图）：state 已含版本门槛判定，这里只如实摊开。 */
+function entryText(e?: Record<string, unknown> | null): string {
+  if (!e) return "未读出";
+  const st = String(e.state || "?");
+  const detail = e.detail ? "（" + String(e.detail) + "）" : "";
+  return (String(e.label || "") || "条目") + " " + st + detail;
+}
+
+/** 维度读数状态字：pending / empty / error 三态各说一句 —— 把「这一拍还没探」显示成「本机没有」
+ *  正是此前多个就绪口径互相顶替的根病，未探必须带上「怎么补」的出路。 */
+function sectionState(sec?: EnvironmentSection): string {
+  if (!sec || sec.state === "pending") return "未探测（点「重新探测」补齐）";
+  if (sec.state === "error") return "探测失败：" + (sec.error || "未给出原因");
+  if (sec.state === "empty") return "已探测，无内容";
+  return "已探测" + (sec.at ? " " + new Date(sec.at).toLocaleTimeString() : "");
+}
+
+/** 代理读数的人话版：unknown 必须说成「取不到」而不是「没有」—— 内核正是按这个差别决定
+ *  隔离窗口保不保留的，界面把它显示成「未启用」就会诱导用户去动一个并不需要动的设置。 */
+function proxyText(proxy?: NonNullable<EgressSectionData["proxy"]> | null): string {
+  const p: NonNullable<EgressSectionData["proxy"]> = proxy || {};
+  if (p.state === "on") return "在用（" + (p.server || p.pac || "地址未读出") + "）";
+  if (p.state === "off") return "系统里明确未启用";
+  if (p.state === "unknown") return "取不到" + (p.source ? "（" + p.source + "）" : "") + "，按判不出处理";
+  return "未探测";
+}
+
+/** 通路三态的显示字：null = 判不出，绝不能显示成「不通」。 */
+function reachText(ok?: boolean | null): string {
+  return ok === true ? "可达" : ok === false ? "不通" : "判不出";
+}
+
+/** 探测留痕行的显示字（与内核 form().probed 同源）：egress 行的行名已带 reach: 前缀，其余带维度名。 */
+function probeText(p: { section?: string; source: string; detail?: string | number | null }): string {
+  return (p.section ? p.section + "：" : "") + p.source + "：" + String(p.detail ?? "");
+}
 
 /** 分发依据的人话版：内核给的是层名，用户要看到的是「这次用谁、是不是我选的」。 */
 function pickText(pick?: EnvironmentForm["pick"]): string {
@@ -68,6 +105,8 @@ export function EnvironmentCard() {
   };
 
   const browsers = form?.browsers ?? [];
+  // 维度台账：异步维度（出网条件/运行时/DSH）由内核按拍补齐，本卡片只渲染读数、不自判。
+  const sections = form?.sections;
   const stale = form?.pick?.stale === true;
   const current = form?.preference?.id || FOLLOW_SYSTEM;
   const chosen = draft !== null ? draft : current;
@@ -124,6 +163,54 @@ export function EnvironmentCard() {
               )}
             </div>
 
+            <div className="grid gap-1.5 rounded-md border border-border/60 px-3 py-2.5">
+              <span className="text-xs font-medium">出网条件（隔离登录窗口的分发依据）</span>
+              <span className="text-xs text-muted-foreground">{sectionState(sections?.egress)}</span>
+              {sections?.egress?.data ? (
+                <div className="grid gap-0.5 text-xs">
+                  <span className="text-muted-foreground">
+                    系统代理：{proxyText(sections?.egress?.data?.proxy)}
+                  </span>
+                  {Object.entries(sections?.egress?.data?.targets || {}).map(([host, t]) => (
+                    <span key={host} className="text-muted-foreground">
+                      {host}：{reachText(t?.ok)}{t?.stage ? "（停在 " + t.stage + (t.detail ? " " + t.detail : "") + "）" : ""}
+                    </span>
+                  ))}
+                  {!Object.keys(sections?.egress?.data?.targets || {}).length ? (
+                    <span className="text-muted-foreground">还没有目标域被问过：一键登录时会当场判定并记在这里。</span>
+                  ) : null}
+                </div>
+              ) : null}
+              {sections?.egress?.data?.proxy?.state === "off" ? (
+                <p className="text-xs text-muted-foreground">
+                  没有在用系统代理时，直连不通的授权域只能靠现有浏览器窗口的既有出网路径打开（隔离冷档案会是空白页）。
+                </p>
+              ) : null}
+            </div>
+
+            <div className="grid gap-1.5 rounded-md border border-border/60 px-3 py-2.5">
+              <span className="text-xs font-medium">运行时与 DSH（安装/升级动作的分发依据）</span>
+              <span className="text-xs text-muted-foreground">{sectionState(sections?.runtime)}</span>
+              {sections?.runtime?.data ? (
+                <div className="grid gap-0.5 text-xs text-muted-foreground">
+                  <span>{entryText(sections?.runtime?.data?.node)} · {entryText(sections?.runtime?.data?.npm)} · {entryText(sections?.runtime?.data?.git)}</span>
+                  <span>
+                    镜像源：{sections?.runtime?.data?.registry?.origin || "未读出"}
+                    {sections?.runtime?.data?.registry?.mode ? "（" + sections.runtime.data.registry.mode + "）" : ""}
+                    {" · 候选 " + (sections?.runtime?.data?.registry?.candidates || []).length + " 个"}
+                  </span>
+                  <span className="break-all">全局前缀：{sections?.runtime?.data?.prefix || "未实测（npm root -g 未返回）"}</span>
+                </div>
+              ) : null}
+              <span className="text-xs text-muted-foreground">{sectionState(sections?.dsh)}</span>
+              {sections?.dsh?.data ? (
+                <div className="grid gap-0.5 text-xs text-muted-foreground">
+                  <span>{entryText(sections?.dsh?.data?.dsh)} · {entryText(sections?.dsh?.data?.selfUpdate)}</span>
+                  <span>看护：{sections?.dsh?.data?.managed ? "守卫托管" : "未托管"}{sections?.dsh?.data?.phase ? " · " + sections.dsh.data.phase : ""}</span>
+                </div>
+              ) : null}
+            </div>
+
             <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-xs">
               <dt className="text-muted-foreground">平台</dt>
               <dd className="font-mono">{[form?.identity?.platform, form?.identity?.arch].filter(Boolean).join(" / ") || "—"}</dd>
@@ -136,9 +223,7 @@ export function EnvironmentCard() {
               <dt className="text-muted-foreground">探测留痕</dt>
               <dd className="grid gap-0.5">
                 {(form?.probed ?? []).map((p, i) => (
-                  <span key={i} className="text-muted-foreground/80">
-                    {(p.section ? p.section + "：" : "") + p.source + "：" + String(p.detail ?? "")}
-                  </span>
+                  <span key={i} className="text-muted-foreground/80">{probeText(p)}</span>
                 ))}
               </dd>
               <dt className="text-muted-foreground">快照</dt>

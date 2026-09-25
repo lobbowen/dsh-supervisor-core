@@ -9,6 +9,13 @@ const { normalize } = require('../../../platform/service/config');
 const { extension: domainConfigExtension } = require('../../../app/settings/domain-config');
 const logcore = require('../../../platform/service/log/logcore');
 const { DshTokenService } = require('../../../platform/service/token');
+// 环境表单的 runtime/dsh 两维直接复用 EnvCatalog（异步口径）与 native 的现成解析口：
+//   见下方 registerSection 的分工说明 —— 表单只记账，采集实现一律不复制。
+const { EnvCatalog } = require('../../../platform/service/env-catalog');
+const npm = require('../../native/npm');
+
+/** 表单读路径里 `npm root -g` 的上界：默认 15s 会把面板刷新整条吃掉，取不到即如实标未测。 */
+const FORM_NPM_ROOT_TIMEOUT_MS = 4000;
 const { DistributionManager } = require('../../../platform/distribution/index');
 const shellDomain = require('../../../domains/shell/index');
 const { TaskRegistry } = require('../../../platform/service/tasks');
@@ -25,6 +32,51 @@ function composeCore(host, rawConfig, configPath) {
     //   而 platform 不得 require app（L-1），故装配期把 getter 绑给表单。必须在任何 form()/选路之前，
     //   绑在这里等于「进程活着就一定有偏好可读」，调用点不再层层传参（漏传一处即一条静默降级路）。
     platform.environment.bind({ preference: () => (host.config && host.config.externalBrowser) || null });
+    // 环境表单的维度注册（schema 2 的「账本住内核、采集归所有者」）：runtime / dsh 两维的探针
+    //   一律复用现成实现 —— EnvCatalog 的异步口径（/env/status 用的就是它）、分发层的镜像源读数、
+    //   native 的环境检查与 DSH 判定。本处只做「把探针挂到台账上」，绝不另写一份探测：
+    //   三份环境实现各说各话正是本轮要收敛的病（面板上同一台机器出现三个就绪口径）。
+    //   探针在刷新期才被调用（启动一拍 + 面板 force），所以引用 host 上的晚装配字段是安全的。
+    platform.environment.registerSection('runtime', {
+      label: '运行时（Node/npm/git/镜像源/全局前缀）',
+      probe: async () => {
+        const cat = await new EnvCatalog(host.config).probeAsync();
+        const m = host.nativeManager;
+        const [reg, prefix] = await Promise.all([
+          m && m.dist && typeof m.dist.registryInfo === 'function'
+            ? Promise.resolve(m.dist.registryInfo()).catch(() => null) : Promise.resolve(null),
+          // 前缀实测就是安装/卸载用的那同一个解析口，只把超时收到表单预算内（默认 15s 会吃掉面板刷新）。
+          m ? npm.resolveNpmRoot(m, { timeoutMs: FORM_NPM_ROOT_TIMEOUT_MS }).catch(() => null) : Promise.resolve(null),
+        ]);
+        return {
+          node: cat.node, npm: cat.npm, git: cat.git,
+          registry: reg ? {
+            origin: reg.origin || null, mode: reg.mode || null, source: reg.source || null,
+            manualOrigin: reg.manualOrigin || null,
+            candidates: (reg.registries || []).map((r) => ({
+              base: r.base, reachable: r.reachable === undefined ? null : r.reachable,
+              latencyMs: r.latencyMs === undefined ? null : r.latencyMs, error: r.error || null,
+            })),
+          } : null,
+          // 全局前缀只来自 `npm root -g` 的实测，拿不到就是 null：装/卸落在哪个前缀是排障第一问，
+          //   猜一个只会指错地方（壳侧的同名读数在 E4 上报接通后进这一维）。
+          prefix: prefix || null,
+        };
+      },
+    });
+    platform.environment.registerSection('dsh', {
+      label: 'DSH 本体与内核更新',
+      probe: async () => {
+        const cat = new EnvCatalog(host.config);
+        const d = typeof host.dshenvStatus === 'function' ? host.dshenvStatus() : null;
+        if (!d) return null;
+        return {
+          dsh: cat.dshEntry(d.binOk, d.installed, d.bin),
+          selfUpdate: cat.selfUpdateEntry(),
+          managed: d.managed === true, phase: d.phase || null,
+        };
+      },
+    });
     // 数据目录访问保护：目录级一次即覆盖全部子文件（NTFS 继承 ACE 对既有与新建子项都生效，
     //   逐个热写文件 icacls 会造成写放大）。Unix chmod 0700；Windows icacls 去继承 + 仅当前用户
     //   （POSIX mode 在 Windows 被忽略）。本目录含 apiAccessKey / remoteToken / DSH 会话令牌 / frpc auth.token。

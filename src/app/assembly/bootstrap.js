@@ -11,6 +11,9 @@ const { createShellWatchdog } = require('../../domains/shell/watchdog');
 const pidlook = require('../../platform/os/pidlookup');
 const platform = require('../../platform/os/index');
 
+/** 启动拍环境表单的延后量：守卫启动头几秒要把资源让给内核拉起，全量探测排在其后。 */
+const ENV_FORM_STARTUP_DELAY_MS = 3000;
+
 function _bootstrap(host) {
     // HTTP 服务由 root 注入的 startApi() 启动：app 不得 require api（契约 DS-3）。
     // markStarted 缺失会使 lifecycle.isReady() 恒 false（/readyz 失败），状态摘要无 startedAt。
@@ -135,6 +138,42 @@ function _bootstrap(host) {
         host.logger.warn('[shell-watchdog] 启动异常（不影响守卫主循环）: ' + ((e && e.message) || e));
       }
     }
+    // 环境表单的启动一拍：异步维度（运行时/DSH/出网条件）只有走 refresh 才会有读数，而读数是
+    //   后续一切分发的依据 —— 不在这里拍，面板与一键登录就只能永远看到 pending。
+    //   延后若干秒：守卫启动头几秒要把 CPU/磁盘让给内核拉起，探测排在其后；句柄 unref，不拖住退出。
+    const envTimer = setTimeout(() => {
+      try { host._refreshEnvironmentForm(); } catch (e) {
+        host.logger.warn && host.logger.warn('[environment] 启动刷新异常（不影响守卫主循环）: ' + ((e && e.message) || e));
+      }
+    }, ENV_FORM_STARTUP_DELAY_MS);
+    if (envTimer && envTimer.unref) envTimer.unref();
+}
+
+/** 环境表单全量刷新一次并落快照（快照是给人回看的留痕，写失败只记 warn）。
+ *  哪些维度没取到读数必须说得出口：pending/错误若只躺在 JSON 里，真机排障就还是「问一处答两处」。 */
+function _refreshEnvironmentForm(host) {
+  return platform.environment.refresh({ persist: true }).then((f) => {
+    const secs = (f && f.sections) || {};
+    const pending = Object.keys(secs).filter((id) => secs[id] && secs[id].state === 'pending');
+    const failed = Object.keys(secs).filter((id) => secs[id] && secs[id].state === 'error');
+    const snap = f && f.snapshot ? f.snapshot : {};
+    if (snap.written === false && snap.error) {
+      host.logger.warn && host.logger.warn('[environment] 快照未落盘: ' + snap.error);
+    }
+    if (failed.length) {
+      host.logger.warn && host.logger.warn('[environment] 维度探测失败: ' + failed.map((id) => id + '(' + secs[id].error + ')').join('; '));
+    }
+    if (pending.length) {
+      host.logger.warn && host.logger.warn('[environment] 维度无探针，本机该项不可判: ' + pending.join(','));
+    }
+    host.logger.info && host.logger.info('[environment] 已刷新：' + Object.keys(secs).length + ' 个维度，浏览器候选 '
+      + ((f && f.browsers && f.browsers.length) || 0) + ' 个，分发依据 ' + ((f && f.pick && f.pick.how) || '?'));
+    return f;
+  }).catch((e) => {
+    // refresh 内部逐维已捕获异常，能到这里的是表单装配本身出错：如实留痕，绝不冒泡进守卫主循环。
+    host.logger.warn && host.logger.warn('[environment] 刷新失败（不影响守卫主循环）: ' + ((e && e.message) || e));
+    return null;
+  });
 }
 
 function _startShellWatchdog(host) {
@@ -204,4 +243,4 @@ function _bindNativeDshCommand(host) {
     } catch (e) { try { host.logger.warn && host.logger.warn('原生 DSH 绑定失败: ' + (e && e.message)); } catch {} }
 }
 
-module.exports = { _bootstrap, _startShellWatchdog, _registerFixedPorts, _bindNativeDshCommand };
+module.exports = { _bootstrap, _startShellWatchdog, _registerFixedPorts, _bindNativeDshCommand, _refreshEnvironmentForm };

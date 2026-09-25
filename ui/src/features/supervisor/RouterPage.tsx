@@ -17,6 +17,7 @@ import { formatCount } from "./format";
 import { Card, Metric, Pill, QuotaBox, MonoEllipsis, ToneDot } from "./widgets";
 import { useSupervisorAction } from "./useSupervisorAction";
 import { runOpenExternal } from "./openExternal";
+import { loginIsolationText } from "../../services/supervisor/externalOpen";
 import { cn } from "../../framework/utils";
 
 function quotaFull(q?: ProviderAccount["quota"]): boolean {
@@ -331,7 +332,9 @@ function EditKeysDialog({ open, onOpenChange, p }: {
     try {
       const s = await runOpenExternal(() => supervisorApi.proxyLoginStart());
       if (!s || s.ok !== true) return;
-      if (s.isolated === false) toast.warning("默认浏览器不支持隔离窗口：本次登录会带现有登录态，换账号请先在该浏览器退出", { duration: 8000 });
+      // 未隔离的两种原因（引擎无隔离方言 / 冷档案注定空白）说法与处置都不同，文案由服务层的纯函数给。
+      const iso = loginIsolationText(s);
+      if (iso) toast.warning(iso, { duration: 12000 });
       const w = await supervisorApi.proxyLoginWait(s.waitMs ?? 180000);
       if (!w.ok || !w.apiKey) { toast.error(w.error || "登录未完成"); return; }
       await supervisorApi.proxyAddKey(p.id, w.apiKey);

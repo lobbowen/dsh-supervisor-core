@@ -20,11 +20,13 @@ function npmLaunch(host) {
 }
 
 /** 优先注入值（测试）。 */
-/** npm 全局根（异步：HTTP/安装路径都在事件循环上，同步 root -g 最长冻结 15s）。 */
-async function resolveNpmRoot(host) {
+/** npm 全局根（异步：HTTP 处理路径都在事件循环上，同步 root -g 最长冻结 15s）。
+ *  opts 透传给执行器（超时口径由调用方定）：环境表单的读路径必须远小于默认 15s，
+ *  否则一次面板刷新就吃掉用户可见的动作预算；拿不到即 null，由表单如实标「未测到」。 */
+async function resolveNpmRoot(host, opts) {
   if (host.npmRoot) return host.npmRoot;
   const l = npmLaunch(host);
-  const r = await ex.runOutAsync(l.program, l.args.concat(['root', '-g']));
+  const r = await ex.runOutAsync(l.program, l.args.concat(['root', '-g']), opts || undefined);
   return r ? r.trim() : null;
 }
 

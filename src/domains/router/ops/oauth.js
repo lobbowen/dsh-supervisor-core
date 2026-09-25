@@ -131,6 +131,11 @@ function createOAuthOps(deps) {
       ok: true, authUrl, url: authUrl, state, port, waitMs: 180000, opened: true,
       // 非隔离引擎（Safari/打包器包装）由平台层降级：账号隔离不成立，换账号只能靠超时重发或手动窗口。
       isolated: ev.isolated === true,
+      // 为什么隔离成立/不成立必须一起交出：面板上一句「未隔离」既没说原因也没法处置。
+      //   basis 来自环境表单的出网条件维度（cold-profile-blocked 即冷档案注定空白），
+      //   与「引擎不支持隔离」是两种不同原因，分开才谈得上分开修（配代理 vs 换浏览器）。
+      isolatedBasis: ev.egress ? ev.egress.basis : (ev.isolated === true ? 'isolated' : 'engine-not-isolatable'),
+      isolatedDetail: ev.egress ? ev.egress.detail || null : null,
     });
   }
 

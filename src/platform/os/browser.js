@@ -10,7 +10,8 @@
 // 外部打开的唯一出口是 openBrowser，`intent` 决定用哪种形态：
 //   'plain'          —— 普通打开（面板/CTL 的「在浏览器里打开」），用系统或用户选的浏览器、并入既有会话；
 //   'isolated-login' —— 一键登录用的隔离窗口（独立 profile + 无痕/隐私参数 + 反指纹环境），
-//                       并监视窗口关闭以便取消登录。
+//                       并监视窗口关闭以便取消登录。窗口是否真能出内容还要过出网条件这一关
+//                       （环境表单的 egress 维度判冷档案，判据不住在本文件）。
 // 两种意图共用同一结果词汇 {ok, confirmed, handedOff, reason, error, message, url, evidence}：
 //   调用方与面板只需认一套字段，不必各自解释 argv 结局，也不存在「登录那条路少判一层」的可能。
 // 三档语义不得混为一谈（这是本能力的标准，也是历史上「面板显示成功而屏幕什么都没有」的病根）：
@@ -288,11 +289,13 @@ function binAvailable(bin) {
  *           inventory?:object, resolveInventory?:Function, resolveDeps?:object, preference?:string|null,
  *           binAvailable?:Function, spawn?:Function, observe?:Function, observeMs?:number, setTimeout?:Function,
  *           platform?:string, desktopAvailable?:Function, allocProfile?:Function, rmTree?:Function,
- *           rand?:Function, now?:Function}} [o]
- *    注入缝供行为测试：CI 机器不真起浏览器、不真查注册表、不真建临时目录。夹具与产品共用同一份输入（同源）。
+ *           rand?:Function, now?:Function, egress?:object}} [o]
+ *    注入缝供行为测试：CI 机器不真起浏览器、不真查注册表、不真建临时目录，也不真摸网（egress 给定读数即不判网）。
+ *    夹具与产品共用同一份输入（同源）。
  *  @returns {Promise<{ok, confirmed, handedOff, reason, error, message, url, evidence}>}
- *    evidence：{bin, engine, via, ownsWindow, isolated, profile, watch, exitCode, exitSignal, error, diagnostics}
- *    —— isolated/profile 在这里而不是结果顶层：顶层字段集是三档词汇的契约，不得按意图增删。 */
+ *    evidence：{bin, engine, via, ownsWindow, isolated, profile, watch, exitCode, exitSignal, error,
+ *              diagnostics, egress} —— isolated/profile 在这里而不是结果顶层：顶层字段集是三档词汇的契约，
+ *    不得按意图增删；egress 是这次隔离判定的依据（null=本意图不判出网）。 */
 async function openBrowser(url, o) {
   const opts = o || {};
   const pl = opts.platform || process.platform;
@@ -319,8 +322,14 @@ async function openBrowser(url, o) {
   const form = formOfBin(pl, picked.browser);
   const canIsolate = intent === 'isolated-login' && form.direct
     && (form.engine === 'chromium' || form.engine === 'firefox');
+  // 冷档案判定（出网条件维度）：能不能隔离不只取决于「探到了支持的浏览器」，还取决于「这个新档案
+  //   有没有一条出网的路」。判据与取数都在环境表单（environment.checkEgress），本层只认结论：
+  //   viable===false 是唯一降档条件（直连不通且系统没有在用代理 —— 那种窗口注定一片空白）；
+  //   null（判不出）保持隔离，绝不拿猜到的事实砍能力。
+  const cold = canIsolate ? await environment.checkEgress(url, opts) : null;
+  const isolate = canIsolate && (!cold || cold.viable !== false);
   let profile = null;
-  if (canIsolate) {
+  if (isolate) {
     const alloc = typeof opts.allocProfile === 'function' ? opts.allocProfile : (() => allocTempDir('dsh-login-'));
     try { profile = opts.profileDir || alloc(); } catch { profile = null; }
   }
@@ -332,7 +341,14 @@ async function openBrowser(url, o) {
     bin: plan.bin, engine: plan.engine, via: plan.via, ownsWindow: plan.exitIsEvidence === true,
     isolated: plan.isolated === true, profile: plan.isolated ? profile : null, watch: plan.watch === true,
     exitCode: null, exitSignal: null, error: null, diagnostics,
+    egress: cold,
   };
+  // 降档要说人话并留在结果里：用户在面板上看到的必须是「为什么没用隔离窗」，而不是静默少了隔离。
+  const downgraded = cold && cold.viable === false;
+  const downgradeText = downgraded
+    ? ('本机直连 ' + cold.host + ' 不通且没有在用系统代理，隔离窗口会是空白页；已在现有浏览器窗口打开该地址'
+      + '（登录完成后请手动清理账号，或先在系统里配好代理）')
+    : null;
   // 预检不通过也要把已分配的目录收走：否则一次失败的登录就在临时目录里留一个孤儿（旧形态从不回收）。
   const deferredRemove = typeof opts.rmTree === 'function' ? opts.rmTree : removeTreeDeferred;
   const fail = (reason, patch) => {
@@ -349,7 +365,8 @@ async function openBrowser(url, o) {
   if (!plan.bin) return fail('no-launcher');
   if (!avail(plan.bin)) return fail('no-launcher');
   // 要隔离却没拿到目录（临时目录分配失败）：如实报失败，绝不降级成「并入既有实例的假隔离登录」。
-  if (canIsolate && !profile) {
+  //   注意判据是 isolate 而不是 canIsolate：出网条件判定降档时压根就不该分配目录，那条路是 plain。
+  if (isolate && !profile) {
     evidence.error = '临时 profile 目录分配失败';
     return fail('spawn-failed');
   }
@@ -381,7 +398,11 @@ async function openBrowser(url, o) {
   }
   // 剩下的都是 ok：可信形态 0 退出算 confirmed；不可信形态（或窗口内仍存活、压根没有退出可言）
   //   只算 handedOff —— 命令确实交出去了，但窗口有无只有用户能判，故面板必须同时给出地址。
-  return outcome({ ok: true, confirmed: exitDecides, handedOff: !exitDecides, url, evidence });
+  //   降档时 message 换成分发依据给出的那句话说清「为什么没用隔离窗」，不得静默少一层隔离。
+  return outcome({
+    ok: true, confirmed: exitDecides, handedOff: !exitDecides, url, evidence,
+    message: downgradeText || undefined,
+  });
 }
 
 module.exports = {

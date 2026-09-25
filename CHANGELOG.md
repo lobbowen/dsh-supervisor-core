@@ -1,3 +1,30 @@
+## [未发布]
+
+### 环境表单维度化 + 出网条件维度：隔离登录的分发依据从「探到了哪个浏览器」升级为「那个浏览器 + 这台机器往外的路」
+- **维度台账（`environment.js` schema 1 升 2）**：新增 `sections`，每个维度一条 `{label, at, source, state, data, error}`，
+  固定次序 `SECTION_ORDER`。收敛的是账本形状而非采集实现——运行时（node/npm/镜像源/全局前缀）与 DSH 判定由
+  **既有探针**经 `registerSection()` 在装配期挂进来（`app/assembly/compose/core.js`），零第二份实现；
+  同步维度（浏览器/图形会话/能力档/偏好/分发依据）由表单每拍现装并**拒接注册**（同一维度两个口径即两个真相）。
+  异步维度未刷新即 `state:'pending'` + 进 `probed` 留痕：面板显示「尚未探测」而不是「本机没有」。
+- **启动拍一次全量并落快照**：`bootstrap.js` 延后一拍调 `refresh({persist:true})`，把 pending/error 维度与快照
+  结果写进日志，真机排障不必再问第二次。
+- **新增 L0 `platform/os/egress.js` + `platform/os/registry.js`**：三平台系统代理读数（win32 读 `Internet Settings`
+  的 `ProxyEnable/ProxyServer/AutoConfigURL`，中英表头都认；darwin 读 `scutil --proxy`；linux 读 `*_proxy` 环境变量）
+  与按主机的 DNS/TCP/TLS 有界通路判定（停在 TLS 完成，不发业务请求）。读数一律三态，「读不到」恒为 `unknown`
+  而不是 `off`；按平台/主机 TTL 60s 复用，`force` 与 `invalidate` 是仅有的两条重探路。`reg query` 的排版解析
+  从 `browser-inventory.js` 抽出为 `registry.js`，同一份输出不再有两处解释。
+- **隔离登录按表单降档**：`coldProfileViable` 是唯一判据，`checkEgress(url)` 是动作层唯一取数入口（永不抛错）。
+  只有「目标域直连明确不通 + 系统代理明确没有」才把 `isolated-login` 降为并入既有窗口（不分配 profile），
+  并给出可修的下一步；任一环判不出即保持隔离档。结论码 `basis` 与人话版 `detail` 经 `evidence.egress`、
+  `proxyLoginStart.isolatedBasis/isolatedDetail` 一路到面板。代理地址里的 `user:pass` 在装配处一次抹掉。
+- **面板**：环境页按维度台账渲染（出网条件/运行时与 DSH 两节各说「判不出」与「尚未探测」），
+  一键登录的「没用隔离窗」拆成两种原因分开措辞（引擎无方言 vs 本机没有出网路），
+  并修掉 `classifyOpenResult` 在非确认档丢掉内核 `message` 的缺陷。
+- 回归：`platform-layer-portability` 新增 X-13（冷档案真值表六格、把 `unknown` 折成 `false` 的写法必判红、
+  L0 三态分档与 TTL 复用、三平台代理分档、凭据脱敏、降档全程零摸网、注册点全仓清单）；
+  `api-contract` EF 组改判 `?force=1` 走 `refresh()` 且整张 `sections` 原样交出；`ui` `externalOpen.test.ts`
+  补隔离文案与出网证据行。四平台 CI 矩阵为唯一裁判。
+
 ## [0.1.6-BETA.14]（2026-09-25）
 
 ### 外部打开的**分发依据**收进一张环境表单：系统说不出默认项时不再整条链静默不弹（0.1.6-BETA.13 的架构续批）
