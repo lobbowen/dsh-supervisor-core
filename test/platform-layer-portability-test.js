@@ -1085,14 +1085,15 @@ async function x10() {
       (r) => r.ok === false && r.reason === 'killed-by-signal' && r.evidence.exitSignal === 'SIGKILL',
       ['dispatcher', 'xdg-open']],
     // 每一次打开都带探测留痕：面板显示 handedOff/失败时，用户与开发者都要能看到「探到了什么、据什么定的默认」。
+    //   判据只覆盖标题所列四项：platform/bin 已退役（界面没有读者，X-14 反向样本正钉着它们不得回流），
+    //   在这里继续断言等于要执行口把无人读的键养回来 —— 两项断言留一条即自相矛盾。
     ['证据必带探测诊断（pick/found/probed/default 四项在场，否则真机无从定性）', u,
       { platform: 'win32', inventory: IN([B(EDGE_WIN), B('C:\\FF\\firefox.exe')], 'c:\\ff\\firefox.exe', 'userchoice'), observe: obs(EX_OK), spawn: okSpawn, binAvailable: () => true },
       (r) => {
         const d = r.evidence && r.evidence.diagnostics;
-        return !!d && d.platform === 'fixture' && d.pick === 'userchoice' && d.found.length === 2
+        return !!d && d.pick === 'userchoice' && d.found.length === 2
           && d.found.every((f) => f.name && f.engine && f.via === 'fixture')
-          && !!d.default && d.default.source === 'userchoice' && d.probed.length === 1
-          && d.bin === r.evidence.bin;
+          && !!d.default && d.default.source === 'userchoice' && d.probed.length === 1;
       }, ['browser', 'C:\\FF\\firefox.exe']],
     // 真机形状：装了多个浏览器，而系统说不出默认（UserChoice 读不到）。旧实现在此判 no-launcher，
     //   用户看到的症状是「点一键登录什么都没弹」。现在这一档必须真的开窗，且把依据摊进证据。
