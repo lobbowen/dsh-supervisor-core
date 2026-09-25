@@ -234,6 +234,8 @@ function loginEnv(rand) {
 /** 探测清单摊成「一行能看完」的诊断，随每次打开的 evidence 交出：
  *  真机报障时这一行就是定档依据（探到几个、分发依据是哪一层、每条来源答了什么），不必再让人回去读代码。
  *  字段全为字符串/短数组，面板原样渲染。
+ *  这里只放**清单与结论**，不放平台名与本次的 bin —— 那两个在 evidence 顶层已经有一份，
+ *  同一件事在两处各写一遍，界面读到哪一处就成了运气，且第二处永远没人维护。
  *  第三参取 pickLauncher 的原样返回而不是清单字段：偏好（命中/已失效）是**这次分发的结论**，
  *  探测层不该知道自己被偏好越过，把它塞进 inventory 会让同一条事实在两处口径不同。 */
 function launchDiagnostics(inv, plan, picked) {
@@ -243,9 +245,7 @@ function launchDiagnostics(inv, plan, picked) {
   }));
   const pk = picked || {};
   return {
-    platform: (inv && inv.platform) || null,
     pick: pk.how || (plan && plan.pick) || 'none',
-    bin: (plan && plan.bin) || null,
     default: inv && inv.defaultId ? { id: inv.defaultId, source: inv.defaultSource || null } : null,
     preference: pk.wanted ? { id: pk.wanted, matched: pk.stale !== true } : null,
     found,

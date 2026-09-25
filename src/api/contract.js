@@ -34,6 +34,7 @@ const SURFACE = [
   { path: '/env/node-lts',         methods: ['GET'],  domain: 'guard', category: 'public',      consumers: ['UI(OverviewPage)'], note: 'Node 当前 vs 官方最新 LTS' },
   { path: '/env/open-url',         methods: ['POST'], domain: 'guard', category: 'public',      consumers: ['UI(externalOpen 地址行)'], note: '请内核用系统默认浏览器打开 http(s) 地址（三档结果原样回传，失败带 evidence.diagnostics 探测留痕；仅回环来源，壳内 webview 丢弃 window.open 时代的唯一代开方）' },
   { path: '/env/environment',      methods: ['GET'],  domain: 'guard', category: 'public',      consumers: ['UI(OverviewPage 环境表单)', 'README 文档化（人工/支持排障直读；打开动作的诊断走 evidence.diagnostics）'], note: '环境表单（只读装配面，schema 2 维度台账）：候选浏览器 + 系统默认及其来源 + 图形会话 + 能力档位 + 用户偏好 + 这一拍的分发依据 + 运行时（Node/npm/镜像源/全局前缀）+ 出网条件（系统代理与目标域通路）+ 每条系统查询留痕；?force=1 异步补齐各维度并落快照' },
+  { path: '/env/environment/last', methods: ['GET'],  domain: 'guard', category: 'public',      consumers: ['UI(OverviewPage 环境表单的上一拍留痕)', 'README 文档化（人工/支持排障直读）'], note: '上一拍环境快照的只读回看口（零摸网零写盘，绝不参与分发判定）：available/at/ageMs/path + 整份上一拍表单；没写过（never-written）与读不出（unreadable-or-schema-mismatch）分开标' },
   { path: '/settings/external-browser', methods: ['GET', 'POST'], domain: 'guard', category: 'public', consumers: ['UI(OverviewPage 环境表单)'], note: '外部打开的浏览器偏好（id 必须是本机候选；空串清除）' },
   { path: '/settings/access-key',  methods: ['GET', 'POST'], domain: 'guard', category: 'public', consumers: ['UI(StartupCard)'], note: '访问密钥' },
   { path: '/settings/close-action', methods: ['GET', 'POST'], domain: 'guard', category: 'public', consumers: ['UI(StartupCard)', '壳(读取执行)'], note: '关窗行为（hide/exit）' },

@@ -646,12 +646,10 @@ export interface EgressVerdict {
  *  与只读端点 `GET /env/environment` 那份完整表单同源）。面板只渲染它，就不必再查一次端点：
  *  失败时屏幕上那一行必须描述**这次**打开所用的那一份清单，而不是另一次探测的结果。 */
 export interface BrowserDiagnostics {
-  platform?: string | null;
-  /** 这次交给谁的分发依据（内核 platform/os/environment.js#pickLauncher 的 how 字段）：
+  /** 分发依据（内核 platform/os/environment.js#pickLauncher 的 how 字段）：
    *  user-preference / candidate-rank / only-installed / none-found，或系统默认项的来源名；
    *  界面只认「有没有用户选过、是不是回落的」，不认具体来源名字。 */
   pick?: string | null;
-  bin?: string | null;
   default?: { id: string; source?: string | null } | null;
   /** 用户偏好的读数：id + 是否仍在候选清单里（false = 需重选）。 */
   preference?: { id?: string | null; matched?: boolean } | null;
@@ -701,12 +699,35 @@ export type DshSectionData = {
   phase?: string | null;
 };
 
-/** 维度台账。已知的三张数据形状点名声明（页面据此渲染具体字段），其余维度（浏览器/会话/能力/偏好/
+/** 启动既成事实维度：守卫这一拍**已经跑过**的东西，逐字抄自启动装配的既有局部量。
+ *  这里没有计划、没有预期，也没有「本该发生但没读到」的形状 —— 每一格只有在代码真的走过那一步
+ *  之后才有值，所以界面看到 null 就是这一拍确实没发生，不需要再猜是不是探测失败。 */
+export type StartupSectionData = {
+  bootAt?: number | null;
+  /** 启动后多久跑环境表单首拍（既成延迟，不是倒计时）。 */
+  envDelayMs?: number | null;
+  routerAutostart?: boolean | null;
+  /** 选路由装配真读出时才算数；null = 这一拍还没到那步。 */
+  routerMode?: string | null;
+  updateCheck?: { enabled?: boolean; initialDelayMs?: number | null; intervalMs?: number | null } | null;
+  shellWatchdog?: boolean | null;
+  lastRefresh?: {
+    at?: number | null;
+    tookMs?: number | null;
+    dims?: Record<string, string>;
+    browsers?: number | null;
+    pick?: string | null;
+    snapshotWritten?: boolean | null;
+  } | null;
+};
+
+/** 维度台账。已知的四张数据形状点名声明（页面据此渲染具体字段），其余维度（浏览器/会话/能力/偏好/
  *  选路，以及未来注册进来的）走索引签名 —— 表单加维度不需要前端先改类型再显示。 */
 export type EnvironmentSections = {
   runtime?: EnvironmentSection<RuntimeSectionData>;
   dsh?: EnvironmentSection<DshSectionData>;
   egress?: EnvironmentSection<EgressSectionData>;
+  startup?: EnvironmentSection<StartupSectionData>;
   [id: string]: EnvironmentSection | undefined;
 };
 
@@ -730,6 +751,19 @@ export interface EnvironmentForm {
   sections?: EnvironmentSections | undefined;
   probed?: Array<{ section?: string; source: string; detail?: string | number | null }>;
   snapshot?: { path?: string; written?: boolean; error?: string | null };
+}
+
+/** 上一拍快照的读回口（`GET /env/environment/last`，内核 environment.js#lastSnapshot）。
+ *  这是**只读留痕**，与当拍字段完全分离：把它并进当拍就等于拿旧数据冒充刚探出来的结论。
+ *  available=false 必须分得清没写过（never-written）与读不出（unreadable-or-schema-mismatch），
+ *  后者是要人去查文件的故障，前者只是这台机器还没跑到落盘那一步。 */
+export interface EnvironmentSnapshotRead {
+  available?: boolean;
+  path?: string;
+  at?: number | null;
+  ageMs?: number | null;
+  reason?: 'ok' | 'never-written' | 'unreadable-or-schema-mismatch' | string;
+  data?: EnvironmentForm | null;
 }
 
 /** 浏览器偏好（`GET|POST /settings/external-browser`）：当前值 + 可选候选 + 这一拍实际会用谁。 */

@@ -12,7 +12,7 @@ import { useCallback, useEffect, useState } from "react";
 import { ExternalLink, RefreshCw, TriangleAlert } from "lucide-react";
 import { Button, RadioGroup, RadioGroupItem } from "../../../framework/ui";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "../../../framework/ui/dialog";
-import { supervisorApi, type EnvironmentForm, type EnvironmentSection, type EgressSectionData } from "../../../services/supervisor";
+import { supervisorApi, type EnvironmentForm, type EnvironmentSection, type EnvironmentSnapshotRead, type EgressSectionData } from "../../../services/supervisor";
 import { cn } from "../../../framework/utils";
 
 /** 运行时条目的显示字（内核 EnvCatalog 条目视图）：state 已含版本门槛判定，这里只如实摊开。 */
@@ -52,6 +52,50 @@ function probeText(p: { section?: string; source: string; detail?: string | numb
   return (p.section ? p.section + "：" : "") + p.source + "：" + String(p.detail ?? "");
 }
 
+/** 距今多久的人话版（只用于「这条留痕有多旧」，不参与任何可用性判定；读不出就说读不出）。 */
+function agoText(ms?: number | null): string {
+  if (typeof ms !== "number" || !Number.isFinite(ms) || ms < 0) return "时间未读出";
+  if (ms < 60000) return "刚刚";
+  if (ms < 3600000) return Math.floor(ms / 60000) + " 分钟前";
+  if (ms < 86400000) return Math.floor(ms / 3600000) + " 小时前";
+  return Math.floor(ms / 86400000) + " 天前";
+}
+
+/** 三态布尔的显示字：「否」与「没读到」是两件事 —— 启动段只记真走过的步，格子空着就是没走到。 */
+function triText(v?: boolean | null): string {
+  return v === true ? "是" : v === false ? "否" : "未读出";
+}
+
+/** 本拍落盘读数：读缓存那一拍压根不写盘，要先按这条分清，否则会把上次装配的 written 冒成本拍成果。 */
+function writeText(snap?: EnvironmentForm["snapshot"], cached?: boolean): string {
+  if (!snap) return "未给出（这一拍没装配）";
+  if (cached) return "没落盘（这一拍读的是内核缓存拍）";
+  if (snap.written === true) return "已写入";
+  if (snap.error) return "失败：" + snap.error;
+  return "没落盘（也没报错误）";
+}
+
+/** 上一拍留痕的一句话（只读回看，与当拍字段分开渲染）：available 为假要分得清没落过盘与读不出，
+ *  后者是要人去查文件的故障，说成「还没写过」会引着人去点刷新；连读回口本身都失败时更不许显示成「没有」。 */
+function lastSnapshotText(last?: EnvironmentSnapshotRead | null, err?: string | null): string {
+  if (err) return "读不回：" + err;
+  if (!last) return "未读";
+  if (last.available === true) {
+    const at = typeof last.at === "number" ? new Date(last.at).toLocaleString() : "时间未读出";
+    const n = last.data && last.data.browsers ? last.data.browsers.length : null;
+    return at + "（" + agoText(last.ageMs) + "）" + (n === null ? "" : "，候选 " + n + " 个");
+  }
+  if (last.reason === "never-written") return "这台机器还没落过盘";
+  return "快照文件读不出或版本不符（不是没写过，得查文件）";
+}
+
+/** 上一拍刷新里没补齐的维度：state 非 ok 全列出 —— 「这一行为什么没数据」的答案就在这串名字里。 */
+function pendingDims(dims?: Record<string, string> | null): string {
+  const d = dims || {};
+  const miss = Object.keys(d).filter((k) => d[k] !== "ok");
+  return miss.length ? "未补齐：" + miss.join("、") : "全部维度补齐";
+}
+
 /** 分发依据的人话版：内核给的是层名，用户要看到的是「这次用谁、是不是我选的」。 */
 function pickText(pick?: EnvironmentForm["pick"]): string {
   const name = pick && pick.name ? pick.name : "未定出";
@@ -74,6 +118,9 @@ export function EnvironmentCard() {
   const [draft, setDraft] = useState<string | null>(null);
   const [probeBusy, setProbeBusy] = useState(false);
   const [saveBusy, setSaveBusy] = useState(false);
+  // 上一拍快照的读回：与当拍表单分开加载、分开失败。它只是留痕，读不回不该把刚探出来的实况一起判死。
+  const [last, setLast] = useState<EnvironmentSnapshotRead | null>(null);
+  const [lastErr, setLastErr] = useState<string | null>(null);
 
   const load = useCallback(async (force: boolean) => {
     if (force) setProbeBusy(true);
@@ -86,6 +133,10 @@ export function EnvironmentCard() {
       setErr(String((e as Error).message || e));
     }
     setProbeBusy(false);
+    // 不 await：这条读回既零摸网也零写盘，但要它失败时只影响自己那一行。
+    void supervisorApi.environmentLast()
+      .then((r) => { setLast(r); setLastErr(null); })
+      .catch((e) => { setLast(null); setLastErr(String((e as Error).message || e)); });
   }, []);
 
   useEffect(() => {
@@ -110,6 +161,8 @@ export function EnvironmentCard() {
   const stale = form?.pick?.stale === true;
   const current = form?.preference?.id || FOLLOW_SYSTEM;
   const chosen = draft !== null ? draft : current;
+  // 启动段逐字摊开内核记录：格子空着就显示「未读出」，界面一栏推断都不补 —— 补出来的因果链正是排障的噪声。
+  const startup = sections?.startup?.data;
 
   return (
     <>
@@ -211,6 +264,38 @@ export function EnvironmentCard() {
               ) : null}
             </div>
 
+            <div className="grid gap-1.5 rounded-md border border-border/60 px-3 py-2.5">
+              <span className="text-xs font-medium">启动既成事实（守卫这一拍真的跑过什么）</span>
+              <span className="text-xs text-muted-foreground">{sectionState(sections?.startup)}</span>
+              {startup ? (
+                <div className="grid gap-0.5 text-xs text-muted-foreground">
+                  <span>
+                    守卫启动于 {typeof startup.bootAt === "number" ? new Date(startup.bootAt).toLocaleTimeString() : "未读出"}
+                    ，环境表单首拍排在启动后 {startup.envDelayMs ?? "未读出"} 毫秒
+                  </span>
+                  <span>
+                    选路：自动启动 {triText(startup.routerAutostart)}，模式 {startup.routerMode || "未读出（这一拍没走到那步）"}
+                  </span>
+                  <span>
+                    更新检查：{!startup.updateCheck ? "未记录" : startup.updateCheck.enabled
+                      ? "开（首查排在启动后 " + (startup.updateCheck.initialDelayMs ?? "未读出") + " 毫秒，之后每 " + (startup.updateCheck.intervalMs ?? "未读出") + " 毫秒）"
+                      : "关（配置里就禁掉了，这同样是一条既成事实）"}
+                  </span>
+                  <span>壳看护：{triText(startup.shellWatchdog)}</span>
+                  <span>
+                    {startup.lastRefresh
+                      ? "最近一次表单刷新于 " + (typeof startup.lastRefresh.at === "number" ? new Date(startup.lastRefresh.at).toLocaleTimeString() : "未读出")
+                        + "，耗时 " + (startup.lastRefresh.tookMs ?? "未读出") + " 毫秒"
+                        + "，浏览器 " + (startup.lastRefresh.browsers ?? "未读出") + " 个"
+                        + "，分发依据 " + (startup.lastRefresh.pick || "未定出")
+                        + "，落盘 " + triText(startup.lastRefresh.snapshotWritten)
+                        + "；" + pendingDims(startup.lastRefresh.dims)
+                      : "这一拍还没跑过表单刷新（首拍排在上面那个延迟之后）"}
+                  </span>
+                </div>
+              ) : null}
+            </div>
+
             <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-xs">
               <dt className="text-muted-foreground">平台</dt>
               <dd className="font-mono">{[form?.identity?.platform, form?.identity?.arch].filter(Boolean).join(" / ") || "—"}</dd>
@@ -226,8 +311,13 @@ export function EnvironmentCard() {
                   <span key={i} className="text-muted-foreground/80">{probeText(p)}</span>
                 ))}
               </dd>
-              <dt className="text-muted-foreground">快照</dt>
-              <dd className="break-all font-mono text-muted-foreground/80">{form?.snapshot?.path || "—"}</dd>
+              <dt className="text-muted-foreground">快照落盘</dt>
+              <dd className="break-all font-mono text-muted-foreground/80">
+                {writeText(form?.snapshot, form?.cached === true)}
+                <span className="text-muted-foreground/60"> {form?.snapshot?.path || "未给出路径"}</span>
+              </dd>
+              <dt className="text-muted-foreground">上一拍留痕</dt>
+              <dd className="text-muted-foreground">{lastSnapshotText(last, lastErr)}</dd>
             </dl>
           </div>
           <DialogFooter>

@@ -1085,14 +1085,15 @@ async function x10() {
       (r) => r.ok === false && r.reason === 'killed-by-signal' && r.evidence.exitSignal === 'SIGKILL',
       ['dispatcher', 'xdg-open']],
     // 每一次打开都带探测留痕：面板显示 handedOff/失败时，用户与开发者都要能看到「探到了什么、据什么定的默认」。
+    //   判据只覆盖标题所列四项：platform/bin 已退役（界面没有读者，X-14 反向样本正钉着它们不得回流），
+    //   在这里继续断言等于要执行口把无人读的键养回来 —— 两项断言留一条即自相矛盾。
     ['证据必带探测诊断（pick/found/probed/default 四项在场，否则真机无从定性）', u,
       { platform: 'win32', inventory: IN([B(EDGE_WIN), B('C:\\FF\\firefox.exe')], 'c:\\ff\\firefox.exe', 'userchoice'), observe: obs(EX_OK), spawn: okSpawn, binAvailable: () => true },
       (r) => {
         const d = r.evidence && r.evidence.diagnostics;
-        return !!d && d.platform === 'fixture' && d.pick === 'userchoice' && d.found.length === 2
+        return !!d && d.pick === 'userchoice' && d.found.length === 2
           && d.found.every((f) => f.name && f.engine && f.via === 'fixture')
-          && !!d.default && d.default.source === 'userchoice' && d.probed.length === 1
-          && d.bin === r.evidence.bin;
+          && !!d.default && d.default.source === 'userchoice' && d.probed.length === 1;
       }, ['browser', 'C:\\FF\\firefox.exe']],
     // 真机形状：装了多个浏览器，而系统说不出默认（UserChoice 读不到）。旧实现在此判 no-launcher，
     //   用户看到的症状是「点一键登录什么都没弹」。现在这一档必须真的开窗，且把依据摊进证据。
@@ -1388,10 +1389,15 @@ async function x10() {
     !/environment\.form\(/.test("return send(200, { ok: true });")
     && !/originAllowed\(req, sup\.config\.apiPort\)/.test("return send(200, environment.form());"), 'hit');
   const ctSrc = fs.readFileSync(path.join(ROOT, 'src', 'api', 'contract.js'), 'utf8');
-  check('X-11 环境表单与浏览器偏好在契约里各登记一次（登记面即对外能力面，漏登记=不承诺）',
-    (ctSrc.match(/\/env\/environment/g) || []).length === 1
-      && (ctSrc.match(/\/settings\/external-browser/g) || []).length === 1,
-    (ctSrc.match(/\/env\/environment|\/settings\/external-browser/g) || []).join(','));
+  // 按整段路径各自数登记，不数子串：/env/environment/last 里含着 /env/environment，
+  //   按子串计数会把「新端点登记了」读成「登记了两次」，于是这条要么假红要么被删——两者都是损失。
+  const regCount = (p) => (ctSrc.match(new RegExp("path:\\s*'" + p + "'", 'g')) || []).length;
+  check('X-11 环境表单、上一拍留痕与浏览器偏好在契约里各登记一次（登记面即对外能力面，漏登记=不承诺）',
+    regCount('/env/environment') === 1 && regCount('/env/environment/last') === 1
+      && regCount('/settings/external-browser') === 1,
+    ['/env/environment', '/env/environment/last', '/settings/external-browser'].map((p) => p + '=' + regCount(p)).join(','));
+  check('X-11 反向：登记计数按整段路径取，前缀那条不会被 /last 顶掉（否则新端点一登记就把老判据判红）',
+    regCount('/env/environment') === 1 && !new RegExp("path:\\s*'/env/environment'").test("path: '/env/environment/last'"), 'hit');
   check('X-11 表单与打开共用同一探测实现与缓存（两条路对「系统里有什么」不得给出两个答案）',
     /environment\.browsers\(/.test(src) && /detector\.inventory\(/.test(envSrc)
       && /environment\.pickLauncher\(/.test(src) && !/pickLauncher\s*=\s*function|function pickLauncher/.test(src), 'ok');
@@ -1650,12 +1656,15 @@ async function x13() {
   check('X-13 台账把维度收在一张表里且内置维度齐备（缺一个维度就是回到各说各话）',
     env.SECTION_ORDER.every((id) => dims.includes(id)) && dims.length === env.SECTION_ORDER.length
       && f0.schema === env.SCHEMA, dims.join(','));
+  // 分母取自 SECTION_ORDER 减同步维：新增维度自动进这条判据，写死名单等于让新维度可以悄悄成摆设
+  const asyncDims = env.SECTION_ORDER.filter((id) => !env.SYNC_DIMS.includes(id));
   check('X-13 未刷新的异步维度标 pending 并进留痕（面板据此说「尚未探测」，而不是显示成「本机没有」）',
-    ['runtime', 'dsh', 'egress'].every((id) => f0.sections[id].state === 'pending' && f0.sections[id].data === null)
-      && ['runtime', 'dsh', 'egress'].every((id) => f0.probed.some((p) => p.section === id && /未刷新/.test(String(p.detail)))),
+    asyncDims.length === env.SECTION_ORDER.length - env.SYNC_DIMS.length
+      && asyncDims.every((id) => f0.sections[id].state === 'pending' && f0.sections[id].data === null)
+      && asyncDims.every((id) => f0.probed.some((p) => p.section === id && /未刷新/.test(String(p.detail)))),
     JSON.stringify(dims.map((id) => [id, f0.sections[id].state])));
   check('X-13 同步维不靠刷新（选路与面板当场要读浏览器清单与分发依据，等一拍即死路）',
-    ['browsers', 'session', 'capabilities', 'preference', 'pick'].every((id) => f0.sections[id].state !== 'pending'
+    env.SYNC_DIMS.every((id) => f0.sections[id].state !== 'pending'
       && f0.sections[id].at === 5 && f0.sections[id].source === 'self'), JSON.stringify(f0.sections.browsers));
   let probeCalls = 0;
   env.registerSection('x13-fake', { label: '假维度', probe: () => { probeCalls++; return { hit: true }; } });
@@ -1806,7 +1815,129 @@ async function x13() {
   eg.invalidate();
 }
 
+// -- X-14：证据字段与快照留痕的出口收口 --
+//   E3 判的是「交出去的东西有没有人读」这一类假账，三条各自可红：
+//   (1) 每次打开交出的 evidence / diagnostics 逐键要有读者，且内核发出与前端声明的字段集必须相等；
+//   (2) 启动段只抄装配已经算出的既成事实（写处一处、读处一处），没刷新那一拍如实 pending；
+//   (3) 快照从单向写变成有读回口，且「没落过盘」与「读不出」必须分得开 —— 把后者说成前者会引着人去点刷新。
+async function x14() {
+  const env = require(path.join(ROOT, 'src', 'platform', 'os', 'environment.js'));
+  const rd = (p) => fs.readFileSync(path.join(ROOT, p), 'utf8');
+  const brSrc = rd('src/platform/os/browser.js');
+  const extSrc = rd('ui/src/services/supervisor/externalOpen.ts');
+  const tsSrc = rd('ui/src/services/supervisor/types.ts');
+  const cardSrc = rd('ui/src/features/supervisor/settings/EnvironmentCard.tsx');
+  const clientSrc = rd('ui/src/services/supervisor/client.ts');
+
+  // 顶层键提取：按括号配平切出字面量体，再按深度 0 的分隔符分件 —— 换行与夹注都拦不住它
+  const objBody = (src, anchor) => {
+    const at = src.indexOf(anchor);
+    if (at < 0) return null;
+    const i0 = src.indexOf('{', at);
+    if (i0 < 0) return null;
+    let depth = 0;
+    for (let i = i0; i < src.length; i++) {
+      if (src[i] === '{') depth++;
+      else if (src[i] === '}') { depth--; if (depth === 0) return src.slice(i0 + 1, i); }
+    }
+    return null;
+  };
+  const topKeys = (body) => {
+    if (!body) return [];
+    const parts = [];
+    let depth = 0, cur = '';
+    for (const c of body) {
+      if (c === '{' || c === '[' || c === '(') depth++;
+      else if (c === '}' || c === ']' || c === ')') depth--;
+      if ((c === ',' || c === ';') && depth === 0) { parts.push(cur); cur = ''; continue; }
+      cur += c;
+    }
+    parts.push(cur);
+    return parts.map((t) => {
+      const s = t.replace(/\/\*[\s\S]*?\*\//g, '').trim();
+      const m = /^([A-Za-z_$][\w$]*)\??\s*:/.exec(s) || /^([A-Za-z_$][\w$]*)$/.exec(s);
+      return m ? m[1] : null;
+    }).filter(Boolean);
+  };
+  const readKeys = (src, re) => { const s = new Set(); let m; while ((m = re.exec(src))) s.add(m[1]); return Array.from(s); };
+  const sameSet = (a, b) => a.length === b.length && a.every((k) => b.includes(k));
+
+  // (1) 字段级假账：发出、声明、读到三处必须同一份，任何一侧单独动都判红
+  const evKeys = topKeys(objBody(brSrc, 'const evidence = {'));
+  const dgKeys = topKeys(objBody(brSrc.slice(brSrc.indexOf('function launchDiagnostics')), 'return {'));
+  const evDecl = topKeys(objBody(tsSrc, 'evidence?: {'));
+  const dgDecl = topKeys(objBody(tsSrc, 'export interface BrowserDiagnostics {'));
+  const evRead = readKeys(extSrc, /\bev\??\.([A-Za-z_$][\w$]*)/g);
+  const dgRead = readKeys(extSrc, /\bd\??\.([A-Za-z_$][\w$]*)/g);
+  check('X-14 分母非空：两份字段集从真实源码切出（提取失灵会让下面三条一起空转）',
+    evKeys.length === 12 && dgKeys.length === 5, JSON.stringify([evKeys, dgKeys]));
+  check('X-14 内核发出的字段集与前端声明逐键相等（只改一侧即假账：声明缺则界面读不出，声明多则是凭空字段）',
+    sameSet(evKeys, evDecl) && sameSet(dgKeys, dgDecl), JSON.stringify([evKeys, evDecl, dgKeys, dgDecl]));
+  check('X-14 反向：无人可读的键（platform/bin 旧形态）不得回流',
+    !dgKeys.includes('platform') && !dgKeys.includes('bin') && !evKeys.some((k) => /^(platform|isolatedBasis)$/.test(k)),
+    JSON.stringify(dgKeys));
+  check('X-14 每个发出的键都在面板证据判据里有读者（内核交出而界面不读等于没交）',
+    evKeys.every((k) => evRead.includes(k)) && dgKeys.every((k) => dgRead.includes(k)),
+    JSON.stringify([evKeys.filter((k) => !evRead.includes(k)), dgKeys.filter((k) => !dgRead.includes(k))]));
+  check('X-14 反向：凭空多一个没人读的键会被上面那条识别（判据非空转）',
+    evKeys.concat(['zzNobodyReadsIt']).filter((k) => !evRead.includes(k)).length === 1, 'hit');
+
+  // (2) 启动既成事实：一处写一处读，探针只抄不判（第二处写即第二个口径）
+  const walk = (d, out) => { for (const f of fs.readdirSync(d, { withFileTypes: true })) {
+    const p = path.join(d, f.name); if (f.isDirectory()) walk(p, out); else if (f.name.endsWith('.js')) out.push(p); } return out; };
+  const relOf = (f) => path.relative(ROOT, f).split(path.sep).join('/');
+  const factFiles = walk(path.join(ROOT, 'src'), []).map(relOf)
+    .filter((r) => /_startupFacts/.test(rd(r))).sort();
+  check('X-14 启动事实的触及面恰好两处（bootstrap 记既成事实、装配核读进台账；第三处即另起口径）',
+    JSON.stringify(factFiles) === JSON.stringify(['src/app/assembly/bootstrap.js', 'src/app/assembly/compose/core.js']),
+    factFiles.join(','));
+  const suBody = objBody(rd('src/app/assembly/compose/core.js').slice(0), "registerSection('startup'");
+  check('X-14 启动维度的探针只读装配状态（不起子进程、不摸网、不读盘：它就是 bootstrap 的另一面镜子）',
+    !!suBody && /_startupFacts/.test(suBody) && !/spawn|execFile|readFile|fetch\(|require\(/.test(suBody),
+    String(suBody).replace(/\s+/g, ' ').slice(0, 70));
+  check('X-14 启动维度走异步台账（在 SECTION_ORDER 而不在 SYNC_DIMS：没刷新那一拍如实 pending，不拿空壳冒充本机实况）',
+    env.SECTION_ORDER.includes('startup') && !env.SYNC_DIMS.includes('startup'), JSON.stringify(env.SECTION_ORDER));
+
+  // (3) 快照读回口：只读、零写盘、两种「没有」分得开
+  const prevHome = process.env.DSH_SUPERVISOR_HOME;
+  process.env.DSH_SUPERVISOR_HOME = path.join(TMP, 'x14-state');
+  const INV14 = { platform: 'fixture', browsers: [], defaultId: null, defaultSource: null, probed: [] };
+  const l0 = env.lastSnapshot({ now: () => 1000 });
+  check('X-14 没落过盘要说成没写过（available=false + never-written，不含糊成读不出）',
+    l0.available === false && l0.reason === 'never-written' && l0.data === null
+      && l0.at === null && l0.ageMs === null && l0.path === env.snapshotPath(), JSON.stringify(l0));
+  const f14 = env.form({ force: true, persist: true, inventory: INV14, now: () => 4242 });
+  const l1 = env.lastSnapshot({ now: () => 9242 });
+  check('X-14 落盘后读回整份上一拍表单与年龄（留痕读不回来就等于没留；这里吃注入时钟，不随宿主漂移）',
+  // 判据按分母走，不比对 l1.data 与 f14 自己：同源自比恒真，等于没判。
+  //   落盘那一刻文档还不含本拍的 snapshot 字段（写成功与否不能自证），所以「留痕在不在」只能由读回口说。
+    l1.available === true && l1.reason === 'ok' && l1.at === f14.at && l1.ageMs === 5000 && l1.path === env.snapshotPath()
+      && !!l1.data && l1.data.schema === env.SCHEMA && l1.data.at === f14.at
+      && env.SECTION_ORDER.every((id) => !!(l1.data.sections || {})[id]) && Array.isArray(l1.data.browsers), JSON.stringify({
+      available: l1.available, at: l1.at, ageMs: l1.ageMs, schema: l1.data && l1.data.schema }));
+  fs.writeFileSync(env.snapshotPath(), '{"schema":' + (env.SCHEMA + 1) + ',"at":1}\n', { mode: 0o600 });
+  const l2 = env.lastSnapshot();
+  check('X-14 文件在但读不出/版本不符要单列一档（说成「没写过」会引着人去点刷新而不是去查文件）',
+    l2.available === false && l2.reason === 'unreadable-or-schema-mismatch' && l2.data === null
+      && fs.existsSync(l2.path), JSON.stringify({ reason: l2.reason }));
+  if (prevHome === undefined) delete process.env.DSH_SUPERVISOR_HOME; else process.env.DSH_SUPERVISOR_HOME = prevHome;
+
+  // (4) 读回口只有一条路：HTTP 面消费，绝不喂分发；界面与契约两侧都得点名它
+  const lastCallers = walk(path.join(ROOT, 'src'), []).map(relOf)
+    .filter((r) => /lastSnapshot\s*\(/.test(rd(r))).sort();
+  check('X-14 读回口的生产侧消费者只有 HTTP 面（并进当拍字段即拿旧数据冒充刚探出来的结论）',
+    JSON.stringify(lastCallers) === JSON.stringify(['src/api/domains/guard.js', 'src/platform/os/environment.js']),
+    lastCallers.join(','));
+  check('X-14 读回端点已上契约清单且带具名消费者（无消费者的端点就是下一个没人读的字段）',
+    /\/env\/environment\/last/.test(rd('src/api/contract.js'))
+      && /\/env\/environment\/last/.test(rd('src/api/domains/guard.js')), 'ok');
+  check('X-14 上一拍留痕在前端有类型、有请求、有分档文案（后端产出而界面不显示等于没产出）',
+    /EnvironmentSnapshotRead/.test(tsSrc) && /environmentLast/.test(clientSrc)
+      && /never-written/.test(cardSrc) && /读不出/.test(cardSrc) && /启动既成事实/.test(cardSrc), 'ok');
+}
+
 x10().catch((e) => check('X-10 异步判据自身未抛错', false, String((e && e.stack) || e)))
   .then(x13).catch((e) => check('X-13 异步判据自身未抛错', false, String((e && e.stack) || e)))
+  .then(x14).catch((e) => check('X-14 异步判据自身未抛错', false, String((e && e.stack) || e)))
   .then(finish);
 

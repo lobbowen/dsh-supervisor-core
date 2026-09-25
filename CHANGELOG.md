@@ -1,5 +1,35 @@
 ## [未发布]
 
+### 证据出口收口 + 启动既成事实 + 快照读回口：交出去的东西必须有人读，读不回来的留痕等于没留
+
+- **删掉无人可读的键**：`evidence.diagnostics` 里的 `platform` 与 `bin` 删除（顶层 `evidence` 已各有一份，
+  同一条事实写两处就是等下一处忘记更新）；面板 `BrowserDiagnostics` 类型同步收口。
+- **内核交出的每一键都上屏**：`evidenceDetail` 此前漏读 `engine`（白窗口要能分「换浏览器」还是「配代理」）、
+  `profile`（冷档案目录就是白窗口的现场）、`watch`（关掉该窗口即取消本次登录，用户不知道就会继续等回调）。
+  新增 X-14 把这条变成判据：`evidence` 的 12 个键与 `diagnostics` 的 5 个键在「内核发出 / 前端声明 /
+  面板读到」三处逐键相等，凭空多一个没人读的键必判红（带反向样本）。
+- **一键登录即使 `confirmed` 也摊出分发依据与出网判定**：披露判定 `reveal` 住在服务层的
+  `classifyOpenResult`（组件不自判，否则无从判红），条件是这一拍**真的判过冷档案出网**
+  （`via:isolated` 或带 `egress`，降档那次也算）。真机那句「弹了但是白窗口」最可能就落在 `confirmed`，
+  屏幕上没有「交给谁 / 什么引擎 / 出网判定」这一行，取证只剩玄学。
+- **`startup` 维度：只记既成事实，不记计划**：`bootstrap.js` 逐点把已经算出的值抄进 `host._startupFacts`
+  （守卫启动时刻、环境表单首拍延迟、选路模式、更新检查开没开及其节奏、壳看护在不在、上一次刷新耗时与
+  哪些维度仍没读数），`compose/core.js` 装配期把它挂进台账，探针零新判定。没走到的那一步留 `null`，
+  面板显示「未读出」；禁用项也记录，避免 `null` 与「还没跑到」混淆。触及面全仓恰好两处（X-14 钉住）。
+- **快照有了真读者**：`environment.lastSnapshot()` + `GET /env/environment/last`（只读文件、零摸网零写盘、
+  仅同源防护）。此前快照单向写、生产侧零调用，进程重启后上一拍探到了什么就再也问不出来。它**绝不参与分发
+  判定**，也不与当拍字段合并——拿旧数据冒充刚探出来的结论是同一类病。`available:false` 分得清
+  `never-written`（还没落过盘）与 `unreadable-or-schema-mismatch`（文件在但读不出/版本不符，该去查文件而不是
+  点刷新），面板另起一行「上一拍留痕」并把读回失败与当拍失败分开显示。
+- **面板环境页**：新增「启动既成事实」一节与「快照落盘 / 上一拍留痕」两行；本拍落盘先按 `cached` 分清，
+  免得把上次装配的 `written` 冒成本拍成果。
+- 回归：`platform-layer-portability` 新增 X-14（字段级假账三处对齐 + 启动事实触及面与探针零副作用 +
+  `lastSnapshot` 三档读数由真实文件状态驱动 + 读回口的生产侧消费者只有 HTTP 面），并把维度台账的
+  pending 判据改为分母驱动（`SECTION_ORDER` 减 `SYNC_DIMS`，新增维度自动进判据）；`api-contract` 新增 EL 组
+  （读回端点整份透传、跨站 403、不触装配与写盘）、EF 组改判九维台账并透传 `startup` 读数；
+  `ui` `externalOpen.test.ts` 补引擎、冷档案目录、关窗即取消与 `reveal` 四臂（每臂都带反向样本）。
+  四平台 CI 矩阵为唯一裁判。
+
 ### 环境表单维度化 + 出网条件维度：隔离登录的分发依据从「探到了哪个浏览器」升级为「那个浏览器 + 这台机器往外的路」
 - **维度台账（`environment.js` schema 1 升 2）**：新增 `sections`，每个维度一条 `{label, at, source, state, data, error}`，
   固定次序 `SECTION_ORDER`。收敛的是账本形状而非采集实现——运行时（node/npm/镜像源/全局前缀）与 DSH 判定由
@@ -23,7 +53,8 @@
 - 回归：`platform-layer-portability` 新增 X-13（冷档案真值表六格、把 `unknown` 折成 `false` 的写法必判红、
   L0 三态分档与 TTL 复用、三平台代理分档、凭据脱敏、降档全程零摸网、注册点全仓清单）；
   `api-contract` EF 组改判 `?force=1` 走 `refresh()` 且整张 `sections` 原样交出；`ui` `externalOpen.test.ts`
-  补隔离文案与出网证据行。四平台 CI 矩阵为唯一裁判。
+  补隔离文案与出网证据行，并把 `ProxyLoginStart` 的字段读法转成类型标注（面板读的字段有编译期依据，不是猜的）。
+  四平台 CI 矩阵为唯一裁判。
 
 ## [0.1.6-BETA.14]（2026-09-25）
 

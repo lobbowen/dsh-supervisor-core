@@ -167,8 +167,9 @@ function pickLauncher(platform, inv, preference) {
 const _sections = new Map();
 const _reads = new Map();
 
-/** 面板与快照的固定呈现次序；未列出的注册维度追加在后面（不藏维度）。 */
-const SECTION_ORDER = ['runtime', 'dsh', 'browsers', 'session', 'egress', 'capabilities', 'preference', 'pick'];
+/** 面板与快照的固定呈现次序；未列出的注册维度追加在后面（不藏维度）。
+ *  startup 在最后：它是「这一拍本机跑过什么」的元信息，不参与任何分发判定，但排障时必须在一起。 */
+const SECTION_ORDER = ['runtime', 'dsh', 'browsers', 'session', 'egress', 'capabilities', 'preference', 'pick', 'startup'];
 
 /** 表单自己装配的同步维度：这些名字由本文件每拍现装，不接受外部注册（注册即两个口径）。 */
 const SYNC_DIMS = ['browsers', 'session', 'capabilities', 'preference', 'pick'];
@@ -379,6 +380,24 @@ function readSnapshot() {
   } catch { return null; }
 }
 
+/** 上一拍快照的读回口（只读留痕，**绝不参与任何分发判定**：分发只认当场同步装配的 form()）。
+ *  存在的理由：快照落了盘却没有任何生产侧读者，就等于「留痕」只是单向写；真机排障要的正是
+ *  「上一拍到底探到了什么」，而那可能已经在进程重启后拿不回来了。
+ *  available=false 必须分得清是没写过还是读不出：把「读不出」说成「没写过」会引着人去刷新。
+ *  @param {{now?:Function}} [o]
+ *  @returns {{available:boolean,path:string,at:number|null,ageMs:number|null,reason:string,data:object|null}} */
+function lastSnapshot(o) {
+  const now = (o && typeof o.now === 'function') ? o.now : Date.now;
+  const p = snapshotPath();
+  const doc = readSnapshot();
+  if (doc) {
+    const at = typeof doc.at === 'number' ? doc.at : null;
+    return { available: true, path: p, at, ageMs: at === null ? null : Math.max(0, now() - at), reason: 'ok', data: doc };
+  }
+  return { available: false, path: p, at: null, ageMs: null,
+    reason: fs.existsSync(p) ? 'unreadable-or-schema-mismatch' : 'never-written', data: null };
+}
+
 let _formCache = null;
 
 /** 环境表单：一次装配出本机全部相关事实。
@@ -523,5 +542,5 @@ module.exports = {
   browsers, normalizeInventory, rankCandidates, pickLauncher, checkPreference,
   registerSection, unregisterSection, section, sectionData, refresh,
   coldProfileViable, checkEgress, maskProxyServer,
-  form, snapshotPath, readSnapshot, invalidate,
+  form, snapshotPath, readSnapshot, lastSnapshot, invalidate,
 };
