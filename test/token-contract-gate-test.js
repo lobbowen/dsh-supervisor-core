@@ -321,11 +321,13 @@ function tokenCacheHitsIn(code) {
 }
 
 // -- TK-G6：令牌不进 argv/URL（browser 出口调用点）--
-// browser.js 的 openBrowser/launchIsolated 会把 url 原样塞进 spawn argv——?token= 一进 argv，
+// browser.js 的 openBrowser 会把 url 原样塞进 spawn argv——?token= 一进 argv，
 // 同机任意进程都能经 ps 看到会话令牌（浏览器打开 URL 属「令牌进 URL」，见 SSOT TK-G6）。
 // 动词集必须与 browser.js 的真实出口同步（下方 TK-G6 有对齐断言）：漏一个动词 = 该出口无人守，
 //  且门禁仍显示绿——这正是「判据空转」的定义。
-var BROWSER_EXIT_VERBS = ['openBrowser', 'launchIsolated'];
+//  隔离登录不再是第二个动词（它已并入 openBrowser 的 intent），故也不在名单里；
+//  若有人再开一个 url 形参 + spawn 的出口，对齐断言会直接判红并要求登记。
+var BROWSER_EXIT_VERBS = ['openBrowser'];
 var BROWSER_VERB_RE = new RegExp('browser\\s*\\.\\s*(?:' + BROWSER_EXIT_VERBS.join('|') + '|open)\\s*\\(', 'g');
 // browser.js 里真正把 url 交给 spawn 的出口（首形参为 url 且函数体内有 spawn 调用）。
 // 必须传入 structOf 产物：字符串抹平后大括号才配平。
@@ -391,7 +393,7 @@ function splitTopLevelArgs(text) {
   if (cur.trim() !== '') out.push(cur.trim());
   return out;
 }
-// 找出「把某个形参原样转交给 browser.openBrowser/launchIsolated」的中间函数。
+// 找出「把某个形参原样转交给 browser.openBrowser」的中间函数。
 // 动词集合与 browser.js 的导出面同源：新增出口必须同时加进这里，否则该出口成为无人守的 argv 通道。
 // 为什么要跨这一跳：令牌只要经中间函数最终进了 spawn argv，危害与直接拼接相同；
 // 只看调用点文本会被「先存变量、再交给 helper」绕过（api/domains/instances.js 的真实形态）。
@@ -427,7 +429,7 @@ function tokenForwardersIn(code) {
 //   会一律看不到 ?token= —— 门禁会假绿（本门禁初版即踩此坑，由 G8 反向断言抓出）。
 //
 // 覆盖两层路径：
-//   1) 直接调用 platform.browser.openBrowser/launchIsolated 且实参含令牌；
+//   1) 直接调用 platform.browser.openBrowser 且实参含令牌；
 //   2) 经中间封装转交（本仓真实形态 api/domains/instances.js）：
 //        const url = '...?token=' + tok;  openInSystemBrowser(url);
 //        function openInSystemBrowser(url) { return platform.browser.openBrowser(url); }

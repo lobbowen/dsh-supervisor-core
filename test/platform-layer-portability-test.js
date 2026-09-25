@@ -36,24 +36,33 @@
 //   X-3b portable provider 纯逻辑：锚点归属/ownGroup 宽严/isUnitActive 三态/stopUnit 幂等
 //   X-4  autostart：daemonCommand 平台差异（win 带 .exe）+ status().kind 与能力档位一致
 //   X-5  反向：判据能识别宿主泄漏与静默误声明（门禁非空转）
-//   X-8  外部打开底座的三层分工：调度器形态（win32 无可信调度器）、探测层多源并集与留痕、
-//        选路（默认项来源优先、多候选而系统说不出默认即拒）、隔离/非隔离计划与诊断面
+//   X-8  外部打开底座的分工：调度器形态（win32 无可信调度器）、探测层多源并集与留痕、
+//        环境表单（本机实况的收敛处）与分发依据（偏好 > 系统默认 > 唯一候选 > 候选次序）、
+//        隔离/非隔离计划与诊断面
 //   X-10 openBrowser 的三档结果语义（confirmed / handedOff / ok:false）+ observeSpawn 本体
 //        + 退出码证据闸（ownsItsWindow 双向生效：不可信形态既不冒领成功也不凭空判失败）
+//        + 两种意图（普通打开 / 隔离登录）共用同一出口与同一词汇
 //        —— 唯一异步出口，故尾部汇总排在它之后
 //   X-11 外部打开「唯一出口」的源码级不变量（旧出口不得重现、名单取自档位表、平台事实只在探测层一处、
-//        图形会话判据只在 desktop.js 一处、只读探测端点与其来源闸、消费方原样透传、
+//        图形会话判据只在 desktop.js 一处、只读环境表单端点与其来源闸、消费方原样透传、
 //        面板那一环只经 /env/open-url 与唯一的 window.open 分支）
+//   X-12 环境表单与浏览器偏好的归属不变量（表单字段集、快照落点与权限、上层事实只经装配期注入、
+//        偏好写入只过校验且落盘唯一入口、全仓只有一个外部打开动词）
 //
 // ## 覆盖缺口（E-2 制度化登记）：本门禁绿了仍然不成立的方面
-//   1. X-8 的探测夹具与 X-10 的 spawn/observe 全是注入的假件：证明的是「读数->清单->计划->分档」的纯逻辑，
+//   1. X-8 的探测夹具与 X-10 的 spawn/observe 全是注入的假件：证明的是「读数->清单->分发->分档」的纯逻辑，
 //      不证明真机上注册表/LaunchServices/XDG 的读数形态，也不证明浏览器窗口出现。
-//      Windows 真机的默认项解析是否命中，只有带着 diagnostics 的真机落档能回答。
+//      Windows 真机的默认项解析是否命中、候选次序兜底是否落在用户期望的那个浏览器上，
+//      只有带着 diagnostics 的真机落档能回答。
 //   2. 观测上界（OPEN_OBSERVE_MS）由假时钟推进，真机冷启动/慢解析下是否够用未证明。
 //   3. X-11 是源码正则判据：改名、字符串拼出的调用、间接 require 都能绕过 —— 它保证「本仓只有一条路」，
 //      不保证「运行期只走了这条路」。
 //   4. 本文件在 Linux 宿主运行：win32/darwin 分支全靠注入 platform，图形会话探测本身归
 //      platform-parsers-and-commands 的 Y-4。
+//   5. 偏好写入口（app/settings/browser.js 的 setExternalBrowser）的**落盘行为**不在本文件跑：这里唯一可能的
+//      注入缝是改 platform.environment 的导出，而那正是本仓测试禁令否掉的形态（假件必须经构造期注入）。
+//      故本文件只钉源码面（写入唯一入口、校验先于写、写后必刷缓存），真实读写行为由 api-contract 的
+//      EF/PR 两组（经 createServer 注入假表单与假门面）加 X-12 的 checkPreference 纯函数判据覆盖。
 // ---------------------------------------------------------------------------
 
 const fs = require('node:fs');
@@ -499,11 +508,13 @@ const TMP = fs.mkdtempSync(path.join(os.tmpdir(), 'platport-'));
   }
 }
 
-// -- X-8：外部打开底座的三层分工（探测 browser-inventory / 选路+执行 browser）--
-// 本组钉的是「分层是否还在」：探测层只回答系统里有什么，选路只回答这次交给谁，执行只回报拿到什么证据。
+// -- X-8：外部打开底座的分工（探测 browser-inventory / 环境表单+分发 environment / 执行 browser）--
+// 本组钉的是「分层是否还在」：探测层只回答系统里有什么，表单把本机实况收一张表并定出这次交给谁，
+// 执行层只按计划 spawn 一次并如实回报拿到什么证据。
 // 任何一层越界（选路自己查注册表、执行层替用户挑浏览器、探测层顺手 spawn）都会让真机症状重新变成不可定性。
 {
   const br = require(path.join(ROOT, 'src', 'platform', 'os', 'browser.js'));
+  const env = require(path.join(ROOT, 'src', 'platform', 'os', 'environment.js'));
   const det = br.detector;
   const u = 'http://127.0.0.1:28111/x';
   check('X-8 解析原语只有一个实现处（browser.js 转出的即探测层的同一函数）',
@@ -511,6 +522,14 @@ const TMP = fs.mkdtempSync(path.join(os.tmpdir(), 'platport-'));
     && br.resolveDefaultWin === undefined && br.resolveDefaultLinux === undefined
     && br.resolveDefaultMac === undefined && br.defaultBrowser === undefined,
     Object.keys(det).slice(0, 6).join(','));
+  // 分发依据住在表单，不住在执行层：它一旦被 browser.js 重新导出，「本机实况」就有了第二个口径
+  //   （旧形态是选路住在 browser.js，于是环境事实与计划各说各话）。
+  check('X-8 反向：选路口只由环境表单交出（browser.js 不再导出 pickLauncher/清单面）',
+    br.pickLauncher === undefined && br.listBrowsers === undefined && br.invalidateBrowsers === undefined
+    && br.launchIsolated === undefined && typeof env.pickLauncher === 'function'
+    && typeof env.form === 'function' && typeof env.bind === 'function',
+    Object.keys(br).join(','));
+
 
   // —— 调度器形态：Windows 没有可信调度器 ——
   check('X-8 win32 openCommand = null（无可信调度器：explorer.exe 未文档化且返回码不携带信息）',
@@ -673,9 +692,11 @@ const TMP = fs.mkdtempSync(path.join(os.tmpdir(), 'platport-'));
     const r = winProbe(runOut);
     check('X-8 探测 win32 反向：StartMenuInternet 的默认值**不得**被当默认项（Win7 起系统忽略它）',
       r.defaultId === null && r.defaultSource === null, JSON.stringify({ d: r.defaultId, s: r.defaultSource }));
-    check('X-8 探测 win32 反向：此时两个候选仍在册，选路据「说不出默认」显式拒绝而非按顺序猜',
-      r.browsers.length === 2 && br.pickLauncher('win32', r).browser === null
-      && br.pickLauncher('win32', r).how === 'no-default', JSON.stringify(br.pickLauncher('win32', r)));
+    // 分发依据必须把「这是第 4 层兜底」写在 how 上而不是伪装成系统默认：面板据此说「系统未报默认项」，
+    //   用户才有改的地方。按顺序猜的旧病不在「启了一个浏览器」，在于启了之后仍说成系统默认。
+    check('X-8 探测 win32 反向：此时两个候选仍在册，分发依据落到候选次序层（不冒认系统默认、也不静默换人）',
+      r.browsers.length === 2 && env.pickLauncher('win32', r, null).browser !== null
+      && env.pickLauncher('win32', r, null).how === 'candidate-rank', JSON.stringify(env.pickLauncher('win32', r, null)));
   }
   {
     // 协议关联（Classes\https）是「系统真正把地址交给谁」的那条事实：UserChoice 读不到时靠它定默认。
@@ -783,7 +804,7 @@ const TMP = fs.mkdtempSync(path.join(os.tmpdir(), 'platport-'));
       one.browsers.length === 1 && one.defaultSource === 'only-installed', JSON.stringify({ d: one.defaultId, s: one.defaultSource }));
   }
 
-  // —— 选路：探测清单 -> 这次交给谁（夹具即探测层产物，不另立字段）——
+  // —— 分发依据：环境表单 + 用户偏好 -> 这次交给谁（夹具即探测层产物，不另立字段）——
   const brow = (bin, extra) => Object.assign({
     id: String(bin).toLowerCase(), name: String(bin).split(/[\\/]/).pop().replace(/\.exe$/i, ''),
     engine: det.engineOf(bin), bin, sources: ['fixture'],
@@ -795,17 +816,37 @@ const TMP = fs.mkdtempSync(path.join(os.tmpdir(), 'platport-'));
   {
     const ff = brow('/usr/lib/firefox/firefox');
     const chrome = brow('/usr/bin/google-chrome');
-    check('X-8 pickLauncher：命中 defaultId 用 defaultSource 记账（谁说的默认要跟着走）',
-      JSON.stringify(br.pickLauncher('linux', invOf([chrome, ff], ff.id, 'mimeapps'))) === JSON.stringify({ browser: ff, how: 'mimeapps' }),
-      JSON.stringify(br.pickLauncher('linux', invOf([chrome, ff], ff.id, 'mimeapps'))));
-    check('X-8 pickLauncher：defaultId 指向清单里没有的条目 = 不命中（探测层与选路同一份数据才谈得上同源）',
-      br.pickLauncher('linux', invOf([ff], 'no-such-id', 'userchoice')).how === 'only-installed',
-      JSON.stringify(br.pickLauncher('linux', invOf([ff], 'no-such-id', 'userchoice'))));
-    check('X-8 pickLauncher：单候选=唯一解、多候选无默认=no-default、空清单=none-found',
-      br.pickLauncher('linux', invOf([ff])).how === 'only-installed'
-      && br.pickLauncher('linux', invOf([ff, chrome])).how === 'no-default'
-      && br.pickLauncher('linux', invOf([])).how === 'none-found'
-      && br.pickLauncher('linux', null).how === 'none-found', 'ok');
+    const p = (inv, pref) => env.pickLauncher('linux', inv, pref);
+    check('X-8 分发依据 1 层：用户偏好命中即用，并压过系统默认（选过的人不该被系统改口）',
+      JSON.stringify([p(invOf([chrome, ff], ff.id, 'mimeapps'), chrome.id).how,
+        p(invOf([chrome, ff], ff.id, 'mimeapps'), chrome.id).browser]) === JSON.stringify(['user-preference', chrome])
+      && p(invOf([chrome, ff], ff.id, 'mimeapps'), chrome.id).stale === false, JSON.stringify(p(invOf([chrome, ff], ff.id, 'mimeapps'), chrome.id)));
+    check('X-8 分发依据 2 层：无偏好时命中 defaultId，用 defaultSource 记账（谁说的默认要跟着走）',
+      p(invOf([chrome, ff], ff.id, 'mimeapps'), null).browser === ff
+      && p(invOf([chrome, ff], ff.id, 'mimeapps'), null).how === 'mimeapps'
+      && p(invOf([chrome, ff], ff.id, 'mimeapps'), null).wanted === null, JSON.stringify(p(invOf([chrome, ff], ff.id, 'mimeapps'), null)));
+    check('X-8 分发依据：偏好所指不在候选清单里 = 不静默换人，回落系统默认并标 stale（面板据此提示重选）',
+      p(invOf([chrome, ff], ff.id, 'mimeapps'), 'c:\\gone\\browser.exe').browser === ff
+      && p(invOf([chrome, ff], ff.id, 'mimeapps'), 'c:\\gone\\browser.exe').stale === true
+      && p(invOf([chrome, ff], ff.id, 'mimeapps'), 'c:\\gone\\browser.exe').wanted === 'c:\\gone\\browser.exe',
+      JSON.stringify(p(invOf([chrome, ff], ff.id, 'mimeapps'), 'c:\\gone\\browser.exe')));
+    check('X-8 分发依据：defaultId 指向清单里没有的条目 = 不命中（探测层与表单同一份数据才谈得上同源）',
+      p(invOf([ff], 'no-such-id', 'userchoice'), null).how === 'only-installed',
+      JSON.stringify(p(invOf([ff], 'no-such-id', 'userchoice'), null)));
+    // 第 4 层是本轮收口点：真机形状 = 多候选且系统说不出默认。旧实现在此给空对象，
+    //   整条链路报 no-launcher，用户看到的是「点一键登录什么都没弹」。
+    check('X-8 分发依据 3/4 层：单候选=唯一解、多候选无默认=候选次序、空清单=none-found',
+      p(invOf([ff]), null).how === 'only-installed'
+      && p(invOf([ff, chrome]), null).how === 'candidate-rank'
+      && p(invOf([ff, chrome]), null).browser === chrome
+      && p(invOf([]), null).how === 'none-found' && p(invOf([]), null).browser === null
+      && p(null, null).how === 'none-found', 'ok');
+    // 次序不能随清单产出顺序漂移，也不能按平台分叉：引擎族定级（裸 URL 参数语义是否确定）+ id 字典序。
+    const safari = brow('/Applications/Safari.app/Contents/MacOS/Safari');
+    check('X-8 候选次序按引擎族分级且与清单顺序无关（other 永不在前，同族按 id 定序）',
+      JSON.stringify(env.rankCandidates([safari, ff, chrome]).map((b) => b.id)) === JSON.stringify([chrome.id, ff.id, safari.id])
+      && JSON.stringify(env.rankCandidates([chrome, ff, safari]).map((b) => b.id)) === JSON.stringify([chrome.id, ff.id, safari.id])
+      && JSON.stringify(env.rankCandidates([brow('/usr/bin/tor-browser'), ff]).map((b) => b.id)) === JSON.stringify([ff.id, '/usr/bin/tor-browser']), 'ok');
   }
   const kl = br.openPlan('linux', u, { inventory: invOf([brow('/usr/bin/google-chrome')]) });
   const kw = br.openPlan('win32', u, { inventory: invOf([brow('C:\\Edge\\msedge.exe')]) });
@@ -815,17 +856,26 @@ const TMP = fs.mkdtempSync(path.join(os.tmpdir(), 'platport-'));
   check('X-8 openPlan win32 探到本体 = 直启（Windows 唯一路；无调度器可退）',
     kw.bin === 'C:\\Edge\\msedge.exe' && kw.via === 'browser' && kw.engine === 'chromium' && kw.pick === 'only-installed', JSON.stringify(kw));
   check('X-8 openPlan win32 探不到任何浏览器 = bin:null（旧形态在这里退 explorer.exe 冒开）',
-    knone.bin === null && knone.via === 'none' && knone.baseArgs.length === 0, JSON.stringify(knone));
-  check('X-8 openPlan win32 多候选而系统说不出默认 = bin:null（拒绝按清单顺序猜）',
-    kmany.bin === null && kmany.pick === 'no-default', JSON.stringify(kmany));
+    knone.bin === null && knone.via === 'none' && knone.pick === 'none-found' && knone.exitIsEvidence === false, JSON.stringify(knone));
+  // 计划层必须把「用的是第几层分发依据」原样带出（pick），并把偏好失效带出（stale）：
+  //   面板与 evidence 只认这两个字段说话，否则兜底启的浏览器会被说成系统默认。
+  check('X-8 openPlan win32 多候选而系统说不出默认 = 按候选次序启并记账 candidate-rank（旧形态在此整链不弹窗）',
+    kmany.bin === 'C:\\Edge\\msedge.exe' && kmany.via === 'browser' && kmany.pick === 'candidate-rank', JSON.stringify(kmany));
+  check('X-8 openPlan 偏好直通：计划认偏好，且失效偏好会随计划交出 stale',
+    br.openPlan('win32', u, { inventory: invOf([brow('C:\\Edge\\msedge.exe'), brow('C:\\FF\\firefox.exe')]), preference: 'c:\\ff\\firefox.exe' }).pick === 'user-preference'
+    && br.openPlan('win32', u, { inventory: invOf([brow('C:\\FF\\firefox.exe')]), preference: 'c:\\gone\\x.exe' }).stale === true, 'ok');
   check('X-8 openPlan linux/darwin 无解析结果 = 文档化调度器且 exitIsEvidence:true（0 即接收、非 0 即拒绝）',
     br.openPlan('linux', u, { inventory: invOf([]) }).bin === 'xdg-open'
     && br.openPlan('linux', u, { inventory: invOf([]) }).exitIsEvidence === true
     && br.openPlan('darwin', u, { inventory: invOf([]) }).bin === 'open'
     && br.openPlan('darwin', u, { inventory: invOf([]) }).exitIsEvidence === true, 'ok');
+  // 两种意图的计划产物同一字段口径（args = 最终 argv）：执行层只有一条 spawn 路，计划不得各叫各的名。
   check('X-8 openPlan 解析到 chromium = 直启该浏览器（baseArgs 在前、url 收尾，且绝不注入隔离参数）',
     kl.bin === '/usr/bin/google-chrome' && kl.via === 'browser' && kl.engine === 'chromium'
-    && JSON.stringify(kl.baseArgs) === JSON.stringify([u]), JSON.stringify(kl));
+    && JSON.stringify(kl.args) === JSON.stringify([u]) && kl.isolated === false && kl.watch === false, JSON.stringify(kl));
+  check('X-8 openPlan 把候选条目自带的 baseArgs 排在 url 之前（snap/env 包装的启动参数不得被丢掉）',
+    JSON.stringify(br.openPlan('linux', u, { inventory: invOf([brow('brave-browser', { baseArgs: ['--ozone-platform=x11'] })]) }).args)
+      === JSON.stringify(['--ozone-platform=x11', u]), 'ok');
   check('X-8 openPlan other 引擎（Safari/snap 包装器）在非 win32 交回调度器（裸 URL 参数语义不确定）',
     ko.via === 'dispatcher' && ko.bin === 'open' && ko.engine === 'other', JSON.stringify(ko));
   check('X-8 openPlan win32 对 other 引擎仍直启（那里没有调度器；引擎不明只等于不可取证，不等于不能试）',
@@ -833,8 +883,10 @@ const TMP = fs.mkdtempSync(path.join(os.tmpdir(), 'platport-'));
   // 裸 URL 直启可被既有实例吸收：本次进程的退出码属于「转交动作」，不属于那个窗口，故两向都不作证据。
   check('X-8 直启浏览器一律 exitIsEvidence:false（win32/linux 同判，不按平台分叉）',
     kl.exitIsEvidence === false && kw.exitIsEvidence === false, JSON.stringify([kl.exitIsEvidence, kw.exitIsEvidence]));
-  check('X-8 证据规则只在 ownsItsWindow 一处：三端调度器 = 非 win32，两种浏览器形态 = 恒 false',
-    br.ownsItsWindow('dispatcher', 'linux') === true
+  check('X-8 证据规则只在 ownsItsWindow 一处：隔离窗口=恒真，三端调度器=非 win32，两种浏览器形态=恒 false',
+    br.ownsItsWindow('isolated', 'linux') === true
+    && br.ownsItsWindow('isolated', 'win32') === true
+    && br.ownsItsWindow('dispatcher', 'linux') === true
     && br.ownsItsWindow('dispatcher', 'darwin') === true
     && br.ownsItsWindow('dispatcher', 'win32') === false
     && br.ownsItsWindow('browser', 'win32') === false
@@ -873,16 +925,35 @@ const TMP = fs.mkdtempSync(path.join(os.tmpdir(), 'platport-'));
   const pbn = br.isolatedPlan('win32', u, { inventory: invOf([brow('C:\\Edge\\msedge.exe')]), profileDir: '/P' });
   check('X-8 win32 隔离计划与 openPlan 同一本体（登录窗口与外部打开不得是两个浏览器）',
     pbn.bin === 'C:\\Edge\\msedge.exe' && pbn.isolated === true && pbn.watch === true, JSON.stringify(pbn));
+  // 隔离形态的退出码从此双向可证：独立 profile 必为新实例，其 0 退出即窗口确实起过、非 0 即没起。
+  //   旧形态的登录路径只能报到 handedOff，用户关了窗口只剩超时可言。
+  check('X-8 隔离计划自带取证档位：via=isolated 且 exitIsEvidence=true，降级路径两向皆 false',
+    pc.via === 'isolated' && pc.exitIsEvidence === true && pf.via === 'isolated' && pf.exitIsEvidence === true
+    && pbn.via === 'isolated' && pbn.exitIsEvidence === true
+    && pg.exitIsEvidence === false && pg.via === 'browser' && pg.envKind === 'sys'
+    && ps.exitIsEvidence === true && ps.via === 'dispatcher' && pn.exitIsEvidence === false && pn.label === null, JSON.stringify([pg, ps]));
+  check('X-8 隔离计划与 openPlan 同一份分发依据：偏好/次序在登录窗口同样生效',
+    br.isolatedPlan('win32', u, { inventory: invOf([brow('C:\\Edge\\msedge.exe'), brow('C:\\FF\\firefox.exe')]), preference: 'c:\\ff\\firefox.exe', profileDir: '/P' }).pick === 'user-preference'
+    && br.isolatedPlan('win32', u, { inventory: invOf([brow('C:\\Edge\\msedge.exe'), brow('C:\\FF\\firefox.exe')]) }).bin === 'C:\\Edge\\msedge.exe', 'ok');
 
   // —— 诊断面：每次打开都带上「系统里探到了什么」，真机报障不必再回去读代码 ——
   {
-    const dg = br.launchDiagnostics(invOf([brow('C:\\Edge\\msedge.exe', { name: 'msedge' }), brow('C:\\FF\\firefox.exe', { name: 'firefox' })], 'c:\\ff\\firefox.exe', 'userchoice'), kmany, 'no-default');
+    const manyInv = invOf([brow('C:\\Edge\\msedge.exe', { name: 'msedge' }), brow('C:\\FF\\firefox.exe', { name: 'firefox' })], 'c:\\ff\\firefox.exe', 'userchoice');
+    const dg = br.launchDiagnostics(manyInv, kmany, env.pickLauncher('win32', manyInv, null));
     check('X-8 诊断带全部候选/默认项来源/probed 留痕（no-launcher 档也要能定性）',
-      dg.pick === 'no-default' && dg.found.length === 2 && dg.found.every((f) => f.name && f.engine && f.via)
+      dg.pick === 'userchoice' && dg.found.length === 2 && dg.found.every((f) => f.name && f.engine && f.via)
       && JSON.stringify(dg.default) === JSON.stringify({ id: 'c:\\ff\\firefox.exe', source: 'userchoice' })
       && dg.probed.length === 1, JSON.stringify(dg));
+    // 偏好是分发依据的一部分，不是探测清单的一部分：诊断里的偏好面由 pick 的 wanted/stale 得出，
+    //   于是「你选的」与「这次用的」对不上时只有一处口径（清单本身不带偏好字段，探测层不该知道被越过）。
+    check('X-8 诊断带偏好面（无偏好=null；命中与失效由同一次分发依据定出，不在界面侧另算一遍）',
+      dg.preference === null
+      && JSON.stringify(br.launchDiagnostics(manyInv, kmany, env.pickLauncher('win32', manyInv, 'c:\\ff\\firefox.exe')).preference)
+        === JSON.stringify({ id: 'c:\\ff\\firefox.exe', matched: true })
+      && JSON.stringify(br.launchDiagnostics(manyInv, kmany, env.pickLauncher('win32', manyInv, 'c:\\gone\\x.exe')).preference)
+        === JSON.stringify({ id: 'c:\\gone\\x.exe', matched: false }), JSON.stringify(dg));
     check('X-8 反向：空清单的诊断仍是空清单（把「没探到」写成「探到 0 个」才是可定性的答案）',
-      JSON.stringify(br.launchDiagnostics(invOf([]), knone, 'none-found').found) === '[]', 'ok');
+      JSON.stringify(br.launchDiagnostics(invOf([]), knone, env.pickLauncher('win32', invOf([]), null)).found) === '[]', 'ok');
   }
 }
 
@@ -900,8 +971,6 @@ const TMP = fs.mkdtempSync(path.join(os.tmpdir(), 'platport-'));
 
 // -- X-9 条 3/4 —— 可执行位判定 + spawn 前可用性预检 --
 {
-  const br = require(path.join(ROOT, 'src', 'platform', 'os', 'browser.js'));
-
   // isExecutableFile 本体
   const nf = path.join(TMP, 'plain-0644');
   fs.writeFileSync(nf, 'x', { mode: 0o644 });
@@ -922,51 +991,8 @@ const TMP = fs.mkdtempSync(path.join(os.tmpdir(), 'platport-'));
   check('X-9 条3 裸名候选保留交 execFile 的 PATH 解析（预检不扩大）',
     /candidates = \['ss',/.test(ssSrc), 'ok');
 
-  // launchIsolated spawn 前预检（inventory + binAvailable + spawn **三注入** -> 宿主无关、
-  //   零真实进程、零注册表/LaunchServices/xdg-settings 真实查询）。
-  //   夹具与产品同源：注入的就是探测层交出的条目形状（id 恒为归一 bin），而不是另一套字段口径。
-  const u9 = 'http://127.0.0.1:28999/x';
-  const chromeBrow = { id: '/usr/bin/google-chrome', name: 'google-chrome', engine: 'chromium',
-    bin: '/usr/bin/google-chrome', baseArgs: [], sources: ['fixture'] };
-  const inv9 = (b) => ({ platform: 'fixture', browsers: b ? [b] : [], defaultId: b ? b.id : null,
-    defaultSource: b ? 'fixture' : null, probed: [{ source: 'fixture', detail: b ? '1 项' : '0 项' }] });
-  const otherBrow = { id: '/applications/safari.app/contents/macos/safari', name: 'Safari', engine: 'other',
-    bin: '/Applications/Safari.app/Contents/MacOS/Safari', baseArgs: [], sources: ['fixture'] };
-  const plan9 = br.isolatedPlan(process.platform, u9, { inventory: inv9(chromeBrow), profileDir: '/P' });
-  const spawned9 = [];
-  const exits9 = [];
-  const fakeSpawn = (bin, args, env, onExit) => { spawned9.push(bin); exits9.push(onExit); return { on() {}, unref() {} }; };
-  const asked9 = [];
-  const r1 = br.launchIsolated(u9, {
-    inventory: inv9(chromeBrow), profileDir: '/P', onExit: () => {},
-    binAvailable: (b) => { asked9.push(b); return true; }, spawn: fakeSpawn,
-  });
-  check('X-9 条4 前提：产品预检只问探测清单定出的那一个浏览器（无候选链可问）',
-    asked9.length === 1 && asked9[0] === plan9.bin, JSON.stringify(asked9));
-  check('X-9 条4 默认浏览器真的被 spawn（宿主无关，三端同形）',
-    spawned9.length === 1 && spawned9[0] === plan9.bin, JSON.stringify(spawned9) + ' want=' + plan9.bin);
-  check('X-9 条4 返回值如实上报（ok/label/isolated 取自同一计划）',
-    r1.ok === true && r1.bin === plan9.label && r1.isolated === plan9.isolated,
-    JSON.stringify(r1) + ' want=' + plan9.label + '/' + plan9.isolated);
-  check('X-9 隔离形态接 onExit（关浏览器即取消登录），url 在 args 收尾',
-    typeof exits9[0] === 'function' && plan9.args[plan9.args.length - 1] === u9, 'ok');
-  const r1f = br.launchIsolated(u9, {
-    inventory: inv9(otherBrow), profileDir: '/P', onExit: () => {},
-    binAvailable: () => true, spawn: fakeSpawn,
-  });
-  // other 引擎在非 win32 交回调度器、在 win32 直启本体：两档都是 isolated:false 且不接 onExit
-  //   （前者退出不等同浏览器退出，后者并入既有实例），这条差异不得影响失败语义。
-  check('X-9 非隔离兜底（other 引擎）= isolated:false、**不接 onExit**（其退出不等同浏览器退出）',
-    r1f.ok === true && r1f.isolated === false && typeof exits9[1] !== 'function', JSON.stringify(r1f));
-  spawned9.length = 0;
-  const r2 = br.launchIsolated(u9, { inventory: inv9(chromeBrow), profileDir: '/P', binAvailable: () => false, spawn: fakeSpawn });
-  check('X-9 条4 预检不过 → ok:false/bin:null（旧实现先返回 ok:true/死 bin，error 异步才到）',
-    r2.ok === false && r2.bin === null, JSON.stringify(r2));
-  check('X-9 条4 反向：预检不过时**一个进程都不起**（"不 spawn 必死的 bin" 不再只是注释）',
-    spawned9.length === 0, '累计 spawn ' + spawned9.length + ' 次');
-  const r3 = br.launchIsolated('file:///c:/x', { inventory: inv9(chromeBrow), binAvailable: () => true, spawn: fakeSpawn });
-  check('X-9 条4 反向：非法 URL 依旧直接拒（预检不绕过 A4 闸门）',
-    r3.ok === false && spawned9.length === 0, JSON.stringify(r3));
+  // 隔离登录的行为判据不在此处：它与普通打开现在是同一个出口（openBrowser 的 intent），
+  //   判据一并收在 X-10（那条链是异步的，同步块里等不到结局）。此处只留纯函数侧的预检判据。
   const brSrc = fs.readFileSync(path.join(ROOT, 'src', 'platform', 'os', 'browser.js'), 'utf8');
   check('X-8 反向：平台层源码不再指定任何浏览器内核（无 Google Chrome 硬编码/无候选链/findChromeWin 已除名）',
     !/Google Chrome/.test(brSrc) && !/microsoft-edge/.test(brSrc) && !/chromium-browser/.test(brSrc)
@@ -1068,6 +1094,29 @@ async function x10() {
           && !!d.default && d.default.source === 'userchoice' && d.probed.length === 1
           && d.bin === r.evidence.bin;
       }, ['browser', 'C:\\FF\\firefox.exe']],
+    // 真机形状：装了多个浏览器，而系统说不出默认（UserChoice 读不到）。旧实现在此判 no-launcher，
+    //   用户看到的症状是「点一键登录什么都没弹」。现在这一档必须真的开窗，且把依据摊进证据。
+    ['win32 多候选且系统说不出默认 = 按候选次序直启，依据留在证据里（不再 no-launcher 死路）', u,
+      { platform: 'win32', inventory: IN([B(EDGE_WIN), B('C:\\FF\\firefox.exe')]), observe: obs(EX_OK), spawn: okSpawn, binAvailable: () => true },
+      (r) => r.ok === true && r.evidence.via === 'browser' && r.evidence.bin === EDGE_WIN
+        && r.evidence.diagnostics.pick === 'candidate-rank' && r.evidence.diagnostics.preference === null,
+      ['browser', EDGE_WIN]],
+    // 浏览器选择权在用户：在产品里选过一次的，普通打开与登录窗口都得听它的，且压过系统默认。
+    ['偏好命中压过系统默认：启动用户选的那个，诊断记 user-preference/matched:true', u,
+      { platform: 'win32', inventory: IN([B(EDGE_WIN), B('C:\\FF\\firefox.exe')], 'c:\\edge\\msedge.exe', 'userchoice'),
+        preference: 'c:\\ff\\firefox.exe', observe: obs(EX_OK), spawn: okSpawn, binAvailable: () => true },
+      (r) => r.ok === true && r.evidence.bin === 'C:\\FF\\firefox.exe'
+        && r.evidence.diagnostics.pick === 'user-preference'
+        && JSON.stringify(r.evidence.diagnostics.preference) === JSON.stringify({ id: 'c:\\ff\\firefox.exe', matched: true }),
+      ['browser', 'C:\\FF\\firefox.exe']],
+    // 偏好所指被卸载：可以回落（否则一次卸载就把功能打死），但必须在面板上说得出来 ——
+    //   「你选的火狐已经不在了」与「按系统默认开的」是两件事，静默换人等于把选择权收回产品。
+    ['偏好所指已不在候选里 = 回落系统默认并交出 matched:false（不静默换人）', u,
+      { platform: 'win32', inventory: IN([B(EDGE_WIN), B('C:\\FF\\firefox.exe')], 'c:\\edge\\msedge.exe', 'userchoice'),
+        preference: 'c:\\gone\\firefox.exe', observe: obs(EX_OK), spawn: okSpawn, binAvailable: () => true },
+      (r) => r.ok === true && r.evidence.bin === EDGE_WIN && r.evidence.diagnostics.pick === 'userchoice'
+        && JSON.stringify(r.evidence.diagnostics.preference) === JSON.stringify({ id: 'c:\\gone\\firefox.exe', matched: false }),
+      ['browser', EDGE_WIN]],
   ];
   for (const [name, url, opts, judge, form] of cases) {
     const r = await br.openBrowser(url, opts);
@@ -1090,9 +1139,6 @@ async function x10() {
     //   现在必须显式失败，且把探测留痕一起交出。
     ['win32 探测清单为空 = 选不出启动对象', u,
       { platform: 'win32', inventory: NO_INV, spawn: okSpawn, binAvailable: () => true, observe: obs(EX_OK) }, 'no-launcher'],
-    // 多个候选而系统说不出默认项：按清单顺序猜一个就是「面板说开了、屏幕上是另一个浏览器」。
-    ['win32 多候选且系统说不出默认项 = 拒绝按顺序猜', u,
-      { platform: 'win32', inventory: IN([B(EDGE_WIN), B('C:\\FF\\firefox.exe')]), spawn: okSpawn, binAvailable: () => true, observe: obs(EX_OK) }, 'no-launcher'],
   ];
   for (const [name, url, opts, reason] of zero) {
     spawned.length = 0;
@@ -1151,15 +1197,77 @@ async function x10() {
     o3.stage === 'alive' && o3.code === undefined, JSON.stringify(o3));
   check('X-10 observeSpawn 的计时句柄被 unref（观测不得拖住进程退出）', unrefed === 1, 'unref=' + unrefed);
 
-  // —— launchIsolated 必须共用同一套词汇（登录路径不得另立一套字段口径）——
-  const li = br.launchIsolated(u, { inventory: IN([B('/usr/bin/google-chrome')]), profileDir: '/P', binAvailable: () => true, spawn: () => ({ on() {}, unref() {} }) });
-  check('X-10 隔离打开同词汇：ok/confirmed/handedOff/reason/url 在场且为 handedOff（同步返回不宣称窗口出现）',
-    li.ok === true && li.confirmed === false && li.handedOff === true && li.reason === null && li.url === u, JSON.stringify(li));
-  check('X-10 隔离打开也带探测诊断（登录页打不开时，面板同样要能说明本机探到了什么）',
-    !!li.evidence && !!li.evidence.diagnostics && li.evidence.diagnostics.found.length === 1, JSON.stringify(li.evidence));
-  const liBad = br.launchIsolated('file:///etc/passwd', { binAvailable: () => true, spawn: () => ({ on() {}, unref() {} }) });
-  check('X-10 隔离打开失败也带 reason/url/error（旧形态只给 ok:false，面板无从解释）',
-    liBad.ok === false && liBad.reason === 'unsafe-url' && typeof liBad.error === 'string', JSON.stringify(liBad));
+  // —— 一键登录的隔离窗口：与普通打开同一个出口（intent 定形态），故同一套判据逐条适用 ——
+  //   注入 observe 而不是依赖真实的 1500ms 窗口：登录那条链的结局由子进程事件决定，等真事件会让用例
+  //   随宿主负载漂移（CI 上曾出现同一份代码两种档位）。
+  {
+    const chromeInv = IN([B('/usr/bin/google-chrome')]);
+    const removed = [];
+    let isoSpawnArgs = null, isoEnv = null, isoOnExit = 'unset';
+    const onExit = () => {};
+    const isoSpawn = (bin, args, env, cb) => { spawned.push([bin, args]); isoSpawnArgs = args; isoEnv = env; isoOnExit = cb; return { fake: true }; };
+    const li = await br.openBrowser(u, {
+      platform: 'linux', inventory: chromeInv, intent: 'isolated-login', observe: obs(EX_OK),
+      spawn: isoSpawn, binAvailable: () => true, allocProfile: () => '/P', rmTree: (p, ms) => removed.push([p, ms]),
+      profileMs: 5000, onExit, rand: () => 0,
+    });
+    check('X-10 隔离登录同词汇同档位：独立 profile 必为新实例，0 退出即 confirmed（登录窗口的退出码双向可证）',
+      vocabOk(li) === null && li.ok === true && li.confirmed === true && li.handedOff === false
+        && li.evidence.via === 'isolated' && li.evidence.isolated === true && li.evidence.watch === true
+        && li.evidence.ownsWindow === true && li.evidence.profile === '/P' && li.url === u,
+      JSON.stringify(li));
+    // argv 的形状是本层的契约（先隔离方言、再随机化外观、url 收尾）；具体取值取自池子，不在此钉死。
+    const ia = isoSpawnArgs || [];
+    check('X-10 隔离登录的 argv 走隔离方言：--incognito + user-data-dir 开头，外观参数居中，url 收尾',
+      ia[0] === '--incognito' && ia[1] === '--user-data-dir=/P'
+        && /^--window-size=\d+,\d+$/.test(ia[2]) && /^--lang=[A-Za-z-]+$/.test(ia[3])
+        && ia.slice(4, 7).join(',') === '--no-first-run,--no-default-browser-check,--disable-session-crashed-bubble'
+        && ia[ia.length - 1] === u, JSON.stringify(ia));
+    check('X-10 环境档用反指纹面（TZ 与 argv 里的 --lang 同源注入，域侧不自己拼一份）',
+      (() => {
+        const m = /^--lang=([A-Za-z-]+)$/.exec(ia[3] || '');
+        return !!m && !!isoEnv && isoEnv.LANG === m[1] && typeof isoEnv.TZ === 'string' && !!isoEnv.TZ;
+      })(), JSON.stringify([isoEnv && isoEnv.TZ, ia[3]]));
+    check('X-10 只在 watch 形态将关闭回调接到 spawn（并入既有实例时 onExit 恒误报，宁可不接）',
+      isoOnExit === onExit, String(isoOnExit));
+    check('X-10 隔离登录成功后延迟回收临时 profile（一次登录留一个目录 = 磁盘上的孤儿）',
+      JSON.stringify(removed) === JSON.stringify([['/P', 5000]]), JSON.stringify(removed));
+    check('X-10 隔离登录也带探测诊断（登录页打不开时，面板同样要能说明本机探到了什么）',
+      !!li.evidence.diagnostics && li.evidence.diagnostics.found.length === 1
+        && li.evidence.diagnostics.pick === 'only-installed', JSON.stringify(li.evidence.diagnostics));
+    // 降级路径：Safari 无隔离方言，走调度器并入既有窗口，此时绝不能声称隔离、也不能挂 onExit。
+    spawned.length = 0; isoOnExit = 'unset';
+    const ld = await br.openBrowser(u, {
+      platform: 'darwin', inventory: NO_INV, intent: 'isolated-login', observe: obs({ stage: 'alive' }),
+      spawn: (b, a, e, cb) => { isoOnExit = cb; return { fake: true }; }, binAvailable: () => true, profileMs: 5000, onExit,
+    });
+    check('X-10 隔离登录降级如实（无可信调度器/无方言时 isolated:false、只到 handedOff、不挂 onExit）',
+      vocabOk(ld) === null && ld.ok === true && ld.confirmed === false && ld.handedOff === true
+        && ld.evidence.isolated === false && ld.evidence.profile === null && ld.evidence.watch === false
+        && ld.evidence.via === 'dispatcher' && isoOnExit === undefined, JSON.stringify(ld));
+    // 预检不过 = 零 spawn 且回收已分配目录（旧形态：登录绕开档位/会话判据，且失败即留孤儿目录）。
+    spawned.length = 0; removed.length = 0;
+    const ln = await br.openBrowser(u, {
+      platform: 'linux', inventory: chromeInv, intent: 'isolated-login', spawn: okSpawn,
+      binAvailable: () => false, desktopAvailable: () => false, allocProfile: () => '/P', rmTree: (p, ms) => removed.push([p, ms]),
+    });
+    check('X-10 隔离登录吃同一套预检：无图形会话即 no-desktop-session，零 spawn 且已分配的 profile 被回收',
+      vocabOk(ln) === null && ln.ok === false && ln.reason === 'no-desktop-session' && spawned.length === 0
+        && ln.url === u && typeof ln.error === 'string' && JSON.stringify(removed) === JSON.stringify([['/P', 0]]),
+      JSON.stringify([ln, removed]));
+    const lb = await br.openBrowser('file:///etc/passwd', { platform: 'linux', intent: 'isolated-login', binAvailable: () => true, spawn: okSpawn });
+    check('X-10 隔离登录失败也带 reason/url/error（旧形态只给 ok:false，面板无从解释）',
+      vocabOk(lb) === null && lb.ok === false && lb.reason === 'unsafe-url' && typeof lb.error === 'string', JSON.stringify(lb));
+    // 偏好对登录窗口同样作数：用户在面板里选一次，两条路都得跟着，否则「选过」只对一半功能生效。
+    spawned.length = 0;
+    const lp = await br.openBrowser(u, {
+      platform: 'win32', inventory: IN([B(EDGE_WIN), B('C:\\FF\\firefox.exe')]), preference: 'c:\\ff\\firefox.exe',
+      intent: 'isolated-login', observe: obs(EX_OK), spawn: okSpawn, binAvailable: () => true, allocProfile: () => '/P', rmTree: () => {},
+    });
+    check('X-10 隔离登录与直启共用分发依据：偏好命中即 firefox 的 --no-remote --profile 形态',
+      lp.ok === true && lp.evidence.bin === 'C:\\FF\\firefox.exe' && lp.evidence.isolated === true
+        && lp.evidence.diagnostics.pick === 'user-preference', JSON.stringify(lp.evidence));
+  }
 }
 
 // -- X-11：唯一出口的源码级不变量 --
@@ -1167,19 +1275,24 @@ async function x10() {
   const brRel = path.join(ROOT, 'src', 'platform', 'os', 'browser.js');
   const br = require(brRel);
   const src = fs.readFileSync(brRel, 'utf8');
-  // 遍历 src/ 找 browser.<verb>( 的调用点：`browser.open(` 一旦重现，说明又开了第二条外部打开路。
+  const envRel = path.join(ROOT, 'src', 'platform', 'os', 'environment.js');
+  const env = require(envRel);
+  const envSrc = fs.readFileSync(envRel, 'utf8');
+  // 遍历 src/ 找外部打开动词的调用点：`browser.open(` / `browser.launchIsolated(` 一旦重现，
+  //   说明又开了第二条路（意图是 openBrowser 的参数，不是第二个动词）。
   const walkSrc = (d, out) => { for (const f of fs.readdirSync(d, { withFileTypes: true })) {
     const p = path.join(d, f.name); if (f.isDirectory()) walkSrc(p, out); else if (f.name.endsWith('.js')) out.push(p); } return out; };
   const files = walkSrc(path.join(ROOT, 'src'), []);
-  const reOld = /browser\s*\.\s*open\s*\(/;
+  const reOld = /browser\s*\.\s*(?:open|openExternal|launchIsolated)\s*\(/;
   const legacy = files.filter((f) => reOld.test(fs.readFileSync(f, 'utf8'))).map((f) => path.relative(ROOT, f));
   check('X-11 全仓 src/ 无第二条外部打开出口（browser.open 已收口）',
     legacy.length === 0, legacy.join(',') || ('扫描 ' + files.length + ' 个文件'));
   check('X-11 反向：判据能识别旧出口形态（否则本条恒绿）',
-    reOld.test("function f(u) { return platform.browser.open(u); }"), 'hit');
-  check('X-11 browser.js 不再导出 open（导出面即能力面，留着就是无人调用的第二出口）',
-    br.open === undefined && typeof br.openBrowser === 'function' && typeof br.launchIsolated === 'function',
-    Object.keys(br).join(','));
+    reOld.test("function f(u) { return platform.browser.open(u); }")
+      && reOld.test("const r = platform.browser.launchIsolated(u, { profileDir: p });"), 'hit');
+  check('X-11 browser.js 只导出一个打开动词（launchIsolated 已被 intent 吸收，不得重现）',
+    br.open === undefined && br.launchIsolated === undefined && br.openExternal === undefined
+      && typeof br.openBrowser === 'function', Object.keys(br).join(','));
   check('X-11 支持外部打开的平台名单来自能力档位表（源码里不得再写第二份平台判断）',
     /CAPABILITY_PROFILES\[k\]\.openBrowser/.test(src) && !/SUPPORTED_OPEN_PLATFORMS\s*=\s*\[\s*['"]linux/.test(src), 'ok');
   const prof = require(path.join(ROOT, 'src', 'platform', 'os', 'capability-profile.js'));
@@ -1191,15 +1304,22 @@ async function x10() {
   check('X-11 open-web 原样透传三档结果且失败映射非 2xx（不得恒 200 把失败说成成功）',
     /openInSystemBrowser\(url\)/.test(apiSrc) && /send\(r\.ok \? 200 : 500, r\)/.test(apiSrc), 'ok');
   const oaSrc = fs.readFileSync(path.join(ROOT, 'src', 'domains', 'router', 'ops', 'oauth.js'), 'utf8');
+  const roSrc = fs.readFileSync(path.join(ROOT, 'src', 'domains', 'router', 'router-ops.js'), 'utf8');
   check('X-11 一键登录把授权地址与 reason 一起交出（打不开时面板仍能给出可复制地址）',
-    /reason:\s*evidence\.reason/.test(oaSrc) && /url:\s*authUrl/.test(oaSrc), 'ok');
+    /reason:\s*r\.reason/.test(oaSrc) && /url:\s*authUrl/.test(oaSrc), 'ok');
   check('X-11 一键登录的成功档原样取自平台层（消费方不得自己宣称 handedOff/confirmed）',
-    /Object\.assign\(\{\}, evidence,/.test(oaSrc) && !/handedOff:\s*true/.test(oaSrc), 'ok');
+    /Object\.assign\(\{\}, r,/.test(oaSrc) && !/confirmed:\s*true/.test(oaSrc) && !/handedOff:\s*true/.test(oaSrc), 'ok');
   check('X-11 反向：判据能识别消费方自宣称成功档（旧形态 confirmed:false,handedOff:true 硬编码）',
     /handedOff:\s*true/.test('return { ok: true, confirmed: false, handedOff: true };'), 'hit');
-  const brOpSrc = fs.readFileSync(path.join(ROOT, 'src', 'domains', 'router', 'ops', 'browser.js'), 'utf8');
-  check('X-11 隔离打开的调用方交出 result 而非只取 profile（丢弃结果即丢弃失败原因）',
-    /=\s*platform\.browser\.launchIsolated\(/.test(brOpSrc) && /return \{ profile: null, result:/.test(brOpSrc), 'ok');
+  // 域侧只声明「要一个登录用的隔离窗口」：argv、profile、环境随机化全在平台层，
+  //   在这里再拼一份就等于给登录开了第二条执行路（本轮缺陷的形态之一）。
+  check('X-11 一键登录经唯一出口声明意图，域侧零 argv/零 profile 拼接',
+    /platform\.browser\.openBrowser\(url, \{ intent: 'isolated-login'/.test(roSrc)
+      && !/user-data-dir|--incognito|--profile/.test(roSrc + oaSrc), roSrc.slice(0, 200));
+  // 临时 profile 的归属：执行口负责分配与启动期回收，登录窗口关掉不等于目录可删 ——
+  //   目录生命周期跟着登录周期走，只从 evidence.profile 取用（旧形态是域侧自己 alloc 自己起进程）。
+  check('X-11 隔离 profile 只从 evidence 取用并随登录周期延迟回收（丢弃结果即丢弃失败原因与目录）',
+    /ev\.profile/.test(oaSrc) && /tmpProfile/.test(oaSrc) && /removeTreeDeferred\(tmpProfile/.test(oaSrc), 'ok');
   // 面板那条路的前提：内核得有一个「只受理本机来源」的代开端点。没有它，壳内面板只能自己 window.open
   //   （webview 丢弃 = 死单击），远程访问者则会把浏览器弹窗推到内核所在机器上。
   const guardSrc = fs.readFileSync(path.join(ROOT, 'src', 'api', 'domains', 'guard.js'), 'utf8');
@@ -1234,43 +1354,48 @@ async function x10() {
     JSON.stringify(x11Files) === JSON.stringify(['src/platform/os/desktop.js']), x11Files.join(',') || 'ok');
   check('X-11 反向：判据能识别域里自己摸 X socket 的形态',
     x11Re.test("const x11 = '/tmp/.X11-unix'; fs.readdirSync(x11)"), 'hit');
-  const brOpEnv = fs.readFileSync(path.join(ROOT, 'src', 'domains', 'router', 'ops', 'browser.js'), 'utf8');
-  check('X-11 隔离登录的环境补齐委托 desktop.sessionEnv（会话判据与补齐必须同源，否则一边说有、一边补不全）',
-    /function graphicalEnv\(\) \{\s*return desktop\.sessionEnv\(\);?\s*\}/.test(brOpEnv)
-    && /require\('\.\.\/\.\.\/\.\.\/platform\/os\/desktop'\)/.test(brOpEnv), 'ok');
+  check('X-11 执行口的图形会话判据与补齐全部委托 desktop.js（会话判据与补齐必须同源，否则一边说有、一边补不全）',
+    /desktop\.sessionEnv\(\)/.test(src) && /desktop\.sessionAvailable/.test(src)
+      && !/\.X11-unix|WAYLAND_DISPLAY/.test(src), 'ok');
 
-  // —— 只读探测面：面板/排障要能直接问「本机探到了什么」，且它绝不允许顺手做动作 ——
-  const obm = /if \(req\.method === 'GET' && pathname === '\/env\/browsers'\) \{([\s\S]*?)\n {4}\}/.exec(guardSrc);
+  // —— 只读装配面：面板/排障要能直接问「本机这张环境表单长什么样」，且它绝不允许顺手做动作 ——
+  const obm = /if \(req\.method === 'GET' && pathname === '\/env\/environment'\) \{([\s\S]*?)\n {4}\}/.exec(guardSrc);
   const obmBody = obm ? obm[1] : '';
-  check('X-11 浏览器清单端点存在且整段处理体被切片判定（切片为空即判据失去对象）',
+  check('X-11 环境表单端点存在且整段处理体被切片判定（切片为空即判据失去对象）',
     obmBody.length > 150, 'len=' + obmBody.length);
-  check('X-11 清单端点是只读探测面：走 browser.listBrowsers、过同源闸、且绝不触到打开出口',
-    /browser\.listBrowsers\(/.test(obmBody) && /originAllowed\(req, sup\.config\.apiPort\)/.test(obmBody)
+  check('X-11 表单端点是只读装配面：走 environment.form、过同源闸、且绝不触到打开出口',
+    /environment\.form\(/.test(obmBody) && /originAllowed\(req, sup\.config\.apiPort\)/.test(obmBody)
     && !/openBrowser\(/.test(obmBody) && !/spawn/.test(obmBody), 'ok');
-  check('X-11 只读面与动作面的来源闸不同级：清单过同源即可（远程面板要能显示本机探到了什么），'
+  check('X-11 只读面与动作面的来源闸不同级：表单过同源即可（远程面板要能显示本机探到了什么），'
     + '而代开端点必须再加回环闸（否则等于白送「在他人机器上开浏览器」）',
     /identity\.loopback/.test(ob) && !/identity\.loopback/.test(obmBody), 'ok');
-  check('X-11 反向：判据能识别「清单端点顺手开浏览器」与无来源闸的形态',
-    !/browser\.listBrowsers\(/.test("return send(200, { ok: true });")
-    && !/originAllowed\(req, sup\.config\.apiPort\)/.test("return send(200, browser.listBrowsers());"), 'hit');
+  check('X-11 反向：判据能识别「表单端点顺手开浏览器」与无来源闸的形态',
+    !/environment\.form\(/.test("return send(200, { ok: true });")
+    && !/originAllowed\(req, sup\.config\.apiPort\)/.test("return send(200, environment.form());"), 'hit');
   const ctSrc = fs.readFileSync(path.join(ROOT, 'src', 'api', 'contract.js'), 'utf8');
-  check('X-11 /env/browsers 在契约里只登记一次（登记面即对外能力面，漏登记=不承诺）',
-    (ctSrc.match(/\/env\/browsers/g) || []).length === 1, String((ctSrc.match(/\/env\/browsers/g) || []).length));
-  check('X-11 清单与打开共用同一探测实现与缓存（两条路对「系统里有什么」不得给出两个答案）',
-    /detector\.inventory\(/.test(src) && /listBrowsers/.test(src) && typeof br.listBrowsers === 'function'
-    && typeof br.invalidateBrowsers === 'function', 'ok');
+  check('X-11 环境表单与浏览器偏好在契约里各登记一次（登记面即对外能力面，漏登记=不承诺）',
+    (ctSrc.match(/\/env\/environment/g) || []).length === 1
+      && (ctSrc.match(/\/settings\/external-browser/g) || []).length === 1,
+    (ctSrc.match(/\/env\/environment|\/settings\/external-browser/g) || []).join(','));
+  check('X-11 表单与打开共用同一探测实现与缓存（两条路对「系统里有什么」不得给出两个答案）',
+    /environment\.browsers\(/.test(src) && /detector\.inventory\(/.test(envSrc)
+      && /environment\.pickLauncher\(/.test(src) && !/pickLauncher\s*=\s*function|function pickLauncher/.test(src), 'ok');
 
   // 出口如何交到域手里也要有闸：网关只允许「缺省即平台层唯一出口、注入只服务于测试」这一种装配。
   //   否则调用方传个 deps.browser 就把外部打开换了实现，S-1 的唯一出口判据形同虚设。
+  //   环境表单同一条装配路：它是动作面的事实来源，允许注入但不允许没有缺省。
   const gwSrc = fs.readFileSync(path.join(ROOT, 'src', 'api', 'transport', 'server.js'), 'utf8');
-  check('X-11 出口由网关缺省装配并随 ctx 交出（无缺省即留第二出口位）',
+  check('X-11 出口与环境表单由网关缺省装配并随 ctx 交出（无缺省即留第二出口位）',
     /const browser = \(deps && deps\.browser\) \|\| browserExit;/.test(gwSrc)
+      && /const environment = \(deps && deps\.environment\) \|\| environmentExit;/.test(gwSrc)
       && /require\('\.\.\/\.\.\/platform\/os\/browser'\)/.test(gwSrc)
-      && /const ctx = \{[^}]*\bbrowser\b/.test(gwSrc), 'ok');
-  const gwNoDefault = "  const browser = deps.browser;\n    const ctx = { sup, req };";
-  check('X-11 反向：判据能识别「deps 不给缺省」与「ctx 不带出口」的装配形态',
+      && /require\('\.\.\/\.\.\/platform\/os\/environment'\)/.test(gwSrc)
+      && /const ctx = \{[^}]*\bbrowser\b[^}]*\benvironment\b/.test(gwSrc), 'ok');
+  const gwNoDefault = "  const browser = deps.browser;\n    const environment = deps.environment;\n    const ctx = { sup, req };";
+  check('X-11 反向：判据能识别「deps 不给缺省」与「ctx 不带出口/表单」的装配形态',
     !/const browser = \(deps && deps\.browser\) \|\| browserExit;/.test(gwNoDefault)
-      && !/const ctx = \{[^}]*\bbrowser\b/.test(gwNoDefault), 'hit');
+      && !/const environment = \(deps && deps\.environment\) \|\| environmentExit;/.test(gwNoDefault)
+      && !/const ctx = \{[^}]*\bbrowser\b[^}]*\benvironment\b/.test(gwNoDefault), 'hit');
 
   // 最后一环在面板：外部打开地址的窗口创建必须只有一个出口，且各页面必须经统一入口消费结果。
   //   为什么平台门禁要读到 ui/：这条能力的判据如果只覆盖内核，面板照样能把 handedOff 显示成成功；
@@ -1325,6 +1450,132 @@ async function x10() {
     !/evidenceDetail\(/.test('export function classifyOpenResult(r){ return { tier: "failed", url: null, title: r.error }; }'), 'hit');
   check('X-11 /env/open-url 在客户端只登记一次（第二处即第二个调用方）',
     (cliSrc.match(/\/env\/open-url/g) || []).length === 1, String((cliSrc.match(/\/env\/open-url/g) || []).length));
+}
+
+// -- X-12：环境表单与浏览器偏好的归属不变量 --
+// 为什么不并进 X-8：X-8 判「一次分发选得对不对」，本条判「这张表由谁装配、谁能改它、改了会不会留下两份真相」。
+//   Windows 那台机器的缺陷形态正是「问一处答两处」——面板显示候选、登录用另一个浏览器、失败原因写在第三个地方。
+//   故本条钉的是结构：字段集、注入点数量、写入路径、动词数量。四项里任何一项松掉，上一层的行为判据都会变成摆设。
+{
+  const envRel = path.join(ROOT, 'src', 'platform', 'os', 'environment.js');
+  const env = require(envRel);
+  const envSrc = fs.readFileSync(envRel, 'utf8');
+  const walkAll = (d, out) => { for (const f of fs.readdirSync(d, { withFileTypes: true })) {
+    const p = path.join(d, f.name); if (f.isDirectory()) walkAll(p, out); else if (f.name.endsWith('.js')) out.push(p); } return out; };
+  const relOf = (f) => path.relative(ROOT, f).split(path.sep).join('/');
+  const allFiles = walkAll(path.join(ROOT, 'src'), []);
+
+  // 表单的输入全部来自注入与探测层：夹具化后本条在任意宿主上等价（不摸注册表、不读真机配置）。
+  const fixtureInv = () => ({
+    platform: 'fixture',
+    browsers: [
+      { id: 'b-firefox', name: 'Firefox', bin: '/usr/bin/firefox', engine: 'firefox', sources: ['fixture'] },
+      { id: 'b-chrome', name: 'Chrome', bin: '/usr/bin/chrome', engine: 'chromium', sources: ['fixture'] },
+    ],
+    defaultId: null, defaultSource: null, probed: [{ source: 'fixture', detail: '2 项' }],
+  });
+  const FKEYS = ['at', 'browsers', 'cached', 'capabilities', 'default', 'identity', 'paths', 'pick',
+    'platform', 'preference', 'probed', 'schema', 'session', 'snapshot'];
+  const saved = { home: process.env.DSH_SUPERVISOR_HOME, bound: Object.assign({}, env.bind()) };
+
+  const f1 = env.form({ force: true, inventory: fixtureInv(), now: () => 111 });
+  check('X-12 表单字段集固定（平台/身份/落点/会话/档位/偏好/系统默认/候选/分发依据/留痕/快照/时戳/schema/缓存位）',
+    JSON.stringify(Object.keys(f1).sort()) === JSON.stringify(FKEYS.slice().sort()), Object.keys(f1).join(','));
+  check('X-12 反向：少一个面的表单不足以支撑后续分发（漏 pick 或漏 identity 必须判红，否则字段集是摆设）',
+    (() => {
+      const less = Object.assign({}, f1); delete less.pick;
+      const more = Object.assign({}, f1, { explorer: true });
+      const k = JSON.stringify(FKEYS.slice().sort());
+      return JSON.stringify(Object.keys(less).sort()) !== k && JSON.stringify(Object.keys(more).sort()) !== k;
+    })(), 'ok');
+  check('X-12 每条结论带留痕来源，分发结论随行（section/source/detail 成对；pick 是后续动作的唯一依据）',
+    ['browsers', 'session', 'capabilities', 'preference', 'pick'].every((s) => f1.probed.some((p) => p.section === s
+      && typeof p.source === 'string' && typeof p.detail === 'string'))
+      && f1.pick.how === 'candidate-rank' && f1.pick.id === 'b-chrome' && f1.preference.reason === 'not-set',
+    JSON.stringify([f1.pick, f1.probed.map((p) => p.section)]));
+  check('X-12 候选行经规整后交给面板与选路共用（engine 恒有值、isDefault 按系统默认标定、baseArgs 恒为数组）',
+    f1.browsers.length === 2 && f1.browsers.every((b) => !!b.engine && Array.isArray(b.baseArgs)
+      && typeof b.isDefault === 'boolean' && b.sources.length === 1)
+      && f1.browsers.every((b) => b.isDefault === false), JSON.stringify(f1.browsers));
+  // 未注入即如实标「未绑定」：能力档的实测覆写只住在 platform/os 门面，表单自造一份就是第二套真相。
+  check('X-12 反向：能力矩阵未注入时不冒充档位（宁可报未绑定，也不给面板一个凭空的是/否）',
+    f1.capabilities === null && /未绑定能力矩阵/.test(JSON.stringify(f1.probed)), JSON.stringify(f1.capabilities));
+
+  // 偏好的判据住在表单：写入口可以有很多个，判据只能有一个。
+  const cp = (v) => env.checkPreference(v, f1);
+  check('X-12 偏好判据：命中候选=可写、空值=清除、非候选=拒写并给一句话（非字符串按空处理，不猜意图）',
+    cp('b-firefox').ok === true && cp('b-firefox').browser.id === 'b-firefox'
+      && cp('').ok === true && cp('').id === null && cp(null).id === null && cp(42).id === null
+      && cp('nope').ok === false && typeof cp('nope').error === 'string' && cp('nope').browser === null
+      && cp('nope').candidates.length === 2, JSON.stringify(cp('nope')));
+  env.bind({ preference: () => 'b-firefox' });
+  const f3 = env.form({ force: true, inventory: fixtureInv() });
+  check('X-12 偏好经装配期注入即全局生效（调用点不传参：漏传一处就是一条静默降级路）',
+    f3.preference.configured === true && f3.preference.matched === true && f3.preference.browser.id === 'b-firefox'
+      && f3.pick.how === 'user-preference' && f3.pick.id === 'b-firefox' && f3.pick.stale === false,
+    JSON.stringify(f3.pick));
+  env.bind({ preference: () => 'b-gone' });
+  const f4 = env.form({ force: true, inventory: fixtureInv() });
+  check('X-12 偏好所指消失时表单自证 stale 并给出回落依据（不静默换人，也不静默不换）',
+    f4.preference.reason === 'stale' && f4.preference.browser === null && f4.pick.stale === true
+      && f4.pick.wanted === 'b-gone' && f4.pick.how === 'candidate-rank', JSON.stringify([f4.preference, f4.pick]));
+  env.bind({ preference: saved.bound.preference, capabilities: saved.bound.capabilities });
+  // 注入点数量必须钉死：多于两处 = 谁都能改写这张表；零处 = 表单在跑假数据。
+  const bindFiles = allFiles.filter((f) => /environment\s*\.\s*bind\(/.test(fs.readFileSync(f, 'utf8'))).map(relOf).sort();
+  check('X-12 上层事实的注入点恰好两处（能力档=platform/os 门面，偏好=app 组装期；platform 层禁止反向 require app/api）',
+    JSON.stringify(bindFiles) === JSON.stringify(['src/app/assembly/compose/core.js', 'src/platform/os/index.js']),
+    bindFiles.join(',') || ('扫描 ' + allFiles.length + ' 个文件'));
+  check('X-12 反向：判据能识别在执行层现取偏好的形态（分层禁止，且绕过表单就是第二个口径）',
+    /environment\s*\.\s*bind\(/.test("environment.bind({ preference: () => cfg.externalBrowser });"), 'hit');
+
+  // 快照是给人回看的留痕，不是启动依赖：读路径绝不写盘，写路径只落进本产品状态目录。
+  const home = path.join(TMP, 'x12-state');
+  process.env.DSH_SUPERVISOR_HOME = home;
+  const snapPath = env.snapshotPath();
+  const fNoPersist = env.form({ force: true, inventory: fixtureInv() });
+  check('X-12 读路径零写盘（面板轮询不在状态目录留副作用；快照只随人主动刷新落一次）',
+    fNoPersist.snapshot.written === false && !fs.existsSync(snapPath) && fNoPersist.snapshot.path === snapPath,
+    'exists=' + fs.existsSync(snapPath));
+  const f2 = env.form({ force: true, persist: true, inventory: fixtureInv() });
+  const bits = fs.statSync(snapPath).mode & 0o777;
+  check('X-12 快照落在状态目录、带 schema、权限只给用户自己（win32 无 POSIX 权限位，退钉写侧传参）',
+    snapPath === path.join(env.paths().supervisor, env.FILE_NAME) && f2.snapshot.written === true
+      && (process.platform === 'win32' ? /\{ mode: 0o600 \}/.test(envSrc) : bits === 0o600)
+      && env.readSnapshot().schema === env.SCHEMA, 'mode=' + bits.toString(8) + ' ' + snapPath);
+  check('X-12 反向：无条件写盘的表单实现会被上面两条识别（读路径判据与写路径判据必须一假一真）',
+    (() => {
+      const unconditional = 'function form(o){ writeAtomic(snapshot.path, doc); }';
+      return !/if \(ov\.persist === true\)/.test(unconditional) && /if \(ov\.persist === true\)/.test(envSrc);
+    })(), 'hit');
+
+  // 动词数量：意图是 openBrowser 的参数，不是第二个动词。旧补丁位（router/ops/browser.js）也不许留壳。
+  const defRe = /(?:async\s+)?function\s+(openBrowser|openExternal|launchIsolated)\s*\(/;
+  const defFiles = allFiles.filter((f) => defRe.test(fs.readFileSync(f, 'utf8'))).map(relOf).sort();
+  check('X-12 全仓只有一处定义外部打开动词（两种意图共用 openBrowser）',
+    JSON.stringify(defFiles) === JSON.stringify(['src/platform/os/browser.js']), defFiles.join(',') || '未找到定义处');
+  check('X-12 反向：判据能识别域侧自造登录启动函数（router/ops/browser.js 旧形态即此）',
+    defRe.test("async function openExternal(url, intent) {}") && defRe.test("function launchIsolated(url, o) {}"), 'hit');
+  check('X-12 域侧的浏览器启动补丁文件已删除（留着补丁位就会被重新写回去）',
+    !fs.existsSync(path.join(ROOT, 'src', 'domains', 'router', 'ops', 'browser.js')), '仍在');
+  // 选路只由交路表决定：pickLauncher 的定义与调用都不许逃出平台层，否则域又在自选浏览器。
+  const pickFiles = allFiles.filter((f) => /pickLauncher\s*\(/.test(fs.readFileSync(f, 'utf8'))).map(relOf).sort();
+  check('X-12 分发依据只在平台层一处定义、一处消费（域与 API 都不自己选浏览器）',
+    JSON.stringify(pickFiles) === JSON.stringify(['src/platform/os/browser.js', 'src/platform/os/environment.js']),
+    pickFiles.join(','));
+  const setSrc = fs.readFileSync(path.join(ROOT, 'src', 'app', 'settings', 'browser.js'), 'utf8');
+  check('X-12 偏好落盘唯一入口（写前过表单判据、写后读回核验、本层不碰 fs）',
+    (setSrc.match(/state\.persistConfigPatch\(/g) || []).length === 1
+      && /const v = platform\.environment\.checkPreference\(id, form\);\s*\n\s*if \(!v\.ok\)/.test(setSrc)
+      && /verifyPersisted\(this\.configPath, patch\)/.test(setSrc)
+      && !/require\('node:fs'\)|fs\.writeFileSync/.test(setSrc), 'ok');
+  check('X-12 改偏好必刷表单缓存（否则下一拍按旧偏好分发：面板显示新值、实际用旧浏览器）',
+    /platform\.environment\.invalidate\(\)/.test(setSrc), 'ok');
+
+  // 复位：注入的偏好、假状态根与表单缓存都不许留给后面的用例（残留会让 X-10 的无偏好档变成有偏好档）。
+  if (saved.home === undefined) delete process.env.DSH_SUPERVISOR_HOME;
+  else process.env.DSH_SUPERVISOR_HOME = saved.home;
+  fs.rmSync(home, { recursive: true, force: true });
+  env.invalidate();
 }
 
 x10().catch((e) => check('X-10 异步判据自身未抛错', false, String((e && e.stack) || e))).then(finish);

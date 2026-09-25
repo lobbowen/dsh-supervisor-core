@@ -185,8 +185,13 @@ console.log('== A2 声明能力必须有实现产物 ==');
     /probed/.test(detSrc) && /CACHE/.test(detSrc) && /ttl/.test(detSrc), 'ok');
   check('A2 探测意外不得变成用户可见的打开失败（异常兜成空清单并记 probe-error）',
     /catch/.test(detSrc) && /probe-error/.test(detSrc), 'ok');
-  check('A2 浏览器清单有只读消费面（面板/排障据此看到本机探到了什么）',
-    /function listBrowsers\(/.test(brSrc) && /listBrowsers/.test(read('src/api/domains/guard.js')), 'ok');
+  // 清单的唯一消费面是环境表单：动作层只问「这次交给谁」，不自己枚举 —— 谁都能枚举就谁都能给出不同答案。
+  const envSrc = readOs('environment.js');
+  check('A2 环境表单有只读消费面（面板/排障据此看到本机探到了什么，分发依据与候选清单同帧交出）',
+    /function form\(/.test(envSrc) && /environment\.form\(/.test(read('src/api/domains/guard.js'))
+      && /\/env\/environment/.test(read('src/api/domains/guard.js')), 'ok');
+  check('A2 反向：动作层不得自己枚举候选清单（探测器只能被表单调用，否则「面板显示两个、实际按第三个启动」）',
+    /environment\.browsers\(/.test(brSrc) && !/detector\.inventory\(/.test(brSrc), 'ok');
   check('A2 linux 的 openBrowser 声明由图形会话实测覆写（静态档位只说「能试」，不说「这次成了」）',
     /p\.openBrowser\s*=\s*desktop\.sessionAvailable\(\)/.test(readOs('index.js')), 'ok');
   const fpSrc = readOs('file-protect.js');

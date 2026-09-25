@@ -21,6 +21,10 @@ const { TOKEN_FILE_NAME } = require('../../../app/settings/token-kinds');
 function composeCore(host, rawConfig, configPath) {
     host.config = normalize(rawConfig, domainConfigExtension());
     host.configPath = typeof configPath === 'string' ? configPath : null;
+    // 环境表单的注入点之二（其一在 platform/os/index.js 绑 capabilities）：用户偏好住在本机配置里，
+    //   而 platform 不得 require app（L-1），故装配期把 getter 绑给表单。必须在任何 form()/选路之前，
+    //   绑在这里等于「进程活着就一定有偏好可读」，调用点不再层层传参（漏传一处即一条静默降级路）。
+    platform.environment.bind({ preference: () => (host.config && host.config.externalBrowser) || null });
     // 数据目录访问保护：目录级一次即覆盖全部子文件（NTFS 继承 ACE 对既有与新建子项都生效，
     //   逐个热写文件 icacls 会造成写放大）。Unix chmod 0700；Windows icacls 去继承 + 仅当前用户
     //   （POSIX mode 在 Windows 被忽略）。本目录含 apiAccessKey / remoteToken / DSH 会话令牌 / frpc auth.token。

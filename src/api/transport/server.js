@@ -13,6 +13,9 @@ const { originAllowed, requestHasAccessKey, isShellOrigin } = require('../securi
 //   注入假出口：域内自己 require 的话，测试只能去 patch 模块导出，而 patch 是否生效取决于消费方是
 //   解构还是按属性取用（test-safety-gate A 条记的正是这种 patch 静默失效后跑了真实副作用的事故）。
 const browserExit = require('../../platform/os/browser');
+// 环境表单（本机实况 + 分发依据，只读面）。与浏览器出口同一个注入范式：面板的「环境」区块与
+//   打开失败的定档依据都取自这一份，测试在构造期注入假表单，域内不自取平台模块。
+const environmentExit = require('../../platform/os/environment');
 
 /** 请求级失败的统一兜底：只应答一次（头已发则仅断开），并记录一条错误事件。
  *  绝不把异常抛给进程层。 */
@@ -30,6 +33,8 @@ function safeFail(res, err, where) {
 function createServer(sup, deps) {
   // deps.browser 只用于注入假出口；缺省即平台层唯一出口（生产路径不经任何加工）。
   const browser = (deps && deps.browser) || browserExit;
+  // 环境表单同范式：只读面，测试注入假表单即可断言面板拿到的字段集。
+  const environment = (deps && deps.environment) || environmentExit;
   return http.createServer((req, res) => {
     // 壳源 CORS 白名单与 CSRF 判定（isShellOrigin）共用同一事实源：
     // 此处若自带更宽字面量，会造成 CORS 松于 CSRF——子源能读响应却驱动不了写请求。
@@ -107,7 +112,7 @@ function createServer(sup, deps) {
       return send(400, { error: 'bad request encoding' });
     }
 
-    const ctx = { sup, req, res, pathname: decodedPathname, identity, send, collectBody, originAllowed, tokOf, browser };
+    const ctx = { sup, req, res, pathname: decodedPathname, identity, send, collectBody, originAllowed, tokOf, browser, environment };
 
     // 按域分派（每域 owns 为粗前缀超集；域内未匹配由该域 handle 兜底 404/405）。
     // handler 同步抛错 / 返回的 Promise reject 一律在此兜底为 500，

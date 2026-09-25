@@ -122,7 +122,7 @@ xdg-open http://127.0.0.1:36360/   # 浏览器直接开面板（默认端口；�
 | 幂等收敛 | 守卫自身重启后读期望状态调和，不叠加实例；接管既有实例时通过 /proc 识别其 pid，可正常 stop/升级 |
 | 观测模式 | 期望停止时发现无主运行实例 → 进入 OBSERVED：如实展示运行状态与 pid，**不强杀不拉起**；点「启动」同一实例无缝转正纳管 |
 | 一键升级 | **先停后装**：停 DSH → npm 安装 → 自动拉起 → 健康验证；失败自动回滚旧版本并恢复运行 |
-| 外部打开 | 先知道系统里有什么，再谈交给谁：四层各一处——探测（`src/platform/os/browser-inventory.js`，三端多源并集枚举已装浏览器 + 默认项来源，每条来源都留痕）、选路（`pickLauncher`：只认「系统说得出的默认项」与「穷举唯一解」，多候选说不出默认项就显式失败而不按顺序猜）、执行（`src/platform/os/browser.js#openBrowser` / `#launchIsolated`）、消费面（只读 `GET /env/browsers` + 每次打开都带 `evidence.diagnostics`）。结果分三档 `confirmed`（本次启动确定拥有自己的窗口且它以 0 退出）/ `handedOff`（只证明交出去了——被既有实例吸收的裸 URL 直启与 win32 全部形态都属此类）/ `ok:false`（带 `reason` 码 + 探测诊断）。「退出码何时算证据」是一条**双向**规则，只写在 `ownsItsWindow` 一处：不可信形态既不凭 0 冒领成功，也不凭非 0 判失败（Windows 那条「向系统 shell 冒开」的未文档化退路已整体删除）。可用性由能力位 `openBrowser` 声明（Linux 按图形会话实测覆写），三档与 `url`、`evidence`（`bin`/`via`/`ownsWindow`/`exitCode`/`diagnostics`）一路原样透传到面板——**任何一档都把地址交到用户眼前**，非 `confirmed` 那两档还把启动形态与探测结论摊成一行小字，真机报错才有可定位的证据。面板自己那条路只有一条选路判据（来源是否回环：本机请内核经 `POST /env/open-url` 代开，远程访客用自己的浏览器），标准见 PLATFORM-CAPABILITY-MATRIX.md §九 |
+| 外部打开 | 先收齐这台机器的实况，再谈交给谁：五层各一处——探测（`src/platform/os/browser-inventory.js`，三端多源并集枚举已装浏览器 + 默认项来源，每条来源都留痕）、环境表单（`src/platform/os/environment.js#form`，把浏览器清单/图形会话/能力档位/用户偏好/这一拍的分发依据一次收齐，后续动作只从这张表分发；读路径零写侧副作用，快照只在主动刷新与改偏好两处落盘）、选路与偏好（`pickLauncher`：用户在本产品里选的 > 系统说得出的默认项 > 穷举唯一解 > 候选次序首个；末档会披露也可改，不再以「系统说不出默认项」为由显式失败；判据只有一处 `checkPreference`）、执行（`src/platform/os/browser.js#openBrowser(url, {intent})`，唯一出口，登录隔离窗口是意图不是第二个出口）、消费面（只读 `GET /env/environment` + 写偏好 `POST /settings/external-browser` + 每次打开都带 `evidence.diagnostics`）。结果分三档 `confirmed`（本次启动确定拥有自己的窗口且它以 0 退出）/ `handedOff`（只证明交出去了——被既有实例吸收的裸 URL 直启与 win32 全部形态都属此类）/ `ok:false`（带 `reason` 码 + 探测诊断）。「退出码何时算证据」是一条**双向**规则，只写在 `ownsItsWindow` 一处：不可信形态既不凭 0 冒领成功，也不凭非 0 判失败（Windows 那条「向系统 shell 冒开」的未文档化退路已整体删除）。可用性由能力位 `openBrowser` 声明（Linux 按图形会话实测覆写，档位随表单一起交出），三档与 `url`、`evidence`（`bin`/`via`/`ownsWindow`/`exitCode`/`profile`/`diagnostics`）一路原样透传到面板——**任何一档都把地址交到用户眼前**，非 `confirmed` 那两档还把启动形态与分发依据摊成一行小字，真机报错才有可定位的证据。面板自己那条路只有一条选路判据（来源是否回环：本机请内核经 `POST /env/open-url` 代开，远程访客用自己的浏览器），标准见 PLATFORM-CAPABILITY-MATRIX.md §九 |
 
 ## 安装
 
@@ -191,11 +191,14 @@ GET  /self-update/status     内核更新状态（**只读**；安装/重启由�
 GET  /env/status             环境探针 + **平台能力矩阵**（capabilities）
 GET  /env/dsh                DSH 本体安装/纳管判定（bin/binOk/managed/phase）
 GET  /env/node-lts           Node 当前 vs 官方最新 LTS
+GET  /env/environment        环境表单（本机实况一次收齐：浏览器候选/默认项来源/图形会话/能力档位/
+      用户偏好/这一拍的分发依据 pick/探测留痕 probed）；只读、零 spawn，仅同源防护；
+      ?force=1 绕缓存重探并把这一拍落进快照，常态读不写盘
 # 实例管理（沙箱）
 GET  /instances              实例列表（含运行状态/安装进度）
 POST /instances/{add|remove|update|start|stop|check-update|open-web|upgrade}
      open-web 回外部打开三档结果 {ok,confirmed,handedOff,reason,error,url,evidence}；失败映射 500 且作废该一次性码
-     面板地址行同源另一条路：POST /env/open-url {url} 请内核用**本机**默认浏览器打开（只受理回环来源，非回环 403）
+     面板地址行同源另一条路：POST /env/open-url {url} 请内核按环境表单的分发依据交给本机浏览器（只受理回环来源，非回环 403）
 # 插件
 GET  /plugins/market|installed|check-updates   市场索引 / 已装 / 更新检测（前与后者只回快照：
      重建/registry 往返在后台跑，响应 building/refreshing=true 时前端轮询，绝不等在这个请求上）
@@ -219,6 +222,8 @@ POST /remote/frp-install     安装 frpc 二进制
 GET/POST /autostart          整条服务链开机自启
 GET/POST /settings/lan       面板局域网访问开关
 GET/POST /settings/access-key / settings/close-action
+GET/POST /settings/external-browser   外部打开用哪个浏览器（GET=当前偏好+候选清单+这一拍的分发依据；
+      POST={"id":"<候选 id>"}，空串=清除回到按系统默认或候选次序分发）；id 必须是本机候选，否则当场失败
 GET/POST /dist/registry(+ /refresh|/set)   全局镜像源配置
 GET  /ports                  端口视图（聚合三注册表 + 池容量）
 GET  /tasks[/{id}]           统一任务列表

@@ -59,6 +59,12 @@ export function evidenceDetail(ev?: OpenExternalResult["evidence"]): string | nu
   const d = ev.diagnostics;
   if (d && typeof d === "object") {
     bits.push("默认项来源 " + ((d.default && d.default.source) || "未读出"));
+    // 分发依据要说人话：用户最需要知道的是「这次用的是不是我选的那个」，而不是内核内部的来源名。
+    if (d.pick === "user-preference") bits.push("按你在环境检测里选的浏览器");
+    else if (d.pick === "candidate-rank") bits.push("系统未报默认项，已按候选次序取首个（可在环境检测里改）");
+    else if (d.pick === "only-installed") bits.push("本机唯一候选");
+    else if (d.pick === "none-found") bits.push("本机未探到可用浏览器");
+    if (d.preference && d.preference.id && d.preference.matched === false) bits.push("你选的浏览器已不在候选清单，请重选");
     const found = Array.isArray(d.found) ? d.found : [];
     bits.push(
       "候选 " + String(found.length) + " 个" +
@@ -67,6 +73,7 @@ export function evidenceDetail(ev?: OpenExternalResult["evidence"]): string | nu
     const probed = Array.isArray(d.probed) ? d.probed : [];
     if (!found.length && probed.length) bits.push("探测读数：" + probed.map((p) => p.source).join("、"));
   }
+  if (ev.via === "isolated") bits.push(ev.isolated === false ? "未隔离（并入既有窗口）" : "隔离窗口");
   return bits.length ? bits.join(" | ") : null;
 }
 

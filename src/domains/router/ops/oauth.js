@@ -1,12 +1,13 @@
 'use strict';
 
-const fs = require('node:fs');
-
 // Command Code OAuth 一键登录（IO + 状态）。状态收敛于本工厂闭包；端口登记沿用
 // platform/service/ports（分配即登记 / 配对释放）。
+// 浏览器启动只声明意图（要用隔离窗口登录 + 关窗即取消），机制全在 platform/os/browser.js 的唯一出口：
+// 本文件不建临时目录、不拼引擎参数、不解释 argv 结局，只认那一套三档结果词汇。
 
 const crypto = require('node:crypto');
 const { createServer } = require('node:http');
+const { removeTreeDeferred } = require('../../../platform/util/fs');
 
 function createOAuthOps(deps) {
   const d = deps || {};
@@ -94,7 +95,7 @@ function createOAuthOps(deps) {
     // commandcodeLoginWait 用的仍是同一 promise 本体，其 await/Promise.race 依旧收到同一 reject。
     promise.catch(() => {});
     st._ccLoginPromise = promise;
-    const opened = openInBrowser(authUrl, () => {
+    const opened = await openInBrowser(authUrl, () => {
       // 旧轮浏览器的退出监视迟到时不得误杀新一轮登录。
       if (st._ccLoginRound !== roundId) return;
       if (st._ccLoginReject) {
@@ -104,8 +105,11 @@ function createOAuthOps(deps) {
         try { r(new Error('浏览器已关闭，登录已取消')); } catch {}
       }
     });
-    const evidence = opened.result || {};
-    if (!opened.profile) {
+    // 唯一出口交回的三档结果（ok/confirmed/handedOff/reason/error/message/evidence）：
+    // 本层只补登录专有字段，绝不自行宣称 confirmed。
+    const r = opened || { ok: false, reason: 'spawn-failed' };
+    const ev = r.evidence || {};
+    if (!r.ok) {
       st._ccLoginPromise = null;
       st._ccLoginResolve = null;
       st._ccLoginReject = null;
@@ -113,24 +117,20 @@ function createOAuthOps(deps) {
       try { ports.unregister('oauth:' + state); } catch {}
       st._ccLogin = null;
       // authUrl 与 error 分字段回：面板必须能把地址原样交给用户（复制/手动打开），
-      // 不再把 URL 埋在错误文案里。
-      // authUrl 与 error 分字段回：面板必须能把地址原样交给用户（复制/手动打开），
-      // 不再把 URL 埋在错误文案里。evidence 一并交出：里面是平台层的探测留痕，
+      // 不再把 URL 埋在错误文案里。evidence 一并交出：里面是环境表单的分发依据与探测留痕，
       // 没有它，「为什么没弹出浏览器」在界面上永远只剩「再点一次」。
       return {
         ok: false, authUrl, url: authUrl, opened: false, confirmed: false, handedOff: false,
-        reason: evidence.reason || 'no-launcher',
-        evidence: evidence.evidence || null,
-        error: (evidence.error || '无法调起系统浏览器') + '，请手动打开下方地址完成授权',
+        reason: r.reason || 'no-launcher',
+        evidence: r.evidence || null,
+        error: (r.error || '无法调起系统浏览器') + '，请手动打开下方地址完成授权',
       };
     }
-    st._ccLogin = { state, port, server, tmpProfile: opened.profile };
-    // 三档字段（confirmed/handedOff/reason/message/evidence）只由平台层解释：这里只补登录专有字段。
-    // 自行宣称 confirmed 就是第二个解释 argv 结局的地方，也正是「面板说已打开、屏幕什么都没有」的成因。
-    return Object.assign({}, evidence, {
+    st._ccLogin = { state, port, server, tmpProfile: ev.profile || null };
+    return Object.assign({}, r, {
       ok: true, authUrl, url: authUrl, state, port, waitMs: 180000, opened: true,
-      // 非隔离引擎（Safari/snap 包装器）由平台层降级：账号隔离不成立，换账号只能靠超时重发或手动窗口。
-      isolated: evidence.isolated === true,
+      // 非隔离引擎（Safari/打包器包装）由平台层降级：账号隔离不成立，换账号只能靠超时重发或手动窗口。
+      isolated: ev.isolated === true,
     });
   }
 
@@ -152,10 +152,8 @@ function createOAuthOps(deps) {
       st._ccLoginResolve = st._ccLoginReject = null;
       return { ok: false, error: e.message };
     } finally {
-      if (tmpProfile) {
-        const t60 = setTimeout(() => { try { fs.rmSync(tmpProfile, { recursive: true, force: true }); } catch {} }, 60 * 1000);
-        if (t60.unref) t60.unref();
-      }
+      // 登录结束后延迟回收隔离 profile（60s 给浏览器进程落盘的时间）；回收机制在 util/fs 一处。
+      if (tmpProfile) removeTreeDeferred(tmpProfile, 60 * 1000);
     }
   }
 

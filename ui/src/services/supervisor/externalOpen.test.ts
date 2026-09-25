@@ -99,7 +99,29 @@ describe("evidenceDetail：把启动形态摊给用户（真机报错只有文�
         probed: [{ source: "userchoice", detail: "empty" }, { source: "app-paths", detail: "指向的文件不可执行" }],
       },
     });
-    expect(detail).toBe("未定出启动对象 | none | 退出码不作证据 | 默认项来源 未读出 | 候选 0 个 | 探测读数：userchoice、app-paths");
+    expect(detail).toBe("未定出启动对象 | none | 退出码不作证据 | 默认项来源 未读出 | 本机未探到可用浏览器 | 候选 0 个 | 探测读数：userchoice、app-paths");
+  });
+  it("分发依据说人话：四层各有一句，用户据此知道这次用的是不是自己选的那个", () => {
+    const say = (pick: string, pref?: { id: string; matched: boolean }) => evidenceDetail({
+      bin: "/usr/bin/firefox", via: "browser", ownsWindow: false, exitCode: 0,
+      diagnostics: { pick, default: null, preference: pref || null, found: [{ name: "Firefox" }], probed: [] },
+    });
+    expect(say("user-preference")).toContain("按你在环境检测里选的浏览器");
+    expect(say("candidate-rank")).toContain("系统未报默认项，已按候选次序取首个（可在环境检测里改）");
+    expect(say("only-installed")).toContain("本机唯一候选");
+    expect(say("none-found")).toContain("本机未探到可用浏览器");
+    // 反向：系统报出的默认项来源名不是这四档之一，不得被说成「按你选的」——否则用户会以为是自己定的
+    expect(say("userchoice")).not.toContain("按你在环境检测里选的浏览器");
+    // 偏好所指已被卸载/路径失效：必须点名「不在候选清单」，只报回落等于让用户继续等一个不会来的窗口
+    expect(say("userchoice", { id: "c:\\gone\\firefox.exe", matched: false }))
+      .toContain("你选的浏览器已不在候选清单，请重选");
+    expect(say("userchoice", { id: "/usr/bin/firefox", matched: true })).not.toContain("请重选");
+  });
+  it("隔离窗口把「隔没隔」写进形态：并入既有窗口时不许留「隔离」二字", () => {
+    expect(evidenceDetail({ bin: "/usr/bin/chrome", via: "isolated", ownsWindow: true, exitCode: 0, isolated: true }))
+      .toBe("chrome | isolated | exit 0 | 隔离窗口");
+    expect(evidenceDetail({ bin: "/usr/bin/safari", via: "isolated", ownsWindow: true, exitCode: 0, isolated: false }))
+      .toBe("safari | isolated | exit 0 | 未隔离（并入既有窗口）");
   });
   it("反向：旧内核不带 diagnostics 时不得凭空造出探测结论", () => {
     expect(evidenceDetail({ bin: "/usr/bin/chromium", via: "browser", ownsWindow: false, exitCode: 0 }))

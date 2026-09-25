@@ -610,26 +610,69 @@ export interface OpenExternalResult {
     via?: string | null;
     /** 本次启动是否确定拥有自己的窗口；false 时退出码在两个方向上都不是证据。 */
     ownsWindow?: boolean;
+    /** 一键登录用的隔离窗口是否真的成立（引擎无隔离方言时为 false，此时换账号只能靠超时重发）。 */
+    isolated?: boolean;
+    /** 隔离 profile 目录（内核分配与回收；非隔离形态为 null）。 */
+    profile?: string | null;
+    /** 是否监视窗口关闭以取消登录（与 isolated 同源，面板据此说明「关掉窗口即取消」是否成立）。 */
+    watch?: boolean;
     exitCode?: number | string | null;
     exitSignal?: string | null;
     error?: string | null;
-    /** 探测留痕（内核 platform/os/browser-inventory.js 的清单摘要）：这次交给谁、依据哪条系统事实、
-     *  本机探到哪些候选。真机报「没弹出网页」时这一份就是定档依据，故必须一路走到屏幕上。 */
+    /** 分发留痕（内核环境表单的摘要）：这次交给谁、依据哪一层、本机探到哪些候选。
+     *  真机报「没弹出网页」时这一份就是定档依据，故必须一路走到屏幕上。 */
     diagnostics?: BrowserDiagnostics | null;
   } | null;
 }
 
-/** 打开动作随结果交出的探测摘要（内核 `platform/os/browser.js#launchDiagnostics` 的产出，
- *  与只读端点 `GET /env/browsers` 那份完整清单同源）。面板只渲染它，就不必再查一次端点：
+/** 打开动作随结果交出的分发摘要（内核 `platform/os/browser.js#launchDiagnostics` 的产出，
+ *  与只读端点 `GET /env/environment` 那份完整表单同源）。面板只渲染它，就不必再查一次端点：
  *  失败时屏幕上那一行必须描述**这次**打开所用的那一份清单，而不是另一次探测的结果。 */
 export interface BrowserDiagnostics {
   platform?: string | null;
-  /** 这次选路依据：userchoice / scheme-association / mimeapps / launchservices / only-installed / no-default / none-found */
+  /** 这次交给谁的分发依据（内核 platform/os/environment.js#pickLauncher 的 how 字段）：
+   *  user-preference / candidate-rank / only-installed / none-found，或系统默认项的来源名；
+   *  界面只认「有没有用户选过、是不是回落的」，不认具体来源名字。 */
   pick?: string | null;
   bin?: string | null;
   default?: { id: string; source?: string | null } | null;
+  /** 用户偏好的读数：id + 是否仍在候选清单里（false = 需重选）。 */
+  preference?: { id?: string | null; matched?: boolean } | null;
   found?: Array<{ name?: string | null; engine?: string | null; via?: string }>;
   probed?: Array<{ source: string; detail?: string | number | null }>;
+}
+
+/** 环境表单（内核 platform/os/environment.js 的装配产物，`GET /env/environment`）。
+ *  面板的「环境检测」据此显示本机实况，并提供浏览器偏好选择器 —— 所有外部打开动作的分发依据都在这份里。 */
+export interface EnvironmentForm {
+  schema?: number;
+  at?: number | null;
+  cached?: boolean;
+  platform?: string | null;
+  identity?: { platform?: string; arch?: string; hostname?: string; user?: string | null; node?: string };
+  paths?: { root?: string; supervisor?: string; shell?: string };
+  session?: { platform?: string; available?: boolean; reason?: string | null; display?: string | null };
+  capabilities?: Record<string, unknown> | null;
+  preference?: { id?: string | null; configured?: boolean; matched?: boolean; browser?: { id: string; name: string; engine: string } | null; reason?: string };
+  default?: { id: string; source?: string | null } | null;
+  browsers?: Array<{ id: string; name?: string; bin?: string; engine?: string; sources?: string[]; isDefault?: boolean }>;
+  pick?: { how?: string; id?: string | null; name?: string | null; wanted?: string | null; stale?: boolean };
+  probed?: Array<{ section?: string; source: string; detail?: string | number | null }>;
+  snapshot?: { path?: string; written?: boolean; error?: string | null };
+}
+
+/** 浏览器偏好（`GET|POST /settings/external-browser`）：当前值 + 可选候选 + 这一拍实际会用谁。 */
+export interface ExternalBrowserStatus {
+  ok?: boolean;
+  error?: string | null;
+  configured?: boolean;
+  value?: string | null;
+  /** 偏好所指已不在候选清单（被卸载/路径失效）：分发已回落，界面必须提示重选。 */
+  stale?: boolean;
+  browser?: { id: string; name?: string; engine?: string; isDefault?: boolean } | null;
+  candidates?: Array<{ id: string; name?: string; engine?: string; isDefault?: boolean }>;
+  pick?: { how?: string; id?: string | null; name?: string | null; wanted?: string | null; stale?: boolean } | null;
+  platform?: string | null;
 }
 
 // -- /lifecycle----------------------------

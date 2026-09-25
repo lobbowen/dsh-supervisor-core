@@ -88,6 +88,10 @@ const BASE_DEFAULTS = {
   apiAccessKey: null,
   // 关闭窗口行为（系统级）：'hide' = 隐藏至托盘、服务常驻（默认）；'exit' = 退出管家并停全部服务链。
   closeAction: 'hide',
+  // 外部打开的浏览器偏好（系统级，本机配置）：存环境表单候选清单里的 id，null = 未选。
+  // 与「系统默认浏览器」分两个字段是刻意的：前者是用户在本产品里的选择，后者是操作系统的事实；
+  // 系统说不出默认时按候选次序分发并如实标注，用户可在这里定一次覆盖它（见 platform/os/environment.js）。
+  externalBrowser: null,
 };
 
 /** 合并注入的业务域默认值 + 平台通用默认值。注入组的 at 是锚点键：该组的值落在 BASE_DEFAULTS

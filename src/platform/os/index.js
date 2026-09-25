@@ -14,6 +14,8 @@ const execPath = require('./exec-path');
 const desktop = require('./desktop');
 // 档位数据在 ./capability-profile.js；门禁 cross-platform-architecture-gate CP-3 要求门面显式列出三平台分支。
 const CAPABILITY_PROFILES = require('./capability-profile');
+// 环境表单（探测事实的汇聚处）：能力矩阵由本门面在载入时注入，表单不得反向 require 本文件（成环）。
+const environment = require('./environment');
 
 const PLATFORM = process.platform; // 'linux' | 'darwin' | 'win32'
 const ARCH = process.arch;
@@ -90,6 +92,10 @@ function capabilities() {
   return p;
 }
 
+// 环境表单的取数注入之一：表单要报「实测后的能力档位」，而带缓存的实测只住在本门面；
+//   require 方向必须单向（门面 -> 表单），故此处把 getter 交出去而不是让表单来 require 门面。
+environment.bind({ capabilities });
+
 module.exports = {
   PLATFORM, ARCH, isLinux, isMac, isWindows,
   dataDir, supervisorDir, capabilities, capabilityProfile, hasTool,
@@ -102,6 +108,7 @@ module.exports = {
   // 导出模块对象会抛 platform.notify is not a function，把升级终态误判成失败。
   notify: require('./notify').notify,
   browser: require('./browser'),
+  environment,                  // 环境表单（外部打开链路的事实底座 + 选路依据）
   desktop,                        // 图形会话可用性（Linux 需实测 socket）
   autostart: require('./autostart'),
 };
