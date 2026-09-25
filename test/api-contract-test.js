@@ -111,6 +111,13 @@ const ENVIRONMENT_FORM = {
     capabilities: { label: 'capabilities', at: 1700000000000, source: 'self', state: 'ok', data: { openBrowser: true } },
     preference: { label: 'preference', at: 1700000000000, source: 'self', state: 'ok', data: { id: 'c:\\ff\\firefox.exe' } },
     pick: { label: 'pick', at: 1700000000000, source: 'self', state: 'ok', data: { how: 'user-preference' } },
+    // 启动既成事实由装配期注册（bootstrap 记、compose/core.js 读进台账），端点只做原样透传：
+    //   夹具给满字段，是为了让「边界挑字段」这种漏法当场可见——面板据此才有「这一拍真跑过什么」可说。
+    startup: { label: '启动既成事实', at: 1700000000000, source: 'registered', state: 'ok', error: null,
+      data: { bootAt: 1699999000000, envDelayMs: 3000, routerAutostart: true, routerMode: 'off',
+        updateCheck: { enabled: true, initialDelayMs: 20000, intervalMs: 3600000 }, shellWatchdog: true,
+        lastRefresh: { at: 1700000000000, tookMs: 12, browsers: 2, pick: 'user-preference', snapshotWritten: true,
+          dims: { runtime: 'ok', dsh: 'ok', egress: 'ok', startup: 'pending' } } } },
   },
   probed: [{ section: 'browsers', source: 'userchoice', detail: 'msedge' }, { section: 'pick', source: 'form', detail: 'user-preference（firefox）' }],
   snapshot: { path: 'C:\\s\\environment.json', written: false, error: null },
@@ -125,9 +132,13 @@ const fakeBrowser = {
 // 表单的假装配：只记调用参数，返回固定形状（真表单要查注册表/摸网络，CI 上既慢又不可预期）。
 //   异步维度（运行时/DSH/出网）只由 refresh 那一拍补齐，故替身必须两条口都有：少一条就验不到真正跑的路。
 const envRefreshCalls = [];
+// 上一拍读回口的替身：两种「没有」各留一次可切换的读数，边界必须原样分档交出而不是揉成一句「没数据」。
+let envLastRead = { available: false, path: 'C:\\s\\environment.json', at: null, ageMs: null, reason: 'never-written', data: null };
+const envLastCalls = [];
 const fakeEnvironment = {
   form: (o) => { envCalls.push(o || {}); return ENVIRONMENT_FORM; },
   refresh: (o) => { envRefreshCalls.push(o || {}); return Promise.resolve(ENVIRONMENT_FORM); },
+  lastSnapshot: (o) => { envLastCalls.push(o || {}); return envLastRead; },
 };
 // 偏好门面（app/settings/browser.js）的替身：本文件只判边界，校验与落盘判据在 X-12 里钉。
 const BROWSER_PREF = { ok: true, configured: true, value: 'c:\\ff\\firefox.exe', stale: false, browser: ENVIRONMENT_FORM.browsers[1], candidates: ENVIRONMENT_FORM.browsers, pick: ENVIRONMENT_FORM.pick, platform: 'win32' };
@@ -212,7 +223,7 @@ function req(method, p, body, hostHeader, extraHeaders, via) {
     owCase = (url) => ({ ok: true, confirmed: false, handedOff: true, reason: null, error: null, message: '已把地址交给系统，但没拿到窗口出现的证据', url, evidence: {
       bin: 'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe', engine: 'chromium', via: 'browser', ownsWindow: false,
       exitCode: 1, exitSignal: null, error: null,
-      diagnostics: { platform: 'win32', pick: 'userchoice', bin: 'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe',
+      diagnostics: { pick: 'userchoice',
         default: { id: 'c:\\program files (x86)\\microsoft\\edge\\application\\msedge.exe', source: 'userchoice' },
         found: [{ name: 'msedge', engine: 'chromium', via: 'userchoice+startmenu-catalog' }],
         probed: [{ source: 'userchoice', detail: 'msedge' }] } } });
@@ -281,8 +292,8 @@ function req(method, p, body, hostHeader, extraHeaders, via) {
     // 维度台账是 schema 2 的全部意义：面板要在一处看完「本机实况 + 每条结论的来路与新鲜度」。
     //   边界要是挑字段回传，异步维度就会静默消失（面板显示成「本机没有」而不是「尚未探测」）。
     const secs = r.body.sections || {};
-    check('EF 交出整张维度台账（八维齐备且每维带 state/source/at/label，未刷新的那维 at 为 null）',
-      ['runtime', 'dsh', 'browsers', 'session', 'egress', 'capabilities', 'preference', 'pick']
+    check('EF 交出整张维度台账（九维齐备且每维带 state/source/at/label，未刷新的那维 at 为 null）',
+      ['runtime', 'dsh', 'browsers', 'session', 'egress', 'capabilities', 'preference', 'pick', 'startup']
         .every((id) => secs[id] && typeof secs[id].state === 'string' && typeof secs[id].source === 'string'
           && typeof secs[id].label === 'string')
       && secs.dsh.state === 'pending' && secs.dsh.at === null && secs.runtime.state === 'ok',
@@ -304,6 +315,33 @@ function req(method, p, body, hostHeader, extraHeaders, via) {
     check('EF 反向：常态读取既不触发刷新也不写盘（面板轮询不得每次重探系统、反复写盘）',
       envRefreshCalls.length === 1 && envCalls.length === 1 && !envCalls[0].force && !envCalls[0].persist,
       JSON.stringify({ refresh: envRefreshCalls, form: envCalls }));
+    check('EF 启动维度原样透传到台账（后端记了既成事实而边界挑掉字段，面板就只剩「未探测」可说）',
+      secs.startup.data.lastRefresh.snapshotWritten === true && secs.startup.data.routerMode === 'off'
+      && secs.startup.data.updateCheck.enabled === true && secs.startup.data.lastRefresh.dims.dsh === 'ok',
+      JSON.stringify(secs.startup && secs.startup.data));
+
+    // EL 组：上一拍快照的只读回看口。它存在的唯一理由是「留痕要能被读回来」，故判据只有三件事：
+    //   整份原样交出、两种「没有」分得开、跨站同样拒读；且全程不碰装配也不写盘。
+    const beforeLast = { form: envCalls.length, refresh: envRefreshCalls.length };
+    r = await req('GET', '/env/environment/last');
+    check('EL 没落过盘要说成 never-written（它与「读不出」是两种处置：一个去刷新、一个去查文件）',
+      r.code === 200 && r.body.available === false && r.body.reason === 'never-written' && r.body.data === null,
+      r.code + ' ' + JSON.stringify(r.body));
+    envLastRead = { available: true, path: 'C:\\s\\environment.json', at: 1699999999000, ageMs: 1000, reason: 'ok',
+      data: { schema: 2, at: 1699999999000, sections: { startup: { state: 'ok' } }, pick: { how: 'candidate-rank' } } };
+    r = await req('GET', '/env/environment/last');
+    check('EL 有留痕时整份上一拍表单原样交出（挑字段回传等于把排障要的那条事实删掉）',
+      r.code === 200 && r.body.available === true && r.body.ageMs === 1000
+      && r.body.data.pick.how === 'candidate-rank' && r.body.data.sections.startup.state === 'ok',
+      r.code + ' ' + JSON.stringify(r.body.data && r.body.data.pick));
+    const evilLast = await new Promise((resolve) => {
+      const rr = http.request({ host: '127.0.0.1', port: API_PORT, path: '/env/environment/last', method: 'GET', headers: { 'Origin': 'http://evil.example', 'Host': '127.0.0.1:' + API_PORT } }, (res) => { res.resume(); res.on('end', () => resolve(res.statusCode)); });
+      rr.on('error', () => resolve(0)); rr.end();
+    });
+    check('EL 跨站 Origin 同样 403（上一拍本机装了哪些浏览器同样是本机事实）', evilLast === 403, String(evilLast));
+    check('EL 反向：读回口既不装配表单也不落盘（掺进装配即拿旧数据冒充当拍结论）',
+      envCalls.length === beforeLast.form && envRefreshCalls.length === beforeLast.refresh && envLastCalls.length === 2,
+      JSON.stringify({ form: envCalls.length, refresh: envRefreshCalls.length, last: envLastCalls.length }));
 
     // PR 组：浏览器偏好的读写边界。判据（id 必须是本机候选）住在表单，本组只钉边界三件事：
     //   GET 原样交出状态、POST 缺字段=400 不走到门面、门面判失败=500 而不是把失败说成成功。

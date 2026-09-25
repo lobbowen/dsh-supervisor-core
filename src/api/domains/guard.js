@@ -9,6 +9,7 @@ function owns(pathname) {
     || pathname.startsWith('/settings/') || pathname.startsWith('/self-update/')
     || pathname === '/env/dsh' || pathname === '/env/status' || pathname === '/env/node-lts'
     || pathname === '/env/open-url' || pathname === '/env/environment'
+    || pathname === '/env/environment/last'
     || pathname === '/ports' || pathname === '/shutdown';
 }
 
@@ -202,6 +203,13 @@ function handle(ctx) {
       return Promise.resolve(force ? environment.refresh({ persist: true, force: true }) : environment.form())
         .then((r) => send(200, r))
         .catch((e) => send(500, { ok: false, error: '环境表单装配失败：' + ((e && e.message) || e) }));
+    }
+    // 上一拍快照（只读留痕，零摸网零写盘）：分发判定永远走当场装配的 form()，本端点不参与任何判定。
+    //   它补的是「快照落了盘却没人读」那一半：进程重启、探针失灵之后，这一台机器上一拍探到了什么
+    //   仍然要读得回来，否则排障只剩守着日志等复现。available=false 分得清没写过与读不出。
+    if (req.method === 'GET' && pathname === '/env/environment/last') {
+      if (!originAllowed(req, sup.config.apiPort)) { req.resume(); return send(403, { ok: false, error: 'cross-origin request rejected' }); }
+      return send(200, environment.lastSnapshot());
     }
     // 面板请内核把地址交给**内核所在机器**的系统浏览器（桌面壳的 webview 丢弃 window.open 与
     //   target=_blank，壳内面板唯一可行的代开方就是同机的内核）。三档结果原样回传，本域不解释结局；

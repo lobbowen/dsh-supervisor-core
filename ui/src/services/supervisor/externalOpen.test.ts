@@ -67,6 +67,23 @@ describe("classifyOpenResult：三档只看字段，不看文案", () => {
     expect(r.tier).toBe("handed-off");
     expect(r.detail).toContain("隔离窗口会是空白页");
   });
+  it("摊不摊证据行的取舍：非确认档恒摊，confirmed 只给隔离登录意图摊", () => {
+    // 普通打开（点自己地址行那种高频动作）成功时不摊，免得屏幕长期挂一行技术字。
+    expect(classifyOpenResult({ ok: true, confirmed: true, url: "http://a.b/",
+      evidence: { bin: "firefox", via: "browser", ownsWindow: false, exitCode: 0 } }).reveal).toBe(false);
+    // 隔离登录成功档正是白窗口的落点：没有这一行，真机取证只剩「弹了但空白」。
+    expect(classifyOpenResult({ ok: true, confirmed: true, url: "http://a.b/",
+      evidence: { bin: "chrome", via: "isolated", engine: "chromium", ownsWindow: true, exitCode: 0, watch: true } }).reveal).toBe(true);
+    // 降档那条 via 已不是 isolated，但 egress 非空即「这一拍真的判过冷档案出网」，同样要摊。
+    expect(classifyOpenResult({ ok: true, confirmed: true, url: "http://a.b/",
+      evidence: { bin: "chrome", via: "browser", exitCode: 0, egress: { host: "login.example.test", viable: false, basis: "cold-profile-blocked", proxy: "off" } } }).reveal).toBe(true);
+    expect(classifyOpenResult({ ok: true, confirmed: true, url: "http://a.b/",
+      evidence: { bin: "chrome", via: "browser", exitCode: 0, egress: { host: "login.example.test", viable: false, basis: "cold-profile-blocked", proxy: "off" } } }).detail)
+      .toContain("出网判定 cold-profile-blocked");
+    // 反向：失败/交给系统两档即使没有证据也必须摊（摊的是「有没有拿到东西」，不是「拿到什么」）
+    expect(classifyOpenResult({ ok: false, error: "未找到" }).reveal).toBe(true);
+    expect(classifyOpenResult({ ok: true, confirmed: false, handedOff: true }).reveal).toBe(true);
+  });
 });
 
 describe("loginIsolationText：「没用隔离窗口」的两种原因分不开，用户就不知道下一步做什么", () => {
@@ -124,9 +141,28 @@ describe("evidenceDetail：把启动形态摊给用户（真机报错只有文�
         probed: [{ source: "userchoice", detail: "Firefox" }],
       },
     });
-    expect(detail).toBe("firefox.exe | browser | 退出码不作证据 | exit 0 | 默认项来源 userchoice | 候选 2 个：Firefox、MSEdge");
+    expect(detail).toBe("firefox.exe | browser | 退出码不作证据 | exit 0 | 默认项来源 userchoice | 候选 2 个：Firefox(firefox)、MSEdge(chromium)");
   });
-  it("选不出启动对象时把「哪条来源答了空」摊出来（否则与探测层失灵无从区分）", () => {
+  it("引擎随行摊出：白窗口要能分「换浏览器」还是「配代理」，内核交出而界面不读等于没交", () => {
+    const d = evidenceDetail({ bin: "/usr/bin/safari", via: "browser", engine: "webkit", ownsWindow: true, exitCode: 0 });
+    expect(d).toContain("引擎 webkit");
+    // 反向：旧内核不交 engine 时不得凭空造出引擎字样（造出来就是把猜测投上屏幕）
+    expect(evidenceDetail({ bin: "/usr/bin/safari", via: "browser", ownsWindow: true, exitCode: 0 })).not.toContain("引擎");
+  });
+  it("关窗即取消要说明：隔离登录的窗口关掉等于放弃，用户不知道就会继续等回调", () => {
+    const d = evidenceDetail({ bin: "/usr/bin/chrome", via: "isolated", ownsWindow: true, watch: true, isolated: true, exitCode: 0 });
+    expect(d).toContain("关掉该窗口即取消本次登录");
+    // 反向：并入既有窗口（watch 不为真）时不得宣称关窗能取消——那会把用户的既有会话当成可弃的
+    expect(evidenceDetail({ bin: "/usr/bin/chrome", via: "isolated", ownsWindow: true, isolated: false, exitCode: 0 }))
+      .not.toContain("关掉该窗口");
+  });
+  it("冷档案目录摊出来：白窗口的解释多半在这个目录里，支持排障要能直接拿到路径", () => {
+    const d = evidenceDetail({ bin: "/usr/bin/chrome", via: "isolated", isolated: true, profile: "/tmp/dsh-login-a1b2", exitCode: 0 });
+    expect(d).toContain("隔离档案 /tmp/dsh-login-a1b2");
+    // 反向：普通打开没有目录（profile 为 null），不许凭空造出一行档案路径
+    expect(evidenceDetail({ bin: "/usr/bin/chrome", via: "browser", profile: null, exitCode: 0 })).not.toContain("隔离档案");
+  });
+  it("选不出启动对象时把「哪条来源答了什么」摊出来（否则与探测层失灵无从区分）", () => {
     const detail = evidenceDetail({
       bin: null, via: "none", ownsWindow: false,
       diagnostics: {
@@ -134,7 +170,7 @@ describe("evidenceDetail：把启动形态摊给用户（真机报错只有文�
         probed: [{ source: "userchoice", detail: "empty" }, { source: "app-paths", detail: "指向的文件不可执行" }],
       },
     });
-    expect(detail).toBe("未定出启动对象 | none | 退出码不作证据 | 默认项来源 未读出 | 本机未探到可用浏览器 | 候选 0 个 | 探测读数：userchoice、app-paths");
+    expect(detail).toBe("未定出启动对象 | none | 退出码不作证据 | 默认项来源 未读出 | 本机未探到可用浏览器 | 候选 0 个 | 探测读数：userchoice=empty、app-paths=指向的文件不可执行");
   });
   it("分发依据说人话：四层各有一句，用户据此知道这次用的是不是自己选的那个", () => {
     const say = (pick: string, pref?: { id: string; matched: boolean }) => evidenceDetail({

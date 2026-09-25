@@ -2,7 +2,7 @@
  *  http() 只看 HTTP 状态码，2xx 里的 { ok:false } 视为数据（如探活不通）不抛，写操作假成功由 failureFromResult 统一判据（UI 条 5）；
  *  生产同源（/…），开发跨端口用 vite proxy 转发（去掉 Origin 走回环）。 */
 import type {
-  AccessKeyResult, AccessKeyStatus, AutostartStatus, CloseActionStatus, EnvironmentForm, EnvStatus, EventsPage, ExternalBrowserStatus, FrpStatus, GenericOk,
+  AccessKeyResult, AccessKeyStatus, AutostartStatus, CloseActionStatus, EnvironmentForm, EnvironmentSnapshotRead, EnvStatus, EventsPage, ExternalBrowserStatus, FrpStatus, GenericOk,
   GuardVersion, InstancesResponse, InstalledPluginsResponse, LanAccessResponse,
   LanPanelStatus, LifecycleModuleId, MarketResponse, NodeLtsStatus, OpenExternalResult, PluginUpdatesResponse,
   PortsResponse, ProvidersResponse, ProxyLoginStart, RegistryInfo, RemoteMode, RouterStatus,
@@ -266,6 +266,9 @@ export const supervisorApi = {
   /** 环境表单（内核所在机器的实况 + 外部打开的分发依据）：面板「环境检测」据此显示候选、
    *  默认项来源与每一层判定。force=true 绕开内核 60s 缓存重探（刚装/卸载浏览器后用）。 */
   environment: (force = false) => get<EnvironmentForm>(`/env/environment${force ? "?force=1" : ""}`),
+  /** 上一拍落盘快照的只读回看（零摸网零写盘）。与 environment() 分开调、分开失败：
+   *  这份读不出只说明留痕断了，不该把刚探出来的当拍表单一起判成不可用。 */
+  environmentLast: () => get<EnvironmentSnapshotRead>("/env/environment/last"),
   /** 外部打开的浏览器偏好：当前值 + 候选清单（候选来自环境表单，与分发同源）。 */
   externalBrowser: () => get<ExternalBrowserStatus>("/settings/external-browser"),
   /** 设置偏好（空串=清除，回到按系统默认/候选次序分发）。id 必须是候选清单里的 id。 */

@@ -77,6 +77,20 @@ function composeCore(host, rawConfig, configPath) {
         };
       },
     });
+    // 启动既成事实：探针只抄 bootstrap 逐点写下的 host._startupFacts，本层不判定、不补默认值。
+    //   没跑到 bootstrap 那一拍即返回 null（台账如实记 empty），而不是编一份「看起来正常」的启动记录。
+    platform.environment.registerSection('startup', {
+      label: '启动既成事实（守卫这一拍跑过什么）',
+      probe: () => {
+        const s = host._startupFacts;
+        if (!s) return null;
+        return {
+          bootAt: s.bootAt, envDelayMs: s.envDelayMs,
+          routerAutostart: s.routerAutostart, routerMode: s.routerMode,
+          updateCheck: s.updateCheck, shellWatchdog: s.shellWatchdog, lastRefresh: s.lastRefresh,
+        };
+      },
+    });
     // 数据目录访问保护：目录级一次即覆盖全部子文件（NTFS 继承 ACE 对既有与新建子项都生效，
     //   逐个热写文件 icacls 会造成写放大）。Unix chmod 0700；Windows icacls 去继承 + 仅当前用户
     //   （POSIX mode 在 Windows 被忽略）。本目录含 apiAccessKey / remoteToken / DSH 会话令牌 / frpc auth.token。

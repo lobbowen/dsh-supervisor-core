@@ -52,7 +52,11 @@ export function evidenceDetail(ev?: OpenExternalResult["evidence"]): string | nu
   if (exe) bits.push(exe);
   else if (ev.via === "none") bits.push("未定出启动对象");
   if (ev.via) bits.push(ev.via);
+  // 引擎是「能不能开隔离窗」的直接线索（chromium/firefox 有隔离方言，webkit 与打包器包装没有）：
+  //   白窗口报障只有摊出引擎才谈得上分「换浏览器」还是「配代理」，内核交出而界面不读等于没交。
+  if (ev.engine) bits.push("引擎 " + ev.engine);
   if (ev.ownsWindow === false) bits.push("退出码不作证据");
+  if (ev.watch === true) bits.push("关掉该窗口即取消本次登录");
   if (ev.exitCode !== undefined && ev.exitCode !== null) bits.push("exit " + String(ev.exitCode));
   else if (ev.exitSignal) bits.push("signal " + ev.exitSignal);
   else if (ev.error) bits.push(String(ev.error));
@@ -66,14 +70,21 @@ export function evidenceDetail(ev?: OpenExternalResult["evidence"]): string | nu
     else if (d.pick === "none-found") bits.push("本机未探到可用浏览器");
     if (d.preference && d.preference.id && d.preference.matched === false) bits.push("你选的浏览器已不在候选清单，请重选");
     const found = Array.isArray(d.found) ? d.found : [];
+    const cand = (f: { name?: string | null; via?: string; engine?: string | null }) =>
+      (f.name || f.via || "?") + (f.engine ? "(" + f.engine + ")" : "");
     bits.push(
       "候选 " + String(found.length) + " 个" +
-      (found.length ? "：" + found.map((f) => f.name || f.via || "?").join("、") : ""),
+      (found.length ? "：" + found.map(cand).join("、") : ""),
     );
     const probed = Array.isArray(d.probed) ? d.probed : [];
-    if (!found.length && probed.length) bits.push("探测读数：" + probed.map((p) => p.source).join("、"));
+    // 零候选时留痕就是唯一的现场：只报行名等于说「系统答了但没说答了什么」，detail 必须一起出。
+    if (!found.length && probed.length) {
+      bits.push("探测读数：" + probed.map((p) => p.source + (p.detail ? "=" + String(p.detail) : "")).join("、"));
+    }
   }
   if (ev.via === "isolated") bits.push(ev.isolated === false ? "未隔离（并入既有窗口）" : "隔离窗口");
+  // 冷档案目录随行：白窗口最可能的解释就住在这个目录里（首次启动、扩展为零），报障时要能把路径给支持看。
+  if (ev.profile) bits.push("隔离档案 " + ev.profile);
   // 出网判定结论码：降级是内核依表单事实做的决定，界面必须说清依据哪一条，否则「为什么没隔离」只剩猜。
   const g = ev.egress;
   if (g && typeof g === "object" && g.basis) {
@@ -98,21 +109,32 @@ export function loginIsolationText(s?: ProxyLoginStart | null): string | null {
 }
 
 /** 结果分档（纯函数）：三档语义在此唯一一次映射为界面档位。
- *  判据取 ok/confirmed，不取 message/error 文本 —— 文案可变，档位是契约。 */
-export function classifyOpenResult(r?: OpenExternalResult | null): { tier: OpenTier; url: string | null; title: string; detail: string | null } {
-  const url = typeof r?.url === "string" && r.url ? r.url : null;
+ *  判据取 ok/confirmed，不取 message/error 文本 —— 文案可变，档位是契约。
+ *  reveal = 这一档要不要把证据行摊到屏幕上，与服务层的分档同处判定：组件只做渲染，
+ *  「白窗口现场该看见什么」这种取舍写在组件里就没法在 CI 里判红。 */
+export function classifyOpenResult(r?: OpenExternalResult | null): {
+  tier: OpenTier; url: string | null; title: string; detail: string | null; reveal: boolean;
+} {
+  const url = typeof r?.url === "string" && r?.url ? r.url : null;
   const detail = evidenceDetail(r?.evidence);
+  // confirmed 档一般不必摊细节（证据已经说完了），隔离登录意图例外：真机那句「弹了但是白窗口」
+  //   最可能就落在 confirmed —— 屏幕上没有「交给谁 / 什么引擎 / 出网判定」这一行，取证只剩玄学。
+  //   判据用 via/egress 而不是意图参数：egress 非空即「这一拍真的判过冷档案出网」，降档那条也算。
+  const ev = r?.evidence;
+  const isolateIntent = !!ev && (ev.via === "isolated" || !!ev.egress);
   // 内核给出 message 的非确认档（如冷档案降档：已在既有窗口打开 + 该怎么收尾）必须上屏。
   //   confirmed 档把 message 当标题，另两档标题是固定的契约句，故 message 并进细节行 ——
   //   丢掉它就等于「内核解释了原因，界面上却只剩一句没拿到证据」。
   const msg = typeof r?.message === "string" && r.message ? r.message : null;
   const withMsg = [msg, detail].filter(Boolean).join(" | ") || null;
   if (!r || r.ok !== true) {
-    return { tier: "failed", url, detail: withMsg, title: (r && r.error) || "无法调起系统浏览器，请手动打开下方地址" };
+    return { tier: "failed", url, detail: withMsg, title: (r && r.error) || "无法调起系统浏览器，请手动打开下方地址", reveal: true };
   }
-  if (r.confirmed === true) return { tier: "confirmed", url, detail, title: r.message || "已在系统浏览器打开" };
+  if (r.confirmed === true) {
+    return { tier: "confirmed", url, detail, title: r.message || "已在系统浏览器打开", reveal: isolateIntent };
+  }
   return {
-    tier: "handed-off", url, detail: withMsg,
+    tier: "handed-off", url, detail: withMsg, reveal: true,
     title: "已把地址交给系统，但没拿到窗口出现的证据" + (url ? "：没看到浏览器就点下方地址" : ""),
   };
 }

@@ -28,6 +28,13 @@ function _bootstrap(host) {
     try { host.lifecycle.markStarted(); } catch {}
     host.logger.info('guard started v' + host.guardVersion + ' pid=' + process.pid);
     // 生命周期注册已在组装期完成，此处不重复。
+    // 启动既成事实：环境表单的 startup 维度只读这一份，本函数逐点把**已经发生或已经算出**的值抄进来，
+    //   不做任何新判定 —— 快照要能回答「这一拍到底跑到过哪一步」，而这只有走到这里的人才知道。
+    host._startupFacts = {
+      bootAt: Date.now(), envDelayMs: ENV_FORM_STARTUP_DELAY_MS,
+      routerAutostart: host.config.routerAutostart === true,
+      routerMode: null, updateCheck: null, shellWatchdog: null, lastRefresh: null,
+    };
     host.tick(); // 首拍立即收敛
     // 唯一心跳（registry heartbeat -> dsh supervise -> _dshConverge）是唯一周期驱动，
     //   故不建 tick 定时器；仅 registry 不可用（极罕见）时保留兜底。
@@ -98,6 +105,7 @@ function _bootstrap(host) {
       // 接管既有 daemon（守卫重启/手动拉起）时先落管理锁（本守卫目录），监督/启停权归本守卫。
       if (host._routerDaemonActive()) host._writeRouterDaemonLock();
       const rt = host._ensureRouterRuntime(true);
+      host._startupFacts.routerMode = rt.mode;
       if (rt.mode === 'daemon') {
         // providers.json 等状态写权归 daemon（守卫只读，防双写覆盖）；
         //   该纪律已在 _ensureRouterRuntime 内统一处置，本行是幂等兜底。
@@ -121,13 +129,20 @@ function _bootstrap(host) {
       const rlc = host.lifecycleManager ? host.lifecycleManager.get('router') : null;
       if (rlc) { rlc.desired = 'stopped'; rlc._monitoring = false; }
     }
+    const checkDelayMs = host.config.initialCheckDelayMs || 20000;
+    const checkIntervalMs = host.config.updateCheckIntervalMs || 3600000;
+    // 先记后判：禁用是一条既成事实，留在 null 里就与「还没跑到这一步」分不开（排障会被引向等一拍）。
+    host._startupFacts.updateCheck = {
+      enabled: host.config.updateCheckEnabled !== false,
+      initialDelayMs: checkDelayMs, intervalMs: checkIntervalMs,
+    };
     if (host.config.updateCheckEnabled !== false) {
       host._initialCheckTimer = setTimeout(() => {
         host.nativeManager.checkUpdate();
-      }, host.config.initialCheckDelayMs || 20000);
+      }, checkDelayMs);
       host._upgradeTimer = setInterval(() => {
         host.nativeManager.checkUpdate();
-      }, host.config.updateCheckIntervalMs || 3600000);
+      }, checkIntervalMs);
     }
     // 失败隔离在此调用点同样执行：任何异常都不得影响守卫主循环 —— 看护是增强，不是依赖。
     //   异常冒泡会让调用方拿不到「已启动」，故包 try/catch 只记 warn。
@@ -138,6 +153,7 @@ function _bootstrap(host) {
         host.logger.warn('[shell-watchdog] 启动异常（不影响守卫主循环）: ' + ((e && e.message) || e));
       }
     }
+    host._startupFacts.shellWatchdog = !!host.shellWatchdog;
     // 环境表单的启动一拍：异步维度（运行时/DSH/出网条件）只有走 refresh 才会有读数，而读数是
     //   后续一切分发的依据 —— 不在这里拍，面板与一键登录就只能永远看到 pending。
     //   延后若干秒：守卫启动头几秒要把 CPU/磁盘让给内核拉起，探测排在其后；句柄 unref，不拖住退出。
@@ -152,11 +168,24 @@ function _bootstrap(host) {
 /** 环境表单全量刷新一次并落快照（快照是给人回看的留痕，写失败只记 warn）。
  *  哪些维度没取到读数必须说得出口：pending/错误若只躺在 JSON 里，真机排障就还是「问一处答两处」。 */
 function _refreshEnvironmentForm(host) {
+  const startedAt = Date.now();
   return platform.environment.refresh({ persist: true }).then((f) => {
     const secs = (f && f.sections) || {};
     const pending = Object.keys(secs).filter((id) => secs[id] && secs[id].state === 'pending');
     const failed = Object.keys(secs).filter((id) => secs[id] && secs[id].state === 'error');
     const snap = f && f.snapshot ? f.snapshot : {};
+    // 这一拍的收尾情况抄进启动事实：startup 维度由此能答出「最后一次刷新什么时候、耗时多少、
+    //   哪些维度仍没读数」，而这些都是本函数刚刚算出来的既有值，不是第二份判定。
+    if (host._startupFacts) {
+      const states = {};
+      for (const id of Object.keys(secs)) states[id] = secs[id] ? secs[id].state : 'missing';
+      host._startupFacts.lastRefresh = {
+        at: (f && f.at) || null, tookMs: Date.now() - startedAt, dims: states,
+        browsers: (f && f.browsers && f.browsers.length) || 0,
+        pick: (f && f.pick && f.pick.how) || null,
+        snapshotWritten: snap.written === true,
+      };
+    }
     if (snap.written === false && snap.error) {
       host.logger.warn && host.logger.warn('[environment] 快照未落盘: ' + snap.error);
     }

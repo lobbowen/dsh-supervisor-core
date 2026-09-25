@@ -42,11 +42,16 @@ function OpenResultBody({ url, detail }: { url: string | null; detail: string | 
   );
 }
 
-/** 一次外部打开结果的呈现（不抛错：这一步没有可失败的后端动作）。 */
+/** 一次外部打开结果的呈现（不抛错：这一步没有可失败的后端动作）。
+ *  摊不摊证据行由服务层的 reveal 决定（判据见 classifyOpenResult），组件不自判：
+ *  「白窗口现场该看见什么」写在渲染侧就没法在 CI 里判红。 */
 export function notifyOpen(r?: OpenExternalResult | null): void {
-  const { tier, url, title, detail } = classifyOpenResult(r);
-  const shown = tier === "confirmed" ? null : detail;
-  const opts = { description: url || shown ? <OpenResultBody url={url} detail={shown} /> : undefined, duration: tier === "confirmed" ? 3000 : 20000 };
+  const { tier, url, title, detail, reveal } = classifyOpenResult(r);
+  const shown = reveal ? detail : null;
+  const opts = {
+    description: url || shown ? <OpenResultBody url={url} detail={shown} /> : undefined,
+    duration: tier === "confirmed" ? (reveal ? 12000 : 3000) : 20000,
+  };
   if (tier === "confirmed") toast.success(title, opts);
   else if (tier === "handed-off") toast.warning(title, opts);
   else toast.error(title, opts);
