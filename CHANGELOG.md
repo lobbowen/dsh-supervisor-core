@@ -1,10 +1,6 @@
-# Changelog
-
-本项目的全部重要变更记录于此文件。
-格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，
-版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
-
 ## [未发布]
+
+## [0.1.6-BETA.12]（2026-09-25）
 
 ### 外部打开的「退出码何时算证据」收口为一条双向规则（Windows 真机报「窗口未出现（1）」）
 
