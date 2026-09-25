@@ -8,7 +8,7 @@ function owns(pathname) {
   return pathname === '/changelog' || pathname.startsWith('/guard/') || pathname === '/autostart'
     || pathname.startsWith('/settings/') || pathname.startsWith('/self-update/')
     || pathname === '/env/dsh' || pathname === '/env/status' || pathname === '/env/node-lts'
-    || pathname === '/env/open-url' || pathname === '/env/browsers'
+    || pathname === '/env/open-url' || pathname === '/env/environment'
     || pathname === '/ports' || pathname === '/shutdown';
 }
 
@@ -29,7 +29,7 @@ function fetchDshChangelog(res, sup) {
 }
 
 function handle(ctx) {
-  const { sup, req, res, pathname, identity, send, collectBody, originAllowed, browser } = ctx;
+  const { sup, req, res, pathname, identity, send, collectBody, originAllowed, browser, environment } = ctx;
     if (req.method === 'GET' && pathname === '/changelog') {
       return fetchDshChangelog(res, sup);
     }
@@ -129,6 +129,22 @@ function handle(ctx) {
       });
       return;
     }
+    // 外部打开的浏览器偏好：GET=当前值 + 候选清单；POST=设置 id（空串清除，回到按系统默认分发）。
+    // 校验（id 必须是本机候选）在 settings/browser 门面，本域只是边界。
+    if (req.method === 'GET' && pathname === '/settings/external-browser') {
+      return send(200, sup.externalBrowserStatus());
+    }
+    if (req.method === 'POST' && pathname === '/settings/external-browser') {
+      if (!originAllowed(req, sup.config.apiPort)) { req.resume(); return send(403, {}); }
+      collectBody(req, res, 2048, (body) => {
+        let id = null; let given = false;
+        try { const j = body ? JSON.parse(body) : {}; if (typeof j.id === 'string') { id = j.id; given = true; } } catch {}
+        if (!given) return send(400, { ok: false, error: '需要 {"id":"<候选 id>"}（空串清除偏好）' });
+        const r = sup.setExternalBrowser(id);
+        return send(r.ok ? 200 : 500, r);
+      });
+      return;
+    }
     // 退出管家（壳「退出管家」/托盘调用）：停止全部服务链 + 守卫自身退出
     if (req.method === 'POST' && pathname === '/shutdown') {
       if (!originAllowed(req, sup.config.apiPort)) { req.resume(); return send(403, {}); }
@@ -175,15 +191,17 @@ function handle(ctx) {
       // Node LTS 本地判定（偶数主版本~LTS；6h 缓存，无远端查询，见 supervisor.nodeLtsStatus）
       return sup.nodeLtsStatus().then((r) => send(200, r)).catch((e) => send(500, { ok: false, error: e.message }));
     }
-    // 系统浏览器清单（外部打开的探测面，只读）：面板据此显示「本机探到了哪些浏览器、默认项从哪条
-    //   系统事实读出、每条来源答了什么」。打开动作失败时的定档依据就是这份数据，故必须能从界面拿到，
-    //   而不是让人回内核机器读注册表。?force=1 绕开探测缓存（刚装/卸载浏览器后用）。
-    if (req.method === 'GET' && pathname === '/env/browsers') {
+    // 环境表单（外部打开链路的底座，只读）：本机装了哪些浏览器、系统说不出默认时的候选次序、
+    //   有没有图形会话、用户选过谁、每条结论来自哪条系统事实。面板的「环境」区块与打开失败时的
+    //   定档依据同源取 here —— 真机报障时这一份就是证据，不必回内核机器读注册表。
+    // ?force=1 绕开缓存重探（刚装/卸载浏览器后用），并把这一拍落进快照 —— 常态轮询不写盘，
+    //   快照只在「人主动刷新」与「人改了偏好」两处落，读路径永不产写侧副作用。
+    if (req.method === 'GET' && pathname === '/env/environment') {
       if (!originAllowed(req, sup.config.apiPort)) { req.resume(); return send(403, { ok: false, error: 'cross-origin request rejected' }); }
-      const force = /[?&]force=1/.test(req.url || '');
-      return Promise.resolve(browser.listBrowsers({ force }))
+      const force = /[?&]force=1/.test(String(req.url || ''));
+      return Promise.resolve(environment.form({ force, persist: force }))
         .then((r) => send(200, r))
-        .catch((e) => send(500, { ok: false, error: '浏览器探测失败：' + ((e && e.message) || e) }));
+        .catch((e) => send(500, { ok: false, error: '环境表单装配失败：' + ((e && e.message) || e) }));
     }
     // 面板请内核把地址交给**内核所在机器**的系统浏览器（桌面壳的 webview 丢弃 window.open 与
     //   target=_blank，壳内面板唯一可行的代开方就是同机的内核）。三档结果原样回传，本域不解释结局；

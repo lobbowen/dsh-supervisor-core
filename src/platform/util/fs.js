@@ -3,6 +3,7 @@
 // 通用文件系统工具（与业务无关，供各域复用）。
 
 const fs = require('node:fs');
+const os = require('node:os');
 const path = require('node:path');
 
 
@@ -52,4 +53,21 @@ function writeAtomic(file, data, opts) {
   }
 }
 
-module.exports = { dirSizeBytes, writeAtomic };
+/** 延迟递归删除（一次性、unref）：隔离登录用完的临时 profile 目录。
+ *  定时器必须 unref，否则三十分钟的清理窗口会拖住进程退出；失败静默（临时目录由系统兜底）。 */
+function removeTreeDeferred(dir, ms) {
+  if (!dir) return null;
+  const t = setTimeout(() => { try { fs.rmSync(dir, { recursive: true, force: true }); } catch { /* 已删或无权 */ } }, ms === undefined ? 60000 : ms);
+  if (t.unref) t.unref();
+  return t;
+}
+
+/** 分配一次性私有临时目录（0700）：隔离登录的 profile 唯一落盘口。
+ *  mkdtempSync 保证名字不与人撞；mode 显式给出，避免继承 umask 后同机他用户可读登录态。 */
+function allocTempDir(prefix) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), prefix || 'dsh-'));
+  try { fs.chmodSync(dir, 0o700); } catch { /* Windows 无 POSIX 权限位 */ }
+  return dir;
+}
+
+module.exports = { dirSizeBytes, writeAtomic, removeTreeDeferred, allocTempDir };

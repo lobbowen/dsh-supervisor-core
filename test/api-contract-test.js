@@ -65,6 +65,9 @@ const sup = new Proxy({}, {
     if (k === 'events') return { readSince: () => [], seq: 0 };
     if (k === 'tasks') return null;
     if (k === 'dist') return { registryInfo: async () => ({ ok: true }) };
+    // 外部打开的浏览器偏好：GET 状态与 POST 写入的门面替身（校验与落盘判据不在此处，见 X-12）。
+    if (k === 'externalBrowserStatus') return () => BROWSER_PREF;
+    if (k === 'setExternalBrowser') return setPref;
     return function () { return { ok: true }; };
   },
 });
@@ -75,30 +78,45 @@ const { createServer } = require(path.join(ROOT, 'src', 'api', 'index'));
 //   test-safety-gate A 条记的形态（值绑定是否生效取决于消费方写法，patch 静默失效就跑真实副作用）。
 const argvUrls = [];
 let owCase = null; // (url) => 三档结果，或 'throw' 模拟出口抛错
-const browserCalls = [];
-// 探测层清单的契约形状（与 platform/os/browser-inventory.js 的 listBrowsers 产物同字段）：
-//   端点只负责原样交出，字段口径由平台层定；这里造一份，钉的是「边界没加工、没丢留痕」。
-const BROWSER_INVENTORY = {
-  ok: true, platform: 'win32', cached: false,
+const envCalls = [];
+// 环境表单的契约形状（与 platform/os/environment.js#form 的产物同字段）：端点只负责原样交出，
+//   字段口径由表单定；这里造一份，钉的是「边界没加工、没丢留痕」，不是重新判一遍表单对不对。
+const ENVIRONMENT_FORM = {
+  schema: 1, at: 1700000000000, cached: false, platform: 'win32',
+  identity: { platform: 'win32', arch: 'x64', hostname: 'h', user: 'u', home: 'C:\\Users\\u', node: 'v24' },
+  paths: { root: 'C:\\Users\\u\\AppData\\Local\\dsh-supervisor', supervisor: 'C:\\s', shell: 'C:\\k' },
+  session: { platform: 'win32', available: true, reason: 'session-scoped-by-launcher' },
+  capabilities: { openBrowser: true },
+  preference: { id: 'c:\\ff\\firefox.exe', configured: true, matched: true, browser: { id: 'c:\\ff\\firefox.exe', name: 'firefox', engine: 'firefox' }, reason: 'matched' },
   default: { id: 'c:\\program files (x86)\\microsoft\\edge\\application\\msedge.exe', source: 'userchoice' },
   browsers: [
     { id: 'c:\\program files (x86)\\microsoft\\edge\\application\\msedge.exe', name: 'msedge', engine: 'chromium',
-      bin: 'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe', sources: ['userchoice', 'startmenu-catalog'], isDefault: true },
-    { id: 'c:\\ff\\firefox.exe', name: 'firefox', engine: 'firefox', bin: 'C:\\FF\\firefox.exe', sources: ['app-paths'], isDefault: false },
+      bin: 'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe', baseArgs: [], sources: ['userchoice', 'startmenu-catalog'], isDefault: true },
+    { id: 'c:\\ff\\firefox.exe', name: 'firefox', engine: 'firefox', bin: 'C:\\FF\\firefox.exe', baseArgs: [], sources: ['app-paths'], isDefault: false },
   ],
-  probed: [{ source: 'userchoice', detail: 'msedge' }, { source: 'app-paths', detail: 'firefox' }],
+  pick: { how: 'user-preference', id: 'c:\\ff\\firefox.exe', name: 'firefox', wanted: 'c:\\ff\\firefox.exe', stale: false },
+  probed: [{ section: 'browsers', source: 'userchoice', detail: 'msedge' }, { section: 'pick', source: 'form', detail: 'user-preference（firefox）' }],
+  snapshot: { path: 'C:\\s\\environment.json', written: false, error: null },
 };
 const fakeBrowser = {
-  // 只读探测面：端点必须原样交出清单（default/候选/留痕），且不得顺手触到打开出口。
-  listBrowsers: (o) => { browserCalls.push(o || {}); return BROWSER_INVENTORY; },
-  invalidateBrowsers: () => ({ ok: true }),
   openBrowser: async (url) => {
     argvUrls.push(url);
     if (owCase === 'throw') throw new Error('spawn blew up');
     return owCase(url);
   },
 };
-const server = createServer(sup, { browser: fakeBrowser });
+// 表单的假装配：只记调用参数，返回固定形状（真表单要查注册表，CI 上既慢又不可预期）。
+const fakeEnvironment = { form: (o) => { envCalls.push(o || {}); return ENVIRONMENT_FORM; } };
+// 偏好门面（app/settings/browser.js）的替身：本文件只判边界，校验与落盘判据在 X-12 里钉。
+const BROWSER_PREF = { ok: true, configured: true, value: 'c:\\ff\\firefox.exe', stale: false, browser: ENVIRONMENT_FORM.browsers[1], candidates: ENVIRONMENT_FORM.browsers, pick: ENVIRONMENT_FORM.pick, platform: 'win32' };
+const envPrefCalls = [];
+function setPref(id) {
+  envPrefCalls.push(id);
+  return id === 'c:\\ff\\firefox.exe' || id === ''
+    ? { ok: true, configured: !!id, value: id || null }
+    : { ok: false, error: '该浏览器不在本机候选清单里（可能已卸载或路径失效），请先刷新环境表单' };
+}
+const server = createServer(sup, { browser: fakeBrowser, environment: fakeEnvironment });
 
 // 本机非回环 IPv4（P0-1 结构修复后的真实 LAN 身份来源：socket 层，不再伪造 Host 头）
 const os = require('node:os');
@@ -227,30 +245,61 @@ function req(method, p, body, hostHeader, extraHeaders, via) {
     check('OU 出口抛错 → 结构化 500 且地址仍在场',
       r.code === 500 && r.body.reason === 'spawn-failed' && r.body.url === 'http://a.b/', r.code + ' ' + JSON.stringify(r.body));
 
-    // OB 组：只读探测面 GET /env/browsers。它是「先知道系统里有什么浏览器，再谈打开」这条标准的界面落点
-    //   —— 真机报「没弹出网页」时，这一份清单（默认项来源 + 每条系统查询的留痕）就是定档依据。
+    // EF 组：只读装配面 GET /env/environment。它是「先把本机情况摊开，再谈打开」这条标准的界面落点
+    //   —— 真机报「没弹出网页」时，这一份表单（候选 + 默认项来源 + 分发依据 + 每条查询留痕）就是定档依据。
     const before = argvUrls.length;
-    r = await req('GET', '/env/browsers');
-    check('OB 清单端点 200 且字段原样交出（default/候选/留痕三层齐备，边界不加工）',
-      r.code === 200 && r.body.ok === true && r.body.platform === 'win32'
+    r = await req('GET', '/env/environment');
+    check('EF 表单端点 200 且字段原样交出（候选/默认/偏好/分发依据/留痕五层齐备，边界不加工）',
+      r.code === 200 && r.body.platform === 'win32' && r.body.schema === 1
       && r.body.default && r.body.default.source === 'userchoice'
       && r.body.browsers.length === 2 && r.body.browsers.filter((b) => b.isDefault).length === 1
       && r.body.browsers.every((b) => Array.isArray(b.sources) && b.sources.length && b.engine)
-      && r.body.probed.length === 2, r.code + ' ' + JSON.stringify(r.body));
-    check('OB 反向：清单是只读面，一次都没触到打开出口（argv 里不得多出一条地址）',
+      && r.body.preference.configured === true && r.body.preference.matched === true
+      && r.body.pick.how === 'user-preference' && r.body.probed.length === 2, r.code + ' ' + JSON.stringify(r.body));
+    check('EF 反向：表单是只读面，一次都没触到打开出口（argv 里不得多出一条地址）',
       argvUrls.length === before, 'openBrowser 调用 ' + (argvUrls.length - before) + ' 次');
-    const evilBrowsers = await new Promise((resolve) => {
-      const rr = http.request({ host: '127.0.0.1', port: API_PORT, path: '/env/browsers', method: 'GET', headers: { 'Origin': 'http://evil.example', 'Host': '127.0.0.1:' + API_PORT } }, (res) => { res.resume(); res.on('end', () => resolve(res.statusCode)); });
+    const evilEnv = await new Promise((resolve) => {
+      const rr = http.request({ host: '127.0.0.1', port: API_PORT, path: '/env/environment', method: 'GET', headers: { 'Origin': 'http://evil.example', 'Host': '127.0.0.1:' + API_PORT } }, (res) => { res.resume(); res.on('end', () => resolve(res.statusCode)); });
       rr.on('error', () => resolve(0)); rr.end();
     });
-    check('OB 跨站 Origin 拒绝 403（本机装了哪些浏览器不得被任意网页读走）', evilBrowsers === 403, String(evilBrowsers));
-    r = await req('GET', '/env/browsers?force=1');
-    check('OB force=1 透传给探测层（刚装/卸载浏览器后绕开探测缓存）',
-      r.code === 200 && browserCalls.some((c) => c.force === true), JSON.stringify(browserCalls));
+    check('EF 跨站 Origin 拒绝 403（本机装了哪些浏览器、用什么打开不得被任意网页读走）', evilEnv === 403, String(evilEnv));
+    r = await req('GET', '/env/environment?force=1');
+    check('EF force=1 透传给表单（刚装/卸载浏览器后绕开缓存重探，并把这一拍落进快照）',
+      r.code === 200 && envCalls.some((c) => c.force === true && c.persist === true), JSON.stringify(envCalls));
+    check('EF 反向：常态读取不带 force/persist（面板轮询不得每次重探系统、也不得反复写盘）',
+      envCalls.some((c) => !c.force && !c.persist), JSON.stringify(envCalls));
+
+    // PR 组：浏览器偏好的读写边界。判据（id 必须是本机候选）住在表单，本组只钉边界三件事：
+    //   GET 原样交出状态、POST 缺字段=400 不走到门面、门面判失败=500 而不是把失败说成成功。
+    r = await req('GET', '/settings/external-browser');
+    check('PR GET 交出当前偏好 + 候选清单 + 这一拍的分发依据（面板据此说明「现在实际会用谁」）',
+      r.code === 200 && r.body.ok === true && r.body.value === 'c:\\ff\\firefox.exe'
+      && r.body.candidates.length === 2 && r.body.pick.how === 'user-preference', r.code + ' ' + JSON.stringify(r.body));
+    const prBefore = envPrefCalls.length;
+    r = await req('POST', '/settings/external-browser', JSON.stringify({ id: 'c:\\ff\\firefox.exe' }));
+    check('PR POST 命中候选 → 200 且写入门面一次（空串以外的值必须经校验）',
+      r.code === 200 && r.body.ok === true && r.body.configured === true && envPrefCalls.length === prBefore + 1,
+      r.code + ' ' + JSON.stringify(r.body));
+    r = await req('POST', '/settings/external-browser', JSON.stringify({ id: '' }));
+    check('PR POST 空串=清除偏好 → 200 且 configured:false（清除与拒写是两种语义，不得都回 400）',
+      r.code === 200 && r.body.ok === true && r.body.configured === false, r.code + ' ' + JSON.stringify(r.body));
+    const rejectBefore = envPrefCalls.length;
+    r = await req('POST', '/settings/external-browser', JSON.stringify({ id: 'C:\\nope.exe' }));
+    check('PR POST 非候选 id → 500 且带 error（写下去也不会生效，必须当场说清楚）',
+      r.code === 500 && r.body.ok === false && !!r.body.error, r.code + ' ' + JSON.stringify(r.body));
+    // 拒写的判据只有一份（门面上的 checkPreference）：边界要是自己抄一份，两处判据迟早分叉。
+    //   所以这一档必须真的走到门面一次，再由门面把「不在候选里」说回来。
+    check('PR 非候选 id 确实走到门面判据一次（边界不自己复述拒写理由）',
+      envPrefCalls.length === rejectBefore + 1, 'calls=' + envPrefCalls.length);
+    const missingBefore = envPrefCalls.length;
+    r = await req('POST', '/settings/external-browser', JSON.stringify({}));
+    check('PR 反向：缺 id 字段 → 400 且一次都没写（漏字段不得被当成清除偏好）',
+      r.code === 400 && r.body.ok === false && envPrefCalls.length === missingBefore, r.code + ' ' + envPrefCalls.length);
   } finally {
     // 反空转：注入的出口若一次都没被叫到，整组三档断言都只是对着空气判绿。
     check('OW/OU 两组真的驱动了注入出口（出口未被调用即整组空转）', argvUrls.length >= 7, 'calls=' + argvUrls.length);
-    check('OB 组真的驱动了探测面（清单端点没被叫到即该组空转）', browserCalls.length >= 2, 'calls=' + browserCalls.length);
+    check('EF/PR 两组真的驱动了表单与偏好门面（一次都没被叫到即该组空转）',
+      envCalls.length >= 2 && envPrefCalls.length >= 2, 'form=' + envCalls.length + ' pref=' + envPrefCalls.length);
   }
 
   // 跨站 Origin 仍拒绝（安全契约不回归）

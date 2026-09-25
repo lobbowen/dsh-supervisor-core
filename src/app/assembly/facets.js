@@ -45,6 +45,7 @@ const FACETS = [
   { name: 'settings/node-lts', mod: require('../settings/node-lts') },
   { name: 'settings/versions', mod: require('../settings/versions') },
   { name: 'settings/access', mod: require('../settings/access') },
+  { name: 'settings/browser', mod: require('../settings/browser') },
   { name: 'settings/lan-panel', mod: require('../settings/lan-panel') },
 ];
 
@@ -97,8 +98,7 @@ function installFacets(host, deps) {
   const d = deps || {};
   for (const f of FACETS) {
     if (f.apiRebind) {
-      host._apiStart = function _apiStart() { return f.mod.startApi(this, d.createServer); };
-      host._apiRebind = function _apiRebind() { return f.mod._rebindApiHost(this, d.createServer); };
+      host._apiStart = function _apiStart() { return f.mod.startApi(this, d.createServer); };      host._apiRebind = function _apiRebind() { return f.mod._rebindApiHost(this, d.createServer); };
       continue;
     }
     if (f.hostFirst) { installHostFirst(host, f.mod); continue; }

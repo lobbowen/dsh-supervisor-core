@@ -2,7 +2,7 @@
  *  http() 只看 HTTP 状态码，2xx 里的 { ok:false } 视为数据（如探活不通）不抛，写操作假成功由 failureFromResult 统一判据（UI 条 5）；
  *  生产同源（/…），开发跨端口用 vite proxy 转发（去掉 Origin 走回环）。 */
 import type {
-  AccessKeyResult, AccessKeyStatus, AutostartStatus, CloseActionStatus, EnvStatus, EventsPage, FrpStatus, GenericOk,
+  AccessKeyResult, AccessKeyStatus, AutostartStatus, CloseActionStatus, EnvironmentForm, EnvStatus, EventsPage, ExternalBrowserStatus, FrpStatus, GenericOk,
   GuardVersion, InstancesResponse, InstalledPluginsResponse, LanAccessResponse,
   LanPanelStatus, LifecycleModuleId, MarketResponse, NodeLtsStatus, OpenExternalResult, PluginUpdatesResponse,
   PortsResponse, ProvidersResponse, RegistryInfo, RemoteMode, RouterStatus,
@@ -263,4 +263,11 @@ export const supervisorApi = {
   /** 请内核用它所在机器的默认浏览器打开地址（外部打开唯一出口；三档结果原样回传）。
    *  非 2xx 时 http() 把响应体挂在 err.body 上，失败档的 url 才有抵达面板的路。 */
   envOpenUrl: (url: string) => post<OpenExternalResult>("/env/open-url", { url }),
+  /** 环境表单（内核所在机器的实况 + 外部打开的分发依据）：面板「环境检测」据此显示候选、
+   *  默认项来源与每一层判定。force=true 绕开内核 60s 缓存重探（刚装/卸载浏览器后用）。 */
+  environment: (force = false) => get<EnvironmentForm>(`/env/environment${force ? "?force=1" : ""}`),
+  /** 外部打开的浏览器偏好：当前值 + 候选清单（候选来自环境表单，与分发同源）。 */
+  externalBrowser: () => get<ExternalBrowserStatus>("/settings/external-browser"),
+  /** 设置偏好（空串=清除，回到按系统默认/候选次序分发）。id 必须是候选清单里的 id。 */
+  setExternalBrowser: (id: string) => post<GenericOk & ExternalBrowserStatus>("/settings/external-browser", { id }),
 };

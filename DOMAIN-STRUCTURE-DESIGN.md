@@ -120,9 +120,8 @@ domains/<domain>/
 | `router/handlers/forward.js` | ≤330 | 324 | **超 DG-2 硬线 +24**（目标 ≤330 仍达，但 `>300` 已越；report-only 故 CI 不红） |
 | `router/store/usage.js` | ≤160 | 150 | 达 |
 | `router/model/inflight.js` | ≤90 | 53 | 达 |
-| `router/router-ops.js` | ≤100 | 34 | 达 |
-| `router/ops/browser.js` | ≤140 | 75 | 达 |
-| `router/ops/oauth.js` | ≤190 | 140 | 达 |
+| `router/router-ops.js` | ≤100 | 36 | 达 |
+| `router/ops/oauth.js` | ≤190 | 163 | 达 |
 | `router/ops/apps-registry.js` | ≤230 | 186 | 达 |
 | `router/ops/quotasync.js` | ≤140 | 89 | 达 |
 | `router/ops/admin.js` | ≤200 | 130 | 达 |
@@ -173,7 +172,6 @@ router/
 ├── store/usage.js       ≤160  用量账本（原子写，**.tmp 命名统一**）
 ├── model/inflight.js    ≤90   纯状态：在途计数 + 错误计数
 ├── router-ops.js        ≤100  门面（运维）
-├── ops/browser.js       ≤140  图形环境 + 打开浏览器
 ├── ops/oauth.js         ≤190  OAuth 一键登录
 ├── ops/apps-registry.js ≤230  应用注册表与更新
 ├── ops/quotasync.js     ≤140  配额 + 单价同步

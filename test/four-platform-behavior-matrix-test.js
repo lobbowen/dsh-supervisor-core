@@ -161,9 +161,11 @@ function underFake(platform, arch, body) {
       && br.openPlan('linux', u, { inventory: chromeInv }).exitIsEvidence === false
       && br.openPlan('win32', u, { inventory: edgeInv }).via === 'browser',
       JSON.stringify([pw, br.openPlan('linux', u, { inventory: empty })]));
-    // 反向样本（判据必须能红）：Windows 的两条假路都要被识别为「不再存在」。
-    check('P-5 反向：win32 既无调度器可退、也不按清单顺序猜默认项（旧 explorer.exe 冒开的两种残形）',
-      pw.bin === null && pw.via === 'none' && pd.bin === null && pd.pick === 'no-default'
+    // 反向样本（判据必须能红）：Windows 的假调度器不得回流。多候选而系统说不出默认这一档
+    //   已改成「按候选次序直启 + 把依据写进证据」（旧形态在此报 no-launcher，症状就是点了没反应）：
+    //   它不再是「猜一个当系统默认」，因为 pick 名字会随证据上屏，用户还能在偏好里改。
+    check('P-5 反向：win32 既无调度器可退，也不在说不出默认时断路（按候选次序直启并留 pick 依据）',
+      pw.bin === null && pw.via === 'none' && pd.bin === EDGE && pd.pick === 'candidate-rank' && pd.via === 'browser'
       && br.ownsItsWindow('dispatcher', 'win32') === false, JSON.stringify([pw, pd]));
     check('P-5 反向：判据能识别 explorer.exe 兜底回流（源码与能力档位表两处都扫）',
       /explorer\.exe/.test("return { cmd: 'explorer.exe', args: [url] };")

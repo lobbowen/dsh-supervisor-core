@@ -1,20 +1,27 @@
 'use strict';
 
 // 三端同一「交给系统浏览器」出口。分层固定，每层只干一件事：
-//   探测（./browser-inventory.js）—— 这台机器装了哪些浏览器、默认是哪个、每条结论来自哪个系统事实；
-//   选路（openPlan / isolatedPlan / pickLauncher，本文件）—— 这次该用哪一个，拿不到就说拿不到；
-//   执行（openBrowser / launchIsolated，本文件）—— spawn 一次并如实回报拿到的是什么档证据。
+//   环境与选路（./environment.js）—— 本机实况表单（装了哪些浏览器、系统说不出默认时的候选次序、
+//     图形会话、用户在本产品里选过谁）与「这次该用哪一个」的分发依据；
+//   探测（./browser-inventory.js）—— 平台事实的唯一写法（环境表单消费它，本文件不直接查）；
+//   执行（openBrowser，本文件）—— 按计划 spawn 一次并如实回报拿到的是什么档证据。
 // 浏览器选择权在用户不在产品：本文件绝不点名任何浏览器，也不在探测失败时「挑一个试试」。
 
-// 外部打开的唯一出口是 openBrowser（非隔离）与 launchIsolated（登录用的隔离窗口），两者共用同一结果词汇
-//   {ok, confirmed, handedOff, reason, error, message}：调用方与面板只需认一套字段，不必各自解释 argv 结局。
+// 外部打开的唯一出口是 openBrowser，`intent` 决定用哪种形态：
+//   'plain'          —— 普通打开（面板/CTL 的「在浏览器里打开」），用系统或用户选的浏览器、并入既有会话；
+//   'isolated-login' —— 一键登录用的隔离窗口（独立 profile + 无痕/隐私参数 + 反指纹环境），
+//                       并监视窗口关闭以便取消登录。
+// 两种意图共用同一结果词汇 {ok, confirmed, handedOff, reason, error, message, url, evidence}：
+//   调用方与面板只需认一套字段，不必各自解释 argv 结局，也不存在「登录那条路少判一层」的可能。
 // 三档语义不得混为一谈（这是本能力的标准，也是历史上「面板显示成功而屏幕什么都没有」的病根）：
 //   confirmed  —— 拿到了「调度器确实接收了该 URL」的证据：仅限本次启动确定拥有自己窗口的形态 0 退出
 //   handedOff  —— 命令已交出且 spawn 没报错，但没有任何形态学证据说明窗口出现过
 //   ok:false   —— 明确失败（非 0 退出/信号/error 事件/预检不过/选不出启动对象），必须带 reason 码与给用户的一句话。
 // 「退出码何时算证据」只由 ownsItsWindow 一处决定，并且**双向**生效：不可信形态既不能凭 0 冒领 confirmed，
 //   也不能凭非 0 判成失败。
-// 失败必须带得上屏幕的诊断：evidence 里有 pick/found/probed（探测到的候选、默认项来源、每条来源的读数），
+// 能力档、图形会话、URL 合法性、启动对象可用性这些预检对两种意图一视同仁：过去隔离登录绕开了它们，
+//   于是同一台机器上「面板能打开、一键登录不能」的分叉无从解释。
+// 失败必须带得上屏幕的诊断：evidence 里有 pick/found/probed（分发依据、候选清单、每条来源的读数），
 //   面板据此把「为什么没弹出来」摊成一行小字。旧形态只有一句「打开失败」，真机报障时无从定性。
 // 结果需要等子进程的 error/exit 才能定，而 ENOENT 只在异步 error 事件里出现（见 binAvailable 注释），
 //   故 openBrowser 是异步的：同步返回 true 的旧形态等于把「没报错」当「已打开」。
@@ -26,12 +33,15 @@ const desktop = require('./desktop');
 // 能力档位表（纯数据）：外部打开支持哪些平台只由它的 openBrowser 位决定。
 const CAPABILITY_PROFILES = require('./capability-profile');
 const { resolveExecutable, isExecutableFile } = require('./exec-path');
-// 探测层：本文件不查注册表/LaunchServices/XDG，只消费它的清单（平台事实只写一次）。
+// 环境表单：候选清单与分发依据的唯一来源（本文件不查注册表/LaunchServices/XDG，平台事实只写一次）。
+const environment = require('./environment');
 const detector = require('./browser-inventory');
 const { engineOf } = detector;
+// 临时 profile 的落盘与延迟清理（fs 只在 util 层出现：本文件不得 require node:fs）。
+const { allocTempDir, removeTreeDeferred } = require('../util/fs');
 
 /** 进 argv 前的唯一闸门：只校验协议为 http/https 的绝对 URL，不校验主机
- *  （两个出口传的都有：openBrowser 传本机回环实例地址，launchIsolated 传外部 OAuth 授权页）。 */
+ *  （两个意图传的都有：plain 传本机回环实例地址，isolated-login 传外部 OAuth 授权页）。 */
 function isSafeHttpUrl(url) {
   try {
     const u = new URL(String(url));
@@ -83,7 +93,7 @@ const HANDEDOFF_TEXT = '已把地址交给系统，但这次启动拿不到窗�
  *  只有 ownsItsWindow 为真的形态才会走到 exit-nonzero/killed-by-signal，故这里可以断言窗口没出现。 */
 const FAILURE_TEXT = {
   'unsafe-url': '地址不是 http(s) 绝对 URL，已拒绝交给浏览器',
-  'no-launcher': '未能确定该用哪个浏览器打开（系统里读不到默认浏览器设置），请在系统设置里指定默认浏览器或手动打开该地址',
+  'no-launcher': '本机未探到可启动的浏览器（或所选浏览器已不可执行），请在面板的环境表单里确认，或手动打开该地址',
   'spawn-failed': '浏览器启动失败（系统拒绝了该命令）',
   'exit-nonzero': '系统拒绝了这个地址（启动命令非 0 退出），窗口未出现',
   'killed-by-signal': '浏览器启动命令被系统终止，窗口未出现',
@@ -93,62 +103,96 @@ const FAILURE_TEXT = {
 
 /** 退出码可信判据的唯一定义处：**本次启动是否确定拥有自己的窗口**。
  *  只有确定是新实例时，它的退出码才同时具备两种证明力：0 说明命令被接收、非 0 说明没接收。
- *  两种不可信形态各有一个平台事实作根据，且都是平台语义而不是产品缺陷：
- *    裸 URL 直启 chromium/firefox 派生系时，浏览器已在运行则本次进程只把地址转交给既有实例，
- *    退出码属于「转交动作」而不属于那个窗口；
- *    win32 只剩直启这一种形态，故该平台恒不可取证（面板必须始终把地址交给用户）。
- *  故不可信形态两个方向都不许进判决，一律只到 handedOff。 */
+ *  三种形态各有平台事实作根据，且都是平台语义而不是产品缺陷：
+ *    via='isolated'（独立 profile 的登录窗口）：必为新实例，退出码双向都是事实；
+ *    via='dispatcher'（darwin 的 open / linux 的 xdg-open）：非 0 即调度器明确拒了这次请求，0 即它确认接收，
+ *      win32 无可信调度器（openCommand 返回 null），故该平台不成立；
+ *    via='browser'（裸 URL 直启）：浏览器已在运行时本次进程只把地址转交给既有实例，
+ *      退出码属于「转交动作」而不属于那个窗口 —— 两种不可信形态两个方向都不许进判决，一律只到 handedOff。 */
 function ownsItsWindow(via, platform) {
+  if (via === 'isolated') return true;
   if (via !== 'dispatcher') return false;
-  // darwin 的 open / linux 的 xdg-open：非 0 即调度器明确拒了这次请求，0 即它确认接收。
-  // win32 无可信调度器（openCommand 返回 null），到这里不可能成立。
   return platform !== 'win32';
 }
 
-/** 选路（纯函数）：探测清单 -> 这次交给谁。顺序只有两条，都不构成「产品挑内核」：
- *  1) 系统自己说得出的默认项（清单条目上的 defaultId，配 defaultSource 说明它是从哪条系统事实读来的；
- *     来源名只存在于探测层，本层认字段不认名字）；
- *  2) 穷举后只有一个候选（唯一解，不是选择）。
- *  有多个候选而系统说不出默认项时返回 null 并留下 how='no-default'：据此显式 no-launcher，
- *  而不是按清单顺序猜一个 —— 猜错就是「面板说开了、屏幕上是另一个浏览器」，比失败更难查。
- *  @param {string} platform
- *  @param {{browsers?:object[], defaultId?:string|null, defaultSource?:string|null}|null} inv
- *  @returns {{browser:object|null, how:string}} */
-function pickLauncher(platform, inv) {
-  const list = inv && Array.isArray(inv.browsers) ? inv.browsers : [];
-  const id = inv && inv.defaultId;
-  const hit = id ? list.find((b) => b.id === id) : null;
-  if (hit) return { browser: hit, how: (inv && inv.defaultSource) || 'default' };
-  if (list.length === 1) return { browser: list[0], how: 'only-installed' };
-  return { browser: null, how: list.length ? 'no-default' : 'none-found' };
-}
-
 /** 拿到一个浏览器条目后的启动形态：两族引擎（chromium/firefox 派生系）的裸 URL 参数语义确定，直启本体，
- *  把「用哪个浏览器」留给用户在系统里设的默认值；argv 仍由我们自己拼（不经 shell）。
- *  other 引擎（Safari、snap 包装器）在本平台有可信调度器时交回调度器 —— 裸 URL 参数语义不确定，
+ *  把「用哪个浏览器」留给用户在系统里设的默认值或在面板里选的偏好；argv 仍由我们自己拼（不经 shell）。
+ *  other 引擎（Safari、打包器包装）在本平台有可信调度器时交回调度器 —— 裸 URL 参数语义不确定，
  *  但整条链路不得为此砍掉。win32 没有可信调度器，解析到的本体直启是唯一路（引擎不明也只是不可取证）。 */
 function formOfBin(pl, b) {
   const engine = b && b.bin ? engineOf(b.bin) : 'other';
   return { engine, direct: !!b && (engine !== 'other' || pl === 'win32') };
 }
 
-/** 非隔离打开计划（纯函数，与 isolatedPlan 同族、同一探测输入）。
- *  退出码可信度一律问 ownsItsWindow，此处不再按平台宣称取证能力。
+/** 普通打开计划（纯函数，与 isolatedPlan 同族、同一分发依据输入）。
  *  @param {{inventory?:object, pick?:{browser:object|null, how:string}}} [opts] */
 function openPlan(platform, url, opts) {
   const o = opts || {};
   const pl = platform || process.platform;
-  const picked = o.pick || pickLauncher(pl, o.inventory);
+  const picked = o.pick || environment.pickLauncher(pl, o.inventory, o.preference);
   const b = picked.browser;
   const form = formOfBin(pl, b);
   if (form.direct) {
-    return { bin: b.bin, engine: form.engine, via: 'browser', pick: picked.how,
-             baseArgs: (b.baseArgs || []).concat([url]), exitIsEvidence: ownsItsWindow('browser', pl) };
+    return { bin: b.bin, args: (b.baseArgs || []).concat([url]), engine: form.engine, via: 'browser',
+             isolated: false, watch: false, envKind: 'sys', pick: picked.how, stale: picked.stale === true,
+             exitIsEvidence: ownsItsWindow('browser', pl) };
   }
   const c = openCommand(pl, url);
-  if (!c) return { bin: null, engine: form.engine, via: 'none', pick: picked.how, baseArgs: [], exitIsEvidence: false };
-  return { bin: c.cmd, engine: 'other', via: 'dispatcher', pick: picked.how,
-           baseArgs: c.args, exitIsEvidence: ownsItsWindow('dispatcher', pl) };
+  if (!c) return { bin: null, args: [url], engine: form.engine, via: 'none',
+                   isolated: false, watch: false, envKind: 'sys', pick: picked.how, stale: picked.stale === true,
+                   exitIsEvidence: false };
+  return { bin: c.cmd, args: c.args, engine: 'other', via: 'dispatcher',
+           isolated: false, watch: false, envKind: 'sys', pick: picked.how, stale: picked.stale === true,
+           exitIsEvidence: ownsItsWindow('dispatcher', pl) };
+}
+
+/** 隔离登录计划（纯函数，不 spawn、不摸文件系统）。
+ *  输入与非隔离打开同一份候选清单与同一条分发链：登录窗口必须与「面板里点打开」用同一个浏览器，
+ *  否则用户在偏好里选一次只对一半功能生效。
+ *  拿不到独立 profile 或引擎无隔离方言时降为非隔离（isolated:false）：没有独立 profile 就并入既有实例，
+ *  此时 onExit 恒误报「用户关了窗口」，故 watch 一并置 false —— 降级要降得如实，不冒充隔离。
+ *  @param {{inventory?:object, pick?:object, profileDir?:string, size?:number[], lang?:string}} [opts] */
+function isolatedPlan(platform, url, opts) {
+  const o = opts || {};
+  const pl = platform || process.platform;
+  const picked = o.pick || environment.pickLauncher(pl, o.inventory, o.preference);
+  const b = picked.browser;
+  const form = formOfBin(pl, b);
+  const baseArgs = (b && b.baseArgs) || [];
+  const common = { pick: picked.how, stale: picked.stale === true, engine: form.engine };
+  const plain = (bin, label) => Object.assign(common, {
+    bin, args: baseArgs.concat([url]), via: 'browser', isolated: false, watch: false, envKind: 'sys', label,
+    exitIsEvidence: ownsItsWindow('browser', pl),
+  });
+  if (form.direct && form.engine === 'chromium' && o.profileDir) {
+    const args = ['--incognito', '--user-data-dir=' + o.profileDir];
+    if (Array.isArray(o.size) && o.size.length === 2) args.push('--window-size=' + o.size[0] + ',' + o.size[1]);
+    if (o.lang) args.push('--lang=' + o.lang);
+    args.push('--no-first-run', '--no-default-browser-check', '--disable-session-crashed-bubble');
+    // 独立 user-data-dir => 必为新实例进程，其 exit 即窗口关闭（onExit 语义成立）。
+    return Object.assign(common, {
+      bin: b.bin, args: [...baseArgs, ...args, url], via: 'isolated', isolated: true, watch: true,
+      envKind: 'anti', label: 'chromium', exitIsEvidence: ownsItsWindow('isolated', pl),
+    });
+  }
+  if (form.direct && form.engine === 'firefox' && o.profileDir) {
+    // --no-remote + 专用 profile：不并入既有实例，新进程随窗口关闭而退出。
+    return Object.assign(common, {
+      bin: b.bin, args: [...baseArgs, '--no-remote', '--profile', o.profileDir, '-private-window', url],
+      via: 'isolated', isolated: true, watch: true, envKind: 'anti', label: 'firefox',
+      exitIsEvidence: ownsItsWindow('isolated', pl),
+    });
+  }
+  if (form.direct) return plain(b.bin, path.basename(b.bin));
+  const c = openCommand(pl, url);
+  if (!c) return Object.assign(common, {
+    bin: null, args: [url], via: 'none', isolated: false, watch: false, envKind: 'sys', label: null,
+    exitIsEvidence: false,
+  });
+  return Object.assign(common, {
+    bin: c.cmd, args: c.args, via: 'dispatcher', isolated: false, watch: false, envKind: 'sys', label: c.cmd,
+    exitIsEvidence: ownsItsWindow('dispatcher', pl),
+  });
 }
 
 /** 观测一次 spawn 的真实结局（有界）：error/exit 先到者定局，窗口内两者都没到即「已移交、未证实」。
@@ -168,120 +212,47 @@ function observeSpawn(child, windowMs, setTimeoutFn) {
 /** 观测窗口：够长以捕获同步失败（ENOENT/权限）与秒退，够短以不占用面板的 15s 动作预算。 */
 const OPEN_OBSERVE_MS = 1500;
 
+/** 隔离登录窗口的随机化面（时区/语言/窗口尺寸）：策略与引擎方言同处一层 —— 域侧只声明「要登录用的
+ *  隔离窗口」，不各自维护一份池子，否则两侧漂移就成了「同一产品两种指纹形状」。
+ *  池子只影响外观参数，不参与任何能力判定。 */
+const LOGIN_TZ_POOL = ['Asia/Shanghai', 'Asia/Seoul', 'Asia/Tokyo', 'Asia/Singapore', 'Europe/Berlin', 'Europe/London', 'Europe/Paris', 'America/New_York', 'America/Los_Angeles', 'Australia/Sydney'];
+const LOGIN_LANG_POOL = ['zh-CN', 'en-US', 'en-GB', 'ja-JP', 'ko-KR', 'de-DE', 'fr-FR', 'zh-TW'];
+const LOGIN_SIZE_POOL = [[1280, 800], [1366, 768], [1440, 900], [1536, 864], [1600, 900], [1680, 1050], [1920, 1080], [1024, 768], [1152, 864], [1280, 720]];
+
+/** 隔离登录用的两套环境：anti=带随机化时区/语言（隔离引擎用），sys=宿主环境补齐图形变量（降级路径用）。
+ *  图形环境补齐只读 desktop.js 一处，不在这里再摸一遍 socket。 */
+function loginEnv(rand) {
+  const pick = (arr) => arr[Math.floor((typeof rand === 'function' ? rand() : Math.random()) * arr.length)];
+  const size = pick(LOGIN_SIZE_POOL);
+  const lang = pick(LOGIN_LANG_POOL);
+  const tz = pick(LOGIN_TZ_POOL);
+  const sysEnv = Object.assign({}, process.env, desktop.sessionEnv());
+  return { size, lang, sysEnv, antiEnv: Object.assign({}, sysEnv, { TZ: tz, LANG: lang }) };
+}
+
 /** 探测清单摊成「一行能看完」的诊断，随每次打开的 evidence 交出：
- *  真机报障时这一行就是定档依据（探到几个、默认项从哪条系统事实读出、每条来源答了什么），
- *  不必再让人回去读代码。字段全为字符串/短数组，面板原样渲染。 */
-function launchDiagnostics(inv, plan, how) {
+ *  真机报障时这一行就是定档依据（探到几个、分发依据是哪一层、每条来源答了什么），不必再让人回去读代码。
+ *  字段全为字符串/短数组，面板原样渲染。
+ *  第三参取 pickLauncher 的原样返回而不是清单字段：偏好（命中/已失效）是**这次分发的结论**，
+ *  探测层不该知道自己被偏好越过，把它塞进 inventory 会让同一条事实在两处口径不同。 */
+function launchDiagnostics(inv, plan, picked) {
   const found = ((inv && inv.browsers) || []).map((b) => ({
     name: b.name, engine: b.engine || engineOf(b.bin),
     via: (b.sources && b.sources.length ? b.sources : [b.source || 'unknown']).join('+'),
   }));
+  const pk = picked || {};
   return {
     platform: (inv && inv.platform) || null,
-    pick: how || (plan && plan.pick) || 'none',
+    pick: pk.how || (plan && plan.pick) || 'none',
     bin: (plan && plan.bin) || null,
     default: inv && inv.defaultId ? { id: inv.defaultId, source: inv.defaultSource || null } : null,
+    preference: pk.wanted ? { id: pk.wanted, matched: pk.stale !== true } : null,
     found,
     probed: (inv && inv.probed) || [],
   };
 }
 
-/** 外部打开的唯一出口：把 http(s) URL 交给探测层解析出的浏览器（或该平台的文档化调度器），
- *  并如实回报证据档位。绝不宣称页面已加载 —— 最多说「命令 0 退出」。
- *  @param {string} url
- *  @param {{inventory?:object, resolveInventory?:Function, resolveDeps?:object,
- *           binAvailable?:Function, spawn?:Function, observeMs?:number, setTimeout?:Function,
- *           platform?:string, desktopAvailable?:Function}} [o]
- *    注入缝供行为测试：CI 机器不真起浏览器、不真查注册表。夹具与产品共用同一份 inventory 输入（同源）。
- *  @returns {Promise<{ok, confirmed, handedOff, reason, error, message, url, evidence}>} */
-async function openBrowser(url, o) {
-  const opts = o || {};
-  const pl = opts.platform || process.platform;
-  if (!isSafeHttpUrl(url)) {
-    return outcome({ ok: false, reason: 'unsafe-url', url: String(url || ''), evidence: null });
-  }
-  // 能力档位说「不支持」就在这里显式失败：openCommand 对未知平台仍会尽力试一次 xdg-open，
-  // 但那是低层映射，不构成本产品对外宣称的能力（unknown 档位 openBrowser:false）。
-  if (!SUPPORTED_OPEN_PLATFORMS.includes(pl)) {
-    return outcome({ ok: false, reason: 'unsupported-platform', url, evidence: { platform: pl } });
-  }
-  const observeMs = opts.observeMs === undefined ? OPEN_OBSERVE_MS : opts.observeMs;
-  const spawnWith = typeof opts.spawn === 'function' ? opts.spawn : _spawnDetachedIgnored;
-  const avail = typeof opts.binAvailable === 'function' ? opts.binAvailable : binAvailable;
-  const observe = typeof opts.observe === 'function' ? opts.observe : observeSpawn;
-  const resolveInv = typeof opts.resolveInventory === 'function' ? opts.resolveInventory
-    : ((platform, deps) => detector.inventory(platform, deps));
-  const inv = 'inventory' in opts ? opts.inventory : resolveInv(pl, opts.resolveDeps || {});
-  const plan = openPlan(pl, url, { inventory: inv, pick: opts.pick });
-  const diagnostics = launchDiagnostics(inv, plan, plan.pick);
-  const evidence = {
-    bin: plan.bin, engine: plan.engine, via: plan.via, ownsWindow: plan.exitIsEvidence === true,
-    exitCode: null, exitSignal: null, error: null, diagnostics,
-  };
-  // linux 无图形会话时任何启动命令都必败：先给出准确原因，别让用户去读 xdg-open 的非 0 退出码。
-  // darwin/win32 由图形会话内的 LaunchAgent / schtasks ONLOGON 载入，无会话即无本进程（判定同源 desktop.js）。
-  const desktopAvailable = typeof opts.desktopAvailable === 'function' ? opts.desktopAvailable : desktop.sessionAvailable;
-  if (pl === 'linux' && !desktopAvailable()) {
-    return outcome({ ok: false, reason: 'no-desktop-session', url, evidence });
-  }
-  // 选不出启动对象 = 显式失败并带诊断（旧形态是退到系统 shell 冒开，屏幕上什么都没有还说「已交出」）。
-  if (!plan.bin) {
-    return outcome({ ok: false, reason: 'no-launcher', url, evidence });
-  }
-  if (!avail(plan.bin)) {
-    return outcome({ ok: false, reason: 'no-launcher', url, evidence });
-  }
-  let child;
-  try { child = spawnWith(plan.bin, plan.baseArgs); }
-  catch (e) {
-    evidence.error = (e && e.code) || String(e);
-    return outcome({ ok: false, reason: 'spawn-failed', url, evidence });
-  }
-  if (!child) return outcome({ ok: false, reason: 'spawn-failed', url, evidence });
-  const seen = await observe(child, observeMs, opts.setTimeout);
-  evidence.error = seen.stage === 'error' ? String(seen.code) : null;
-  evidence.exitCode = seen.code === undefined ? null : seen.code;
-  evidence.exitSignal = seen.signal === undefined ? null : seen.signal;
-  if (seen.stage === 'error') return outcome({ ok: false, reason: 'spawn-failed', url, evidence });
-  // 退出码进判决的唯一闸门，规则只在 openPlan/ownsItsWindow 一处写：不可信形态的退出码在两个方向上
-  //   都不是证据 —— 据它判红会把已打开的页面报成失败，据它判绿会凭空宣称窗口出现过。
-  //   判红与判绿必须同一条 `&&`，分两处写就会重新分叉。
-  const exitDecides = seen.stage === 'exit' && plan.exitIsEvidence === true;
-  if (exitDecides && (seen.code !== 0 || seen.signal)) {
-    return outcome({
-      ok: false, reason: seen.signal ? 'killed-by-signal' : 'exit-nonzero', url, evidence,
-      error: FAILURE_TEXT[seen.signal ? 'killed-by-signal' : 'exit-nonzero'] + '（' + (seen.signal || seen.code) + '）',
-    });
-  }
-  // 剩下的都是 ok：可信形态 0 退出算 confirmed；不可信形态（或窗口内仍存活、压根没有退出可言）
-  //   只算 handedOff —— 命令确实交出去了，但窗口有无只有用户能判，故面板必须同时给出地址。
-  return outcome({ ok: true, confirmed: exitDecides, handedOff: !exitDecides, url, evidence });
-}
-
-/** 系统浏览器清单（只读诊断面）：面板据此显示「本机探到了什么」，与打开动作共用同一份探测缓存。
- *  @param {{force?:boolean}} [o] force=true 绕开缓存（用户刚装/刚卸载浏览器后用）。 */
-function listBrowsers(o) {
-  const ov = o || {};
-  const inv = detector.inventory(ov.platform, { force: ov.force === true });
-  return {
-    ok: true,
-    platform: inv.platform,
-    cached: inv.cached === true,
-    default: inv.defaultId ? { id: inv.defaultId, source: inv.defaultSource || null } : null,
-    browsers: (inv.browsers || []).map((b) => ({
-      id: b.id, name: b.name, engine: b.engine || engineOf(b.bin), bin: b.bin,
-      sources: b.sources && b.sources.length ? b.sources : [b.source],
-      isDefault: b.id === inv.defaultId,
-    })),
-    probed: inv.probed || [],
-  };
-}
-
-/** 缓存失效：安装/卸载浏览器后面板要能立刻反映（与 listBrowsers 的 force 同一目的，两个入口都留着是因为
- *  一个是「只刷这一次」，一个是「下一次自己重探」，语义不同）。 */
-function invalidateBrowsers(platform) { return detector.invalidate(platform); }
-
-/** detachedIgnored 的无 env 变体：外部打开不注入反取证环境，用宿主环境即可（隔离窗口才需要 antiEnv）。 */
+/** detachedIgnored 的无 env 变体：普通打开不注入反指纹环境，用宿主环境即可（隔离窗口才需要 antiEnv）。 */
 function _spawnDetachedIgnored(bin, args) {
   try {
     const p = spawnOS.detachedIgnored(bin, args);
@@ -301,45 +272,6 @@ function _spawnDetached(bin, args, env, onExit) {
   return child;
 }
 
-/** 平台到隔离打开的命令规划（纯函数，不 spawn、不做探测 I/O）。
- *  输入与 openPlan 同一份探测清单：登录窗口与非隔离打开必须是同一个浏览器，否则用户在系统里
- *  设的默认值只对一半的功能生效。
- *  拿不到可直启的本体时：本平台有可信调度器就走非隔离兜底（isolated:false，登录靠超时兜底），
- *  没有调度器（win32）则 bin=null，由 launchIsolated 的预检如实报 no-launcher。
- *  @param {{inventory?:object, pick?:{browser:object|null, how:string}, profileDir?:string,
- *           size?:number[], lang?:string}} [opts] */
-function isolatedPlan(platform, url, opts) {
-  const o = opts || {};
-  const pl = platform || process.platform;
-  const picked = o.pick || pickLauncher(pl, o.inventory);
-  const b = picked.browser;
-  const form = formOfBin(pl, b);
-  const baseArgs = (b && b.baseArgs) || [];
-  if (form.direct && form.engine === 'chromium' && o.profileDir) {
-    const args = ['--incognito', '--user-data-dir=' + o.profileDir];
-    if (Array.isArray(o.size) && o.size.length === 2) args.push('--window-size=' + o.size[0] + ',' + o.size[1]);
-    if (o.lang) args.push('--lang=' + o.lang);
-    args.push('--no-first-run', '--no-default-browser-check', '--disable-session-crashed-bubble');
-    // 独立 user-data-dir => 必为新实例进程，其 exit 即窗口关闭（onExit 语义成立）。
-    return { bin: b.bin, args: [...baseArgs, ...args, url], isolated: true, watch: true, envKind: 'anti', label: 'chromium', pick: picked.how };
-  }
-  if (form.direct && form.engine === 'firefox' && o.profileDir) {
-    // --no-remote + 专用 profile：不并入既有实例，新进程随窗口关闭而退出。
-    return {
-      bin: b.bin,
-      args: [...baseArgs, '--no-remote', '--profile', o.profileDir, '-private-window', url],
-      isolated: true, watch: true, envKind: 'anti', label: 'firefox', pick: picked.how,
-    };
-  }
-  // 其余形态一律不冒充隔离：没有独立 profile 就并入既有实例，onExit 恒误报「用户关了窗口」。
-  if (form.direct) {
-    return { bin: b.bin, args: baseArgs.concat([url]), isolated: false, watch: false, envKind: 'sys', label: path.basename(b.bin), pick: picked.how };
-  }
-  const c = openCommand(pl, url);
-  if (!c) return { bin: null, args: [url], isolated: false, watch: false, envKind: 'sys', label: null, pick: picked.how };
-  return { bin: c.cmd, args: c.args, isolated: false, watch: false, envKind: 'sys', label: c.cmd, pick: picked.how };
-}
-
 /** spawn 前的可用性预检：绝对路径判执行位，裸名走 PATH 解析。
  *  必须在 spawn 前判：Node 的 ENOENT 是异步 error 事件，spawn 返回时已成功，
  *  事后挂 error 处理器只能吞掉它，改不了已经上报的 ok/bin。 */
@@ -349,42 +281,112 @@ function binAvailable(bin) {
   return resolveExecutable(bin) !== null;
 }
 
-/** 以系统默认浏览器做隔离打开（OAuth 一键登录用）：浏览器由操作系统的默认设置决定，
- *  产品只决定「以何种隔离参数打开它」。
- *  与 openBrowser 同一结果词汇；同步返回故只能到 handedOff 档（隔离窗口的存活由 onExit 监视承担）。
- *  @param o 注入点：binAvailable/spawn —— 行为测试不依赖宿主浏览器、不在 CI 机器真起浏览器；
- *  inventory —— 夹具与产品必须共用同一份探测输入，否则预检判定不同源恒 false。
- *  @returns {{ok:boolean, bin:string|null, isolated:boolean, confirmed:boolean, handedOff:boolean,
- *             reason:string|null, error:string|null, url:string|null}} bin=null 表示打不开 */
-function launchIsolated(url, o) {
+/** 外部打开的唯一出口：按意图把 http(s) URL 交给分发依据定出的浏览器（或该平台的文档化调度器），
+ *  并如实回报证据档位。绝不宣称页面已加载 —— 最多说「命令 0 退出」。
+ *  @param {string} url
+ *  @param {{intent?:'plain'|'isolated-login', onExit?:Function, profileMs?:number,
+ *           inventory?:object, resolveInventory?:Function, resolveDeps?:object, preference?:string|null,
+ *           binAvailable?:Function, spawn?:Function, observe?:Function, observeMs?:number, setTimeout?:Function,
+ *           platform?:string, desktopAvailable?:Function, allocProfile?:Function, rmTree?:Function,
+ *           rand?:Function, now?:Function}} [o]
+ *    注入缝供行为测试：CI 机器不真起浏览器、不真查注册表、不真建临时目录。夹具与产品共用同一份输入（同源）。
+ *  @returns {Promise<{ok, confirmed, handedOff, reason, error, message, url, evidence}>}
+ *    evidence：{bin, engine, via, ownsWindow, isolated, profile, watch, exitCode, exitSignal, error, diagnostics}
+ *    —— isolated/profile 在这里而不是结果顶层：顶层字段集是三档词汇的契约，不得按意图增删。 */
+async function openBrowser(url, o) {
   const opts = o || {};
-  if (!isSafeHttpUrl(url)) return Object.assign(outcome({ ok: false, reason: 'unsafe-url', url: String(url || '') }), { bin: null, isolated: false });
-  const antiEnv = opts.antiEnv || opts.sysEnv || process.env;
-  const sysEnv = opts.sysEnv || process.env;
-  const onExit = opts.onExit;
+  const pl = opts.platform || process.platform;
+  const intent = opts.intent === 'isolated-login' ? 'isolated-login' : 'plain';
+  if (!isSafeHttpUrl(url)) {
+    return outcome({ ok: false, reason: 'unsafe-url', url: String(url || ''), evidence: null });
+  }
+  // 能力档位说「不支持」就在这里显式失败：openCommand 对未知平台仍会尽力试一次 xdg-open，
+  // 但那是低层映射，不构成本产品对外宣称的能力（unknown 档位 openBrowser:false）。
+  if (!SUPPORTED_OPEN_PLATFORMS.includes(pl)) {
+    return outcome({ ok: false, reason: 'unsupported-platform', url, evidence: { platform: pl } });
+  }
+  const observeMs = opts.observeMs === undefined ? OPEN_OBSERVE_MS : opts.observeMs;
+  const spawnWith = typeof opts.spawn === 'function' ? opts.spawn : (intent === 'isolated-login' ? _spawnDetached : _spawnDetachedIgnored);
   const avail = typeof opts.binAvailable === 'function' ? opts.binAvailable : binAvailable;
-  const spawnWith = typeof opts.spawn === 'function' ? opts.spawn : _spawnDetached;
-  const fail = (reason, extra) => Object.assign(outcome(Object.assign({ ok: false, reason, url }, extra)), { bin: null, isolated: false });
+  const observe = typeof opts.observe === 'function' ? opts.observe : observeSpawn;
+  const resolveInv = typeof opts.resolveInventory === 'function' ? opts.resolveInventory
+    : ((platform, deps) => environment.browsers(Object.assign({ platform }, deps)));
+  const inv = 'inventory' in opts ? opts.inventory : resolveInv(pl, opts.resolveDeps || {});
+  const pref = 'preference' in opts ? opts.preference : undefined;
+  const login = intent === 'isolated-login' ? loginEnv(opts.rand) : null;
+  // 分发依据与「能不能隔离」在此定出一次，两种意图共用同一条链（旧形态是登录另走一条不查档的路）。
+  const picked = opts.pick || environment.pickLauncher(pl, inv, pref);
+  const form = formOfBin(pl, picked.browser);
+  const canIsolate = intent === 'isolated-login' && form.direct
+    && (form.engine === 'chromium' || form.engine === 'firefox');
+  let profile = null;
+  if (canIsolate) {
+    const alloc = typeof opts.allocProfile === 'function' ? opts.allocProfile : (() => allocTempDir('dsh-login-'));
+    try { profile = opts.profileDir || alloc(); } catch { profile = null; }
+  }
+  const plan = intent === 'isolated-login'
+    ? isolatedPlan(pl, url, { inventory: inv, pick: picked, profileDir: profile, size: login.size, lang: login.lang })
+    : openPlan(pl, url, { inventory: inv, pick: picked });
+  const diagnostics = launchDiagnostics(inv, plan, picked);
+  const evidence = {
+    bin: plan.bin, engine: plan.engine, via: plan.via, ownsWindow: plan.exitIsEvidence === true,
+    isolated: plan.isolated === true, profile: plan.isolated ? profile : null, watch: plan.watch === true,
+    exitCode: null, exitSignal: null, error: null, diagnostics,
+  };
+  // 预检不通过也要把已分配的目录收走：否则一次失败的登录就在临时目录里留一个孤儿（旧形态从不回收）。
+  const deferredRemove = typeof opts.rmTree === 'function' ? opts.rmTree : removeTreeDeferred;
+  const fail = (reason, patch) => {
+    if (profile) deferredRemove(profile, 0);
+    return outcome(Object.assign({ ok: false, reason, url, evidence }, patch));
+  };
+  // 无图形会话时任何启动命令都必败：两种意图同一条判据（判定同源 desktop.js）。
+  // darwin/win32 由图形会话内的 LaunchAgent / schtasks ONLOGON 载入，无会话即无本进程。
+  const desktopAvailable = typeof opts.desktopAvailable === 'function' ? opts.desktopAvailable : desktop.sessionAvailable;
+  if (pl === 'linux' && !desktopAvailable()) {
+    return fail('no-desktop-session');
+  }
+  // 定不出启动对象 = 显式失败并带诊断（旧形态是退到系统 shell 冒开，屏幕上什么都没有还说「已交出」）。
+  if (!plan.bin) return fail('no-launcher');
+  if (!avail(plan.bin)) return fail('no-launcher');
+  // 要隔离却没拿到目录（临时目录分配失败）：如实报失败，绝不降级成「并入既有实例的假隔离登录」。
+  if (canIsolate && !profile) {
+    evidence.error = '临时 profile 目录分配失败';
+    return fail('spawn-failed');
+  }
+  let child;
   try {
-    const resolveInv = typeof opts.resolveInventory === 'function' ? opts.resolveInventory
-      : ((platform, deps) => detector.inventory(platform, deps));
-    const inv = 'inventory' in opts ? opts.inventory : resolveInv(process.platform, opts.resolveDeps || {});
-    const plan = isolatedPlan(process.platform, url, {
-      inventory: inv, pick: opts.pick, profileDir: opts.profileDir, size: opts.size, lang: opts.lang,
+    child = intent === 'isolated-login'
+      ? spawnWith(plan.bin, plan.args, plan.envKind === 'anti' ? login.antiEnv : login.sysEnv, plan.watch ? opts.onExit : undefined)
+      : spawnWith(plan.bin, plan.args);
+  } catch (e) {
+    evidence.error = (e && e.code) || String(e);
+    return fail('spawn-failed');
+  }
+  if (!child) return fail('spawn-failed');
+  if (evidence.profile) deferredRemove(evidence.profile, opts.profileMs === undefined ? 30 * 60 * 1000 : opts.profileMs);
+  const seen = await observe(child, observeMs, opts.setTimeout);
+  evidence.error = seen.stage === 'error' ? String(seen.code) : null;
+  evidence.exitCode = seen.code === undefined ? null : seen.code;
+  evidence.exitSignal = seen.signal === undefined ? null : seen.signal;
+  if (seen.stage === 'error') return outcome({ ok: false, reason: 'spawn-failed', url, evidence });
+  // 退出码进判决的唯一闸门，规则只在 openPlan/isolatedPlan/ownsItsWindow 一处写：不可信形态的退出码在两个
+  //   方向上都不是证据 —— 据它判红会把已打开的页面报成失败，据它判绿会凭空宣称窗口出现过。
+  //   判红与判绿必须同一条 `&&`，分两处写就会重新分叉。
+  const exitDecides = seen.stage === 'exit' && plan.exitIsEvidence === true;
+  if (exitDecides && (seen.code !== 0 || seen.signal)) {
+    return outcome({
+      ok: false, reason: seen.signal ? 'killed-by-signal' : 'exit-nonzero', url, evidence,
+      error: FAILURE_TEXT[seen.signal ? 'killed-by-signal' : 'exit-nonzero'] + '（' + (seen.signal || seen.code) + '）',
     });
-    const evidence = { bin: plan.bin, engine: plan.label, via: plan.isolated ? 'browser' : 'dispatcher', diagnostics: launchDiagnostics(inv, plan, plan.pick) };
-    // spawn 前预检：不可用即如实 ok:false，不 spawn 必死的 bin（bin 为 null = 选不出启动对象）。
-    if (!avail(plan.bin)) return fail('no-launcher', { evidence });
-    const env = plan.envKind === 'anti' ? antiEnv : sysEnv;
-    const p = spawnWith(plan.bin, plan.args, env, plan.watch ? onExit : undefined);
-    if (!p) return fail('spawn-failed', { evidence });
-    return Object.assign(outcome({ ok: true, confirmed: false, handedOff: true, url, evidence }), { bin: plan.label, isolated: plan.isolated });
-  } catch (e) { return fail('spawn-failed', { error: FAILURE_TEXT['spawn-failed'] + '（' + ((e && e.code) || e) + '）' }); }
+  }
+  // 剩下的都是 ok：可信形态 0 退出算 confirmed；不可信形态（或窗口内仍存活、压根没有退出可言）
+  //   只算 handedOff —— 命令确实交出去了，但窗口有无只有用户能判，故面板必须同时给出地址。
+  return outcome({ ok: true, confirmed: exitDecides, handedOff: !exitDecides, url, evidence });
 }
 
 module.exports = {
-  openBrowser, launchIsolated, openCommand, openPlan, isolatedPlan, pickLauncher, ownsItsWindow,
-  observeSpawn, isSafeHttpUrl, binAvailable, listBrowsers, invalidateBrowsers, launchDiagnostics,
+  openBrowser, openCommand, openPlan, isolatedPlan, ownsItsWindow,
+  observeSpawn, isSafeHttpUrl, binAvailable, launchDiagnostics, loginEnv,
   // 探测层的解析原语经此转出（唯一实现处在 ./browser-inventory.js）：门禁与消费方按同一出口取用，
   //   不在别处再写第二份平台解析。
   engineOf, detector,

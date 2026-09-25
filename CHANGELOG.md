@@ -1,5 +1,48 @@
 ## [未发布]
 
+### 外部打开的**分发依据**收进一张环境表单：系统说不出默认项时不再整条链静默不弹（0.1.6-BETA.13 的架构续批）
+
+BETA.13 把「这台机器装了哪些浏览器」问清楚了，但没给这份实况一个落脚点：各动作仍各自向探测层要一份
+自己的解释。真机症状就是这件事的形状——智能路由 → 反向代理 → 添加账号 → 一键登录，点了不弹。根因不在
+注册表读不到，而在**读不到默认项时那条链没有下一步**：`pickLauncher` 只有「系统说得出的默认项」与
+「穷举唯一解」两条判据，多候选又读不出默认项就返回 `no-default`，于是执行口 `no-launcher`；而用户这边
+既不知道为什么，也没有任何入口说「用我这个浏览器」。上一版把退出码解释改对之后，这变成一句如实的失败，
+但如实的失败不是修复。
+
+按「先收齐这台机器的实况，后续动作只从这张表分发」把链路重排为四层，每层仍只有一处：
+
+- **环境表单**（新文件 `src/platform/os/environment.js`）：一次装配顶层字段
+  `schema/at/platform/identity/paths/session/capabilities/preference/default/browsers/pick/probed/snapshot`
+  （+ `cached`）。表单自己不查系统——平台事实的唯一书写处仍是 `browser-inventory.js`，本文件只做装配、
+  选路次序与快照落盘。按 60s 缓存，快照 0600 只在「人主动刷新」（`?force=1`）与「人改了偏好」两处落盘，
+  常态轮询既不反复查系统也不写盘。
+- **选路与偏好同层**：`pickLauncher` 改为一条固定次序——用户在本产品里选的 > 系统说得出的默认项 >
+  穷举唯一解 > 候选次序首个（`rankCandidates`：引擎族先 chromium > firefox > other，同族按 id 稳定序）。
+  末档取代 `no-default` 死路。把失败换成猜测之所以合法，是因为它**会披露**（`evidence.diagnostics.pick`
+  随每一档结果交出，面板明说「系统未报默认项，已按候选次序取首个」）而且**用户可改**。偏好指向的浏览器
+  不在候选清单（卸载/路径失效）时按回落处理并留 `preference.matched === false`，不静默沿用旧值。
+  校验只有一个判据 `checkPreference`（住在表单层）：门面与 HTTP 边界都不各写一份。
+- **执行口收敛为一条**：`launchIsolated` 并入 `openBrowser(url, {intent})`（`plain` / `isolated-login`）。
+  隔离参数（独立 profile / 无痕 / `--no-remote` / 反指纹窗口尺寸与语言）由出口按表单解析出的引擎族在一处
+  展开，`isolated`/`profile`/`watch` 归入 `evidence`（顶层结果字段集不再各说各话）；`router/ops/browser.js`
+  这个中间层随之下线，授权流程的 profile 改取自行结果的 `evidence.profile`，回收仍走 `removeTreeDeferred`。
+- **装配期注入解决「platform 不得 require app」**：`environment.bind()` 全仓只有两处站点——
+  `src/platform/os/index.js` 绑能力矩阵（含 Linux 图形会话实测覆写），`src/app/assembly/compose/core.js`
+  绑内核配置里的 `externalBrowser`。绑一次全局生效，漏传一处就是一条静默降级路，故由 X-12 扫全仓字面量。
+- **消费面**：只读端点从 `GET /env/browsers` 改为 `GET /env/environment`（交整张表单，含这一拍的 `pick`
+  与 `probed`）；新增 `GET|POST /settings/external-browser`（读偏好+候选+分发依据 / 写偏好，空串清除）。
+  面板「环境」区块与打开失败时那一行小字同源取这张表。
+- **门禁换锚 + 真能红**（不新增测试链条目）：X-8 的诊断与选路判据改吃 pick 对象；X-10 补三条正向样本
+  （win32 多候选说不出默认项 = 按候选次序直启且 `pick==='candidate-rank'`、偏好命中、偏好失效回落）；
+  X-11 的旧出口清单反向化（`launchIsolated`/`openExternal` 出现即红）、加「路由域不得自带 argv」判据；
+  新增 X-12 钉表单字段集、绑定站点清单、动词定义处唯一、快照读路径零写侧副作用、`checkPreference` 单点、
+  改偏好必刷缓存；P-5/A2/TK-G6（动词集与真实出口对账）/`round13`（oauth 夹具改平铺结果）同步，各带反向样本；
+  `api-contract` 的 OB 组重写为 EF 组（表单面零 `spawn`、`force` 才写盘）并新增 PR 组（偏好写边界：
+  命中/清除/非候选拒写/缺字段 400，且写入恰好一次）。
+- **未收口**：Windows 真机的落档证据仍待取——本批改的是「说不出默认项时怎么办」的判据，不是注册表读取
+  本身；真机那台机器的 `UserChoice` 到底读不读得到，要等面板那一行诊断。验收以 CI 四平台矩阵为准，
+  本机未运行任何测试。
+
 ## [0.1.6-BETA.13]（2026-09-25）
 
 ### 外部打开底座重建：先枚举系统里的浏览器，再谈交给谁（Windows 真机「交给系统了但屏幕上什么都没有」）

@@ -44,6 +44,7 @@ const DOMAIN_DEPS = {
     'lanPanelStatus', 'setLanPanel',
     'accessKeyStatus', 'setAccessKey',
     'closeActionStatus', 'setCloseAction',
+    'externalBrowserStatus', 'setExternalBrowser', // /settings/external-browser：外部打开的浏览器偏好（实现：app/settings/browser.js）
     'shutdownAll',           // /shutdown（旧退出入口）
     'guardSelfUpdateStatus', // /self-update/status（只读；写端点已下架=410）
     'dshenvStatus', 'envStatus', 'nodeLtsStatus',

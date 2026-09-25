@@ -16,6 +16,7 @@ import { supervisorApi, useSupervisorData, type SupervisorEvent } from "../../se
 import { Card, CardTitle, Metric, Pill, ToneDot } from "./widgets";
 import { cn } from "../../framework/utils";
 import { PortPanel } from "./PortPanel";
+import { EnvironmentCard } from "./settings/EnvironmentCard";
 import { EVENT_LABELS, SUP_PHASE_META, friendlyFailure } from "./nav";
 import { useSupervisorAction } from "./useSupervisorAction";
 import { runOpenExternal } from "./openExternal";
@@ -318,6 +319,9 @@ function EnvDetect() {
           </span>
         );
       })}
+      {/* 环境表单（内核 platform/os/environment.js 的装配面）：候选浏览器、系统默认项来源、
+          图形会话与外部打开的分发依据都在这里，用户的浏览器偏好也在这里定。 */}
+      <EnvironmentCard />
       {node?.ltsLine === false ? (
         <span className="inline-flex items-center gap-1 whitespace-nowrap rounded-full bg-warning-background px-2 py-0.5 font-semibold text-warning" title={node.suggested || undefined}>
           <TriangleAlert className="size-3" />

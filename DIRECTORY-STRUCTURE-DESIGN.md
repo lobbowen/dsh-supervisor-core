@@ -99,7 +99,8 @@ src/
 │   │   ├── log/                ← log.js / events.js / logcore.js / loghub.js
 │   │   ├── ports/              ← platform/ports/index.js
 │   │   └── token/              ← platform/token/**
-│   ├── os/                     （11 个 .js + autostart/ + pidlookup/）
+│   ├── os/                     平铺 .js + autostart/ + pidlookup/（外部打开链三处各一件事：
+│   │                           browser-inventory 问平台事实 → environment 装配环境表单 → browser 执行）
 │   ├── ctl/          ← domains/router/ctl.js（通用 dispatcher，白名单按域注入）
 │   ├── distribution/ ← domains/dist/index.js（DistributionManager）
 │   └── security/     ← api/identity.js 的 HTTP 身份部分
@@ -122,7 +123,7 @@ src/
 │   ├── daemons/      process / supervise / runtime / identity / probe / scripts
 │   ├── ctl/          client / facades
 │   ├── native/       command / installer / manifest / npm / ops / policies / probe / upgrade
-│   ├── settings/     env / node-lts / versions / autostart / access / lan-panel
+│   ├── settings/     env / node-lts / versions / autostart / access / browser（外部打开偏好）/ lan-panel
 │   └── facade/       status / main / router / lan / ports
 │
 └── api/                        【L3 传输契约】

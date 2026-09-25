@@ -391,10 +391,21 @@ const runUpstream = (headers, chunks, chunkMs) => new Promise((resolve) => {
     check('⑥ 形态：handler 决议前比对轮次且旧轮回调回 410',
       /st\._ccLoginRound !== roundId/.test(oauthSrc) && /writeHead\(410\)/.test(oauthSrc), '有');
     const watchers = [];
+    // 夹具形状 = 平台层唯一出口 openBrowser(url, {intent:'isolated-login', onExit}) 的返回：
+    //   三档词汇在顶层、隔离产物（profile/isolated）在 evidence 里。域侧只认这一套字段，
+    //   所以夹具造错形状等于绕过契约（旧形态 {profile, result} 那种自造包装已不存在）。
     const ops = createOAuthOps({
       ports: { allocate: async () => freePort(), unregister: () => {}, allocateMark: () => {} },
-      openInBrowser: (url, onClose) => { watchers.push(onClose); return { profile: '/tmp/oauth-b26b-profile', result: { ok: true, isolated: true } }; },
+      openInBrowser: async (url, onClose) => {
+        watchers.push(onClose);
+        return {
+          ok: true, confirmed: true, handedOff: false, reason: null, error: null, message: '已在隔离窗口打开', url,
+          evidence: { via: 'isolated', isolated: true, watch: true, profile: '/tmp/oauth-b26b-profile', bin: '/usr/bin/chrome' },
+        };
+      },
     });
+    check('⑥ 登录成功后 tmpProfile 取自 evidence 并随 wait 结束回收（丢弃结果即丢弃目录与失败原因）',
+      /ev\.profile/.test(oauthSrc) && /removeTreeDeferred\(tmpProfile/.test(oauthSrc), '有');
     const cred = (state, key) => ({ apiKey: key, userId: 'u-' + key, userName: 'n', keyName: 'k', state });
     const post = (port, body) => new Promise((resolve, reject) => {
       const rq = http.request({ host: '127.0.0.1', port, path: '/callback', method: 'POST', headers: { 'Content-Type': 'application/json' } },

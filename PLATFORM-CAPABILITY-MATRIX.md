@@ -53,7 +53,7 @@ macOS 的**壳自启 / 壳自愈从项目奠基提交（`8867942`, 2026-09-01）
 | C5 | 端口 → PID 反查 | ✅ `/proc` + `ss` 兜底 | ✅ `lsof` | ✅ `netstat -ano` | `platform/os/pidlookup/index.js` | A2 |
 | C6 | 进程列表 / 命令行读取 | ✅ `pgrep -af` | ✅ `pgrep` + `ps` | ✅ CIM | `platform/os/pidlookup/index.js` | A2 |
 | C7 | 桌面通知 | ✅ `notify-send` | ✅ `osascript` | ✅ PowerShell 气泡 | `platform/os/notify.js` | A2 |
-| C8 | 打开浏览器（外部打开）：**四层各一处** —— 探测 `platform/os/browser-inventory.js`（这台机器装了哪些浏览器、默认是哪个、每条结论来自哪条系统事实）→ 选路 `pickLauncher`（只有「系统说得出的默认项」与「穷举唯一解」两条，多候选且系统说不出默认项即显式失败，不按清单顺序猜）→ 执行 `openBrowser`（非隔离）/ `launchIsolated`（登录隔离窗口，隔离参数按解析结果的引擎族展开）→ 消费面（HTTP 与面板原样透传同一结果词汇 `{ok, confirmed, handedOff, reason, error, message, url, evidence}`）。三档语义：`confirmed`=本次启动确定拥有自己的窗口且它以 0 退出（判据只写在 `ownsItsWindow` 一处，双向生效）；`handedOff`=只证明交出去了（裸 URL 直启可被既有实例吸收，故 win32 全部形态都属此类）；`ok:false`=显式失败并带 reason 码 + 探测诊断 | ✅ 扫 XDG/flatpak/snap 的 `.desktop`（主条目 `Exec` 还原真实命令、`env` 包装去壳、裸名按 PATH 解析）+ `mimeapps.list`/`xdg-settings` 定默认；`other` 引擎（snap 包装器）交回 `xdg-open`；无图形会话时 `capabilities()` 实测把 `openBrowser` 覆写为 false 并报 `no-desktop-session` | ✅ `NSWorkspace.urlsForApplicationsToOpenURL`（macOS 12+，不可用时回落单默认值老路）给清单、`URLForApplicationToOpenURL` 给默认；本体不可执行即剔除并留痕；Safari 等 `other` 引擎走 `open` | ✅ 五源并集：`UrlAssociations\https\UserChoice`（用户自己选的）优先，其次 `Classes\https` 协议关联（系统真正把地址交给谁），再 `Clients\StartMenuInternet` **子键目录**（其默认值自 Win7 起被系统忽略，故只当目录用）、`RegisteredApplications`、`App Paths`；`REG_EXPAND_SZ` 自行展开。**没有可信调度器**，只直启解析出的本体；选不出即 `no-launcher` 并带诊断 | `platform/os/browser-inventory.js`（探测：平台事实只写一次、每条来源都留痕、按平台缓存）+ `platform/os/browser.js`（选路与执行：结果词汇唯一构造点 `outcome()`；argv 永不裹 shell） | A1·A2（能力位 + 探测层分平台实现与留痕/缓存）· A3（未知平台显式 `unsupported-platform`）· P-5（声明 + `exitIsEvidence` 取证档位 + 旧冒开形态判据）· X-8（探测夹具、选路、计划）· X-10（三档行为 + 诊断必达 `evidence`）· X-11（分层唯一出口的源码级不变量）· `api-contract` OW/OB 两组（三档透传 + 只读清单面）· `ui` `externalOpen.test.ts`（面板分档判据与 `evidenceDetail` 把探测诊断摊上屏幕） |
+| C8 | 打开浏览器（外部打开）：**五层各一处** —— 探测 `platform/os/browser-inventory.js`（这台机器装了哪些浏览器、默认是哪个、每条结论来自哪条系统事实）→ 环境表单 `platform/os/environment.js#form`（把这台机器的实况收一次：浏览器清单、默认项来源、图形会话、能力档位、用户偏好、这一拍的分发依据与全部留痕；后续动作只从这张表分发，读路径零写侧副作用）→ 选路与偏好 `pickLauncher` + `checkPreference`（一条固定次序：用户在本产品里选的 > 系统说得出的默认项 > 穷举唯一解 > 候选次序首个；末档**会披露**（`diagnostics.pick`）且**用户可改**，故不再以「系统说不出默认项」为由显式失败；偏好不在候选清单即回落并留痕）→ 执行 `openBrowser(url, {intent})`（唯一出口；`plain` 直启、`isolated-login` 登录隔离窗口，隔离参数按表单解析出的引擎族在这一处展开，调用方只交意图）→ 消费面（HTTP 与面板原样透传同一结果词汇 `{ok, confirmed, handedOff, reason, error, message, url, evidence}`）。三档语义：`confirmed`=本次启动确定拥有自己的窗口且它以 0 退出（判据只写在 `ownsItsWindow` 一处，双向生效）；`handedOff`=只证明交出去了（裸 URL 直启可被既有实例吸收，故 win32 全部形态都属此类）；`ok:false`=显式失败并带 reason 码 + 探测诊断 | ✅ 扫 XDG/flatpak/snap 的 `.desktop`（主条目 `Exec` 还原真实命令、`env` 包装去壳、裸名按 PATH 解析）+ `mimeapps.list`/`xdg-settings` 定默认；`other` 引擎（snap 包装器）交回 `xdg-open`；无图形会话时 `capabilities()` 实测把 `openBrowser` 覆写为 false 并报 `no-desktop-session` | ✅ `NSWorkspace.urlsForApplicationsToOpenURL`（macOS 12+，不可用时回落单默认值老路）给清单、`URLForApplicationToOpenURL` 给默认；本体不可执行即剔除并留痕；Safari 等 `other` 引擎走 `open` | ✅ 五源并集：`UrlAssociations\https\UserChoice`（用户自己选的）优先，其次 `Classes\https` 协议关联（系统真正把地址交给谁），再 `Clients\StartMenuInternet` **子键目录**（其默认值自 Win7 起被系统忽略，故只当目录用）、`RegisteredApplications`、`App Paths`；`REG_EXPAND_SZ` 自行展开。**没有可信调度器**，只直启解析出的本体；选不出即 `no-launcher` 并带诊断 | `platform/os/browser-inventory.js`（探测：平台事实只写一次、每条来源都留痕、按平台缓存）+ `platform/os/browser.js`（选路与执行：结果词汇唯一构造点 `outcome()`；argv 永不裹 shell） | A1·A2（能力位 + 探测层分平台实现与留痕/缓存）· A3（未知平台显式 `unsupported-platform`）· P-5（声明 + `exitIsEvidence` 取证档位 + 旧冒开形态判据）· X-8（探测夹具、选路、计划）· X-10（三档行为 + 诊断必达 `evidence`）· X-11（分层唯一出口的源码级不变量）· X-12（环境表单与偏好的归属不变量：表单字段集、绑定站点清单、动词定义处唯一、快照读路径零写侧副作用、`checkPreference` 单点判据）· `api-contract` OW/EF/PR 三组（三档透传 + 只读表单面 + 偏好写边界）· `ui` `externalOpen.test.ts`（面板分档判据与 `evidenceDetail` 把探测诊断摊上屏幕） |
 | C9 | 宿主服务单元管理（systemd 单元语义：daemonReload / 持久单元 / failed 复位） | ✅ systemd | ❌ **显式**（launchd 无 provider；实例舱由 `portable` 档承担，见 C10，不冒充服务管理器） | ❌ **显式**（同左；Windows 服务无 provider，实例舱走 `portable` 档） | `platform/os/service.js` | A3 |
 | C10 | 沙箱实例舱（两维拆分声明：拉起 `sandboxLaunch` / 限额执行 `sandboxEnforcement`；provider 分档见 `service.current()`） | ✅ 拉起 + 限额 `cgroup`（`systemd-run` transient；运行期动态限额 `systemctl --user set-property --runtime`）；无 user-systemd 的容器/WSL1 自动落 `portable` 软档 | ✅ 拉起 + 限额 `supervise`（`portable` provider：端口反查 + cmdline 锚点认领，软档无内核强制） | ✅ 拉起 + 限额 `supervise`（同 macOS；未知平台仍**显式** launch=false、enforcement=none） | `platform/os/{service,portable}.js`（provider 分档与 dispatch） + `platform/os/capability-profile.js` + `domains/instance/{sandbox,governor}.js` + `platform/os/resstats.js`（W2 采样观测；governor 决策/准入三平台同跑；W3 落地运行期限额动态化：systemd `setLimits` 下发，portable `setLimits` 恒 false = 档位声明而非缺陷） | A1·A2·A3 · P-5 · X-3·X-3b·X-3c·X-3d |
 | C11 | **守卫**开机自启 | ✅ systemd + linger | ✅ LaunchAgent | ✅ schtasks | `platform/os/autostart/index.js` | A2 |
@@ -277,14 +277,15 @@ pidlookup 的认领/停止语义矩阵）· X-3c（真实宿主拉起→监听�
 结果——面板、反代登录、实例 Web 各自调 `spawn`/`window.open`，各自把「没报错」解释成「已打开」。
 用户看到的就是「面板显示成功，屏幕上什么都没有」，而且再也拿不到那个地址。
 
-**分层固定，每层只干一件事**（任何一层都不越层：先知道系统里有什么，才谈得上交给谁，才谈得上证据）：
+**分层固定，每层只干一件事**（任何一层都不越层：先收齐这台机器的实况，才谈得上交给谁，才谈得上证据）：
 
 | 层 | 归属 | 只回答 | 不得做 |
 |---|---|---|---|
-| L1 探测 | `platform/os/browser-inventory.js` | 这台机器装了哪些浏览器、默认是哪个、每条结论从哪条系统事实读来 | 不 launch、不猜命令、查不到时不替用户挑一个试试 |
-| L2 选路 | `browser.js#pickLauncher` / `formOfBin` / `openPlan` / `isolatedPlan` | 这次交给清单里的哪一条、以何种形态 | 不碰系统事实、不点名任何浏览器 |
-| L3 执行 | `browser.js#openBrowser` / `launchIsolated` + `observeSpawn` | spawn 一次并如实回报拿到的是哪一档证据 | 不把「没报错」改写成「已打开」 |
-| L4 消费面 | `GET /env/browsers`（只读）+ `evidence.diagnostics` | 把 L1 的结论与 L3 的档位原样摊到屏幕上 | 不另立第二套语义、不改写 reason 码 |
+| L0 探测 | `platform/os/browser-inventory.js` | 这台机器装了哪些浏览器、默认是哪个、每条结论从哪条系统事实读来 | 不 launch、不猜命令、查不到时不替用户挑一个试试 |
+| L1 环境表单 | `platform/os/environment.js#form` | 这台机器与本产品相关的实况一次收齐（浏览器/默认项来源/图形会话/能力档位/偏好/身份/路径/分发结论/留痕） | 不查系统事实（只消费 L0）、不 launch、不落写侧副作用 |
+| L2 选路与偏好 | `environment.js#pickLauncher` / `#checkPreference` + 配置项 `externalBrowser` | 这次交给清单里的哪一条、依据是哪一档、用户选的那个还在不在 | 不碰平台事实、不点名任何浏览器、不自建第二份校验 |
+| L3 执行 | `browser.js#openBrowser`（唯一出口，`intent` 取 `plain` 或 `isolated-login`）+ `observeSpawn` | spawn 一次并如实回报拿到的是哪一档证据 | 不把「没报错」改写成「已打开」、不接受调用方自带的 argv |
+| L4 消费面 | `GET /env/environment`（只读表单）+ `POST /settings/external-browser`（写偏好）+ 每次打开的 `evidence.diagnostics` | 把 L1 的实况、L2 的分发依据与 L3 的档位原样摊到屏幕上 | 不另立第二套语义、不改写 reason 码 |
 
 ### S-0 探测层：先知道系统里有什么浏览器
 
@@ -312,16 +313,41 @@ pidlookup 的认领/停止语义矩阵）· X-3c（真实宿主拉起→监听�
 `':'` 拆，不经宿主 `path.join`；可执行性判定只有一个 `canExec` 注入缝（文件在 **且** 有执行位），
 不写成 `exists || canExec`。
 
+### S-0a 环境表单层：实况收一次，后续动作只从这张表分发
+
+`platform/os/environment.js#form` 把「这台机器与本产品相关的实况」一次装配成一张表（顶层字段固定：
+`schema/at/platform/identity/paths/session/capabilities/preference/default/browsers/pick/probed/snapshot`
+外加 `cached`），之后**所有**对外打开动作都从这张表分发。之所以要一张表而不是各动作各探各的：直启打开与
+登录隔离窗口此前各自摸系统事实、各自解释结果，于是「面板说交出去了、屏幕上什么都没有」在真机上无从定性。
+
+三条边界：
+
+1. **表单不查系统**：本文件不读注册表、不跑 LaunchServices、不扫 `.desktop`，只做装配、选路次序与快照落盘；
+   平台事实的唯一书写处仍是 L0（X-12 把「打开浏览器的动词只定义在一处」扫成全仓字面量清单并带反向样本）。
+2. **读路径零写侧副作用**：表单按 60s 缓存，快照（0600）只在「人主动刷新」（`?force=1`）与「人改了偏好」
+   两处落盘——常态轮询既不反复触发系统查询也不写盘。改偏好必须连同表单缓存一起失效，否则下一拍仍按旧偏好
+   分发，界面显示新值而实际用旧浏览器。
+3. **偏好与选路同层，且只有一处校验**：`pickLauncher` 的判据是一条固定次序——用户在本产品里选的
+   （配置项 `externalBrowser`）> 系统说得出的默认项 > 穷举唯一解 > 候选次序首个。末档取代了旧的
+   「多候选且系统说不出默认项即显式失败」：把失败换成猜测之所以合法，是因为这一档**会披露**
+   （`evidence.diagnostics.pick === 'candidate-rank'`，面板明说「系统未报默认项，已按候选次序取首个」）
+   而且**用户可改**（环境页选择器）。偏好的那个浏览器不在候选清单里（被卸载/路径失效）时按回落处理，
+   并在诊断里留 `preference.matched === false`，绝不静默沿用旧值。校验件只有一个 `checkPreference`
+   （住在表单层）：写偏好的门面与 HTTP 边界都不各写一份判据。
+
 ### S-1 唯一出口 + 三档诚实语义
 
-内核侧外部打开**只有一个出口**：`platform/os/browser.js#openBrowser`（非隔离）与
-`#launchIsolated`（登录用的隔离窗口）。两者共用同一结果词汇，调用方与面板不再各自解释 argv 结局。
+内核侧外部打开**只有一个出口**：`platform/os/browser.js#openBrowser(url, opts)`。非隔离直启与登录用的
+隔离窗口是它的两个意图（`opts.intent === 'isolated-login'`），不是两个出口——隔离参数（独立 profile /
+无痕 / `--no-remote`）由这一处按表单解析出的引擎族展开，调用方只交意图、**永不自带 argv**
+（X-11 把这条钉成路由域源码判据：消费方文件里出现任何隔离参数字样即红）。出口只有一条，结果词汇也就只有
+一套，调用方与面板不再各自解释 argv 结局。
 
 | 档位 | 判据（不是文案） | 允许说 | 禁止说 |
 |---|---|---|---|
 | `confirmed` | 本次启动**确定拥有自己的窗口**（`ownsItsWindow`）且它以 0 退出 | 「已在系统浏览器打开」 | —— |
 | `handedOff` | 命令已交出、`spawn` 没报错，但退出码不属于「窗口是否出现」这个事实：被既有实例吸收的裸 URL 直启、win32 的全部形态（只剩直启）、观测窗口内仍存活 | 「已把地址交给系统，无法确认窗口」 | 「已打开」 |
-| `ok:false` | 明确失败：`error` 事件、`binAvailable` 预检不过、选不出启动对象（探测清单为空，或多候选且系统说不出默认项）、**可信形态**非 0 退出或被信号终止 | 一句给用户的说法 + `reason` 码 + **地址** + 探测诊断 | 静默 `ok:true` |
+| `ok:false` | 明确失败：`error` 事件、`binAvailable` 预检不过、从表单里选不出启动对象（候选清单为空，或无可信调度器）、**可信形态**非 0 退出或被信号终止 | 一句给用户的说法 + `reason` 码 + **地址** + 探测诊断 | 静默 `ok:true` |
 
 **退出码何时算证据，是一条双向规则，只写在 `platform/os/browser.js#ownsItsWindow` 一处**：只有本次启动
 确定拥有自己的窗口（即确定是新实例）时，它的退出码才同时具备「0 算接收、非 0 算拒绝」两种证明力。
@@ -329,8 +355,8 @@ pidlookup 的认领/停止语义矩阵）· X-3c（真实宿主拉起→监听�
 其返回码与地址是否打开无关（真机现场返回 1），旧实现「非 0 即失败」于是把已经打开的页面报成「窗口未出现」。
 那条冒开路径已整体删除（win32 的 `openCommand` 返回 `null`，只直启探测解析出的本体），故该平台恒不可
 取证。同一处还解释了为什么裸 URL 直启 chromium/firefox 派生系也不算拥有窗口：浏览器已在运行时，本次进程
-只把地址转交给既有实例。`evidence.ownsWindow` 与 `evidence.diagnostics`（`pick`/`bin`/`default`/`found`/
-`probed`）随结果一起交出，面板在 `handedOff`/`ok:false` 两档把启动形态与探测结论摊在地址行下面——
+只把地址转交给既有实例。`evidence.ownsWindow` 与 `evidence.diagnostics`（`pick`/`bin`/`default`/`preference`
+/`found`/`probed`）随结果一起交出，面板在 `handedOff`/`ok:false` 两档把启动形态与探测结论摊在地址行下面——
 没有这一行，真机报错就只剩一句无法定位的文案。
 
 `reason` 码是契约、文案是呈现：`unsafe-url` / `no-launcher` / `spawn-failed` / `exit-nonzero` /
@@ -351,6 +377,10 @@ patch 是否生效取决于消费方是解构还是按属性取用，静默失�
 
 档位说不开时出口**显式失败**（`unsupported-platform`），而不是尽力试一次 `xdg-open` 再冒成功。
 `openCommand` 对未知平台仍退化 `xdg-open`：那是低层映射，不构成本产品对外宣称的能力。
+这一份档位（含实测覆写的最终结果）由 `platform/os/index.js` 在组装时经 `bind` 注入表单，随
+`form.capabilities` 一起交出；未绑定即如实标 `null` 并说明「未绑定能力矩阵」，不冒充一份档位——
+面板与真机取证因此不必再问第二次。之所以要注入：platform 层不得 require app/api（分层门禁 L-1），
+而「用户的偏好」住在内核配置里、「实测覆写」住在能力矩阵里，都只能由上层绑进来。
 
 ### S-3 消费方一律回 `{ok, reason, url}`
 
@@ -360,9 +390,10 @@ patch 是否生效取决于消费方是解构还是按属性取用，静默失�
 |---|---|
 | `POST /instances/open-web` | 三档结果原样透传；`ok:false` 映射 **500**（恒 200 会让面板显示成功）；失败即作废一次性授权码 |
 | `POST /env/open-url` | 面板请内核代开：三档结果原样透传；`ok:false` 映射 **500**；非回环来源 403 |
-| 智能路由一键登录 `proxyLoginStart` | `{ok, opened, confirmed, handedOff, reason, url=authUrl, isolated}`；打不开时文案直接接「请手动打开下方地址完成授权」 |
-| 隔离窗口调用方（`router/ops/browser.js`） | 返回 `{profile, result}`，不再只回一个 profile（丢弃 result 即丢弃失败原因） |
-| `GET /env/browsers`（只读探测面） | L1 的结论原样交出：`{platform, cached, default:{id,source}, browsers[{id,name,engine,bin,sources,isDefault}], probed[]}`；跨站 403、探测异常 500，**不启动任何浏览器**（读探测面与执行动作分属两个端点，判据也不同：后者要回环身份） |
+| 智能路由一键登录 `proxyLoginStart`（`router/ops/oauth.js`） | 平铺唯一出口的三档字段再补登录专有字段（`opened`/`authUrl`/`url`），**绝不自行宣称 `confirmed`**；隔离 profile 取自行结果的 `evidence.profile`（不自己造目录），失败与非 0 退出一律 `removeTreeDeferred` 回收；`url` 单独成字段上交，打不开时文案直接接「请手动打开下方地址完成授权」 |
+| 该域的注入缝（`router-ops.js#openInBrowser`） | 只交意图（`{intent:'isolated-login', onExit}`）——引擎方言、独立 profile、反指纹环境、档位与图形会话预检全在唯一出口里做，**消费方自带 argv 即判红** |
+| `GET /env/environment`（只读表单面） | L1 的实况原样交出（顶层字段见 S-0a，含 `pick` 与 `probed`）；跨站 403、装配异常 500；`?force=1` 绕缓存重探并把这一拍落进快照，**常态读不写盘、且零 `spawn`**（读实况与执行动作分属两个端点，判据也不同：后者还要回环身份） |
+| `POST /settings/external-browser`（写偏好） | 只认表单里的候选 id（判据在 `checkPreference` 一处）：命中即落配置并失效表单缓存，未命中当场 500 说清「这台机器上没探到它」，空串=清除偏好回到按系统默认分发；缺字段 400、跨站 403 |
 
 ### S-4 面板：一条选路判据 + 任何一档都把地址交到眼前
 
@@ -399,12 +430,16 @@ patch 是否生效取决于消费方是解构还是按属性取用，静默失�
 
 `platform-layer-portability-test` X-8（探测夹具：三平台来源并集、留痕、缓存与失效、选路、计划、取证档位，
 含「Win7 起被忽略的那个默认值不得再当默认读」的反向样本）· X-10（三档行为 + 诊断必达 `evidence` +
-`observeSpawn` 本体，全部注入假 spawn/observe，CI 不真起浏览器）· X-11（四层唯一出口的源码级不变量：
-平台事实只写一次、执行层不碰探测原语、图形会话判定单点、消费面注册单点，含面板最后一环）；
-`four-platform-behavior-matrix` P-5（声明 + `exitIsEvidence` + 旧冒开形态回流判据）；
-`platform-capability-audit` A1·A2·A3（A2 钉探测层的分平台实现、留痕、缓存与只读消费面）；
-`api-contract` OW/OU/OB 三组（HTTP 契约：三档透传、500、地址在场、失败作废一次性码、跨站与已认证 LAN 访客的
-403，以及只读清单面零启动副作用）；
+`observeSpawn` 本体，全部注入假 spawn/observe，CI 不真起浏览器；含隔离登录意图的 argv 结构与 profile
+回收、无图形会话零 spawn、Safari 降级）· X-11（唯一出口的源码级不变量：平台事实只写一次、执行层不碰探测
+原语、图形会话判定单点、消费面注册单点、路由域不得自带 argv，含面板最后一环）· X-12（环境表单与偏好的
+归属不变量：表单顶层字段集、`bind` 站点全仓清单、打开动词定义处唯一、快照只在主动刷新与改偏好两处落盘
+（0600）、`checkPreference` 是唯一判据、写偏好必须连带失效表单缓存，各带反向样本）；
+`four-platform-behavior-matrix` P-5（声明 + `exitIsEvidence` + 旧冒开形态回流判据 + 「多候选且系统说不出
+默认项」这一档的披露语义）；
+`platform-capability-audit` A1·A2·A3（A2 钉探测层的分平台实现、留痕、缓存，以及表单与只读消费面的同源）；
+`api-contract` OW/OU/EF/PR 四组（HTTP 契约：三档透传、500、地址在场、失败作废一次性码、跨站与已认证 LAN 访客的
+403；表单面零 `spawn` 且 `force` 才写盘；偏好面只认候选 id、缺字段 400、写入恰好一次）；
 `token-contract-gate` TK-G6（令牌不得进 argv，动词集与真实出口对齐）；
-`ui` `externalOpen.test.ts`（分档判据 + 回环选路 + `evidenceDetail` 把探测诊断摊上屏幕 + 弹窗被拦截判失败）。
+`ui` `externalOpen.test.ts`（分档判据 + 回环选路 + `evidenceDetail` 把表单的分发依据与探测留痕摊上屏幕 + 弹窗被拦截判失败）。
 
