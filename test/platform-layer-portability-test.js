@@ -575,15 +575,27 @@ const TMP = fs.mkdtempSync(path.join(os.tmpdir(), 'platport-'));
     det.safeRegKeyPart('ChromeHTML') === true
     && det.safeRegKeyPart('a&b') === false && det.safeRegKeyPart('a|b') === false
     && det.safeRegKeyPart('a\nb') === false && det.safeRegKeyPart('') === false, 'ok');
+  // reg.exe 把根名展开后打印（问 HKLM 回 HKEY_LOCAL_MACHINE）。产品若按简写键比前缀，真机上每一行都匹配不上，
+  //   整个 StartMenuInternet 枚举会静默交出空清单——本轮 Windows 落档缺的就是这一类「探了却什么都没探到」。
+  const subOf = (text) => det.regSubkeys(() => text, () => {}, 'HKLM\\SOFTWARE\\Clients\\StartMenuInternet');
+  check('X-8 regSubkeys：只认 reg.exe 实际打印的完整根名，简写形态反向也钉住',
+    JSON.stringify(subOf('HKEY_LOCAL_MACHINE\\SOFTWARE\\Clients\\StartMenuInternet\\MSEdge\r\nHKEY_LOCAL_MACHINE\\SOFTWARE\\Clients\\StartMenuInternet\\Firefox\r\n')) === JSON.stringify(['MSEdge', 'Firefox'])
+    && subOf('HKLM\\SOFTWARE\\Clients\\StartMenuInternet\\MSEdge\r\n').length === 0
+    && det.regKeyFull('HKCU\\Software\\Classes') === 'HKEY_CURRENT_USER\\Software\\Classes', 'ok');
 
   // —— 探测层：win32 多源并集，且「被系统忽略的默认值」不再被当默认项读 ——
   const UC_KEY = 'HKCU\\Software\\Microsoft\\Windows\\Shell\\Associations\\UrlAssociations\\https\\UserChoice';
   const SMI = 'HKLM\\SOFTWARE\\Clients\\StartMenuInternet';
   /** 假 reg.exe：只按探测层实际发出的 query 形态应答，认不出的形态一律 null（= 读不到）。
-   *  values 的项可为字符串（REG_SZ）或 {t:'REG_EXPAND_SZ',d:'…'}。 */
+   *  values 的项可为字符串（REG_SZ）或 {t:'REG_EXPAND_SZ',d:'…'}。
+   *  两处必须照真机形状来，否则夹具与产品各自成立、判据空转：
+   *   1) 不带 /v 的查询里，子键行打印的是**展开后的完整根名**（`reg query HKLM\...` 回的是 `HKEY_LOCAL_MACHINE\...`），
+   *      而 fixture 里的键仍按简写登记（作者侧好读）；
+   *   2) 三个登记表（values/named/subs）要挂在返回的函数上，供逐例追加键值。 */
   function fakeReg(o) {
     const hits = [];
     const values = o.values || {}, named = o.named || {}, subs = o.subs || {}, multi = o.multi || {};
+    const HIVE = { HKLM: 'HKEY_LOCAL_MACHINE', HKCU: 'HKEY_CURRENT_USER', HKCR: 'HKEY_CLASSES_ROOT' };
     const q = (v) => (typeof v === 'string' ? ['REG_SZ', v] : [v.t || 'REG_SZ', v.d]);
     const run = (bin, args) => {
       if (bin !== 'reg.exe' || args[0] !== 'query') return null;
@@ -599,12 +611,18 @@ const TMP = fs.mkdtempSync(path.join(os.tmpdir(), 'platport-'));
         if (v === undefined) return null;
         const [t, d] = q(v); return '    (默认)    ' + t + '    ' + d + '\r\n';
       }
+      const sep = key.indexOf('\\');
+      const root = sep < 0 ? key : key.slice(0, sep);
+      const fullKey = (HIVE[root.toUpperCase()] || root) + (sep < 0 ? '' : key.slice(sep));
       const lines = [];
       for (const [n, v] of Object.entries(multi[key] || {})) { const [t, d] = q(v); lines.push('    ' + n + '    ' + t + '    ' + d); }
-      for (const s of (subs[key] || [])) lines.push(key + '\\' + s);
+      for (const s of (subs[key] || [])) lines.push(fullKey + '\\' + s);
       return lines.length ? lines.join('\r\n') + '\r\n' : null;
     };
     run.hits = hits;
+    run.values = values;
+    run.named = named;
+    run.subs = subs;
     return run;
   }
   /** 探测注入缝：默认「列出的路径都可执行」，逐例收紧。env 里带 Windows 的真实变量名（含括号）。 */

@@ -92,11 +92,21 @@ function regValue(runner, note, key, name) {
   return v;
 }
 
+/** `reg query` 输出的行首是**展开后的完整根名**（问 HKLM 回 HKEY_LOCAL_MACHINE），所以拿简写键去前缀比对
+ *  会一行都匹配不上——真机上表现为「目录里一个浏览器都没探到」。先归一再比。 */
+const REG_HIVE_ALIAS = { HKLM: 'HKEY_LOCAL_MACHINE', HKCU: 'HKEY_CURRENT_USER', HKCR: 'HKEY_CLASSES_ROOT', HKU: 'HKEY_USERS', HKCC: 'HKEY_CURRENT_CONFIG' };
+function regKeyFull(key) {
+  const s = String(key || '');
+  const i = s.indexOf('\\');
+  const root = i < 0 ? s : s.slice(0, i);
+  return (REG_HIVE_ALIAS[root.toUpperCase()] || root) + (i < 0 ? '' : s.slice(i));
+}
+
 /** 键下子键名列表（`reg query <key>` 不带 /v 时逐行打印完整子键路径）。 */
 function regSubkeys(runner, note, key) {
   const out = runner('reg.exe', ['query', key]);
   if (!out) { note(key, 'unreadable'); return []; }
-  const prefix = key + '\\';
+  const prefix = regKeyFull(key) + '\\';
   const names = [];
   for (const line of String(out).split(/\r?\n/)) {
     const l = line.trim();
@@ -500,7 +510,7 @@ function invalidate(platform) {
 
 module.exports = {
   inventory, invalidate, probe, probeWin, probeMac, probeLinux,
-  engineOf, tokenizeExec, parseExecLine, regValueOf, expandEnvVars, exeFromCmdLine, regSubkeys, regValueTargets,
+  engineOf, tokenizeExec, parseExecLine, regValueOf, expandEnvVars, exeFromCmdLine, regSubkeys, regKeyFull, regValueTargets,
   safeRegKeyPart, browserFromDesktop, desktopDirs, resolveLinuxBin, mimeAppsDefault, linuxDefaultFromMimeApps,
   WIN_APP_PATHS, PROBE_TIMEOUT_MS,
 };
