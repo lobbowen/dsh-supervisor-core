@@ -3,7 +3,8 @@
 // 只能证明源码里有这些字样，证不了分档判据按字段而非文案走、也证不了选路判据成立，故这里按行为钉。
 // 与 client.test.ts 同一手法：注入 fetch 替身，测到真实请求的路径与请求体，不碰 supervisorApi 本身。
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { handOffFromPanel, openViaWindow, servedByKernelHost, classifyOpenResult, evidenceDetail } from "./externalOpen";
+import { handOffFromPanel, openViaWindow, servedByKernelHost, classifyOpenResult, evidenceDetail, loginIsolationText } from "./externalOpen";
+import type { ProxyLoginStart } from "./types";
 
 function jsonResponse(status: number, body: unknown): Response {
   return new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } } as ResponseInit);
@@ -60,6 +61,40 @@ describe("classifyOpenResult：三档只看字段，不看文案", () => {
   it("结果整体缺失也是 failed（不得因 undefined 冒充实成功）", () => {
     expect(classifyOpenResult(null).tier).toBe("failed");
     expect(classifyOpenResult(undefined).url).toBe(null);
+  });
+  it("降档理由必须随非确认档上桌（内核解释了为什么没用隔离窗，界面丢掉那句话等于没说）", () => {
+    const r = classifyOpenResult({ ok: true, confirmed: false, handedOff: true, url: "http://a.b/", message: "隔离窗口会是空白页" });
+    expect(r.tier).toBe("handed-off");
+    expect(r.detail).toContain("隔离窗口会是空白页");
+  });
+});
+
+describe("loginIsolationText：「没用隔离窗口」的两种原因分不开，用户就不知道下一步做什么", () => {
+  it("反向：隔离成功与结果缺失都不给提示（把正常档写成提醒就是噪声）", () => {
+    expect(loginIsolationText({ ok: true, isolated: true })).toBe(null);
+    expect(loginIsolationText(null)).toBe(null);
+    expect(loginIsolationText({ ok: true })).toBe(null);
+  });
+  it("冷档案注定空白 -> 说清依据并给出可修的那一半（配好系统代理即回到隔离档）", () => {
+    // 类型标注不是装饰：它把「面板读的这三个字段确实在内核契约里」钉成编译期判据，
+    //   内核改名或漏字段时这里先红，而不是到真机上才发现提示永远是兜底那句。
+    const s: ProxyLoginStart = {
+      ok: true, isolated: false, isolatedBasis: "cold-profile-blocked",
+      isolatedDetail: "login.example.test 直连不通且系统没有在用代理",
+    };
+    const t = loginIsolationText(s);
+    expect(t).toContain("login.example.test 直连不通");
+    expect(t).toContain("配好代理");
+    expect(t).toContain("手动清理账号");
+  });
+  it("引擎没有隔离方言 -> 只说换浏览器，不得混进代理那条说法（两种原因的处置相反）", () => {
+    const t = loginIsolationText({ ok: true, isolated: false, isolatedBasis: "engine-not-isolatable" });
+    expect(t).toContain("不支持隔离窗口");
+    expect(t).not.toContain("代理");
+  });
+  it("依据码缺失时给一句兜底而不是什么都不显示", () => {
+    const t = loginIsolationText({ ok: true, isolated: false });
+    expect(t).toContain("未使用隔离窗口");
   });
 });
 
@@ -134,6 +169,17 @@ describe("evidenceDetail：把启动形态摊给用户（真机报错只有文�
     });
     expect(r.tier).toBe("handed-off");
     expect(r.detail).toBe("msedge.exe | browser | 退出码不作证据 | exit 1");
+  });
+  it("出网判定进证据行（这次隔离窗为什么开/为什么没开，屏幕上要有一行依据而不是一句玄学）", () => {
+    const d = evidenceDetail({
+      bin: "/usr/bin/google-chrome", via: "browser", isolated: false, exitCode: 0,
+      egress: { host: "login.example.test", viable: false, basis: "cold-profile-blocked", proxy: "off" },
+    });
+    expect(d).toContain("出网判定 cold-profile-blocked");
+    expect(d).toContain("login.example.test 代理 off");
+  });
+  it("反向：内核没交出出网结论时不得凭空造出一行判定", () => {
+    expect(evidenceDetail({ bin: "/usr/bin/google-chrome", via: "browser", exitCode: 0 })).not.toContain("出网判定");
   });
 });
 

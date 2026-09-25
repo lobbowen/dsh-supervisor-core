@@ -5,7 +5,7 @@ import type {
   AccessKeyResult, AccessKeyStatus, AutostartStatus, CloseActionStatus, EnvironmentForm, EnvStatus, EventsPage, ExternalBrowserStatus, FrpStatus, GenericOk,
   GuardVersion, InstancesResponse, InstalledPluginsResponse, LanAccessResponse,
   LanPanelStatus, LifecycleModuleId, MarketResponse, NodeLtsStatus, OpenExternalResult, PluginUpdatesResponse,
-  PortsResponse, ProvidersResponse, RegistryInfo, RemoteMode, RouterStatus,
+  PortsResponse, ProvidersResponse, ProxyLoginStart, RegistryInfo, RemoteMode, RouterStatus,
   PluginJobStatus, ProxyUpdateStatus, SelfUpdateStatus, SupervisorInstance, SupervisorStatus, TasksResponse,
   ShellStatus, ShellUpdateCheck,
 } from "./types";
@@ -197,7 +197,7 @@ export const supervisorApi = {
   proxyAddKey: (id: string, key: string) => post<GenericOk>("/router/providers/proxy/key", { id, key }),
   proxyRemoveKey: (id: string, keyId: string) => post<GenericOk>("/router/providers/proxy/key/remove", { id, keyId }),
   proxySelect: (id: string, keyId: string) => post<GenericOk>("/router/providers/proxy/select", { id, keyId }),
-  proxyLoginStart: () => post<OpenExternalResult & { authUrl?: string; waitMs?: number; state?: string; port?: number; isolated?: boolean }>("/router/proxy/login/start"),
+  proxyLoginStart: () => post<ProxyLoginStart>("/router/proxy/login/start"),
   // 服务端轮询等待（最长可 waitMs~180s）：请求超时需覆盖等待窗口 + 网络余量
   proxyLoginWait: (timeoutMs: number) => post<GenericOk & { apiKey?: string }>("/router/proxy/login/wait", { timeoutMs }, { timeoutMs: Math.max(LONG_TIMEOUT_MS, timeoutMs + 30_000) }),
   proxyUpdateCheck: () => post<GenericOk>("/router/proxy/update/check"),

@@ -1201,6 +1201,10 @@ async function x10() {
   // —— 一键登录的隔离窗口：与普通打开同一个出口（intent 定形态），故同一套判据逐条适用 ——
   //   注入 observe 而不是依赖真实的 1500ms 窗口：登录那条链的结局由子进程事件决定，等真事件会让用例
   //   随宿主负载漂移（CI 上曾出现同一份代码两种档位）。
+  //   出网判定同样必须钉成夹具：隔离档现在会问 environment.checkEgress，不注入就是 CI 真摸网
+  //   （DNS + TLS 到 127.0.0.1:28111），既慢又随宿主网络漂移。降档路径由 X-13 逐条钉。
+  const EG_OK = { at: 1, proxy: { state: 'unknown', source: 'fixture' },
+    targets: { '127.0.0.1': { ok: true, stage: 'tls', detail: 'fixture', at: 1 } }, probed: [] };
   {
     const chromeInv = IN([B('/usr/bin/google-chrome')]);
     const removed = [];
@@ -1208,7 +1212,7 @@ async function x10() {
     const onExit = () => {};
     const isoSpawn = (bin, args, env, cb) => { spawned.push([bin, args]); isoSpawnArgs = args; isoEnv = env; isoOnExit = cb; return { fake: true }; };
     const li = await br.openBrowser(u, {
-      platform: 'linux', inventory: chromeInv, intent: 'isolated-login', observe: obs(EX_OK),
+      platform: 'linux', inventory: chromeInv, intent: 'isolated-login', observe: obs(EX_OK), egress: EG_OK,
       spawn: isoSpawn, binAvailable: () => true, allocProfile: () => '/P', rmTree: (p, ms) => removed.push([p, ms]),
       profileMs: 5000, onExit, rand: () => 0,
     });
@@ -1236,10 +1240,15 @@ async function x10() {
     check('X-10 隔离登录也带探测诊断（登录页打不开时，面板同样要能说明本机探到了什么）',
       !!li.evidence.diagnostics && li.evidence.diagnostics.found.length === 1
         && li.evidence.diagnostics.pick === 'only-installed', JSON.stringify(li.evidence.diagnostics));
+    // 出网判定必须原样进证据：降档与否的定性靠这一份，只留在内核日志就等于界面上无从解释。
+    check('X-10 隔离登录的证据带出网判定结论（basis/host/viable 三项在场）',
+      !!li.evidence.egress && li.evidence.egress.basis === 'target-reachable'
+        && li.evidence.egress.viable === true && li.evidence.egress.host === '127.0.0.1',
+      JSON.stringify(li.evidence.egress));
     // 降级路径：Safari 无隔离方言，走调度器并入既有窗口，此时绝不能声称隔离、也不能挂 onExit。
     spawned.length = 0; isoOnExit = 'unset';
     const ld = await br.openBrowser(u, {
-      platform: 'darwin', inventory: NO_INV, intent: 'isolated-login', observe: obs({ stage: 'alive' }),
+      platform: 'darwin', inventory: NO_INV, intent: 'isolated-login', observe: obs({ stage: 'alive' }), egress: EG_OK,
       spawn: (b, a, e, cb) => { isoOnExit = cb; return { fake: true }; }, binAvailable: () => true, profileMs: 5000, onExit,
     });
     check('X-10 隔离登录降级如实（无可信调度器/无方言时 isolated:false、只到 handedOff、不挂 onExit）',
@@ -1249,7 +1258,7 @@ async function x10() {
     // 预检不过 = 零 spawn 且回收已分配目录（旧形态：登录绕开档位/会话判据，且失败即留孤儿目录）。
     spawned.length = 0; removed.length = 0;
     const ln = await br.openBrowser(u, {
-      platform: 'linux', inventory: chromeInv, intent: 'isolated-login', spawn: okSpawn,
+      platform: 'linux', inventory: chromeInv, intent: 'isolated-login', spawn: okSpawn, egress: EG_OK,
       binAvailable: () => false, desktopAvailable: () => false, allocProfile: () => '/P', rmTree: (p, ms) => removed.push([p, ms]),
     });
     check('X-10 隔离登录吃同一套预检：无图形会话即 no-desktop-session，零 spawn 且已分配的 profile 被回收',
@@ -1264,6 +1273,7 @@ async function x10() {
     const lp = await br.openBrowser(u, {
       platform: 'win32', inventory: IN([B(EDGE_WIN), B('C:\\FF\\firefox.exe')]), preference: 'c:\\ff\\firefox.exe',
       intent: 'isolated-login', observe: obs(EX_OK), spawn: okSpawn, binAvailable: () => true, allocProfile: () => '/P', rmTree: () => {},
+      egress: EG_OK,
     });
     check('X-10 隔离登录与直启共用分发依据：偏好命中即 firefox 的 --no-remote --profile 形态',
       lp.ok === true && lp.evidence.bin === 'C:\\FF\\firefox.exe' && lp.evidence.isolated === true
@@ -1340,8 +1350,12 @@ async function x10() {
   //   为什么钉这一条：本轮 Windows 缺陷的根因不是某个分支写错，而是「系统里有什么浏览器」这件事
   //   从来没有一个唯一回答处 —— 选路层顺手查一次注册表、router 侧自己摸 X socket，两份副本必然漂移。
   const detRel = path.join(ROOT, 'src', 'platform', 'os', 'browser-inventory.js');
+  //  允许的第二处只有一个：registry.js —— 它写的是 `reg query` 的**输出排版与键名回显**这一件事，
+  //   且被探测层原样转出口消费；浏览器键的**取用与裁决**仍只在探测层。第三处（任何域自己查注册表）
+  //   仍是违规，故反向样本照旧成立。
+  const regRel = path.join(ROOT, 'src', 'platform', 'os', 'registry.js');
   const factRe = /StartMenuInternet|UrlAssociations|RegisteredApplications|App Paths|urlsForApplicationsToOpenURL|URLForApplicationToOpenURL|mimeapps|x-scheme-handler|xdg-settings/;
-  const factFiles = files.filter((f) => f !== detRel && factRe.test(fs.readFileSync(f, 'utf8'))).map((f) => path.relative(ROOT, f));
+  const factFiles = files.filter((f) => f !== detRel && f !== regRel && factRe.test(fs.readFileSync(f, 'utf8'))).map((f) => path.relative(ROOT, f));
   check('X-11 浏览器探测的平台事实只在 browser-inventory.js 一处（全仓 src/ 零第二份）',
     fs.existsSync(detRel) && factFiles.length === 0, factFiles.join(',') || ('扫描 ' + files.length + ' 个文件'));
   check('X-11 反向：判据能识别探测事实散回选路层（旧 browser.js 里查注册表即此形态）',
@@ -1476,18 +1490,20 @@ async function x10() {
     defaultId: null, defaultSource: null, probed: [{ source: 'fixture', detail: '2 项' }],
   });
   const FKEYS = ['at', 'browsers', 'cached', 'capabilities', 'default', 'identity', 'paths', 'pick',
-    'platform', 'preference', 'probed', 'schema', 'session', 'snapshot'];
+    'platform', 'preference', 'probed', 'schema', 'sections', 'session', 'snapshot'];
   const saved = { home: process.env.DSH_SUPERVISOR_HOME, bound: Object.assign({}, env.bind()) };
 
   const f1 = env.form({ force: true, inventory: fixtureInv(), now: () => 111 });
-  check('X-12 表单字段集固定（平台/身份/落点/会话/档位/偏好/系统默认/候选/分发依据/留痕/快照/时戳/schema/缓存位）',
+  check('X-12 表单字段集固定（平台/身份/落点/会话/档位/偏好/系统默认/候选/分发依据/维度台账/留痕/快照/时戳/schema/缓存位）',
     JSON.stringify(Object.keys(f1).sort()) === JSON.stringify(FKEYS.slice().sort()), Object.keys(f1).join(','));
-  check('X-12 反向：少一个面的表单不足以支撑后续分发（漏 pick 或漏 identity 必须判红，否则字段集是摆设）',
+  check('X-12 反向：少一个面的表单不足以支撑后续分发（漏 pick、漏 identity 或漏维度台账必须判红，否则字段集是摆设）',
     (() => {
       const less = Object.assign({}, f1); delete less.pick;
+      const lessSection = Object.assign({}, f1); delete lessSection.sections;
       const more = Object.assign({}, f1, { explorer: true });
       const k = JSON.stringify(FKEYS.slice().sort());
-      return JSON.stringify(Object.keys(less).sort()) !== k && JSON.stringify(Object.keys(more).sort()) !== k;
+      return JSON.stringify(Object.keys(less).sort()) !== k && JSON.stringify(Object.keys(lessSection).sort()) !== k
+        && JSON.stringify(Object.keys(more).sort()) !== k;
     })(), 'ok');
   check('X-12 每条结论带留痕来源，分发结论随行（section/source/detail 成对；pick 是后续动作的唯一依据）',
     ['browsers', 'session', 'capabilities', 'preference', 'pick'].every((s) => f1.probed.some((p) => p.section === s
@@ -1579,5 +1595,218 @@ async function x10() {
   env.invalidate();
 }
 
-x10().catch((e) => check('X-10 异步判据自身未抛错', false, String((e && e.stack) || e))).then(finish);
+// -- X-13：出网条件维度（分发依据从「哪个浏览器」升级为「哪个浏览器 + 这台机器往外走不走得出去」）--
+//   三件事各自可红：冷档案可行性判据的真值表、L0 读数的三态分档、维度台账的注册契约。
+//   本组一次都不摸网也不起子进程：通路判定吃注入的 lookup/connect，代理读数吃注入的 runner，
+//   可行性结论吃注入的读数 —— 真机网络形状不由 CI 的宿主决定。
+async function x13() {
+  const env = require(path.join(ROOT, 'src', 'platform', 'os', 'environment.js'));
+  const eg = require(path.join(ROOT, 'src', 'platform', 'os', 'egress.js'));
+  const reg = require(path.join(ROOT, 'src', 'platform', 'os', 'registry.js'));
+  const br = require(path.join(ROOT, 'src', 'platform', 'os', 'browser.js'));
+  const T = 'login.example.test';
+  const url = 'https://' + T + '/callback?state=x13';
+  const rd = (ok, stage, detail) => ({ ok, stage, detail, at: 7 });
+  const EG = (proxyState, target) => ({ at: 7,
+    proxy: { state: proxyState, source: 'fixture', server: null, pac: null },
+    targets: target ? { [T]: target } : {}, probed: [] });
+  const note = () => {};
+  const NO_INV = { platform: 'fixture', browsers: [], defaultId: null, defaultSource: null, probed: [] };
+
+  // (1) 冷档案可行性真值表：唯一砍隔离档的输入是「直连不通 + 代理明确没有」，其余一律保持原档。
+  const rows = [
+    ['直连可达 -> 照开（没有理由砍）', EG('off', rd(true, 'tls', 'fixture')), true, 'target-reachable'],
+    ['不通 + 代理在用 -> 照开（冷档案继承系统/环境代理）', EG('on', rd(false, 'dns', 'ENOTFOUND')), true, 'cold-profile-inherits-proxy'],
+    ['不通 + 代理明确没有 -> 降档（冷档案必然空白）', EG('off', rd(false, 'dns', 'ENOTFOUND')), false, 'cold-profile-blocked'],
+    ['不通 + 代理读不出 -> 判不出，保持隔离', EG('unknown', rd(false, 'dns', 'ENOTFOUND')), null, 'proxy-unreadable'],
+    ['通路本身判不出 -> 判不出，保持隔离', EG('off', rd(null, 'tcp', 'ETIMEDOUT')), null, 'egress-undetermined'],
+    ['这台机器还没判过该主机 -> 判不出，保持隔离', EG('off', null), null, 'egress-undetermined'],
+  ];
+  for (const [name, data, viable, basis] of rows) {
+    const v = env.coldProfileViable(data, T);
+    check('X-13 冷档案判据 ' + name, v.viable === viable && v.basis === basis && !!v.detail, JSON.stringify(v));
+  }
+  const unp = env.coldProfileViable(null, T);
+  check('X-13 缺维度即如实 unprobed（拿空数据冒充本机实况是最难查的假账，也不许顺手砍能力）',
+    unp.viable === null && unp.basis === 'egress-unprobed', JSON.stringify(unp));
+  check('X-13 反向：把 unknown 折成 false 的写法会被真值表判红（一次 DNS 抖动就砍掉一项能力）',
+    (() => {
+      const guessed = (d) => !(d.targets[T] && d.targets[T].ok === true); // 猜测版：没证出可达就降档
+      return rows.slice(3).every(([, d]) => guessed(d) === true && env.coldProfileViable(d, T).viable === null);
+    })(), 'hit');
+
+  // (2) checkEgress：动作层唯一的取数入口，结论四项（主机/三态/依据码/代理档）必须一起交出
+  const ce = await env.checkEgress(url, { egress: EG('off', rd(true, 'tls', 'fixture')) });
+  check('X-13 checkEgress 交出 host/结论/依据码/代理档/时戳（结论要一路走到屏幕上，不能只活在判据里）',
+    ce.host === T && ce.viable === true && ce.basis === 'target-reachable' && ce.proxy === 'off' && ce.at === 7,
+    JSON.stringify(ce));
+  const ceBad = await env.checkEgress('读不出主机的地址', { egress: EG('unknown', null) });
+  check('X-13 地址读不出主机名 -> 判不出而不是抛错（出网探测不得成为用户可见的失败原因）',
+    ceBad.host === null && ceBad.viable === null && typeof ceBad.basis === 'string', JSON.stringify(ceBad));
+
+  // (3) 维度台账：同步维每拍自装，异步维按拍记账；注册口是 app 层挂进来的唯一缝
+  const f0 = env.form({ force: true, inventory: NO_INV, now: () => 5 });
+  const dims = Object.keys(f0.sections);
+  check('X-13 台账把维度收在一张表里且内置维度齐备（缺一个维度就是回到各说各话）',
+    env.SECTION_ORDER.every((id) => dims.includes(id)) && dims.length === env.SECTION_ORDER.length
+      && f0.schema === env.SCHEMA, dims.join(','));
+  check('X-13 未刷新的异步维度标 pending 并进留痕（面板据此说「尚未探测」，而不是显示成「本机没有」）',
+    ['runtime', 'dsh', 'egress'].every((id) => f0.sections[id].state === 'pending' && f0.sections[id].data === null)
+      && ['runtime', 'dsh', 'egress'].every((id) => f0.probed.some((p) => p.section === id && /未刷新/.test(String(p.detail)))),
+    JSON.stringify(dims.map((id) => [id, f0.sections[id].state])));
+  check('X-13 同步维不靠刷新（选路与面板当场要读浏览器清单与分发依据，等一拍即死路）',
+    ['browsers', 'session', 'capabilities', 'preference', 'pick'].every((id) => f0.sections[id].state !== 'pending'
+      && f0.sections[id].at === 5 && f0.sections[id].source === 'self'), JSON.stringify(f0.sections.browsers));
+  let probeCalls = 0;
+  env.registerSection('x13-fake', { label: '假维度', probe: () => { probeCalls++; return { hit: true }; } });
+  const fr = await env.refresh({ only: ['x13-fake'], force: true, inventory: NO_INV, now: () => 5 });
+  check('X-13 注册进来的维度进台账并带 label/source/at（采集归所有者、账本归表单：E1 的分工判据）',
+    !!fr.sections['x13-fake'] && fr.sections['x13-fake'].state === 'ok' && fr.sections['x13-fake'].source === 'registered'
+      && fr.sections['x13-fake'].label === '假维度' && fr.sections['x13-fake'].data.hit === true && probeCalls === 1,
+    JSON.stringify(fr.sections['x13-fake']));
+  await env.refresh({ only: ['x13-fake'], inventory: NO_INV, now: () => 5 });
+  check('X-13 未到期不重探（面板轮询不得把子进程与网络查询变成常态开销）', probeCalls === 1, 'probe ' + probeCalls + ' 次');
+  env.registerSection('x13-boom', { probe: () => { throw new Error('探针炸了'); } });
+  const fb = await env.refresh({ only: ['x13-boom'], force: true, inventory: NO_INV, now: () => 5 });
+  check('X-13 维度探针抛错只记成 error 一档（表单不得成为用户可见的失败原因，也不许拿旧数据顶）',
+    fb.sections['x13-boom'].state === 'error' && /探针炸了/.test(fb.sections['x13-boom'].error)
+      && fb.sections['x13-boom'].data === null && fb.schema === env.SCHEMA, JSON.stringify(fb.sections['x13-boom']));
+  let rejMsg = null;
+  try { env.registerSection('browsers', { probe: () => ({}) }); } catch (e) { rejMsg = String(e.message || e); }
+  env.unregisterSection('x13-fake'); env.unregisterSection('x13-boom');
+  check('X-13 反向：同步维拒接注册、注销即离开台账（两处写同一维度即两个口径）',
+    !!rejMsg && /不接注册/.test(rejMsg) && env.form({ force: true, inventory: NO_INV }).sections['x13-fake'] === undefined,
+    String(rejMsg));
+  check('X-13 维度注册点唯一（platform 只挂自身采集口，运行时与 DSH 由装配期挂入；第四处即第二套真相）',
+    (() => {
+      const walk = (d, out) => { for (const f of fs.readdirSync(d, { withFileTypes: true })) {
+        const p = path.join(d, f.name); if (f.isDirectory()) walk(p, out); else if (f.name.endsWith('.js')) out.push(p); } return out; };
+      const hits = walk(path.join(ROOT, 'src'), []).filter((f) => /environment\s*\.\s*registerSection\(|^\s*registerSection\(/m
+        .test(fs.readFileSync(f, 'utf8'))).map((f) => path.relative(ROOT, f).split(path.sep).join('/')).sort();
+      return JSON.stringify(hits) === JSON.stringify(['src/app/assembly/compose/core.js', 'src/platform/os/environment.js']);
+    })(), '注册点见判据');
+
+  // (4) L0 通路判定的三态分档：明确否定才是 false，没有答案一律 null
+  const dnsErr = (code) => eg.reachWith({ lookup: () => Promise.reject(Object.assign(new Error(code), { code })),
+    connect: () => Promise.resolve(true) }, T, 443, 50);
+  const connErr = (code) => eg.reachWith({ lookup: () => Promise.resolve('127.0.0.1'),
+    connect: () => Promise.reject(Object.assign(new Error(code), { code })) }, T, 443, 50);
+  const cls = {};
+  for (const c of ['ENOTFOUND', 'EAI_AGAIN']) cls['dns:' + c] = await dnsErr(c);
+  for (const c of ['ECONNREFUSED', 'EPROTO', 'ERR_TLS_CERT_ALTNAME_INVALID', 'ETIMEDOUT', 'ECONNRESET']) cls['c:' + c] = await connErr(c);
+  check('X-13 L0 分档：域名不存在=明确不通（dns 段）、连接被拒=tcp 段、TLS 协议/证书错=tls 段且都算否证',
+    cls['dns:ENOTFOUND'].ok === false && cls['dns:ENOTFOUND'].stage === 'dns'
+      && cls['c:ECONNREFUSED'].ok === false && cls['c:ECONNREFUSED'].stage === 'tcp'
+      && cls['c:EPROTO'].ok === false && cls['c:EPROTO'].stage === 'tls'
+      && cls['c:ERR_TLS_CERT_ALTNAME_INVALID'].ok === false && cls['c:ERR_TLS_CERT_ALTNAME_INVALID'].stage === 'tls',
+    JSON.stringify(cls));
+  check('X-13 L0 分档：解析服务器不响应/超时/半路 reset 一律判不出（砍能力要有否证，不能拿没答案当否证）',
+    cls['dns:EAI_AGAIN'].ok === null && cls['dns:EAI_AGAIN'].stage === 'dns'
+      && cls['c:ETIMEDOUT'].ok === null && cls['c:ECONNRESET'].ok === null, JSON.stringify(cls));
+  const okReach = await eg.reachWith({ lookup: () => Promise.resolve('127.0.0.1'), connect: () => Promise.resolve(true) }, T, 443, 50);
+  check('X-13 L0 判定停在 TLS 完成（不发业务请求：能力判定不得变成内容依赖）',
+    okReach.ok === true && okReach.stage === 'tls' && !/http|GET|status/.test(String(okReach.detail)), JSON.stringify(okReach));
+  let lookCalls = 0;
+  const spy = { lookup: () => { lookCalls++; return Promise.resolve('127.0.0.1'); }, connect: () => Promise.resolve(true) };
+  const cached = await eg.reach(T, spy);
+  const cached2 = await eg.reach(T, spy);
+  check('X-13 同一主机在 TTL 内复用判定（一次登录动作不得反复摸网；复用的是原结论而不是重算）',
+    cached.ok === true && cached2.ok === true && cached2.cached === true && lookCalls === 1, JSON.stringify(cached2));
+  check('X-13 hosts() 交出已判主机、invalidate 按主机作废（代理一改旧判定必须当场失效而不是等 TTL）',
+    eg.hosts().includes(T) && eg.invalidate(T) === 1 && eg.reachRead(T) === null, JSON.stringify(eg.hosts()));
+
+  // (5) 代理读数：三平台各自的分档与「读不到 != 没配」
+  check('X-13 linux 代理分档：环境变量有=on、一个都没有=unknown（服务语境 import-environment 不全，判成没配就打死有代理的机器）',
+    eg.proxyLinux({ HTTPS_PROXY: 'http://127.0.0.1:7890' }, note).state === 'on'
+      && eg.proxyLinux({ https_proxy: 'http://127.0.0.1:7890' }, note).state === 'on'
+      && eg.proxyLinux({}, note).state === 'unknown' && eg.proxyLinux({ https_proxy: '   ' }, note).state === 'unknown',
+    JSON.stringify(eg.proxyLinux({}, note)));
+  const WIN_ON = '注册表项 HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings 的查询结果\r\n    ProxyEnable    REG_DWORD    0x1\r\n\r\n';
+  const WIN_SV = '    ProxyServer    REG_SZ    127.0.0.1:7890\r\n\r\n';
+  const winRun = (bin, args) => Promise.resolve(/ProxyEnable/.test(String(args[args.length - 1])) ? WIN_ON
+    : /ProxyServer/.test(String(args[args.length - 1])) ? WIN_SV : '未找到指定的注册表项或值\r\n');
+  const pw = await eg.proxyWin(winRun, note);
+  check('X-13 win32 代理解析只认值名与类型列（中英文表头都读得出；按英文提示语锚定 = 中国版机器读空，正是白窗口的成因之一）',
+    reg.regDwordOf(WIN_ON) === 1 && reg.regValueOf(WIN_SV) === '127.0.0.1:7890'
+      && reg.regValueOf('未找到指定的注册表项或值\r\n') === null && reg.regValueOf(WIN_ON) === null
+      && pw.state === 'on' && pw.server === '127.0.0.1:7890' && pw.source === 'registry:Internet Settings',
+    JSON.stringify(pw));
+  const offRun = (bin, args) => {
+    const v = String(args[args.length - 1]);
+    return Promise.resolve(/ProxyEnable/.test(v) ? '    ProxyEnable    REG_DWORD    0x0\r\n'
+      : /ProxyServer/.test(v) ? WIN_SV : '未找到指定的注册表项或值\r\n');
+  };
+  const one = await eg.proxyWin(offRun, note);
+  const pacRun = (bin, args) => {
+    const v = String(args[args.length - 1]);
+    return Promise.resolve(/AutoConfigURL/.test(v) ? '    AutoConfigURL    REG_SZ    http://pac/intranet.pac\r\n'
+      : /ProxyEnable/.test(v) ? '    ProxyEnable    REG_DWORD    0x0\r\n' : '未找到指定的注册表项或值\r\n');
+  };
+  const two = await eg.proxyWin(pacRun, note);
+  check('X-13 win32 只存 ProxyServer 而未启用 = off（开着才算数，PAC 单独配也算在用）',
+    one.state === 'off' && one.server === '127.0.0.1:7890'
+      && two.state === 'on' && two.pac === 'http://pac/intranet.pac' && two.server === null,
+    JSON.stringify([one, two]));
+  const macOn = await eg.proxyMac(async () => 'HTTPEnable : 1\nHTTPProxy : 127.0.0.1\nHTTPPort : 8888\n', note);
+  const macOff = await eg.proxyMac(async () => 'HTTPEnable : 0\nHTTPProxy : 127.0.0.1\n', note);
+  const macNone = await eg.proxyMac(async () => '(The command could not load because of a sandbox.)\n', note);
+  check('X-13 darwin 代理分档：开关为 1 才算在用、有开关但全 0 才是没配、读不出开关位置即 unknown',
+    macOn.state === 'on' && macOn.server === '127.0.0.1' && macOff.state === 'off' && macNone.state === 'unknown',
+    JSON.stringify([macOn, macOff, macNone]));
+  eg.invalidate();
+  const syncCalls = eg.hosts().length;
+  check('X-13 同步读数只取缓存、绝不触发系统查询（HTTP 路径与判据读 proxyRead；起子进程的是刷新那一步）',
+    syncCalls === 0 && (eg.proxyRead() === null || eg.proxyRead().platform === process.platform), 'ok');
+  check('X-13 代理凭据不进表单也不进快照（脱敏住在装配处，漏一处就等于把 user:pass 投给人看的界面）',
+    env.maskProxyServer('http://usr:pwd@127.0.0.1:7890') === 'http://usr:***@127.0.0.1:7890'
+      && env.maskProxyServer('127.0.0.1:7890') === '127.0.0.1:7890' && env.maskProxyServer(null) === null,
+    JSON.stringify([env.maskProxyServer('http://usr:pwd@h:1'), env.maskProxyServer('a:b@h:1')]));
+
+  // (6) 执行口接线：降档要说清依据、判不出要保持原档、全程零摸网
+  const CH = { id: 'chrome', name: 'Chrome', bin: '/usr/bin/google-chrome', engine: 'chromium', sources: ['fixture'] };
+  const inv = { platform: 'fixture', browsers: [CH], defaultId: null, defaultSource: null, probed: [{ source: 'fixture', detail: '1 项' }] };
+  let allocated = 0;
+  const spawned = [];
+  const isoOpen = (egress) => br.openBrowser(url, {
+    platform: 'linux', inventory: inv, intent: 'isolated-login', egress, observeMs: 1,
+    observe: async () => ({ stage: 'exit', code: 0, signal: null }),
+    spawn: (bin, args) => { spawned.push([bin, args]); return { fake: true }; },
+    binAvailable: () => true, desktopAvailable: () => true, rmTree: () => {}, onExit: () => {},
+    allocProfile: () => { allocated++; return '/P'; },
+  });
+  eg.invalidate();
+  const blocked = await isoOpen(EG('off', rd(false, 'dns', 'ENOTFOUND')));
+  check('X-13 判定为必然空白时降档如实：并入既有窗口 + 不分配 profile + 证据带结论码与理由',
+    blocked.ok === true && blocked.evidence.isolated === false && blocked.evidence.via === 'browser'
+      && blocked.evidence.profile === null && allocated === 0 && spawned.length === 1
+      && blocked.evidence.egress.basis === 'cold-profile-blocked' && blocked.evidence.egress.viable === false
+      && /空白页/.test(String(blocked.message)) && /代理/.test(String(blocked.message)),
+    JSON.stringify([blocked.evidence, blocked.message]));
+  check('X-13 降档全程零摸网零系统查询（判据吃注入的读数：CI 摸网会让同一条判据随宿主网络漂移）',
+    eg.hosts().length === 0 && eg.proxyRead() === null, JSON.stringify(eg.hosts()));
+  const undet = await isoOpen(EG('unknown', rd(false, 'dns', 'ENOTFOUND')));
+  check('X-13 判不出即保持隔离档（用猜到的事实砍能力是被禁的形态：真机「弹了个空白窗」的另一半成因）',
+    undet.ok === true && undet.evidence.isolated === true && undet.evidence.via === 'isolated'
+      && undet.evidence.egress.viable === null && allocated === 1 && !/空白页/.test(String(undet.message)),
+    JSON.stringify(undet.evidence));
+
+  // (7) 结论要走到屏幕：域侧交出依据码，面板声明并消费同一份形状
+  const oaSrc = fs.readFileSync(path.join(ROOT, 'src', 'domains', 'router', 'ops', 'oauth.js'), 'utf8');
+  check('X-13 一键登录把隔离依据码与理由一起交出（「未隔离」必须分得清引擎不支持与本机没有出网路）',
+    /isolatedBasis:/.test(oaSrc) && /isolatedDetail:/.test(oaSrc) && /engine-not-isolatable/.test(oaSrc), 'ok');
+  const tsSrc = fs.readFileSync(path.join(ROOT, 'ui', 'src', 'services', 'supervisor', 'types.ts'), 'utf8');
+  const cardSrc = fs.readFileSync(path.join(ROOT, 'ui', 'src', 'features', 'supervisor', 'settings', 'EnvironmentCard.tsx'), 'utf8');
+  const extSrc = fs.readFileSync(path.join(ROOT, 'ui', 'src', 'services', 'supervisor', 'externalOpen.ts'), 'utf8');
+  check('X-13 后端产出的新维度必须同时进前端类型与页面（只改后端则 tsc 不报错、界面静默少显示）',
+    /export type EnvironmentSections/.test(tsSrc) && /sections\?:\s*EnvironmentSections/.test(tsSrc)
+      && /export type EgressSectionData/.test(tsSrc) && /sections\?\.egress/.test(cardSrc)
+      && /出网条件/.test(cardSrc) && /判不出/.test(cardSrc), 'ok');
+  check('X-13 面板把出网结论与降档理由摊进证据行（内核解释了原因，界面上只剩「没拿到证据」就是把话丢了）',
+    /ev\.egress/.test(extSrc) && /isolatedBasis/.test(extSrc) && /r\?\.message/.test(extSrc), 'ok');
+  eg.invalidate();
+}
+
+x10().catch((e) => check('X-10 异步判据自身未抛错', false, String((e && e.stack) || e)))
+  .then(x13).catch((e) => check('X-13 异步判据自身未抛错', false, String((e && e.stack) || e)))
+  .then(finish);
 

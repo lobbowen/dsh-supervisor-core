@@ -1,14 +1,20 @@
 'use strict';
 
-// 环境表单（外部打开链路的最底层）：把「这台机器与本产品相关的实况」一次收齐并常驻呈现 ——
-//   装了哪些浏览器、系统说不出哪个是默认、有没有图形会话、用户在本产品里选过谁、
-//   每条结论是从哪条系统事实读来的。后续动作只从这张表分发（选路见 pickLauncher，执行见 ./browser.js）。
+// 环境表单（外部打开链路的最底层）：把「这台机器与本产品相关的实况」按**维度**收齐并常驻呈现 ——
+//   装了哪些浏览器、系统说不出哪个是默认、有没有图形会话、用户在本产品里选过谁、跑内核的这套
+//   运行时（node/npm/镜像源/全局前缀）到不到位、这台机器往外走不走得出去，每条结论是从哪条系统事实读来的。
+//   后续动作只从这张表分发（选路见 pickLauncher，执行见 ./browser.js）。
 //
 // 为什么要一张表而不是各动作各探各的：直启打开与登录隔离窗此前各自摸系统事实、各自解释结果，
 //   于是「面板说交出去了、屏幕上什么都没有」在真机上无从定性。表单收敛的是**事实与分发依据**，
 //   不是又一个调用口：动作层只问「这次该用谁」，不再问「系统里有什么」。
-// 平台事实仍只写在 ./browser-inventory.js 一处：本文件不查注册表、不跑 LaunchServices 脚本、
-//   不扫 XDG 目录，只做表单装配、选路次序与快照落盘。
+// 为什么要维度化（schema 2）：同一件事此前有三份实现 —— 壳的 domain/probes.rs、内核的 EnvCatalog、
+//   本文件的浏览器单节。三份各自「探测 + 缓存 + 呈现」，面板上同一台机器就有三个就绪口径。
+//   维度台账收敛的是**账本形状**（每个维度一条 {at, source, state, data, probed}），不是采集实现：
+//   采集仍归各自的所有者，用 registerSection() 把**既有探针**挂进来（零第二份实现），
+//   本文件只负责按拍装配、失效与落盘。
+// 平台事实仍只写在 ./browser-inventory.js 与 ./egress.js 一处：本文件不查注册表、不跑 LaunchServices 脚本、
+//   不扫 XDG 目录、不自己摸网络，只做表单装配、选路次序与快照落盘。
 
 const fs = require('node:fs');
 const os = require('node:os');
@@ -17,16 +23,21 @@ const stateRoot = require('../service/state-root');
 const { writeAtomic } = require('../util/fs');
 const desktop = require('./desktop');
 const detector = require('./browser-inventory');
+const egress = require('./egress');
 const { engineOf } = detector;
 
-/** 快照 schema：落盘格式变更时递增，读侧据此判旧快照是否作废（不得按字段猜版本）。 */
-const SCHEMA = 1;
+/** 快照 schema：落盘格式变更时递增，读侧据此判旧快照是否作废（不得按字段猜版本）。
+ *  2 = 维度台账（sections）进快照：只有浏览器单节的快照撑不起「本机实况」这句话。 */
+const SCHEMA = 2;
 
 /** 快照文件名（落在本产品状态目录，与 config/state 同处）。 */
 const FILE_NAME = 'environment.json';
 
 /** 表单缓存窗口：与探测层的清单缓存同量级，面板轮询不得把系统查询变成常态开销。 */
 const FORM_TTL_MS = 60000;
+
+/** 维度默认复用窗口：出网条件与运行时探测都比「读一次文件」贵得多，按维度各自 ttlMs 覆盖。 */
+const SECTION_TTL_MS = 60000;
 
 /** 装配期注入的取数口。platform 不得 require app/api（分层门禁 L-1），而「用户的偏好」住在内核配置里、
  *  「能力矩阵的实测覆写」住在 ./index.js 里，两者都只能由上层在组装时把 getter 绑进来。
@@ -150,6 +161,211 @@ function pickLauncher(platform, inv, preference) {
   return out(null, 'none-found');
 }
 
+// ---- 维度台账 ----
+// _sections：注册表（谁提供这一维）；_reads：每维最后一次读数（{at, source, state, data, error}）。
+// 分开两份是必需的：注册发生在装配期，读数发生在刷新期，而 form() 必须同步可读（选路当场要用）。
+const _sections = new Map();
+const _reads = new Map();
+
+/** 面板与快照的固定呈现次序；未列出的注册维度追加在后面（不藏维度）。 */
+const SECTION_ORDER = ['runtime', 'dsh', 'browsers', 'session', 'egress', 'capabilities', 'preference', 'pick'];
+
+/** 表单自己装配的同步维度：这些名字由本文件每拍现装，不接受外部注册（注册即两个口径）。 */
+const SYNC_DIMS = ['browsers', 'session', 'capabilities', 'preference', 'pick'];
+
+/** 注册一个环境维度（app 层在装配期调用；platform 不得反向 require app，L-1）。
+ *  probe 同步或异步都收：异步维度（子进程/网络）只由 refresh() 拍，同步维度不得在 HTTP 路径上跑。
+ *  @param {string} id 维度名（进 sections/快照，故必须稳定）
+ *  @param {{label?:string, probe:Function, ttlMs?:number, source?:string}} def
+ *  @returns {object} 注册后的定义 */
+function registerSection(id, def) {
+  if (!id || !def || typeof def.probe !== 'function') throw new Error('registerSection(' + id + ') 需要 probe 函数');
+  if (SYNC_DIMS.includes(id)) throw new Error('维度 ' + id + ' 由表单每拍自装，不接注册');
+  const d = { id, label: def.label || id, probe: def.probe, ttlMs: def.ttlMs === undefined ? SECTION_TTL_MS : def.ttlMs, source: def.source || 'registered' };
+  _sections.set(id, d);
+  _reads.delete(id); // 换探针即作废旧读数：留着上一版数据冒充本机实况是最难查的假账
+  return d;
+}
+
+function unregisterSection(id) {
+  _sections.delete(id);
+  _reads.delete(id);
+}
+
+/** 某维度当前读数（同步取；绝不在这里触发探测）。未注册也未读过即 null，读过但失败 = state='error'。 */
+function section(id) {
+  return _reads.get(id) || null;
+}
+
+function sectionData(id) {
+  const r = _reads.get(id);
+  return r ? r.data || null : null;
+}
+
+/** 出网条件维度的数据装配：代理读数 + 已判过的目标主机，全部三态原样交出（不把 null 折成 false）。
+ *  代理地址里的凭据一律抹掉：快照 0600 也要给人看、表单也要过 HTTP，`user:pass@host` 没有理由出现在任何一处。
+ *  两种写法都要管（`http://u:p@host` 与裸 `u:p@host`）。`//` 必须先于「无协议头」这条分支参与匹配，
+ *  且用户名与密码都不得跨 `/`：少了这两条约束，`http://u:p@h` 会先撞上协议名后那个冒号，
+ *  脱敏就把整段 `//u:p` 当成密码吃掉、留下 `http:***@h` —— 地址看着像被处理过，实际把主机前的结构改了形。
+ *  `host:port` 里没有 @，不会被误伤。 */
+function maskProxyServer(server) {
+  return server ? String(server).replace(/(\/\/)?([^\s/@:]+):([^\s/@]*)@/, '$1$2:***@') : null;
+}
+
+/** 探测留痕行里的凭据同样要抹：egress 层的 note 会原样写下 `ProxyServer=http://u:p@host`，
+ *  这一份既进表单也进快照，漏一处就等于把凭据投给人看的界面。整行可能有多处，故 global。 */
+function maskProxySecrets(text) {
+  return String(text == null ? '' : text).replace(/(\/\/)?([^\s/@:]+):([^\s/@]*)@/g, '$1$2:***@');
+}
+
+/** 代理地址脱敏（导出的理由：它是本维度的安全边界，门禁要能直接喂样本判红绿，
+ *  绕开函数另拼一份正则就等于验不住真正跑的那条路）。 */
+function proxyDataOf(p) {
+  return p ? { state: p.state, server: maskProxyServer(p.server), pac: p.pac || null, source: p.source, cached: p.cached === true } : null;
+}
+function egressData(proxyReading) {
+  const targets = {};
+  for (const h of egress.hosts()) {
+    const r = egress.reachRead(h);
+    if (r) targets[h] = { ok: r.ok === null ? null : r.ok === true, stage: r.stage, detail: r.detail, at: r.at };
+  }
+  const p = proxyReading || egress.proxyRead();
+  const probed = [];
+  if (p) {
+    for (const row of (p.probed || [])) probed.push({ source: row.source, detail: maskProxySecrets(String(row.detail || '')) });
+    probed.push({ source: p.source, detail: 'proxy=' + p.state + (p.server ? ' (' + maskProxyServer(p.server) + ')' : '') + (p.cached ? ' 复用' : '') });
+  } else {
+    probed.push({ source: 'egress', detail: '系统代理未读（本维度尚未刷新）' });
+  }
+  for (const h of Object.keys(targets)) {
+    const t = targets[h];
+    probed.push({ source: 'reach:' + h, detail: (t.ok === null ? 'unknown' : (t.ok ? 'ok' : 'no-route')) + '@' + t.stage + ' ' + t.detail });
+  }
+  return {
+    at: p ? p.at : null,
+    proxy: proxyDataOf(p),
+    targets,
+    probed,
+  };
+}
+
+/** 内置维度：出网条件。注册在本文件加载时，因为它的采集口（./egress.js）就在同层；
+ *  运行时与 DSH 两维不在这里注册 —— 它们的探针住在 app/service 层，由装配期挂进来（见 registerSection）。
+ *  force 一路传到 L0：面板点「刷新」就是要重问系统一遍，复用 60s 前的代理读数等于没刷。 */
+registerSection('egress', {
+  label: '出网条件',
+  source: 'self',
+  probe: (o) => {
+    const ov = o || {};
+    const force = ov.force === true;
+    const hosts = Array.isArray(ov.hosts) ? ov.hosts : egress.hosts();
+    const reachOpts = { force, timeoutMs: ov.timeoutMs, lookup: ov.lookup, connect: ov.connect, ttlMs: ov.ttlMs };
+    return Promise.all([egress.proxy(Object.assign({}, ov, { force }))]
+      .concat(hosts.map((h) => egress.reach(h, reachOpts))))
+      .then(([p]) => egressData(p));
+  },
+});
+
+/** 拍一个维度：跑 probe、按结果定 state、失败只记账不抛（表单不得成为用户可见的失败原因）。 */
+async function probeSection(id, o) {
+  const def = _sections.get(id);
+  if (!def) return null;
+  const ov = o || {};
+  const now = typeof ov.now === 'function' ? ov.now : Date.now;
+  try {
+    const data = await def.probe(ov);
+    _reads.set(id, { at: now(), source: def.source, label: def.label, state: data ? 'ok' : 'empty', data: data || null, error: null });
+  } catch (e) {
+    _reads.set(id, { at: now(), source: def.source, label: def.label, state: 'error', data: null, error: String((e && (e.code || e.message)) || e) });
+  }
+  return _reads.get(id);
+}
+
+/** 到期的维度才重探：`force` 与 ttl 是仅有的两条重探路，常态刷新只补到期的那几个。 */
+function staleOf(id, now, force) {
+  if (force) return true;
+  const def = _sections.get(id);
+  const read = _reads.get(id);
+  if (!def || !read) return true;
+  return now - read.at >= def.ttlMs;
+}
+
+/** 异步刷新：把所有（或 only 指定的）维度按拍补齐，再交一份表单。
+ *  启动装配、面板 ?force=1、改偏好后各拍一次；HTTP 路径只走这条与同步 form()，
+ *  同步 exec 冻结事件循环的老路（B1-6）不得再出现在本文件。
+ *  @param {{only?:string[], force?:boolean, persist?:boolean, platform?:string, inventory?:object,
+ *           resolveInventory?:Function, resolveDeps?:object, now?:Function}} [o]
+ *  @returns {Promise<object>} form() 的产物 */
+async function refresh(o) {
+  const ov = o || {};
+  const now = typeof ov.now === 'function' ? ov.now : Date.now;
+  const ids = Array.isArray(ov.only) && ov.only.length ? ov.only : [..._sections.keys()];
+  await Promise.all(ids.filter((id) => _sections.has(id) && staleOf(id, now(), ov.force))
+    .map((id) => probeSection(id, ov)));
+  return form(Object.assign({}, ov, { force: true }));
+}
+
+/** 当场判一次「这次隔离登录的冷档案能不能出内容」（异步、有界，是 coldProfileViable 唯一取数入口）。
+ *  为什么由表单而不是动作层做：动作层要的是结论，不是又一次自己摸系统 —— 与 pickLauncher 同一分工。
+ *  本函数**永不抛错**：判不出就是 viable:null（保持隔离档），出网探测绝不能变成用户可见的失败原因。
+ *  @param {string} url 本次要打开的地址（取其主机名做判定对象）
+ *  @param {{egress?:object, lookup?:Function, connect?:Function, force?:boolean, ttlMs?:number,
+ *           timeoutMs?:number, now?:Function}} [o] `egress` 为注入缝：给定读数即不摸网（CI 与行为测试同源）
+ *  @returns {Promise<{host:string|null, viable:boolean|null, basis:string, detail:string, proxy:string, at:number|null}>} */
+async function checkEgress(url, o) {
+  const ov = o || {};
+  const host = egress.hostOf(url);
+  let data = ov.egress === undefined ? null : ov.egress;
+  if (!data) {
+    try {
+      const hosts = new Set(egress.hosts());
+      if (host) { await egress.reach(host, ov); hosts.add(host); }
+      const read = await probeSection('egress', Object.assign({}, ov, { hosts: [...hosts] }));
+      data = (read && read.data) || sectionData('egress');
+    } catch { data = sectionData('egress'); }
+  }
+  const v = coldProfileViable(data, host);
+  return Object.assign({}, v, {
+    host,
+    proxy: data && data.proxy ? data.proxy.state : 'unknown',
+    at: data ? data.at || null : null,
+  });
+}
+
+/** 冷档案隔离窗口的可行性判据（纯函数，与 pickLauncher 同族：分发依据只由表单决定，动作层不自判）。
+ *  要判的事：一键登录开的是**独立 user-data-dir 的冷档案**，它没有扩展、没有 per-profile 配置、
+ *  没有既有登录态。目标域直连不通时，这个窗口能不能出内容只取决于「机器上有没有一条系统级/环境级代理」：
+ *    直连可达            -> 隔离档照开（没有理由砍）；
+ *    直连不通 + 代理在    -> 隔离档照开（冷档案继承系统/环境代理，那正是它出网的路）；
+ *    直连不通 + 代理明确没有 -> 冷档案必然空白：如实降为并入既有窗口（plain），并交出理由；
+ *    任何一环判不出       -> 保持隔离（null）。判不出就砍能力是「用猜到的事实做决定」，同一种病。
+ *  返回三态 viable + basis：basis 是给人看的结论码，进 evidence、进面板，绝不只留在日志里。
+ *  @param {object|null} eg egress 维度数据（egressData 的产物）；null=尚未探测
+ *  @param {string|null} [host] 本次动作的目标主机；没有读数即无从判定
+ *  @returns {{viable:boolean|null, basis:string, detail:string}} */
+function coldProfileViable(eg, host) {
+  if (!eg) return { viable: null, basis: 'egress-unprobed', detail: '出网条件尚未探测，隔离窗口按原档打开' };
+  const t = host && eg.targets ? eg.targets[host] : null;
+  const reached = t ? t.ok : null;
+  const proxyState = eg.proxy ? eg.proxy.state : 'unknown';
+  if (reached === true) {
+    return { viable: true, basis: 'target-reachable', detail: host + ' 直连可达（' + t.stage + '）' };
+  }
+  if (reached === null) {
+    return { viable: null, basis: 'egress-undetermined', detail: host + ' 的通路判定没有给出答案（' + (t ? t.stage + ' ' + t.detail : '无读数') + '）' };
+  }
+  if (proxyState === 'on') {
+    return { viable: true, basis: 'cold-profile-inherits-proxy', detail: host + ' 直连不通（' + t.stage + '），系统级代理在用，冷档案同一条路' };
+  }
+  if (proxyState === 'unknown') {
+    return { viable: null, basis: 'proxy-unreadable', detail: host + ' 直连不通（' + t.stage + '），但代理读数取不到，按判不出处理' };
+  }
+  return {
+    viable: false, basis: 'cold-profile-blocked',
+    detail: host + ' 直连不通（' + t.stage + ' ' + t.detail + '）且系统没有在用代理，冷档案窗口必然空白',
+  };
+}
+
 /** 表单快照的落盘位置。 */
 function snapshotPath() {
   return path.join(stateRoot.supervisorDir(), FILE_NAME);
@@ -166,10 +382,13 @@ function readSnapshot() {
 let _formCache = null;
 
 /** 环境表单：一次装配出本机全部相关事实。
+ *  **同步**是硬要求：选路与执行当场要读它（异步化会把「没探到」变成「等不到」，两者都得各写一套兜底）。
+ *  异步维度（出网条件/运行时/DSH）只在此读台账里最近的一拍，从未刷新即 state='pending' —— 如实标未探，
+ *  不拿空数据冒充本机实况。要补数据走 refresh()（启动一次 + 面板 ?force=1 + 改偏好后）。
  *  @param {{force?:boolean, persist?:boolean, now?:Function, ttlMs?:number, platform?:string,
  *           inventory?:object, resolveInventory?:Function, resolveDeps?:object}} [o]
  *    persist=true 才落盘（读路径不写盘；面板刷新与启动装配各写一次即可）。
- *  @returns {object} schema/at/identity/paths/session/capabilities/preference/browsers/default/pick/probed/snapshot */
+ *  @returns {object} schema/at/identity/paths/session/capabilities/preference/browsers/default/pick/probed/sections/snapshot */
 function form(o) {
   const ov = o || {};
   const now = typeof ov.now === 'function' ? ov.now : (() => Date.now());
@@ -200,6 +419,40 @@ function form(o) {
       : (preference.reason === 'matched' ? '已选 ' + preference.browser.name : '偏好所指已不在候选清单: ' + prefId) });
   probed.push({ section: 'pick', source: 'form',
     detail: pick.how + (pick.browser ? '（' + pick.browser.name + '）' : '（无候选）') + (pick.stale ? '，偏好已失效需重选' : '') });
+
+  // 维度台账：同步维度每拍现装；异步维度取最近一拍，未拍过即 pending（并保留 pending 的说明）。
+  const sections = {};
+  const syncDims = {
+    browsers: { at: stamp, state: inv.browsers.length ? 'ok' : 'empty', count: inv.browsers.length, defaultSource: inv.defaultSource },
+    session: { at: stamp, state: session.available ? 'ok' : 'missing', reason: session.reason },
+    capabilities: { at: stamp, state: caps ? 'ok' : 'unbound', openBrowser: caps ? caps.openBrowser === true : null },
+    preference: { at: stamp, state: preference.reason === 'matched' ? 'ok' : (preference.configured ? 'stale' : 'unset'), id: preference.id },
+    pick: { at: stamp, state: pick.browser ? 'ok' : 'empty', how: pick.how, id: pick.browser ? pick.browser.id : null },
+  };
+  const dimOf = (id) => {
+    const def = _sections.get(id);
+    const read = _reads.get(id);
+    if (read && !syncDims[id]) {
+      return { label: def ? def.label : id, at: read.at, source: read.source, state: read.state, data: read.data, error: read.error || null };
+    }
+    const s = syncDims[id];
+    if (s) return Object.assign({ label: id, source: 'self' }, s);
+    return { label: def ? def.label : id, at: null, source: def ? def.source : 'registered', state: 'pending', data: null, error: null };
+  };
+  const ids = SECTION_ORDER.concat([..._sections.keys()].filter((id) => !SECTION_ORDER.includes(id)));
+  for (const id of ids) {
+    if (sections[id]) continue;
+    const entry = dimOf(id);
+    sections[id] = entry;
+    if (entry.state === 'pending') {
+      probed.push({ section: id, source: 'form', detail: '未刷新（等启动装配或面板 force 刷新补拍）' });
+    } else if (entry.state === 'error') {
+      probed.push({ section: id, source: 'probe', detail: id + ' 探测失败: ' + entry.error });
+    }
+  }
+  const egressRows = ((sections.egress || {}).data || {}).probed || [];
+  for (const row of egressRows) probed.push({ section: 'egress', source: row.source, detail: row.detail });
+
   const value = {
     schema: SCHEMA,
     at: stamp,
@@ -212,6 +465,7 @@ function form(o) {
     default: inv.defaultId ? { id: inv.defaultId, source: inv.defaultSource } : null,
     browsers: inv.browsers,
     pick: { how: pick.how, id: pick.browser ? pick.browser.id : null, name: pick.browser ? pick.browser.name : null, wanted: pick.wanted, stale: pick.stale },
+    sections,
     probed,
   };
   const snapshot = { path: snapshotPath(), written: false, error: null };
@@ -228,9 +482,19 @@ function form(o) {
   return Object.assign({ cached: false }, value);
 }
 
-/** 显式失效：改动偏好或装卸浏览器后刷新。表单与探测层一起失效，否则下一拍仍读到旧候选。 */
-function invalidate(platform) {
+/** 显式失效：改动偏好或装卸浏览器后调用。表单缓存与探测层清单一起作废，异步维度只**过期不删数**——
+ *  下一拍 refresh 补新值，而面板在这一拍仍看得见上一次读数与其时间；把读数删成 pending 会让人误判
+ *  「机器上的浏览器变了」，而那正是本次要探的事。出网读数同理：代理一改，旧判定当场作废。
+ *  @param {string} [platform] 探测层清单缓存的平台
+ *  @param {string|string[]} [only] 只作废这些维度的读数（不传即全维度过期） */
+function invalidate(platform, only) {
   _formCache = null;
+  const list = only === undefined ? null : (Array.isArray(only) ? only : [only]);
+  if (!list || list.includes('egress')) egress.invalidate();
+  for (const id of (list || [..._reads.keys()])) {
+    const r = _reads.get(id);
+    if (r) r.at = 0;
+  }
   return detector.invalidate(platform);
 }
 
@@ -254,8 +518,10 @@ function checkPreference(value, form) {
 }
 
 module.exports = {
-  SCHEMA, FILE_NAME, FORM_TTL_MS,
+  SCHEMA, FILE_NAME, FORM_TTL_MS, SECTION_TTL_MS, SECTION_ORDER, SYNC_DIMS,
   bind, preferenceId, capabilities, identity, paths,
   browsers, normalizeInventory, rankCandidates, pickLauncher, checkPreference,
+  registerSection, unregisterSection, section, sectionData, refresh,
+  coldProfileViable, checkEgress, maskProxyServer,
   form, snapshotPath, readSnapshot, invalidate,
 };

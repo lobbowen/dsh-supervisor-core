@@ -12,6 +12,10 @@ const path = require('node:path');
 const os = require('node:os');
 const exec = require('../util/exec');
 const { isExecutableFile } = require('./exec-path');
+// 注册表解析原语的唯一实现住在 ./registry.js：本层不复制一份 reg.exe 排版解析。浏览器探测与出网条件
+//   问的是同一张注册表，两处各写一遍必然分叉（一边认 REG_EXPAND_SZ、另一边不认就是静默漏检）。
+const registry = require('./registry');
+const { expandEnvVars, safeRegKeyPart, regValue, regSubkeys, regValueTargets } = registry;
 
 /** 单条系统查询的上界：探测不得成为用户可见的失败原因，也不得吃掉面板 15s 动作预算。 */
 const PROBE_TIMEOUT_MS = 1500;
@@ -52,21 +56,6 @@ function parseExecLine(line) {
   return { bin: toks[0], baseArgs: toks.slice(1) };
 }
 
-/** reg.exe 输出的值类型：`/ve` 取默认值、`/v Name` 取具名值，两者排版同为「名字 类型 数据」。
- *  REG_EXPAND_SZ 必须一起认：浏览器安装器写下的 open\command 常是 %ProgramFiles% 这类待展开形态，
- *  旧实现只匹配 REG_SZ，等于把这类注册当成「没注册」—— 第二个静默漏检。 */
-function regValueOf(out) {
-  const m = String(out || '').match(/REG_(?:EXPAND_SZ|SZ)\s+(.*)/);
-  if (!m) return null;
-  return m[1].trim() || null;
-}
-
-/** %VAR% 展开：reg.exe 不做展开，交回我们手里时必须自己扩（未知变量原样留着，宁可判不可用也不猜）。 */
-function expandEnvVars(value, env) {
-  const e = env || process.env;
-  return String(value).replace(/%([^%]+)%/g, (all, name) => (e[name] === undefined ? all : e[name]));
-}
-
 /** 注册表 open\command 命令行 -> 可执行文件路径（纯函数；带引号与裸 .exe 两种形态）。
  *  未加引号时路径本身也可以带空格（注册表里的 REG_EXPAND_SZ 常这么写），所以取「第一个 .exe 截止处」，
  *  而不是首个空白 token —— 后者会把 `C:\Program Files (x86)\...\msedge.exe -- "%1"` 读成 `C:\Program`。 */
@@ -76,47 +65,6 @@ function exeFromCmdLine(cmdLine) {
   if (m) return m[1];
   m = s.match(/^\s*(.*?\.exe)/i);
   return m ? m[1] : null;
-}
-
-/** ProgID 会进 reg 的 argv（不经 shell），仍限可打印 ASCII 防控制序列；`\\` 是合法键分隔。 */
-function safeRegKeyPart(s) {
-  return typeof s === 'string' && s.length > 0 && s.length <= 200 && /^[\x20-\x7e]+$/.test(s) && !/[;|&`$()<>^"'\r\n]/.test(s);
-}
-
-/** 一个注册表键的默认值或具名值（只读；失败返回 null 并记一条 probed 留痕）。 */
-function regValue(runner, note, key, name) {
-  const args = name ? ['query', key, '/v', name] : ['query', key, '/ve'];
-  const out = runner('reg.exe', args);
-  const v = regValueOf(out);
-  note(name ? key + ' /v ' + name : key, v ? 'ok' : 'empty');
-  return v;
-}
-
-/** `reg query` 输出的行首是**展开后的完整根名**（问 HKLM 回 HKEY_LOCAL_MACHINE），所以拿简写键去前缀比对
- *  会一行都匹配不上——真机上表现为「目录里一个浏览器都没探到」。先归一再比。 */
-const REG_HIVE_ALIAS = { HKLM: 'HKEY_LOCAL_MACHINE', HKCU: 'HKEY_CURRENT_USER', HKCR: 'HKEY_CLASSES_ROOT', HKU: 'HKEY_USERS', HKCC: 'HKEY_CURRENT_CONFIG' };
-function regKeyFull(key) {
-  const s = String(key || '');
-  const i = s.indexOf('\\');
-  const root = i < 0 ? s : s.slice(0, i);
-  return (REG_HIVE_ALIAS[root.toUpperCase()] || root) + (i < 0 ? '' : s.slice(i));
-}
-
-/** 键下子键名列表（`reg query <key>` 不带 /v 时逐行打印完整子键路径）。 */
-function regSubkeys(runner, note, key) {
-  const out = runner('reg.exe', ['query', key]);
-  if (!out) { note(key, 'unreadable'); return []; }
-  const prefix = regKeyFull(key) + '\\';
-  const names = [];
-  for (const line of String(out).split(/\r?\n/)) {
-    const l = line.trim();
-    if (!/^HKEY_/i.test(l) || l.length <= prefix.length) continue;
-    if (l.slice(0, prefix.length).toUpperCase() !== prefix.toUpperCase()) continue;
-    const rest = l.slice(prefix.length);
-    if (rest && !rest.includes('\\') && safeRegKeyPart(rest)) names.push(rest);
-  }
-  note(key, names.length ? names.length + ' 项' : '无子键');
-  return names;
 }
 
 // win32 的 App Paths 候选：只列厂商公开安装的 exe 名（该键是文档化的安装位置，逐个查询即枚举）。
@@ -230,23 +178,6 @@ function probeWin(d) {
   // 只装了一个浏览器时，它必然就是 https 的归宿 —— 这不是猜默认值，是穷举后的唯一解。
   if (found.size === 1) setDefault([...found.values()][0], 'only-installed');
   return { browsers: [...found.values()], defaultId, defaultSource, probed: notes };
-}
-
-/** RegisteredApplications 的值数据 = 能力键路径（相对其根），逐个返回可直接再查的绝对键路径。 */
-function regValueTargets(runOut, note, key) {
-  const out = runOut('reg.exe', ['query', key]);
-  if (!out) { note(key, 'unreadable'); return []; }
-  const paths = [];
-  for (const line of String(out).split(/\r?\n/)) {
-    const m = line.trim().match(/REG_SZ\s+(.*)/);
-    if (!m) continue;
-    const rel = m[1].trim();
-    if (!safeRegKeyPart(rel)) continue;
-    const root = key.slice(0, key.indexOf('\\'));
-    paths.push(root + '\\' + rel);
-  }
-  note(key, paths.length ? paths.length + ' 个能力路径' : '无值');
-  return paths;
 }
 
 /** macOS 探测脚本：`urlsForApplicationsToOpenURL`（macOS 12+，Apple 文档化为「可打开该 URL 的全部应用，最佳匹配在前」）
@@ -510,7 +441,10 @@ function invalidate(platform) {
 
 module.exports = {
   inventory, invalidate, probe, probeWin, probeMac, probeLinux,
-  engineOf, tokenizeExec, parseExecLine, regValueOf, expandEnvVars, exeFromCmdLine, regSubkeys, regKeyFull, regValueTargets,
-  safeRegKeyPart, browserFromDesktop, desktopDirs, resolveLinuxBin, mimeAppsDefault, linuxDefaultFromMimeApps,
+  engineOf, tokenizeExec, parseExecLine, exeFromCmdLine,
+  // 注册表原语住在 ./registry.js（单一实现），此处原样转出：既有门禁与消费方的取用口不变。
+  regValueOf: registry.regValueOf, expandEnvVars, safeRegKeyPart, regKeyFull: registry.regKeyFull,
+  regValue, regSubkeys, regValueTargets,
+  browserFromDesktop, desktopDirs, resolveLinuxBin, mimeAppsDefault, linuxDefaultFromMimeApps,
   WIN_APP_PATHS, PROBE_TIMEOUT_MS,
 };

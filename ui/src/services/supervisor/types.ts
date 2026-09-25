@@ -622,7 +622,24 @@ export interface OpenExternalResult {
     /** 分发留痕（内核环境表单的摘要）：这次交给谁、依据哪一层、本机探到哪些候选。
      *  真机报「没弹出网页」时这一份就是定档依据，故必须一路走到屏幕上。 */
     diagnostics?: BrowserDiagnostics | null;
+    /** 本次动作的出网判定（内核 environment.js#checkEgress）。只有会开冷档案窗口的动作才有；
+     *  null=这条动作不涉及隔离窗口或表单尚未探测。降级与否、依据码与人和话理由都在这一份里。 */
+    egress?: EgressVerdict | null;
   } | null;
+}
+
+/** 一次动作的出网结论（三态，内核不得把「判不出」折成 false）。
+ *  basis 是结论码（进屏幕也进快照），detail 是同一结论的人话版 —— 两者必须一路走到界面上，
+ *  否则「为什么这次没用隔离窗」在用户侧只剩一句猜。 */
+export interface EgressVerdict {
+  host?: string | null;
+  /** true=冷档案窗口能出内容；false=注定空白（已降档）；null=判不出，按原档保持隔离。 */
+  viable?: boolean | null;
+  basis?: string;
+  detail?: string | null;
+  /** 系统代理读数：on / off / unknown（unknown 不等于 off）。 */
+  proxy?: string;
+  at?: number | null;
 }
 
 /** 打开动作随结果交出的分发摘要（内核 `platform/os/browser.js#launchDiagnostics` 的产出，
@@ -642,6 +659,57 @@ export interface BrowserDiagnostics {
   probed?: Array<{ source: string; detail?: string | number | null }>;
 }
 
+/** 环境表单的一个维度读数（内核 environment.js#form 的 sections 值）。
+ *  state 四档必须分开呈现：pending = 这一拍还没探过（启动拍/刷新会补），empty = 探了但没内容，
+ *  error = 探失败了。把三者混成「没有」正是此前三个就绪口径各说各话的病。
+ *  同名字段（count/how/reason…）随维度而异，故开放索引签名，页面只认自己读过的那几个。
+ *  一律用 type 而非 interface：维度数据要能当 Record 用（界面按 id 取键），interface 拿不到隐式索引签名。 */
+export type EnvironmentSection<T = Record<string, unknown>> = {
+  label?: string;
+  at?: number | null;
+  source?: string;
+  state?: 'ok' | 'empty' | 'error' | 'pending' | string;
+  data?: T | null;
+  error?: string | null;
+  [k: string]: unknown;
+};
+
+/** 出网条件维度的数据：代理读数 + 已判过的目标主机通路，全三态原样交出。 */
+export type EgressSectionData = {
+  at?: number | null;
+  proxy?: { state?: string; server?: string | null; pac?: string | null; source?: string; cached?: boolean } | null;
+  targets?: Record<string, { ok?: boolean | null; stage?: string; detail?: string | null; at?: number | null }>;
+  probed?: Array<{ source?: string; detail?: string | number | null }>;
+};
+
+/** 运行时维度：node/npm/git 条目沿用内核 EnvCatalog 的条目视图（label/required/state/detail），
+ *  镜像源与全局前缀来自分发层与安装用的同一解析口。 */
+export type RuntimeSectionData = {
+  node?: Record<string, unknown> | null;
+  npm?: Record<string, unknown> | null;
+  git?: Record<string, unknown> | null;
+  registry?: { origin?: string | null; mode?: string | null; source?: string | null; manualOrigin?: string | null;
+    candidates?: Array<{ base?: string; reachable?: boolean | null; latencyMs?: number | null; error?: string | null }> } | null;
+  prefix?: string | null;
+};
+
+/** DSH 维度：本体安装判定 + 内核更新包配置 + 守卫看护状态。 */
+export type DshSectionData = {
+  dsh?: Record<string, unknown> | null;
+  selfUpdate?: Record<string, unknown> | null;
+  managed?: boolean;
+  phase?: string | null;
+};
+
+/** 维度台账。已知的三张数据形状点名声明（页面据此渲染具体字段），其余维度（浏览器/会话/能力/偏好/
+ *  选路，以及未来注册进来的）走索引签名 —— 表单加维度不需要前端先改类型再显示。 */
+export type EnvironmentSections = {
+  runtime?: EnvironmentSection<RuntimeSectionData>;
+  dsh?: EnvironmentSection<DshSectionData>;
+  egress?: EnvironmentSection<EgressSectionData>;
+  [id: string]: EnvironmentSection | undefined;
+};
+
 /** 环境表单（内核 platform/os/environment.js 的装配产物，`GET /env/environment`）。
  *  面板的「环境检测」据此显示本机实况，并提供浏览器偏好选择器 —— 所有外部打开动作的分发依据都在这份里。 */
 export interface EnvironmentForm {
@@ -657,6 +725,9 @@ export interface EnvironmentForm {
   default?: { id: string; source?: string | null } | null;
   browsers?: Array<{ id: string; name?: string; bin?: string; engine?: string; sources?: string[]; isDefault?: boolean }>;
   pick?: { how?: string; id?: string | null; name?: string | null; wanted?: string | null; stale?: boolean };
+  /** 维度台账（schema 2）：每维度一条 {label, at, source, state, data}。异步维度（运行时/DSH/出网条件）
+   *  只由 refresh() 拍，未拍即 state='pending' —— 界面必须照实标未探，不得拿空当结论。 */
+  sections?: EnvironmentSections | undefined;
   probed?: Array<{ section?: string; source: string; detail?: string | number | null }>;
   snapshot?: { path?: string; written?: boolean; error?: string | null };
 }
@@ -673,6 +744,24 @@ export interface ExternalBrowserStatus {
   candidates?: Array<{ id: string; name?: string; engine?: string; isDefault?: boolean }>;
   pick?: { how?: string; id?: string | null; name?: string | null; wanted?: string | null; stale?: boolean } | null;
   platform?: string | null;
+}
+
+/** 一键登录发起（`POST /router/proxy/login/start`）：外部打开结果 + 回调等待参数 + 隔离结论。
+ *  isolated 与 isolatedBasis 必须成对读：「未隔离」既可能是引擎没有隔离方言，也可能是出网条件判定
+ *  冷档案注定空白（cold-profile-blocked）—— 两种原因处置完全不同（换浏览器 vs 配系统代理），
+ *  合成一句「不支持隔离窗口」就把可修的那一半说丢了。 */
+export interface ProxyLoginStart extends OpenExternalResult {
+  authUrl?: string;
+  state?: string;
+  port?: number;
+  waitMs?: number;
+  opened?: boolean;
+  isolated?: boolean;
+  /** 依据码：target-reachable / cold-profile-inherits-proxy / cold-profile-blocked /
+   *  egress-undetermined / proxy-unreadable / egress-unprobed / isolated / engine-not-isolatable。 */
+  isolatedBasis?: string;
+  /** 依据码的人话版（来自出网条件维度）；结论与出网无关时为 null。 */
+  isolatedDetail?: string | null;
 }
 
 // -- /lifecycle----------------------------

@@ -7,7 +7,7 @@
  *  两条路的结局一律归一成 OpenExternalResult，界面上不存在第二种说法。
  */
 import { supervisorApi } from "./client";
-import type { OpenExternalResult } from "./types";
+import type { OpenExternalResult, ProxyLoginStart } from "./types";
 
 /** 面板是否由本机内核托管；与内核 /env/open-url 的 identity.loopback 判的是同一件事。
  *  回环 IPv4 按四段整体匹配：`^127.` 这种前缀判据会把 `127.example.com` 也认成本机，
@@ -74,7 +74,27 @@ export function evidenceDetail(ev?: OpenExternalResult["evidence"]): string | nu
     if (!found.length && probed.length) bits.push("探测读数：" + probed.map((p) => p.source).join("、"));
   }
   if (ev.via === "isolated") bits.push(ev.isolated === false ? "未隔离（并入既有窗口）" : "隔离窗口");
+  // 出网判定结论码：降级是内核依表单事实做的决定，界面必须说清依据哪一条，否则「为什么没隔离」只剩猜。
+  const g = ev.egress;
+  if (g && typeof g === "object" && g.basis) {
+    bits.push("出网判定 " + g.basis + "（" + (g.host || "未定主机") + " 代理 " + (g.proxy || "未读出") + "）");
+  }
   return bits.length ? bits.join(" | ") : null;
+}
+
+/** 一键登录的隔离结论说明（纯函数，页面只渲染它给的句子或 null）。
+ *  「未隔离」有两种完全不同的原因：引擎根本没有隔离方言（只能换浏览器），或本机往目标域没有出网路、
+ *  冷档案窗口注定是空白页（配好系统代理即可回到隔离档）。合成一句就把可修的那一半说丢了。 */
+export function loginIsolationText(s?: ProxyLoginStart | null): string | null {
+  if (!s || s.isolated !== false) return null;
+  if (s.isolatedBasis === "cold-profile-blocked") {
+    return "本次登录没有用隔离窗口：" + (s.isolatedDetail || "本机直连授权域不通且没有在用代理")
+      + "。已在现有浏览器窗口打开，登录完成后请手动清理账号；在系统里配好代理即可回到隔离登录。";
+  }
+  if (s.isolatedBasis === "engine-not-isolatable") {
+    return "默认浏览器不支持隔离窗口：本次登录会带现有登录态，换账号请先在该浏览器退出";
+  }
+  return "本次登录未使用隔离窗口" + (s.isolatedDetail ? "：" + s.isolatedDetail : "，换账号请先在浏览器里退出");
 }
 
 /** 结果分档（纯函数）：三档语义在此唯一一次映射为界面档位。
@@ -82,12 +102,17 @@ export function evidenceDetail(ev?: OpenExternalResult["evidence"]): string | nu
 export function classifyOpenResult(r?: OpenExternalResult | null): { tier: OpenTier; url: string | null; title: string; detail: string | null } {
   const url = typeof r?.url === "string" && r.url ? r.url : null;
   const detail = evidenceDetail(r?.evidence);
+  // 内核给出 message 的非确认档（如冷档案降档：已在既有窗口打开 + 该怎么收尾）必须上屏。
+  //   confirmed 档把 message 当标题，另两档标题是固定的契约句，故 message 并进细节行 ——
+  //   丢掉它就等于「内核解释了原因，界面上却只剩一句没拿到证据」。
+  const msg = typeof r?.message === "string" && r.message ? r.message : null;
+  const withMsg = [msg, detail].filter(Boolean).join(" | ") || null;
   if (!r || r.ok !== true) {
-    return { tier: "failed", url, detail, title: (r && r.error) || "无法调起系统浏览器，请手动打开下方地址" };
+    return { tier: "failed", url, detail: withMsg, title: (r && r.error) || "无法调起系统浏览器，请手动打开下方地址" };
   }
   if (r.confirmed === true) return { tier: "confirmed", url, detail, title: r.message || "已在系统浏览器打开" };
   return {
-    tier: "handed-off", url, detail,
+    tier: "handed-off", url, detail: withMsg,
     title: "已把地址交给系统，但没拿到窗口出现的证据" + (url ? "：没看到浏览器就点下方地址" : ""),
   };
 }
