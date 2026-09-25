@@ -1,5 +1,50 @@
 ## [未发布]
 
+### 外部打开底座重建：先枚举系统里的浏览器，再谈交给谁（Windows 真机「交给系统了但屏幕上什么都没有」）
+
+真机现象：面板显示「已把地址交给系统」，`explorer.exe | dispatcher | 退出码不作证据 | exit 1`，屏幕上
+没有任何页面。上一批把退出码的解释规则改对了，于是这句失败变成如实的「没打开」——但**如实的失败不是修复**。
+真正的缺陷在产品从没问过「这台机器装了哪些浏览器」：它只问一句默认浏览器是谁（而且问的是 Win7 起就被
+系统忽略的 `Clients\StartMenuInternet` **默认值**），问不到就退向系统 shell 冒开，冒开的返回码又不携带
+信息。所有对外打开的逻辑还散在各处——面板一条、反代登录一条、实例 Web 一条，各自解释 argv 结局。
+
+按「先知道系统环境有什么，才谈得上触发什么」把这条能力拆成四层，每层只干一件事、且全仓只有一处：
+
+- **L1 探测** 新文件 `src/platform/os/browser-inventory.js`：三端各自实现、同一输出契约
+  `{browsers[], defaultId, defaultSource, probed[]}`。win32 取五源并集（`UrlAssociations\https\UserChoice`、
+  `Classes\https` 协议关联及其 `shell\open\command`、`StartMenuInternet` **子键目录**、`RegisteredApplications`
+  能力路径、`App Paths`，HKCU 先于 HKLM），`REG_EXPAND_SZ` 自行展开——旧实现只匹配 `REG_SZ`，等于把
+  浏览器安装器写下的那批注册当「没注册」，是第二个静默漏检；darwin 用 `NSWorkspace.urlsForApplicationsToOpenURL`
+  （macOS 12+）列清单、`URLForApplicationToOpenURL` 定默认；linux 扫 XDG/flatpak/snap 的 `.desktop`
+  主条目 `Exec`（`env VAR=x bin` 去壳、`%u`/`%U` 字段码剔除、裸名按 PATH 解析成绝对路径）。
+  每条来源都进 `probed` 留痕，本体不可执行即剔除并留痕；单条查询 1.5s 上界、异常一律降级为
+  `probe-error`，**探测永不是用户可见的失败原因**；结果按平台缓存 60s，面板轮询不反复触发注册表与目录扫描。
+- **L2 选路** `pickLauncher` + `formOfBin` + `openPlan` / `isolatedPlan`：只有两条判据——系统自己说得出的
+  默认项（按来源高低，晚到的低优先级来源不得翻案）、穷举后的唯一解。多候选而系统说不出默认项时返回
+  `no-default` 并据此显式 `no-launcher`，**不再按清单顺序猜一个**（猜错就是「面板说开了、屏幕上是另一个
+  浏览器」，比失败更难查）。默认项与清单同一份数据（`id` 恒为归一后的可执行文件路径），否则选路永远命中不了。
+- **L3 执行**：删除 Windows 那条向系统 shell 冒开的未文档化退路（`openCommand('win32')` 现返回 `null`，
+  只直启探测解析出的本体），并让每次打开——成功或失败——都带 `evidence.diagnostics`
+  （`pick`/`bin`/`default{id,source}`/`found[]`/`probed[]`）。真机报障时面板那一行小字就是定档依据。
+  非 `confirmed` 档的呈现从「启动形态」扩到「探测结论」，随结果的只有字符串，攻击面不随之变宽。
+- **L4 消费面**：新增只读诊断端点 `GET /env/browsers`（与打开动作分属两个端点：读清单只要同源防护，
+  执行动作还要回环身份；该端点零 `spawn`），面板 `evidenceDetail` 消费 `evidence.diagnostics`。
+- **散落补丁清理**：图形会话可用性（`/tmp/.X11-unix`、`wayland-*` 探测）此前在 `platform/os/desktop.js`
+  与 `router/ops/browser.js` 各写一份，现收归 `desktop.js` 单点（`sessionEnv` / `sessionAvailable`），
+  路由侧只留一行委托；`browser.js` 不再持有平台事实（不 require `fs`/`exec`、不出现注册表键与脚本）。
+  全仓 `src/` 里那条被删掉的冒开命令的字面量清零——注释里留着，下一个人就会以为它是可恢复的退路。
+- **能力零损伤**：`error` 事件、`binAvailable` 预检、`no-desktop-session`、`unsupported-platform`、
+  linux/darwin 调度器非 0 退出、以及登录用的隔离窗口参数（独立 profile / 无痕 / `--no-remote`）全部保留；
+  `other` 引擎（Safari、snap 包装器）在两族引擎之外仍交回该平台可信调度器，不因 Windows 收口而砍掉。
+- **门禁换锚 + 真能红**（不新增链条目）：X-8 重写为「探测夹具 + 选路 + 计划」——三平台各一组注入夹具
+  （`runOut`/`readFile`/`exists`/`listDir`/`canExec`/`env`/`home`），含两条反向样本：那个被系统忽略的默认值
+  作为唯一来源时必须 `defaultId=null` 且选路落 `no-default`；`explorer.exe` 字样在全仓 `src/` 出现即红。
+  X-10 补 win32 直启的 handedOff/诊断必达两组，并把「探测清单为空」「多候选无默认项」判成
+  `no-launcher` 且诊断在场；X-11 钉四层归属（平台事实只写一次、执行层不碰探测原语、图形会话判定单点、
+  只读端点与动作端点判据不同源）；P-5/A2/`api-contract` OB 组同步跟上，各带反向样本。
+- **未收口**：Windows 真机的落档证据（面板那一行诊断结论）仍待取——CI 四平台矩阵只能证明判据成立，
+  不能证明真机注册表读得到东西。
+
 ## [0.1.6-BETA.12]（2026-09-25）
 
 ### 外部打开的「退出码何时算证据」收口为一条双向规则（Windows 真机报「窗口未出现（1）」）

@@ -114,9 +114,13 @@ function createOAuthOps(deps) {
       st._ccLogin = null;
       // authUrl 与 error 分字段回：面板必须能把地址原样交给用户（复制/手动打开），
       // 不再把 URL 埋在错误文案里。
+      // authUrl 与 error 分字段回：面板必须能把地址原样交给用户（复制/手动打开），
+      // 不再把 URL 埋在错误文案里。evidence 一并交出：里面是平台层的探测留痕，
+      // 没有它，「为什么没弹出浏览器」在界面上永远只剩「再点一次」。
       return {
         ok: false, authUrl, url: authUrl, opened: false, confirmed: false, handedOff: false,
         reason: evidence.reason || 'no-launcher',
+        evidence: evidence.evidence || null,
         error: (evidence.error || '无法调起系统浏览器') + '，请手动打开下方地址完成授权',
       };
     }

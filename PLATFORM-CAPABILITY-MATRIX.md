@@ -53,7 +53,7 @@ macOS 的**壳自启 / 壳自愈从项目奠基提交（`8867942`, 2026-09-01）
 | C5 | 端口 → PID 反查 | ✅ `/proc` + `ss` 兜底 | ✅ `lsof` | ✅ `netstat -ano` | `platform/os/pidlookup/index.js` | A2 |
 | C6 | 进程列表 / 命令行读取 | ✅ `pgrep -af` | ✅ `pgrep` + `ps` | ✅ CIM | `platform/os/pidlookup/index.js` | A2 |
 | C7 | 桌面通知 | ✅ `notify-send` | ✅ `osascript` | ✅ PowerShell 气泡 | `platform/os/notify.js` | A2 |
-| C8 | 打开浏览器（外部打开）：**唯一出口** `openBrowser`（非隔离）/ `launchIsolated`（登录隔离窗口，引擎 = **系统默认浏览器**，隔离参数按解析结果的引擎族展开），两者共用同一结果词汇 `{ok, confirmed, handedOff, reason, error, message, url, evidence}`。三档语义：`confirmed`=本次启动确定拥有自己的窗口且它以 0 退出（判据只写在 `ownsItsWindow` 一处，双向生效）；`handedOff`=只证明交出去了（win32 两种形态与被既有实例吸收的裸 URL 直启都属此类）；`ok:false`=显式失败并带 reason 码 | ✅ `xdg-settings`+`.desktop` Exec 解析 → `xdg-open` 兜底；无图形会话时 `capabilities()` 实测把 `openBrowser` 覆写为 false 并报 `no-desktop-session` | ✅ LaunchServices 解析直启 → `open` 兜底 | ✅ 注册表 `Clients\StartMenuInternet` 解析直启 → `explorer.exe` 兜底（**两形态的退出码都不作证据，故恒只到 `handedOff`**） | `platform/os/browser.js`（结果词汇唯一构造点 `outcome()`；argv 永不裹 shell，win32 用 `explorer.exe` 直启而非 `cmd /c start`，URL 不被二次解析） | A1·A2（能力位 + 实现产物）· A3（未知平台显式 `unsupported-platform`）· P-5（声明 + `exitIsEvidence` 取证档位）· X-8/X-10/X-11（计划、三档行为、唯一出口、证据细节下达屏幕）· `api-contract` OW 组（HTTP 原样透传）· `ui` `externalOpen.test.ts`（面板分档判据与 `evidenceDetail`） |
+| C8 | 打开浏览器（外部打开）：**四层各一处** —— 探测 `platform/os/browser-inventory.js`（这台机器装了哪些浏览器、默认是哪个、每条结论来自哪条系统事实）→ 选路 `pickLauncher`（只有「系统说得出的默认项」与「穷举唯一解」两条，多候选且系统说不出默认项即显式失败，不按清单顺序猜）→ 执行 `openBrowser`（非隔离）/ `launchIsolated`（登录隔离窗口，隔离参数按解析结果的引擎族展开）→ 消费面（HTTP 与面板原样透传同一结果词汇 `{ok, confirmed, handedOff, reason, error, message, url, evidence}`）。三档语义：`confirmed`=本次启动确定拥有自己的窗口且它以 0 退出（判据只写在 `ownsItsWindow` 一处，双向生效）；`handedOff`=只证明交出去了（裸 URL 直启可被既有实例吸收，故 win32 全部形态都属此类）；`ok:false`=显式失败并带 reason 码 + 探测诊断 | ✅ 扫 XDG/flatpak/snap 的 `.desktop`（主条目 `Exec` 还原真实命令、`env` 包装去壳、裸名按 PATH 解析）+ `mimeapps.list`/`xdg-settings` 定默认；`other` 引擎（snap 包装器）交回 `xdg-open`；无图形会话时 `capabilities()` 实测把 `openBrowser` 覆写为 false 并报 `no-desktop-session` | ✅ `NSWorkspace.urlsForApplicationsToOpenURL`（macOS 12+，不可用时回落单默认值老路）给清单、`URLForApplicationToOpenURL` 给默认；本体不可执行即剔除并留痕；Safari 等 `other` 引擎走 `open` | ✅ 五源并集：`UrlAssociations\https\UserChoice`（用户自己选的）优先，其次 `Classes\https` 协议关联（系统真正把地址交给谁），再 `Clients\StartMenuInternet` **子键目录**（其默认值自 Win7 起被系统忽略，故只当目录用）、`RegisteredApplications`、`App Paths`；`REG_EXPAND_SZ` 自行展开。**没有可信调度器**，只直启解析出的本体；选不出即 `no-launcher` 并带诊断 | `platform/os/browser-inventory.js`（探测：平台事实只写一次、每条来源都留痕、按平台缓存）+ `platform/os/browser.js`（选路与执行：结果词汇唯一构造点 `outcome()`；argv 永不裹 shell） | A1·A2（能力位 + 探测层分平台实现与留痕/缓存）· A3（未知平台显式 `unsupported-platform`）· P-5（声明 + `exitIsEvidence` 取证档位 + 旧冒开形态判据）· X-8（探测夹具、选路、计划）· X-10（三档行为 + 诊断必达 `evidence`）· X-11（分层唯一出口的源码级不变量）· `api-contract` OW/OB 两组（三档透传 + 只读清单面）· `ui` `externalOpen.test.ts`（面板分档判据与 `evidenceDetail` 把探测诊断摊上屏幕） |
 | C9 | 宿主服务单元管理（systemd 单元语义：daemonReload / 持久单元 / failed 复位） | ✅ systemd | ❌ **显式**（launchd 无 provider；实例舱由 `portable` 档承担，见 C10，不冒充服务管理器） | ❌ **显式**（同左；Windows 服务无 provider，实例舱走 `portable` 档） | `platform/os/service.js` | A3 |
 | C10 | 沙箱实例舱（两维拆分声明：拉起 `sandboxLaunch` / 限额执行 `sandboxEnforcement`；provider 分档见 `service.current()`） | ✅ 拉起 + 限额 `cgroup`（`systemd-run` transient；运行期动态限额 `systemctl --user set-property --runtime`）；无 user-systemd 的容器/WSL1 自动落 `portable` 软档 | ✅ 拉起 + 限额 `supervise`（`portable` provider：端口反查 + cmdline 锚点认领，软档无内核强制） | ✅ 拉起 + 限额 `supervise`（同 macOS；未知平台仍**显式** launch=false、enforcement=none） | `platform/os/{service,portable}.js`（provider 分档与 dispatch） + `platform/os/capability-profile.js` + `domains/instance/{sandbox,governor}.js` + `platform/os/resstats.js`（W2 采样观测；governor 决策/准入三平台同跑；W3 落地运行期限额动态化：systemd `setLimits` 下发，portable `setLimits` 恒 false = 档位声明而非缺陷） | A1·A2·A3 · P-5 · X-3·X-3b·X-3c·X-3d |
 | C11 | **守卫**开机自启 | ✅ systemd + linger | ✅ LaunchAgent | ✅ schtasks | `platform/os/autostart/index.js` | A2 |
@@ -277,6 +277,41 @@ pidlookup 的认领/停止语义矩阵）· X-3c（真实宿主拉起→监听�
 结果——面板、反代登录、实例 Web 各自调 `spawn`/`window.open`，各自把「没报错」解释成「已打开」。
 用户看到的就是「面板显示成功，屏幕上什么都没有」，而且再也拿不到那个地址。
 
+**分层固定，每层只干一件事**（任何一层都不越层：先知道系统里有什么，才谈得上交给谁，才谈得上证据）：
+
+| 层 | 归属 | 只回答 | 不得做 |
+|---|---|---|---|
+| L1 探测 | `platform/os/browser-inventory.js` | 这台机器装了哪些浏览器、默认是哪个、每条结论从哪条系统事实读来 | 不 launch、不猜命令、查不到时不替用户挑一个试试 |
+| L2 选路 | `browser.js#pickLauncher` / `formOfBin` / `openPlan` / `isolatedPlan` | 这次交给清单里的哪一条、以何种形态 | 不碰系统事实、不点名任何浏览器 |
+| L3 执行 | `browser.js#openBrowser` / `launchIsolated` + `observeSpawn` | spawn 一次并如实回报拿到的是哪一档证据 | 不把「没报错」改写成「已打开」 |
+| L4 消费面 | `GET /env/browsers`（只读）+ `evidence.diagnostics` | 把 L1 的结论与 L3 的档位原样摊到屏幕上 | 不另立第二套语义、不改写 reason 码 |
+
+### S-0 探测层：先知道系统里有什么浏览器
+
+`platform/os/browser-inventory.js` 是**唯一**问系统「装了哪些浏览器」的地方，三端各自实现、共用同一
+输出契约 `{browsers[], defaultId, defaultSource, probed[]}`：
+
+| 平台 | 清单来源（取并集） | 默认项来源（有高低，晚到的低优先级来源不得翻案） |
+|---|---|---|
+| win32 | `UrlAssociations\https\UserChoice` 指向的 ProgID、`Classes\https` 协议关联、`Clients\StartMenuInternet` **子键目录**、`RegisteredApplications` 能力路径、`App Paths`（HKCU 先于 HKLM） | `UserChoice`（用户自己选的）> `Classes\https` 的 `shell\open\command`（系统真正把地址交给谁）> 穷举唯一解 |
+| darwin | `NSWorkspace.urlsForApplicationsToOpenURL`（macOS 12+ 文档化「可打开该 URL 的全部应用，最佳匹配在前」），不可用时只交得出下面那条默认值查询的结果 | `URLForApplicationToOpenURL`（同一份清单里标记默认项）> 穷举唯一解 |
+| linux | XDG/flatpak/snap 各 `.desktop` 目录（`Categories` 含 `WebBrowser` 且解析出的可执行文件属两族引擎） | `mimeapps.list` 规范顺序（用户级先于系统级）> `xdg-settings` > 穷举唯一解 |
+
+三条硬要求：
+
+1. **每条来源都留痕**：`probed[{source, detail}]` 记下每个来源答了什么（读到几项、无输出、指向的文件
+   不可执行）。真机报障时这一份就是定档依据，不必回去读代码。
+2. **只认能落地的条目**：注册表/清单报了但本体不可执行的一律剔除并留痕。`id` 恒为归一后的可执行文件
+   路径（win32 反斜杠小写、其余 POSIX 小写），`defaultId` 靠它在清单里定位——所以「默认项」与「清单」
+   必须同源，否则选路层永远命中不了。
+3. **探测永不是用户可见的失败原因**：单条查询 1.5s 上界、任何异常都降级为一条 `probe-error` 留痕，
+   最坏结果是清单为空 → 执行层显式 `no-launcher`；结果按平台缓存 60s（面板轮询不得反复触发注册表/目录
+   扫描），`?force=1` 与 `invalidateBrowsers()` 是安装/卸载浏览器后的两个入口。
+
+跨宿主纯度（同一份测试要在四平台 runner 上同判）：linux 侧路径拼接恒用 `path.posix.join`、PATH 恒按
+`':'` 拆，不经宿主 `path.join`；可执行性判定只有一个 `canExec` 注入缝（文件在 **且** 有执行位），
+不写成 `exists || canExec`。
+
 ### S-1 唯一出口 + 三档诚实语义
 
 内核侧外部打开**只有一个出口**：`platform/os/browser.js#openBrowser`（非隔离）与
@@ -285,16 +320,18 @@ pidlookup 的认领/停止语义矩阵）· X-3c（真实宿主拉起→监听�
 | 档位 | 判据（不是文案） | 允许说 | 禁止说 |
 |---|---|---|---|
 | `confirmed` | 本次启动**确定拥有自己的窗口**（`ownsItsWindow`）且它以 0 退出 | 「已在系统浏览器打开」 | —— |
-| `handedOff` | 命令已交出、`spawn` 没报错，但退出码不属于「窗口是否出现」这个事实：win32 的任何形态、被既有实例吸收的裸 URL 直启、观测窗口内仍存活 | 「已把地址交给系统，无法确认窗口」 | 「已打开」 |
-| `ok:false` | 明确失败：`error` 事件、`binAvailable` 预检不过、**可信形态**非 0 退出或被信号终止 | 一句给用户的说法 + `reason` 码 + **地址** | 静默 `ok:true` |
+| `handedOff` | 命令已交出、`spawn` 没报错，但退出码不属于「窗口是否出现」这个事实：被既有实例吸收的裸 URL 直启、win32 的全部形态（只剩直启）、观测窗口内仍存活 | 「已把地址交给系统，无法确认窗口」 | 「已打开」 |
+| `ok:false` | 明确失败：`error` 事件、`binAvailable` 预检不过、选不出启动对象（探测清单为空，或多候选且系统说不出默认项）、**可信形态**非 0 退出或被信号终止 | 一句给用户的说法 + `reason` 码 + **地址** + 探测诊断 | 静默 `ok:true` |
 
 **退出码何时算证据，是一条双向规则，只写在 `platform/os/browser.js#ownsItsWindow` 一处**：只有本次启动
 确定拥有自己的窗口（即确定是新实例）时，它的退出码才同时具备「0 算接收、非 0 算拒绝」两种证明力。
-不可信形态的退出码两个方向都不许进判决——win32 正是这条被写反过：`explorer.exe` 的返回码与地址是否打开无关
-（与地址是否打开无关），旧实现「非 0 即失败」于是把已经打开的页面报成「窗口未出现」。同一处还解释了为什么
-裸 URL 直启 chromium/firefox 派生系也不算拥有窗口：浏览器已在运行时，本次进程只把地址转交给既有实例。
-`evidence.ownsWindow` 随结果一起交出，面板在 `handedOff`/`ok:false` 两档把启动形态（`bin | via | exit`）
-摊在地址行下面——没有这一行，真机报错就只剩一句无法定位的文案。
+不可信形态的退出码两个方向都不许进判决——win32 正是这条被写反过：系统 shell 的 URL 交付命令未文档化，
+其返回码与地址是否打开无关（真机现场返回 1），旧实现「非 0 即失败」于是把已经打开的页面报成「窗口未出现」。
+那条冒开路径已整体删除（win32 的 `openCommand` 返回 `null`，只直启探测解析出的本体），故该平台恒不可
+取证。同一处还解释了为什么裸 URL 直启 chromium/firefox 派生系也不算拥有窗口：浏览器已在运行时，本次进程
+只把地址转交给既有实例。`evidence.ownsWindow` 与 `evidence.diagnostics`（`pick`/`bin`/`default`/`found`/
+`probed`）随结果一起交出，面板在 `handedOff`/`ok:false` 两档把启动形态与探测结论摊在地址行下面——
+没有这一行，真机报错就只剩一句无法定位的文案。
 
 `reason` 码是契约、文案是呈现：`unsafe-url` / `no-launcher` / `spawn-failed` / `exit-nonzero` /
 `killed-by-signal` / `no-desktop-session` / `unsupported-platform`。
@@ -325,6 +362,7 @@ patch 是否生效取决于消费方是解构还是按属性取用，静默失�
 | `POST /env/open-url` | 面板请内核代开：三档结果原样透传；`ok:false` 映射 **500**；非回环来源 403 |
 | 智能路由一键登录 `proxyLoginStart` | `{ok, opened, confirmed, handedOff, reason, url=authUrl, isolated}`；打不开时文案直接接「请手动打开下方地址完成授权」 |
 | 隔离窗口调用方（`router/ops/browser.js`） | 返回 `{profile, result}`，不再只回一个 profile（丢弃 result 即丢弃失败原因） |
+| `GET /env/browsers`（只读探测面） | L1 的结论原样交出：`{platform, cached, default:{id,source}, browsers[{id,name,engine,bin,sources,isDefault}], probed[]}`；跨站 403、探测异常 500，**不启动任何浏览器**（读探测面与执行动作分属两个端点，判据也不同：后者要回环身份） |
 
 ### S-4 面板：一条选路判据 + 任何一档都把地址交到眼前
 
@@ -344,21 +382,29 @@ patch 是否生效取决于消费方是解构还是按属性取用，静默失�
 面板经 postMessage 桥请壳主帧代开（`dsh:open-url` / `dsh:open-url-result`）。它与内核那条是同一件事的
 两套语义（回执有无、超时算不算成功各说各话），而壳与内核恒在同一台机器上，故代开方归内核。
 
-### 反模式（本标准的四条禁止项，都有历史实例）
+### 反模式（本标准的五条禁止项，都有历史实例）
 
 1. 同步 `return true` / 「spawn 没抛错就算成功」。
 2. 端点恒 200，把失败折算成布尔或干脆丢掉结果。
-3. 各处自己 `window.open` / `shell.openExternal` / 自己拼 `cmd /c start`（第二出口 = 第二套语义）。
+3. 各处自己 `window.open` / `shell.openExternal` / 自己拼 `cmd /c start` / **绕过探测层自己拼一条命令
+   冒开**（第二出口 = 第二套语义；历史上 Windows 那条「向系统 shell 冒开」的退路就是这一类，已整体删除，
+   注释里也不留它的名字，免得下一个人以为它是可恢复的退路）。
    面板侧的例外只有一个、且有意保留：非回环来源时访客的浏览器根本不在内核那台机器上，
    此时 `openViaWindow` 是唯一正确的执行方（全仓只允许这一处，X-11 钉死）。
 4. 失败时不交出地址，让用户只能重复点击。
+5. 平台事实写在两处：探测之外的层再出现一次注册表键 / `LaunchServices` / `.desktop` 解析，
+   或按平台宣称取证能力（`openBrowser` 的档位表与行为分叉即「声明能开、实际乱试」）。
 
 ### 验证
 
-`platform-layer-portability-test` X-8（计划与取证档位）· X-10（三档行为 + `observeSpawn` 本体，
-全部注入假 spawn/observe，CI 不真起浏览器）· X-11（唯一出口的源码级不变量，含面板最后一环）；
-`four-platform-behavior-matrix` P-5；`platform-capability-audit` A1·A2·A3；
-`api-contract` OW/OU 两组（HTTP 契约：三档透传、500、地址在场、失败作废一次性码、跨站与已认证 LAN 访客的 403）；
+`platform-layer-portability-test` X-8（探测夹具：三平台来源并集、留痕、缓存与失效、选路、计划、取证档位，
+含「Win7 起被忽略的那个默认值不得再当默认读」的反向样本）· X-10（三档行为 + 诊断必达 `evidence` +
+`observeSpawn` 本体，全部注入假 spawn/observe，CI 不真起浏览器）· X-11（四层唯一出口的源码级不变量：
+平台事实只写一次、执行层不碰探测原语、图形会话判定单点、消费面注册单点，含面板最后一环）；
+`four-platform-behavior-matrix` P-5（声明 + `exitIsEvidence` + 旧冒开形态回流判据）；
+`platform-capability-audit` A1·A2·A3（A2 钉探测层的分平台实现、留痕、缓存与只读消费面）；
+`api-contract` OW/OU/OB 三组（HTTP 契约：三档透传、500、地址在场、失败作废一次性码、跨站与已认证 LAN 访客的
+403，以及只读清单面零启动副作用）；
 `token-contract-gate` TK-G6（令牌不得进 argv，动词集与真实出口对齐）；
-`ui` `externalOpen.test.ts`（分档判据 + 回环选路 + 弹窗被拦截判失败）。
+`ui` `externalOpen.test.ts`（分档判据 + 回环选路 + `evidenceDetail` 把探测诊断摊上屏幕 + 弹窗被拦截判失败）。
 

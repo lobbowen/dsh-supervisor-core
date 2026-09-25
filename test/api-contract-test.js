@@ -75,7 +75,23 @@ const { createServer } = require(path.join(ROOT, 'src', 'api', 'index'));
 //   test-safety-gate A 条记的形态（值绑定是否生效取决于消费方写法，patch 静默失效就跑真实副作用）。
 const argvUrls = [];
 let owCase = null; // (url) => 三档结果，或 'throw' 模拟出口抛错
+const browserCalls = [];
+// 探测层清单的契约形状（与 platform/os/browser-inventory.js 的 listBrowsers 产物同字段）：
+//   端点只负责原样交出，字段口径由平台层定；这里造一份，钉的是「边界没加工、没丢留痕」。
+const BROWSER_INVENTORY = {
+  ok: true, platform: 'win32', cached: false,
+  default: { id: 'c:\\program files (x86)\\microsoft\\edge\\application\\msedge.exe', source: 'userchoice' },
+  browsers: [
+    { id: 'c:\\program files (x86)\\microsoft\\edge\\application\\msedge.exe', name: 'msedge', engine: 'chromium',
+      bin: 'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe', sources: ['userchoice', 'startmenu-catalog'], isDefault: true },
+    { id: 'c:\\ff\\firefox.exe', name: 'firefox', engine: 'firefox', bin: 'C:\\FF\\firefox.exe', sources: ['app-paths'], isDefault: false },
+  ],
+  probed: [{ source: 'userchoice', detail: 'msedge' }, { source: 'app-paths', detail: 'firefox' }],
+};
 const fakeBrowser = {
+  // 只读探测面：端点必须原样交出清单（default/候选/留痕），且不得顺手触到打开出口。
+  listBrowsers: (o) => { browserCalls.push(o || {}); return BROWSER_INVENTORY; },
+  invalidateBrowsers: () => ({ ok: true }),
   openBrowser: async (url) => {
     argvUrls.push(url);
     if (owCase === 'throw') throw new Error('spawn blew up');
@@ -150,11 +166,25 @@ function req(method, p, body, hostHeader, extraHeaders, via) {
     r = await req('POST', '/instances/open-web', JSON.stringify({ id: 'sb1' }));
     check('OW 每次调用重新签发一次性码（成功路径不烧码：码要留给浏览器回 /open 换 cookie）', argvUrls[1] !== firstCode && r.code === 200, argvUrls[1]);
 
-    owCase = (url) => ({ ok: true, confirmed: false, handedOff: true, reason: null, error: null, message: '已把地址交给系统，但没拿到窗口出现的证据', url, evidence: { bin: 'explorer.exe', via: 'dispatcher', ownsWindow: false, exitCode: 1, exitSignal: null, error: null } });
+    // Windows 真机那一档：探测解析到默认浏览器本体后直启，其退出码在两个方向都不作证据
+    //   （explorer.exe 兜底已删除；直启可被既有实例吸收，故非 0 也不判失败）。
+    //   diagnostics 是「为什么没弹出」的唯一现场证据，端点不得把它裁掉。
+    owCase = (url) => ({ ok: true, confirmed: false, handedOff: true, reason: null, error: null, message: '已把地址交给系统，但没拿到窗口出现的证据', url, evidence: {
+      bin: 'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe', engine: 'chromium', via: 'browser', ownsWindow: false,
+      exitCode: 1, exitSignal: null, error: null,
+      diagnostics: { platform: 'win32', pick: 'userchoice', bin: 'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe',
+        default: { id: 'c:\\program files (x86)\\microsoft\\edge\\application\\msedge.exe', source: 'userchoice' },
+        found: [{ name: 'msedge', engine: 'chromium', via: 'userchoice+startmenu-catalog' }],
+        probed: [{ source: 'userchoice', detail: 'msedge' }] } } });
     r = await req('POST', '/instances/open-web', JSON.stringify({ id: 'sb1' }));
-    check('OW 移交档（win32 的退出码不作证据，真机 explorer.exe 以 1 返回）→ 200 但 confirmed:false，面板据此不说「已打开」',
+    check('OW 移交档（win32 直启探测到的默认浏览器，非 0 退出仍不作证据）→ 200 但 confirmed:false，面板据此不说「已打开」',
       r.code === 200 && r.body.ok === true && r.body.confirmed === false && r.body.handedOff === true
-      && r.body.evidence.bin === 'explorer.exe' && r.body.evidence.ownsWindow === false, JSON.stringify(r.body));
+      && /msedge\.exe$/.test(r.body.evidence.bin) && r.body.evidence.ownsWindow === false && r.body.evidence.exitCode === 1,
+      JSON.stringify(r.body));
+    check('OW 把探测留痕（diagnostics 的 pick/found/default）原样交给面板 —— 真机报障据此定档',
+      !!r.body.evidence.diagnostics && r.body.evidence.diagnostics.pick === 'userchoice'
+      && r.body.evidence.diagnostics.found.length === 1
+      && r.body.evidence.diagnostics.default.source === 'userchoice', JSON.stringify(r.body.evidence.diagnostics));
 
     owCase = (url) => ({ ok: false, confirmed: false, handedOff: false, reason: 'no-launcher', error: '未找到可用的浏览器启动命令，请手动打开该地址', message: null, url, evidence: { bin: 'xdg-open', via: 'dispatcher', exitCode: null, exitSignal: null, error: null } });
     r = await req('POST', '/instances/open-web', JSON.stringify({ id: 'sb1' }));
@@ -196,9 +226,31 @@ function req(method, p, body, hostHeader, extraHeaders, via) {
     r = await req('POST', '/env/open-url', JSON.stringify({ url: 'http://a.b/' }));
     check('OU 出口抛错 → 结构化 500 且地址仍在场',
       r.code === 500 && r.body.reason === 'spawn-failed' && r.body.url === 'http://a.b/', r.code + ' ' + JSON.stringify(r.body));
+
+    // OB 组：只读探测面 GET /env/browsers。它是「先知道系统里有什么浏览器，再谈打开」这条标准的界面落点
+    //   —— 真机报「没弹出网页」时，这一份清单（默认项来源 + 每条系统查询的留痕）就是定档依据。
+    const before = argvUrls.length;
+    r = await req('GET', '/env/browsers');
+    check('OB 清单端点 200 且字段原样交出（default/候选/留痕三层齐备，边界不加工）',
+      r.code === 200 && r.body.ok === true && r.body.platform === 'win32'
+      && r.body.default && r.body.default.source === 'userchoice'
+      && r.body.browsers.length === 2 && r.body.browsers.filter((b) => b.isDefault).length === 1
+      && r.body.browsers.every((b) => Array.isArray(b.sources) && b.sources.length && b.engine)
+      && r.body.probed.length === 2, r.code + ' ' + JSON.stringify(r.body));
+    check('OB 反向：清单是只读面，一次都没触到打开出口（argv 里不得多出一条地址）',
+      argvUrls.length === before, 'openBrowser 调用 ' + (argvUrls.length - before) + ' 次');
+    const evilBrowsers = await new Promise((resolve) => {
+      const rr = http.request({ host: '127.0.0.1', port: API_PORT, path: '/env/browsers', method: 'GET', headers: { 'Origin': 'http://evil.example', 'Host': '127.0.0.1:' + API_PORT } }, (res) => { res.resume(); res.on('end', () => resolve(res.statusCode)); });
+      rr.on('error', () => resolve(0)); rr.end();
+    });
+    check('OB 跨站 Origin 拒绝 403（本机装了哪些浏览器不得被任意网页读走）', evilBrowsers === 403, String(evilBrowsers));
+    r = await req('GET', '/env/browsers?force=1');
+    check('OB force=1 透传给探测层（刚装/卸载浏览器后绕开探测缓存）',
+      r.code === 200 && browserCalls.some((c) => c.force === true), JSON.stringify(browserCalls));
   } finally {
     // 反空转：注入的出口若一次都没被叫到，整组三档断言都只是对着空气判绿。
     check('OW/OU 两组真的驱动了注入出口（出口未被调用即整组空转）', argvUrls.length >= 7, 'calls=' + argvUrls.length);
+    check('OB 组真的驱动了探测面（清单端点没被叫到即该组空转）', browserCalls.length >= 2, 'calls=' + browserCalls.length);
   }
 
   // 跨站 Origin 仍拒绝（安全契约不回归）
