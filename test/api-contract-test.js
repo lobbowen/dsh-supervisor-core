@@ -283,13 +283,18 @@ function req(method, p, body, hostHeader, extraHeaders, via) {
     r = await req('POST', '/settings/external-browser', JSON.stringify({ id: '' }));
     check('PR POST 空串=清除偏好 → 200 且 configured:false（清除与拒写是两种语义，不得都回 400）',
       r.code === 200 && r.body.ok === true && r.body.configured === false, r.code + ' ' + JSON.stringify(r.body));
-    const badBefore = envPrefCalls.length;
+    const rejectBefore = envPrefCalls.length;
     r = await req('POST', '/settings/external-browser', JSON.stringify({ id: 'C:\\nope.exe' }));
     check('PR POST 非候选 id → 500 且带 error（写下去也不会生效，必须当场说清楚）',
       r.code === 500 && r.body.ok === false && !!r.body.error, r.code + ' ' + JSON.stringify(r.body));
+    // 拒写的判据只有一份（门面上的 checkPreference）：边界要是自己抄一份，两处判据迟早分叉。
+    //   所以这一档必须真的走到门面一次，再由门面把「不在候选里」说回来。
+    check('PR 非候选 id 确实走到门面判据一次（边界不自己复述拒写理由）',
+      envPrefCalls.length === rejectBefore + 1, 'calls=' + envPrefCalls.length);
+    const missingBefore = envPrefCalls.length;
     r = await req('POST', '/settings/external-browser', JSON.stringify({}));
     check('PR 反向：缺 id 字段 → 400 且一次都没写（漏字段不得被当成清除偏好）',
-      r.code === 400 && r.body.ok === false && envPrefCalls.length === badBefore, r.code + ' ' + envPrefCalls.length);
+      r.code === 400 && r.body.ok === false && envPrefCalls.length === missingBefore, r.code + ' ' + envPrefCalls.length);
   } finally {
     // 反空转：注入的出口若一次都没被叫到，整组三档断言都只是对着空气判绿。
     check('OW/OU 两组真的驱动了注入出口（出口未被调用即整组空转）', argvUrls.length >= 7, 'calls=' + argvUrls.length);
