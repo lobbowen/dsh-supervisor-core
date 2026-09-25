@@ -67,12 +67,14 @@ function expandEnvVars(value, env) {
   return String(value).replace(/%([^%]+)%/g, (all, name) => (e[name] === undefined ? all : e[name]));
 }
 
-/** 注册表 open\command 命令行 -> 可执行文件路径（纯函数；带引号与裸 .exe 两种形态）。 */
+/** 注册表 open\command 命令行 -> 可执行文件路径（纯函数；带引号与裸 .exe 两种形态）。
+ *  未加引号时路径本身也可以带空格（注册表里的 REG_EXPAND_SZ 常这么写），所以取「第一个 .exe 截止处」，
+ *  而不是首个空白 token —— 后者会把 `C:\Program Files (x86)\...\msedge.exe -- "%1"` 读成 `C:\Program`。 */
 function exeFromCmdLine(cmdLine) {
   const s = String(cmdLine || '');
   let m = s.match(/^\s*"([^"]+\.exe)"/i);
   if (m) return m[1];
-  m = s.match(/^\s*(\S+\.exe)/i);
+  m = s.match(/^\s*(.*?\.exe)/i);
   return m ? m[1] : null;
 }
 
@@ -110,12 +112,13 @@ function regSubkeys(runner, note, key) {
 // win32 的 App Paths 候选：只列厂商公开安装的 exe 名（该键是文档化的安装位置，逐个查询即枚举）。
 const WIN_APP_PATHS = ['msedge.exe', 'chrome.exe', 'firefox.exe', 'brave.exe', 'opera.exe', 'vivaldi.exe', 'chromium.exe', 'thorium.exe', 'librewolf.exe'];
 
-/** ProgID -> 可执行文件：HKCU 的 Classes 优先（per-user 安装就写在这里），再 HKLM。 */
-function winExeOfProgId(runner, note, progId) {
+/** ProgID -> 可执行文件：HKCU 的 Classes 优先（per-user 安装就写在这里），再 HKLM。
+ *  reg.exe 不展开 %VAR%，且值是命令行而非路径，两处都得先展开再取本体。 */
+function winExeOfProgId(runner, note, progId, env) {
   if (!safeRegKeyPart(progId)) return null;
   for (const root of ['HKCU\\Software\\Classes', 'HKLM\\Software\\Classes']) {
     const cmd = regValue(runner, note, root + '\\' + progId + '\\shell\\open\\command');
-    const exe = exeFromCmdLine(cmd);
+    const exe = cmd ? exeFromCmdLine(expandEnvVars(cmd, env)) : null;
     if (exe) return exe;
   }
   return null;
@@ -137,7 +140,9 @@ function probeWin(d) {
   const keyOf = (exe) => String(exe || '').toLowerCase().replace(/[\\/]/g, '\\');
   const push = (exe, how) => {
     const full = expandEnvVars(exe, env).trim();
-    if (!/\.exe$/i.test(full)) return null;
+    // 来源报了但不是本体路径（例如 App Paths 的默认值按规范写的是安装目录）：留痕而不入册，
+    //   否则真机上「明明注册过却没探到」就成了无从解释的黑箱。
+    if (!/\.exe$/i.test(full)) { note(how, '来源给出的不是 exe 路径: ' + full); return null; }
     const k = keyOf(full);
     const hit = found.get(k);
     if (hit) { if (!hit.sources.includes(how)) hit.sources.push(how); return hit; }
@@ -165,6 +170,10 @@ function probeWin(d) {
     if (item && r < defRank) { defRank = r; defaultId = item.id; defaultSource = how; }
   };
 
+  // 注册表里 open\command 的两处固有变形：reg.exe 不展开 %VAR%，值本身是命令行而非路径。
+  //   任何一条来源取到的值都必须过这道手，否则「探到了却认不出」会以空清单的形式复现本轮的缺陷。
+  const cmdToExe = (raw) => (raw ? exeFromCmdLine(expandEnvVars(raw, env)) : null);
+
   const uc = regValue(runOut, note, 'HKCU\\Software\\Microsoft\\Windows\\Shell\\Associations\\UrlAssociations\\https\\UserChoice', 'ProgId');
   if (uc) addProgId(uc, 'userchoice');
   // https 协议关联本体（HKCU 的 per-user 覆盖先于 HKLM）：默认值是处理该协议的 ProgID，其
@@ -174,14 +183,17 @@ function probeWin(d) {
   for (const root of ['HKCU\\Software\\Classes', 'HKLM\\Software\\Classes']) {
     const pid = regValue(runOut, note, root + '\\https');
     if (pid) addProgId(pid, 'scheme-association');
-    const cmd = regValue(runOut, note, root + '\\https\\shell\\open\\command');
-    const exe = cmd && exeFromCmdLine(expandEnvVars(cmd, env));
+    const exe = cmdToExe(regValue(runOut, note, root + '\\https\\shell\\open\\command'));
     if (exe) setDefault(push(exe, 'scheme-association'), 'scheme-association');
   }
+  // StartMenuInternet 的子键名就是 ProgID。它的 open\command 既写在目录键下（文档化位置），
+  //   也常只在 Classes\<ProgID> 下有一份（per-user 安装、部分发行版），两处都认才叫枚举；
+  //   只查一处等于把第二类装机形态整个漏掉，而它正是本轮第二台机器上「装了却探不到」的形状。
   for (const name of regSubkeys(runOut, note, 'HKLM\\SOFTWARE\\Clients\\StartMenuInternet')) {
     addProgId(name, 'startmenu-catalog');
-    const direct = regValue(runOut, note, 'HKLM\\SOFTWARE\\Clients\\StartMenuInternet\\' + name + '\\shell\\open\\command');
-    if (direct) push(direct, 'startmenu-catalog');
+    const exe = cmdToExe(regValue(runOut, note, 'HKLM\\SOFTWARE\\Clients\\StartMenuInternet\\' + name + '\\shell\\open\\command'))
+      || winExeOfProgId(runOut, note, name, env);
+    if (exe) push(exe, 'startmenu-catalog');
   }
   for (const root of ['HKLM\\SOFTWARE', 'HKCU\\SOFTWARE']) {
     for (const capPath of regValueTargets(runOut, note, root + '\\RegisteredApplications')) {
@@ -199,7 +211,7 @@ function probeWin(d) {
     }
   }
   for (const [pid, how] of progIds) {
-    const exe = winExeOfProgId(runOut, note, pid);
+    const exe = winExeOfProgId(runOut, note, pid, env);
     if (!exe) continue;
     const item = push(exe, how);
     // UserChoice 是唯一能说明「用户自己选了谁」的来源。

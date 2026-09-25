@@ -563,6 +563,8 @@ const TMP = fs.mkdtempSync(path.join(os.tmpdir(), 'platport-'));
   check('X-8 exeFromCmdLine：引号形态与裸 .exe 形态；非 exe 命令行 → null',
     det.exeFromCmdLine('"C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe" -- "%1"') === 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe'
     && det.exeFromCmdLine('C:\\Windows\\notepad.exe %1') === 'C:\\Windows\\notepad.exe'
+    // 未加引号但路径自带空格：注册表里 REG_EXPAND_SZ 展开后就是这个形状，按首个空白切会切出 `C:\Program`。
+    && det.exeFromCmdLine('C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe -- "%1"') === 'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe'
     && det.exeFromCmdLine('notepad') === null, 'ok');
   check('X-8 parseExecLine：URL 字段码剔除 + env 去壳 + 引号分词',
     JSON.stringify(det.parseExecLine('/usr/bin/firefox %u')) === JSON.stringify({ bin: '/usr/bin/firefox', baseArgs: [] })
