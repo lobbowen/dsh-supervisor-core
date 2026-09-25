@@ -67,8 +67,10 @@ check('清单中所有前缀路由均存在于源码', phantomPrefix.length === 
 
 console.log('== 消费者分类核验（孤儿端点必须显式归类）==');
 // public 必须有具体消费者（不能空泛）
-check('public 条目均标注具体消费者', SURFACE.filter((e) => e.category === 'public').every((e) => e.consumers.some((c) => /UI|CLI|壳|README/.test(c))),
-  'ok');
+//   失败时把「哪一条、当前写的什么消费者」一起打出来：只报 ok/not ok 的话，排障要重读一遍判据源码。
+const publicVague = SURFACE.filter((e) => e.category === 'public' && !e.consumers.some((c) => /UI|CLI|壳|README/.test(c)));
+check('public 条目均标注具体消费者', publicVague.length === 0,
+  JSON.stringify(publicVague.map((e) => ({ path: e.path, consumers: e.consumers }))));
 // operational/internal/deprecated 必须说明为何无一方 UI 消费者
 check('operational 条目说明其运维用途', SURFACE.filter((e) => e.category === 'operational').every((e) => /探针|监控|诊断|审计/.test(e.note)),
   JSON.stringify(SURFACE.filter((e) => e.category === 'operational').map((e) => e.path)));

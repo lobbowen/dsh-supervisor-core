@@ -33,7 +33,7 @@ const SURFACE = [
   { path: '/env/status',           methods: ['GET'],  domain: 'guard', category: 'public',      consumers: ['UI(InstancesPage 能力矩阵)'], note: '环境 + 平台能力矩阵 + catalog' },
   { path: '/env/node-lts',         methods: ['GET'],  domain: 'guard', category: 'public',      consumers: ['UI(OverviewPage)'], note: 'Node 当前 vs 官方最新 LTS' },
   { path: '/env/open-url',         methods: ['POST'], domain: 'guard', category: 'public',      consumers: ['UI(externalOpen 地址行)'], note: '请内核用系统默认浏览器打开 http(s) 地址（三档结果原样回传，失败带 evidence.diagnostics 探测留痕；仅回环来源，壳内 webview 丢弃 window.open 时代的唯一代开方）' },
-  { path: '/env/browsers',         methods: ['GET'],  domain: 'guard', category: 'public',      consumers: ['只读取证面（人工/支持在浏览器直接打开；面板不轮询，打开动作的诊断走 evidence.diagnostics）'], note: '系统浏览器清单（只读探测面）：default 及其来源 + 每个候选的解析来源 + 每条系统查询的留痕；?force=1 绕开探测缓存' },
+  { path: '/env/browsers',         methods: ['GET'],  domain: 'guard', category: 'public',      consumers: ['README 文档化（人工/支持排障直读；面板不轮询，打开动作的诊断走 evidence.diagnostics）'], note: '系统浏览器清单（只读探测面）：default 及其来源 + 每个候选的解析来源 + 每条系统查询的留痕；?force=1 绕开探测缓存' },
   { path: '/settings/access-key',  methods: ['GET', 'POST'], domain: 'guard', category: 'public', consumers: ['UI(StartupCard)'], note: '访问密钥' },
   { path: '/settings/close-action', methods: ['GET', 'POST'], domain: 'guard', category: 'public', consumers: ['UI(StartupCard)', '壳(读取执行)'], note: '关窗行为（hide/exit）' },
   { path: '/settings/lan',         methods: ['GET', 'POST'], domain: 'guard', category: 'public', consumers: ['UI(StartupCard)'], note: '面板局域网访问开关' },
