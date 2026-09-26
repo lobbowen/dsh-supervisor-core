@@ -514,6 +514,12 @@ function req(method, p, body, hostHeader, extraHeaders, via) {
   check('OU 非回环来源 → 403 且给出可复制地址的说法',
     !LAN_IP || (kr.code === 403 && kr.body.ok === false && /复制/.test(String(kr.body.error))),
     LAN_IP ? (kr.code + ' ' + JSON.stringify(kr.body)) : '（无 LAN 地址，跳过）');
+  // 来源闸的不对称只有这一处判据能回答：表单端点不带回环闸是有意设计——远程访客的面板也要能
+  //   看到内核探到了什么（否则报障只剩口述）；动作端点必须加回环闸。上面那条 403 钉了动作面，这条钉读面。
+  kr = await reqKey('GET', '/env/environment', null, { Authorization: 'Bearer ' + KEY }, 'lan');
+  check('EF 已认证非回环来源 GET /env/environment → 200（只读面与动作面的来源闸不同级）',
+    !LAN_IP || kr.code === 200,
+    LAN_IP ? String(kr.code) : '（无 LAN 地址，跳过）');
   serverKey.close();
 
   server.close();

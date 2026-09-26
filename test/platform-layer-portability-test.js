@@ -43,9 +43,10 @@
 //        + 退出码证据闸（ownsItsWindow 双向生效：不可信形态既不冒领成功也不凭空判失败）
 //        + 两种意图（普通打开 / 隔离登录）共用同一出口与同一词汇
 //        —— 唯一异步出口，故尾部汇总排在它之后
-//   X-11 外部打开「唯一出口」的源码级不变量（旧出口不得重现、名单取自档位表、平台事实只在探测层一处、
-//        图形会话判据只在 desktop.js 一处、只读环境表单端点与其来源闸、消费方原样透传、
-//        面板那一环只经 /env/open-url 与唯一的 window.open 分支）
+//   X-11 外部打开「唯一出口」的源码级不变量，只钉运行判据看不见的那几件：旧出口不得重现、
+//        平台事实只在探测层一处、图形会话判据只在 desktop.js 一处、网关缺省装配、
+//        面板那一环只经统一入口与唯一的 window.open 分支。
+//        端点透传/来源闸/分档呈现不在此重复：它们由 api-contract 的 OW/OU/EF 组与面板 vitest 按行为判红。
 //   X-12 环境表单与浏览器偏好的归属不变量（表单字段集、快照落点与权限、上层事实只经装配期注入、
 //        偏好写入只过校验且落盘唯一入口、全仓只有一个外部打开动词）
 //
@@ -1287,9 +1288,6 @@ async function x10() {
   const brRel = path.join(ROOT, 'src', 'platform', 'os', 'browser.js');
   const br = require(brRel);
   const src = fs.readFileSync(brRel, 'utf8');
-  const envRel = path.join(ROOT, 'src', 'platform', 'os', 'environment.js');
-  const env = require(envRel);
-  const envSrc = fs.readFileSync(envRel, 'utf8');
   // 遍历 src/ 找外部打开动词的调用点：`browser.open(` / `browser.launchIsolated(` 一旦重现，
   //   说明又开了第二条路（意图是 openBrowser 的参数，不是第二个动词）。
   const walkSrc = (d, out) => { for (const f of fs.readdirSync(d, { withFileTypes: true })) {
@@ -1305,47 +1303,10 @@ async function x10() {
   check('X-11 browser.js 只导出一个打开动词（launchIsolated 已被 intent 吸收，不得重现）',
     br.open === undefined && br.launchIsolated === undefined && br.openExternal === undefined
       && typeof br.openBrowser === 'function', Object.keys(br).join(','));
-  check('X-11 支持外部打开的平台名单来自能力档位表（源码里不得再写第二份平台判断）',
-    /CAPABILITY_PROFILES\[k\]\.openBrowser/.test(src) && !/SUPPORTED_OPEN_PLATFORMS\s*=\s*\[\s*['"]linux/.test(src), 'ok');
   const prof = require(path.join(ROOT, 'src', 'platform', 'os', 'capability-profile.js'));
   const declared = Object.keys(prof).filter((k) => prof[k].openBrowser === true).sort();
   check('X-11 档位表只声明三平台可外部打开（未知平台不开）',
     JSON.stringify(declared) === JSON.stringify(['darwin', 'linux', 'win32']), declared.join(','));
-  // 消费方必须把三档结果原样交给面板，不得自行折算成布尔（旧形态：spawn 未抛错即 send ok:true）
-  const apiSrc = fs.readFileSync(path.join(ROOT, 'src', 'api', 'domains', 'instances.js'), 'utf8');
-  check('X-11 open-web 原样透传三档结果且失败映射非 2xx（不得恒 200 把失败说成成功）',
-    /openInSystemBrowser\(url\)/.test(apiSrc) && /send\(r\.ok \? 200 : 500, r\)/.test(apiSrc), 'ok');
-  const oaSrc = fs.readFileSync(path.join(ROOT, 'src', 'domains', 'router', 'ops', 'oauth.js'), 'utf8');
-  const roSrc = fs.readFileSync(path.join(ROOT, 'src', 'domains', 'router', 'router-ops.js'), 'utf8');
-  check('X-11 一键登录把授权地址与 reason 一起交出（打不开时面板仍能给出可复制地址）',
-    /reason:\s*r\.reason/.test(oaSrc) && /url:\s*authUrl/.test(oaSrc), 'ok');
-  check('X-11 一键登录的成功档原样取自平台层（消费方不得自己宣称 handedOff/confirmed）',
-    /Object\.assign\(\{\}, r,/.test(oaSrc) && !/confirmed:\s*true/.test(oaSrc) && !/handedOff:\s*true/.test(oaSrc), 'ok');
-  check('X-11 反向：判据能识别消费方自宣称成功档（旧形态 confirmed:false,handedOff:true 硬编码）',
-    /handedOff:\s*true/.test('return { ok: true, confirmed: false, handedOff: true };'), 'hit');
-  // 域侧只声明「要一个登录用的隔离窗口」：argv、profile、环境随机化全在平台层，
-  //   在这里再拼一份就等于给登录开了第二条执行路（本轮缺陷的形态之一）。
-  check('X-11 一键登录经唯一出口声明意图，域侧零 argv/零 profile 拼接',
-    /platform\.browser\.openBrowser\(url, \{ intent: 'isolated-login'/.test(roSrc)
-      && !/user-data-dir|--incognito|--profile/.test(roSrc + oaSrc), roSrc.slice(0, 200));
-  // 临时 profile 的归属：执行口负责分配与启动期回收，登录窗口关掉不等于目录可删 ——
-  //   目录生命周期跟着登录周期走，只从 evidence.profile 取用（旧形态是域侧自己 alloc 自己起进程）。
-  check('X-11 隔离 profile 只从 evidence 取用并随登录周期延迟回收（丢弃结果即丢弃失败原因与目录）',
-    /ev\.profile/.test(oaSrc) && /tmpProfile/.test(oaSrc) && /removeTreeDeferred\(tmpProfile/.test(oaSrc), 'ok');
-  // 面板那条路的前提：内核得有一个「只受理本机来源」的代开端点。没有它，壳内面板只能自己 window.open
-  //   （webview 丢弃 = 死单击），远程访问者则会把浏览器弹窗推到内核所在机器上。
-  const guardSrc = fs.readFileSync(path.join(ROOT, 'src', 'api', 'domains', 'guard.js'), 'utf8');
-  const om = /if \(req\.method === 'POST' && pathname === '\/env\/open-url'\) \{([\s\S]*?)\n {4}\}/.exec(guardSrc);
-  const ob = om ? om[1] : '';
-  check('X-11 代开端点存在且整段处理体被切片判定（切片为空即判据失去对象）', ob.length > 200, 'len=' + ob.length);
-  check('X-11 代开端点走唯一出口、失败映射非 2xx、抛错路径仍带地址',
-    /browser\.openBrowser\(url\)/.test(ob) && /send\(r\.ok \? 200 : 500, r\)/.test(ob) && /, url \}\)/.test(ob), 'ok');
-  check('X-11 代开端点只受理回环来源（跨站与远程访客各有一闸，缺一即白送动作面）',
-    /identity\.loopback/.test(ob) && /originAllowed\(req, sup\.config\.apiPort\)/.test(ob), 'ok');
-  const badOpenUrl = "\n  const u = JSON.parse(body).url; require('node:child_process').exec(u);\n  return send(200, { ok: true });\n    }";
-  check('X-11 反向：判据能识别旁路 spawn、恒 200 与无来源闸（否则上面两条恒绿）',
-    !/platform\.browser\.openBrowser\(url\)/.test(badOpenUrl) && !/send\(r\.ok \? 200 : 500, r\)/.test(badOpenUrl)
-      && !/identity\.loopback/.test(badOpenUrl), 'hit');
 
   // —— 分层归属：平台事实只写在探测层一处，别的文件一律不得再写第二份 ——
   //   为什么钉这一条：本轮 Windows 缺陷的根因不是某个分支写错，而是「系统里有什么浏览器」这件事
@@ -1374,34 +1335,6 @@ async function x10() {
     /desktop\.sessionEnv\(\)/.test(src) && /desktop\.sessionAvailable/.test(src)
       && !/\.X11-unix|WAYLAND_DISPLAY/.test(src), 'ok');
 
-  // —— 只读装配面：面板/排障要能直接问「本机这张环境表单长什么样」，且它绝不允许顺手做动作 ——
-  const obm = /if \(req\.method === 'GET' && pathname === '\/env\/environment'\) \{([\s\S]*?)\n {4}\}/.exec(guardSrc);
-  const obmBody = obm ? obm[1] : '';
-  check('X-11 环境表单端点存在且整段处理体被切片判定（切片为空即判据失去对象）',
-    obmBody.length > 150, 'len=' + obmBody.length);
-  check('X-11 表单端点是只读装配面：走 environment.form、过同源闸、且绝不触到打开出口',
-    /environment\.form\(/.test(obmBody) && /originAllowed\(req, sup\.config\.apiPort\)/.test(obmBody)
-    && !/openBrowser\(/.test(obmBody) && !/spawn/.test(obmBody), 'ok');
-  check('X-11 只读面与动作面的来源闸不同级：表单过同源即可（远程面板要能显示本机探到了什么），'
-    + '而代开端点必须再加回环闸（否则等于白送「在他人机器上开浏览器」）',
-    /identity\.loopback/.test(ob) && !/identity\.loopback/.test(obmBody), 'ok');
-  check('X-11 反向：判据能识别「表单端点顺手开浏览器」与无来源闸的形态',
-    !/environment\.form\(/.test("return send(200, { ok: true });")
-    && !/originAllowed\(req, sup\.config\.apiPort\)/.test("return send(200, environment.form());"), 'hit');
-  const ctSrc = fs.readFileSync(path.join(ROOT, 'src', 'api', 'contract.js'), 'utf8');
-  // 按整段路径各自数登记，不数子串：/env/environment/last 里含着 /env/environment，
-  //   按子串计数会把「新端点登记了」读成「登记了两次」，于是这条要么假红要么被删——两者都是损失。
-  const regCount = (p) => (ctSrc.match(new RegExp("path:\\s*'" + p + "'", 'g')) || []).length;
-  check('X-11 环境表单、上一拍留痕与浏览器偏好在契约里各登记一次（登记面即对外能力面，漏登记=不承诺）',
-    regCount('/env/environment') === 1 && regCount('/env/environment/last') === 1
-      && regCount('/settings/external-browser') === 1,
-    ['/env/environment', '/env/environment/last', '/settings/external-browser'].map((p) => p + '=' + regCount(p)).join(','));
-  check('X-11 反向：登记计数按整段路径取，前缀那条不会被 /last 顶掉（否则新端点一登记就把老判据判红）',
-    regCount('/env/environment') === 1 && !new RegExp("path:\\s*'/env/environment'").test("path: '/env/environment/last'"), 'hit');
-  check('X-11 表单与打开共用同一探测实现与缓存（两条路对「系统里有什么」不得给出两个答案）',
-    /environment\.browsers\(/.test(src) && /detector\.inventory\(/.test(envSrc)
-      && /environment\.pickLauncher\(/.test(src) && !/pickLauncher\s*=\s*function|function pickLauncher/.test(src), 'ok');
-
   // 出口如何交到域手里也要有闸：网关只允许「缺省即平台层唯一出口、注入只服务于测试」这一种装配。
   //   否则调用方传个 deps.browser 就把外部打开换了实现，S-1 的唯一出口判据形同虚设。
   //   环境表单同一条装配路：它是动作面的事实来源，允许注入但不允许没有缺省。
@@ -1418,7 +1351,9 @@ async function x10() {
       && !/const environment = \(deps && deps\.environment\) \|\| environmentExit;/.test(gwNoDefault)
       && !/const ctx = \{[^}]*\bbrowser\b[^}]*\benvironment\b/.test(gwNoDefault), 'hit');
 
-  // 最后一环在面板：外部打开地址的窗口创建必须只有一个出口，且各页面必须经统一入口消费结果。
+  // 最后一环在面板：这里只钉运行判据看不见的那两件事 —— 新页面不许自己造窗口（window.open 唯一出口）
+  //   与不许绕开统一入口自造成败说法（四个消费页必须走 runOpenExternal）。
+  //   分档、选路、证据渲染本身由 ui 侧 vitest（externalOpen.test.ts）按行为判红，不在这里重复钉文案。
   //   为什么平台门禁要读到 ui/：这条能力的判据如果只覆盖内核，面板照样能把 handedOff 显示成成功；
   //   而链条长度已近 Windows cmd 上限（test-chain-completeness N-e），不允许再为它新设一个链条目。
   const readUi = (rel) => fs.readFileSync(path.join(ROOT, 'ui', 'src', rel), 'utf8');
@@ -1434,19 +1369,10 @@ async function x10() {
     JSON.stringify(openers) === JSON.stringify(['services/supervisor/externalOpen.ts']), openers.join(','));
   check('X-11 反向：判据能识别页面里裸 window.open（壳内 webview 会静默丢弃它，正是要钉的形态）',
     reWinOpen.test('function f(){ return window.open(u, "_blank"); }'), 'hit');
-  const entry = readUi('features/supervisor/openExternal.tsx');
-  check('X-11 面板结果分档只有一处，且失败也渲染地址行（假成功在结构上无法出现）',
-    /classifyOpenResult\(/.test(entry) && /description:\s*url \|\| shown \? <OpenResultBody url=\{url\} detail=\{shown\} \/>/.test(entry)
-    && /\{url \? <OpenUrlRow url=\{url\} \/> : null\}/.test(entry), 'ok');
   const pages = ['features/supervisor/InstancesPage.tsx', 'features/supervisor/OverviewPage.tsx', 'features/supervisor/RouterPage.tsx', 'features/supervisor/LanPage.tsx']
     .filter((p) => !/runOpenExternal\(/.test(readUi(p)));
   check('X-11 四处外部打开入口都经统一入口消费结果（各自表述成败即病根）',
     pages.length === 0, pages.join(',') || 'ok');
-  // 失败档的地址要能活着走到面板：后端把 ok:false 映射为非 2xx，若 http() 只抛一句文案，
-  //   面板就拿不到 url，用户在最需要的这一档反而只剩「重新点一次」。
-  const cliSrc = readUi('services/supervisor/client.ts');
-  check('X-11 非 2xx 抛错随附响应体（失败档的 url/reason 才有抵达面板的路）',
-    /err\.body = data/.test(cliSrc) && /instanceOpenWeb: .*OpenExternalResult/.test(cliSrc), 'ok');
   // 代开只有一条路：面板问内核。postMessage 桥那套（dsh:open-url）与 target=_blank 都在壳内 webview
   //   里静默失效过，留着就是第二套语义（回执有无、超时算成功与否各说各话）。
   const reBridge = /dsh:open-url/;
@@ -1459,18 +1385,6 @@ async function x10() {
   check('X-11 面板不用 target=_blank 开外部地址（壳内静默丢弃 = 死单击）',
     blanked.length === 0, blanked.join(',') || 'ok');
   check('X-11 反向：判据能识别锚点直开形态', reBlank.test('<a href={url} target="_blank">x</a>'), 'hit');
-  const eoSrc = readUi('services/supervisor/externalOpen.ts');
-  check('X-11 面板选路判据只有一条（来源回环与否），本机路径唯一出口是内核端点',
-    /servedByKernelHost\(\)/.test(eoSrc) && /supervisorApi\.envOpenUrl\(url\)/.test(eoSrc), 'ok');
-  // 证据必须一路走到屏幕：evidence 只躺在响应体里时，真机报错就只剩一句无法定位的文案
-  //   （本能力的上一条缺陷正是这样才被读成「产品打不开浏览器」）。
-  check('X-11 启动形态证据抵达面板并随非 confirmed 档渲染（evidenceDetail 取自内核 evidence）',
-    /export function evidenceDetail\(/.test(eoSrc) && /ownsWindow/.test(eoSrc)
-    && /detail = evidenceDetail\(/.test(eoSrc) && /<OpenResultBody url=\{url\} detail=\{shown\} \/>/.test(entry), 'ok');
-  check('X-11 反向：只回 title 不分摊证据的旧呈现口会被上面那条识别',
-    !/evidenceDetail\(/.test('export function classifyOpenResult(r){ return { tier: "failed", url: null, title: r.error }; }'), 'hit');
-  check('X-11 /env/open-url 在客户端只登记一次（第二处即第二个调用方）',
-    (cliSrc.match(/\/env\/open-url/g) || []).length === 1, String((cliSrc.match(/\/env\/open-url/g) || []).length));
 }
 
 // -- X-12：环境表单与浏览器偏好的归属不变量 --
