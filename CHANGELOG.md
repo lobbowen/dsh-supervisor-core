@@ -1,4 +1,27 @@
 ## [未发布]
+### 源码死码批次 + 状态根搬迁改为「失败即拒启」
+
+按 2026-09-27 的源码全量审计落地「硬死码」一批。**验证只到静态**：逐文件 `node --check`、删除前后按名 grep
+`src bin ui/src test ci .github release` 双树（本地工作树与 `origin/master` 原文）复核零命中——本机不跑测试，
+运行期判定归 CI。
+
+- 删除零消费者代码：`router/views.js` 响应里的 `validity` 兼容字段（面板与内核同包同版本出货，不存在旧前端；
+  门禁只有「序列化不写 validity」这条同向断言）、`compose/core.js` 的 `host._lastStateBody`（只赋值不读）、
+  `facets.js` 的 `buildFieldHelpers` 兜底分支（无切面导出该名）、`model.js#stateContainer`、
+  `quota.js#quotaPercent`、`log/sources.js#getSources` 及其 `hub.js` 转-export、`latestDshVersion` 两层壳
+  （注释宣称「视图与有无更新消费」是假的；`latestDsh` 是内部活函数，未顺手导出成新表面）。
+- 修四处「写了但恒不成立」的缺陷：`daemons/runtime.js` 的失败串取 `host.name`（全仓无赋值 ⇒ 错误信息恒为
+  `daemon 未启动: undefined`）改用入参 `lc.name`；`task-store.js` 合并排序键 `createdAt` ⇒ `startedAt`
+  （任务只有 `startedAt`，原式两侧恒 0 ⇒ 排序空转、条数截断保的是任意序）；`router/daemon.js` 事件里的
+  `config.guardVersion`（配置无此键 ⇒ 恒 `unknown`）改走 `platform/service/version#guardVersion()`；
+  `util/exec.js` 删 `|| o.timeout` 历史别名（全仓该拼写命中都是 `http.request` 或测试里裸 `execFileSync`）。
+- **行为变更**：`state-root.js#migrateLegacy()` 不再吞异常。旧实现返回「搬走了几条」的字符串数组、异常一律
+  `catch {}`，注释写着「失败静默（下次启动再试）」——那是把数据缺失伪装成正常的自愈式兜底。现返回
+  `{moved, skipped, failed}`（`skipped` = 新根已有同名条目，以新副本为准、旧文件原地留下），
+  `bin/dsh-supervisor` 的两处调用点（`daemon` / `install`）在 `failed` 非空时逐条打到 stderr 并 `exit(1)`：
+  宁可让服务如实变红（unit 走 `Restart=always`+`StartLimitBurst=3`，壳侧就绪判据跟着报未就绪），
+  也不在新根写出默认配置、把用户历史留在旧位置两边都当空态。搬迁本身仍在读/写任何配置之前完成。
+
 
 ## [0.1.6-BETA.18]（2026-09-26）
 

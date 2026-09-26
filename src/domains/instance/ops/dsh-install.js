@@ -132,13 +132,7 @@ function createDshInstall(deps) {
     return r;
   }
 
-  /** 目标版本字符串（视图与「有无更新」消费；要失败原因或下载源的走 latestDsh）。 */
-  async function latestDshVersion() {
-    const r = await latestDsh();
-    return r.version;
-  }
-
-  return { installSandbox, readInstalledVersion, latestDsh, latestDshVersion };
+  return { installSandbox, readInstalledVersion, latestDsh };
 }
 
 module.exports = { createDshInstall };

@@ -337,10 +337,24 @@ function releaseLock() {
 }
 
 // ---- 子命令 ----
+/** 旧状态搬迁（必须在读/写任何配置之前完成）。搬不动即拒绝启动：静默继续会在新根写出默认配置，
+ *  而用户历史仍留在旧位置，两边都不知道自己看到的是空态。此处尚未有 logger，故走 stderr/stdout
+ *  （systemd journal 与 .cmd 垫片控制台都收得到），退出非零让服务状态如实变红。 */
+function migrateStateRoot() {
+  const r = stateRoot.migrateLegacy();
+  for (const m of r.moved) console.log('[migrate] 状态目录迁移: ' + m);
+  for (const s of r.skipped) console.log('[migrate] 旧条目以新根同名文件为准，原样留在: ' + s);
+  if (!r.failed.length) return;
+  for (const f of r.failed) {
+    console.error('[migrate] 搬迁失败: ' + f.from + (f.entry ? '/' + f.entry : '') + ' —— ' + f.error);
+  }
+  console.error('[migrate] 拒绝启动：旧状态未完整迁至产品状态根 ' + stateRoot.root()
+    + '（本次未在新根写入任何配置）。请修正上述目录权限/挂载点，或以同用户手工搬移后重试。');
+  process.exit(1);
+}
+
 function cmdDaemon() {
-  // 前向自愈迁移：旧位置（DSH 目录下）迁至产品状态根。必须在读/写配置前完成。
-  const moved = stateRoot.migrateLegacy();
-  for (const m of moved) console.log('[migrate] 状态目录迁移: ' + m);
+  migrateStateRoot();
   const lock = acquireLock();
   if (lock !== true) {
     console.error('[supervisor] 本进程退出：未取得守卫锁（锁 ' + LOCK_FILE + '）—— ' + lock);
@@ -475,8 +489,7 @@ function finishControl(r) {
 }
 
 function cmdInstall() {
-  const moved = stateRoot.migrateLegacy();
-  for (const m of moved) console.log('[migrate] 状态目录迁移: ' + m);
+  migrateStateRoot();
   fs.mkdirSync(SUPERVISOR_DIR, { recursive: true });
   // 配置文件（内嵌默认模板；源码态与打包态一致，不再依赖仓库 config.json 外置文件）
   if (!fs.existsSync(USER_CONFIG)) {

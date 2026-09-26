@@ -71,7 +71,6 @@ function listProviders(state, deps) {
         keyId: a.keyId,
         maskedKey: a.maskedKey,
         status: a.status,
-        validity: a.status,                      // 兼容字段（=status，避免旧前端读 undefined）
         usage: usageOf,                          // 纯派生（activeAccount/实例实况）
         quota: a.quota || null,
         limit: (p._previewLimit ? p._previewLimit(a) : a.limit) || null, // limitKind+recovery（只读预览，无写副作用）

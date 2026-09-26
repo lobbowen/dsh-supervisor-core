@@ -4,6 +4,7 @@ const { RouterService } = require('./index');
 const { DistributionManager } = require('../../platform/distribution/index');
 const { TaskRegistry } = require('../../platform/service/tasks');
 const stateRoot = require('../../platform/service/state-root');
+const { guardVersion } = require('../../platform/service/version');
 const hub = require('../../platform/service/log/hub');
 const logcore = require('../../platform/service/log/logcore');
 const { createCtlServer } = require('../../platform/ctl/server');
@@ -67,7 +68,7 @@ function main() {
     logger.error('[router-daemon] ctl listen failed (' + ctlPort + '): ' + e.message + '（守卫监督模式将无法转发 router 控制）');
   });
 
-  events.append('router_daemon_started', { pid: process.pid, version: config.guardVersion || 'unknown' });
+  events.append('router_daemon_started', { pid: process.pid, version: guardVersion() });
   logger.info('[router-daemon] started pid=' + process.pid);
 
   router.start().then((r) => {

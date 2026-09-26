@@ -15,9 +15,7 @@ const DEFAULT_MAX_BUFFER = 8 * 1024 * 1024;
 function options(opts) {
   const o = opts || {};
   return {
-    // timeout 是历史别名（兼容旧调用点拼写，若不与 timeoutMs 归一会被静默忽略）：
-    // 两种拼写都收，timeoutMs 优先；新调用一律用 timeoutMs。
-    timeout: o.timeoutMs || o.timeout || DEFAULT_TIMEOUT_MS,
+    timeout: o.timeoutMs || DEFAULT_TIMEOUT_MS,
     // 必须 SIGKILL：SIGTERM 对挂起或被停住的进程可能无效。
     killSignal: o.killSignal || 'SIGKILL',
     maxBuffer: o.maxBuffer || DEFAULT_MAX_BUFFER,

@@ -32,9 +32,6 @@ function registerSources(list) {
 // 用给定名单整体替换已注册源（装配期幂等：重复调用结果一致）。
 function setSources(list) { _sources.length = 0; registerSources(list); }
 
-// 已注册源快照（副本；供装配自检/测试）。
-function getSources() { return _sources.map((s) => ({ name: s.name, key: s.key, local: s.local })); }
-
 // 未注入时的退化：只认本进程本地源，不猜测任何业务源名（DS-G4）。
 function resolvedSources() {
   if (_sources.length) return _sources.slice();
@@ -81,6 +78,6 @@ function humaneMsg(type, data) {
 }
 
 module.exports = {
-  LOCAL_SOURCE, registerSource, registerSources, setSources, getSources,
+  LOCAL_SOURCE, registerSource, registerSources, setSources,
   resolvedSources, registerInternalType, setInternalTypes, isInternalEvent, humaneMsg,
 };
