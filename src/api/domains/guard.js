@@ -224,7 +224,8 @@ function handle(ctx) {
         try { const j = body ? JSON.parse(body) : {}; if (typeof j.url === 'string') url = j.url; } catch {}
         if (!url) return send(400, { ok: false, error: '需要 {"url":"http(s)://…"}' });
         // 地址恒随结果交出（含抛错路径）：拿不到地址的失败只剩「再点一次」，用户无路可走。
-        return Promise.resolve(browser.openBrowser(url))
+        // logger 交进唯一出口：这一次打开的 argv 与档位落在守卫日志里，报障时不必再靠屏幕拍照。
+        return Promise.resolve(browser.openBrowser(url, { logger: sup.logger }))
           .then((r) => send(r.ok ? 200 : 500, r))
           .catch((e) => send(500, { ok: false, reason: 'spawn-failed', error: '打开浏览器失败：' + ((e && e.message) || e), url }));
       });

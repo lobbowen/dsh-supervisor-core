@@ -457,6 +457,42 @@ check('副作用经 deps.save 显式发出（非隐式 this）', saves > 0, 'sav
         /governSweep\(\)\s*\{\s*return this\._lifecycle\.governSweep\(\);/.test(idxSrc)
         && (ctSrc.match(/'governSweep'/g) || []).length === 2, String((ctSrc.match(/'governSweep'/g) || []).length));
     }
+
+    // 7H. 启动命令的「不自弹浏览器」由内核补齐。真机形状：存量 command 是旧版默认
+    //      [node, bin, 'web', '--port', P]，没带 --no-open -> dsh 自己拉起系统浏览器；那条路绕在
+    //      外部打开唯一出口之外（无能力档、无预检、无三档证据、日志里查无此事），且守卫每次重启
+    //      实例就再弹一个窗。补齐只补**缺省**：命令里已显式写了开关的一律原样交回，不砍用户意图。
+    {
+      // 命令里的入口必须落在该实例自己的沙箱安装根内，否则执行边界复校先拒（7E 同形）。
+      const startWith = async (id, slot, mk) => {
+        const port = safePort('instance-state', slot);
+        const { mgr, transient } = mkGovMgr({});
+        const inst = govInst(id, port, { phase: 'STOPPED', restartCount: 0, allocation: null });
+        mgr.instances = [inst];
+        mgr.save();
+        mgr._store.ensureDirs(inst);
+        const bin = sandbox.dshEntry(mgr.instancesRoot, inst);
+        fs.mkdirSync(path.dirname(bin), { recursive: true });
+        fs.writeFileSync(bin, '// fake entry for boundary recheck\n');
+        inst.command = mk(bin, port);
+        const r = await mgr.startInstance(id, { fromUpgrade: true });
+        const t = transient.find((x) => x.unit === 'dsh-web@' + id);
+        return { r, cmd: (t && t.cmd) || null, given: mk(bin, port) };
+      };
+      const LEGACY = (bin, port) => [process.execPath, bin, 'web', '--port', String(port)];
+      const g1 = await startWith('hh1', 8, LEGACY);
+      check('7H 存量旧命令（无开关）拉起时补齐 --no-open，其余参数原样',
+        g1.r.ok === true && JSON.stringify(g1.cmd) === JSON.stringify(g1.given.concat(['--no-open'])),
+        JSON.stringify(g1.cmd));
+      const g2 = await startWith('hh2', 9, (bin, port) => LEGACY(bin, port).concat(['--no-open']));
+      check('7H 已带 --no-open 的命令不重复补（补齐必须幂等）',
+        !!g2.cmd && g2.cmd.filter((a) => a === '--no-open').length === 1 && JSON.stringify(g2.cmd) === JSON.stringify(g2.given),
+        JSON.stringify(g2.cmd));
+      const g3 = await startWith('hh3', 10, (bin, port) => LEGACY(bin, port).concat(['--open']));
+      check('7H 反向（能力不被砍）：用户显式写了开关的命令一字不改地交回',
+        !!g3.cmd && !g3.cmd.includes('--no-open') && JSON.stringify(g3.cmd) === JSON.stringify(g3.given),
+        JSON.stringify(g3.cmd));
+    }
   }
 })().catch((e) => { check('B15 supervise 块无异常', false, e && e.message); }).then(() => {
   const failed = results.filter((x) => !x);

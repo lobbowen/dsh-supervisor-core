@@ -282,6 +282,35 @@ function binAvailable(bin) {
   return resolveExecutable(bin) !== null;
 }
 
+/** 一次打开一行日志：本次实际的启动对象、argv 与三档结局。
+ *  出口此前零日志——真机上「面板说已交出、屏幕上什么都没有」只能靠拍照取证，日志里连
+ *  「启动的是哪个二进制、带了哪些参数」都查不到（同一台机器上还有别的路在开浏览器时，尤无法对照）。
+ *  参数逐个去过查询串与片段：普通打开传的是带 ?token= 的本机地址，日志不是令牌的家。 */
+function logOpen(lg, run, res) {
+  const ev = res.evidence || {};
+  const tier = res.ok ? (res.confirmed ? 'confirmed' : 'handedOff') : 'failed';
+  // 只有真观测到退出才有退出可写：预检失败档的 evidence 里根本没有这两个键。
+  const exit = ev.exitSignal ? ' signal=' + ev.exitSignal : (ev.exitCode === null || ev.exitCode === undefined ? '' : ' exit=' + ev.exitCode);
+  const line = '[open] intent=' + run.intent + ' via=' + (ev.via || '-') + ' engine=' + (ev.engine || '-') +
+    ' bin=' + (ev.bin || '-') + ' isolated=' + (ev.isolated === true) +
+    ' argv=' + (run.args || []).map(redactArg).join(' ') +
+    ' => ' + tier + (res.reason ? ' reason=' + res.reason : '') + exit + (ev.error ? ' error=' + ev.error : '');
+  const fn = lg.info || lg.warn;
+  if (typeof fn !== 'function') return;
+  try { fn.call(lg, line); } catch { /* 日志绝不改变打开结局 */ }
+}
+
+/** 落日志/落 argv 摘要前的脱敏：截到 '?' 或 '#' 之前，保住 origin+path 供对照，丢掉查询串与片段。 */
+function redactArg(a) {
+  const s = String(a);
+  let cut = -1;
+  for (const ch of ['?', '#']) {
+    const i = s.indexOf(ch);
+    if (i >= 0 && (cut < 0 || i < cut)) cut = i;
+  }
+  return cut < 0 ? s : s.slice(0, cut) + '[trimmed]';
+}
+
 /** 外部打开的唯一出口：按意图把 http(s) URL 交给分发依据定出的浏览器（或该平台的文档化调度器），
  *  并如实回报证据档位。绝不宣称页面已加载 —— 最多说「命令 0 退出」。
  *  @param {string} url
@@ -289,9 +318,9 @@ function binAvailable(bin) {
  *           inventory?:object, resolveInventory?:Function, resolveDeps?:object, preference?:string|null,
  *           binAvailable?:Function, spawn?:Function, observe?:Function, observeMs?:number, setTimeout?:Function,
  *           platform?:string, desktopAvailable?:Function, allocProfile?:Function, rmTree?:Function,
- *           rand?:Function, now?:Function, egress?:object}} [o]
+ *           rand?:Function, now?:Function, egress?:object, logger?:{info?:Function,warn?:Function}}} [o]
  *    注入缝供行为测试：CI 机器不真起浏览器、不真查注册表、不真建临时目录，也不真摸网（egress 给定读数即不判网）。
- *    夹具与产品共用同一份输入（同源）。
+ *    夹具与产品共用同一份输入（同源）。logger 缺省即不落日志（本层不 import 日志实现）。
  *  @returns {Promise<{ok, confirmed, handedOff, reason, error, message, url, evidence}>}
  *    evidence：{bin, engine, via, ownsWindow, isolated, profile, watch, exitCode, exitSignal, error,
  *              diagnostics, egress} —— isolated/profile 在这里而不是结果顶层：顶层字段集是三档词汇的契约，
@@ -300,13 +329,23 @@ async function openBrowser(url, o) {
   const opts = o || {};
   const pl = opts.platform || process.platform;
   const intent = opts.intent === 'isolated-login' ? 'isolated-login' : 'plain';
+  // 本次执行的实际形态，只喂日志、不进结果契约：argv 与意图在 evidence 里没有读者，
+  //   把它们塞进 evidence 就是造第二份事实。
+  const run = { intent, args: null };
+  // 每一档结局（含两条最早的预检失败）都从 out 出：结局在多处定档，日志若也在那多处各写一遍，
+  //   漏写的那条路在界面上就又是「点了没反应、日志里查无此事」——本案要修的正是这个形态。
+  const out = (p) => {
+    const res = outcome(p);
+    if (opts.logger) logOpen(opts.logger, run, res);
+    return res;
+  };
   if (!isSafeHttpUrl(url)) {
-    return outcome({ ok: false, reason: 'unsafe-url', url: String(url || ''), evidence: null });
+    return out({ ok: false, reason: 'unsafe-url', url: String(url || ''), evidence: null });
   }
   // 能力档位说「不支持」就在这里显式失败：openCommand 对未知平台仍会尽力试一次 xdg-open，
   // 但那是低层映射，不构成本产品对外宣称的能力（unknown 档位 openBrowser:false）。
   if (!SUPPORTED_OPEN_PLATFORMS.includes(pl)) {
-    return outcome({ ok: false, reason: 'unsupported-platform', url, evidence: { platform: pl } });
+    return out({ ok: false, reason: 'unsupported-platform', url, evidence: { platform: pl } });
   }
   const observeMs = opts.observeMs === undefined ? OPEN_OBSERVE_MS : opts.observeMs;
   const spawnWith = typeof opts.spawn === 'function' ? opts.spawn : (intent === 'isolated-login' ? _spawnDetached : _spawnDetachedIgnored);
@@ -336,6 +375,7 @@ async function openBrowser(url, o) {
   const plan = intent === 'isolated-login'
     ? isolatedPlan(pl, url, { inventory: inv, pick: picked, profileDir: profile, size: login.size, lang: login.lang })
     : openPlan(pl, url, { inventory: inv, pick: picked });
+  run.args = plan.args;
   const diagnostics = launchDiagnostics(inv, plan, picked);
   const evidence = {
     bin: plan.bin, engine: plan.engine, via: plan.via, ownsWindow: plan.exitIsEvidence === true,
@@ -353,7 +393,7 @@ async function openBrowser(url, o) {
   const deferredRemove = typeof opts.rmTree === 'function' ? opts.rmTree : removeTreeDeferred;
   const fail = (reason, patch) => {
     if (profile) deferredRemove(profile, 0);
-    return outcome(Object.assign({ ok: false, reason, url, evidence }, patch));
+    return out(Object.assign({ ok: false, reason, url, evidence }, patch));
   };
   // 无图形会话时任何启动命令都必败：两种意图同一条判据（判定同源 desktop.js）。
   // darwin/win32 由图形会话内的 LaunchAgent / schtasks ONLOGON 载入，无会话即无本进程。
@@ -385,13 +425,13 @@ async function openBrowser(url, o) {
   evidence.error = seen.stage === 'error' ? String(seen.code) : null;
   evidence.exitCode = seen.code === undefined ? null : seen.code;
   evidence.exitSignal = seen.signal === undefined ? null : seen.signal;
-  if (seen.stage === 'error') return outcome({ ok: false, reason: 'spawn-failed', url, evidence });
+  if (seen.stage === 'error') return out({ ok: false, reason: 'spawn-failed', url, evidence });
   // 退出码进判决的唯一闸门，规则只在 openPlan/isolatedPlan/ownsItsWindow 一处写：不可信形态的退出码在两个
   //   方向上都不是证据 —— 据它判红会把已打开的页面报成失败，据它判绿会凭空宣称窗口出现过。
   //   判红与判绿必须同一条 `&&`，分两处写就会重新分叉。
   const exitDecides = seen.stage === 'exit' && plan.exitIsEvidence === true;
   if (exitDecides && (seen.code !== 0 || seen.signal)) {
-    return outcome({
+    return out({
       ok: false, reason: seen.signal ? 'killed-by-signal' : 'exit-nonzero', url, evidence,
       error: FAILURE_TEXT[seen.signal ? 'killed-by-signal' : 'exit-nonzero'] + '（' + (seen.signal || seen.code) + '）',
     });
@@ -399,7 +439,7 @@ async function openBrowser(url, o) {
   // 剩下的都是 ok：可信形态 0 退出算 confirmed；不可信形态（或窗口内仍存活、压根没有退出可言）
   //   只算 handedOff —— 命令确实交出去了，但窗口有无只有用户能判，故面板必须同时给出地址。
   //   降档时 message 换成分发依据给出的那句话说清「为什么没用隔离窗」，不得静默少一层隔离。
-  return outcome({
+  return out({
     ok: true, confirmed: exitDecides, handedOff: !exitDecides, url, evidence,
     message: downgradeText || undefined,
   });

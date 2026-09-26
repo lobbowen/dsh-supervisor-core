@@ -165,6 +165,30 @@ async function main() {
     check('B4-4 capture() 同步返回不等 journal（<50ms，不冻结心跳）', dt < 50, dt + 'ms 返回=' + hit);
   }
 
+  console.log('== 令牌边界：journald 档的服务档闸（无 systemd 单元的机器上没有任何 journal 可查）==');
+  {
+    const capture = require(path.join(ROOT, 'src', 'platform', 'service', 'token', 'capture.js'));
+    const rows = [];
+    const lg = { info: (m) => rows.push(String(m)), warn: (m) => rows.push(String(m)) };
+    const unit = 'dsh-web@gate-portable';
+    const r1 = await capture.captureJournal(unit, { logger: lg, providerKind: () => 'portable' });
+    const r2 = await capture.captureJournal(unit, { logger: lg, providerKind: () => 'portable' });
+    check('服务档闸 portable 档直接查无（不为不存在的 journal 起子进程）',
+      r1 === null && r2 === null, JSON.stringify([String(r1), String(r2)]));
+    check('服务档闸 停用一次说清（第二拍不得再刷同一句）',
+      rows.filter((l) => l.indexOf('停用') >= 0).length === 1, JSON.stringify(rows));
+    check('服务档闸 两拍合计只落一行（周期兜底不得把它变成噪声源）', rows.length === 1, JSON.stringify(rows));
+    check('服务档闸 落点写明本机服务档', /portable/.test(rows[0] || ''), rows[0]);
+    const sysRows = [];
+    const sys = await capture.captureJournal('dsh-web@gate-systemd', {
+      logger: { info: (m) => sysRows.push(String(m)), warn: (m) => sysRows.push(String(m)) },
+      providerKind: () => 'systemd',
+    });
+    // 反向：闸不得把真有 systemd 的机器也判成停用（砍能力 = 令牌回填链路消失却无人知晓）
+    check('服务档闸 systemd 档不被判成停用',
+      !sysRows.some((l) => l.indexOf('停用') >= 0), JSON.stringify(sysRows) + ' 返回=' + String(sys));
+  }
+
 
   console.log('== 令牌边界：B2-6a journal 回填 attach 世代守卫（TK-8：在途回填被换代后必须作废）==');
   {

@@ -406,7 +406,9 @@ function tokenForwardersIn(code) {
     var openP = code.indexOf('(', m.index);
     var closeP = parenClose(code, openP);
     if (closeP < 0) continue;
-    var arg = code.slice(openP + 1, closeP).trim();
+    // 取**首个顶层实参**而不是整条实参表：唯一出口的第二实参是选项对象（intent/logger），
+    // 以「实参表恰为一个裸标识符」为条件会让加了选项对象的封装脱离检测 —— 那正是令牌脱守的形状。
+    var arg = (splitTopLevelArgs(code.slice(openP + 1, closeP))[0] || '').trim();
     if (!/^[A-Za-z_$][\w$]*$/.test(arg)) continue; // 只认「原样转交单个标识符」
     var range = enclosingFnRange(code, m.index);
     if (!range) continue;
@@ -432,7 +434,7 @@ function tokenForwardersIn(code) {
 //   1) 直接调用 platform.browser.openBrowser 且实参含令牌；
 //   2) 经中间封装转交（本仓真实形态 api/domains/instances.js）：
 //        const url = '...?token=' + tok;  openInSystemBrowser(url);
-//        function openInSystemBrowser(url) { return platform.browser.openBrowser(url); }
+//        function openInSystemBrowser(url) { return platform.browser.openBrowser(url, { logger }); }
 //      此时违规发生在**封装的调用点**，故须反查每个调用方传进来的实参。
 function browserTokenScanIn(rel, code) {
   var hits = [];
@@ -810,6 +812,15 @@ console.log('== TK-G8 反向：判据能识别旧形态 ==');
     (function () {
       var snip = "function openInSystemBrowser(url) { return platform.browser.openBrowser(url); }\n"
         + "var u = 'http://127.0.0.1:1/open?token=' + tok; openInSystemBrowser(u);";
+      var r = browserTokenScanIn('(snippet)', snip);
+      return r.hits.length > 0 && r.sites >= 1;
+    })(), 'hit');
+  // 封装带选项对象的形态（真实调用点要把 logger 交进唯一出口）：只认「实参表恰为一个裸标识符」
+  // 会让这类封装脱离转交检测，令牌经封装进 argv 的路径就此无人守。
+  check('TK-G8 G6 判据识别「实参表带选项对象」的转封装',
+    (function () {
+      var snip = "function openInSystemBrowser(url, o) { return platform.browser.openBrowser(url, { logger: o.logger }); }\n"
+        + "var u = 'http://127.0.0.1:1/open?token=' + tok; openInSystemBrowser(u, {});";
       var r = browserTokenScanIn('(snippet)', snip);
       return r.hits.length > 0 && r.sites >= 1;
     })(), 'hit');

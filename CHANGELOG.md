@@ -1,5 +1,31 @@
 ## [未发布]
 
+### 真机三条缺陷：实例自弹浏览器、journald 档空转、外部打开零留痕
+
+三条都由真机日志定档（守卫 `shell.log` 与 `guard.log` 同场取读），不是推测：
+
+- **启动命令的 `--no-open` 由内核在执行口补齐**（`src/domains/instance/sandbox.js#withoutAutoOpen`）。
+  `dsh web` 自己会拉起系统浏览器，而那条路绕在外部打开唯一出口之外：没有能力档、没有预检、没有三档证据、
+  日志里查无此事，守卫每次重启实例就再弹一个窗。真机上启动命令是从 `instances.json` 载回的旧默认
+  （`[…, 'web', '--port', P]`，没带开关），补齐只补**缺省**：命令里已显式写了 `--open` 或 `--no-open` 的
+  一律原样交回，用户意图不被砍掉；三条默认命令分支同过该函数，位置参数分隔符 `--` 之后的 token 不当开关。
+  判据在 `instance-state-test` 7H（存量旧命令补齐 / 已带开关不重复补 / 反向：显式开关一字不改）。
+- **journald 档加服务档闸**（`src/platform/service/token/capture.js#captureJournal`）。
+  `'dsh-web@' + 实例 id` 只是实例标识，portable 服务档（darwin/win32 与无 user-systemd 的容器）同样带着它，
+  而那里没有任何 journal 可查：真机日志尾部 917 条 `journalctl ENOENT`，每 30s 成对 WARN 刷到看不见真因。
+  判据取 Provider 分派单源（`platform/os/service#current`），本层不再写第二份平台判断；停用按单元说一次
+  （那是状态不是待重试的失败），`systemd` 档行为不变。判据在 `token-boundary-test`（两腿服务档 + 恰一行 +
+  反向：systemd 档不得被判成停用）。
+- **外部打开唯一出口每次落一行日志**（`src/platform/os/browser.js#logOpen`）。此前该出口出口零日志，
+  「面板说已交出、屏幕上什么都没有」只能靠拍照取证。现在六处结局出口（含两条最早的预检失败）统一经
+  局部 `out` 落一行：`intent/via/engine/bin/argv/档位/reason/exit`，参数逐个截掉查询串与片段——
+  普通打开传的就是带 `?token=` 的本机地址，日志不是令牌的家，而 origin+path 保留才可比对。
+  `logger` 由三处调用点注入（`/env/open-url`、`/instances` 的代开、一键登录），本层不 import 日志实现。
+  判据在 `platform-layer-portability` X-10（每条用例恰一行 + 令牌与查询串不入日志 + 地址主体在场）。
+- **随带修门禁的一处漏法**：`token-contract-gate` 的转封装识别原要求「实参表恰为一个裸标识符」，
+  给调用点加第二个实参（选项对象）就会让该封装脱离令牌路径检测。扫描器改为取**首个顶层实参**，
+  并在 TK-G8 反向区补一条「实参表带选项对象的转封装仍被抓到」的对照。四平台 CI 矩阵为唯一裁判。
+
 ### 外部打开的门禁做减法：运行判据已经判红的事，不再于源码里重述一遍
 
 - **`platform-layer-portability` X-11 删去与运行判据重复的源码级正则**（端点三档透传、来源闸、契约登记计数、
