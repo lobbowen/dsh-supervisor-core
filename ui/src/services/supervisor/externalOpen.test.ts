@@ -125,7 +125,8 @@ describe("loginUrlOf：等待授权期间常驻的地址行（toast 十几秒就
   it("反向：地址缺失或非 https 一律不摊 —— 这一行会被渲染成可点链接，且面板地址带着访问令牌", () => {
     expect(loginUrlOf(null)).toBe("");
     expect(loginUrlOf({ url: "" })).toBe("");
-    expect(loginUrlOf({ url: "javascript:alert(1)" })).toBe("");
+    expect(loginUrlOf({ url: "javascript:void0" })).toBe("");
+    expect(loginUrlOf({ url: "data:text/html,%3Cscript%3E" })).toBe("");
     expect(loginUrlOf({ authUrl: "http://127.0.0.1:3080/?token=secret" })).toBe("");
   });
 });

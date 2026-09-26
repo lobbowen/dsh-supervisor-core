@@ -1255,9 +1255,12 @@ async function x10() {
         && ia.slice(1, 4).join(',') === '--no-first-run,--no-default-browser-check,--disable-session-crashed-bubble'
         && ia[ia.length - 1] === u && ia.length === 5, JSON.stringify(ia));
     // 判据不能钉「环境里没有 LANG」——runner 自己就带 LANG，那样只会误报；要比的是反指纹档相对宿主档
-    //   只多改了一项（把界面语言随机化改回来就红）。
+    //   只多改了一项（把界面语言随机化改回来就红）。宿主若自带 TZ，同名同值会让差集为空，故先摘掉再比。
+    const savedTZ = process.env.TZ;
+    delete process.env.TZ;
     const le = br.loginEnv(() => 0.5);
     const injected = Object.keys(le.antiEnv).filter((k) => le.sysEnv[k] !== le.antiEnv[k]);
+    if (savedTZ === undefined) delete process.env.TZ; else process.env.TZ = savedTZ;
     check('X-10 反指纹档相对宿主档只改 TZ 一项（这里曾随机化界面语言：中文 Windows 被弹出过法语窗口）',
       JSON.stringify(injected) === JSON.stringify(['TZ']), JSON.stringify(injected));
     check('X-10 隔离登录确实用反指纹档：TZ 有值且宿主 LANG 原样带过',
