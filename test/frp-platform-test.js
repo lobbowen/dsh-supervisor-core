@@ -2,7 +2,7 @@
 'use strict';
 
 // frp 平台映射测试：验证 frpPlatformTag 纯函数对三平台 x 双架构的官方产物命名正确性。
-// 独立脚本：node test/frp-platform-test.js（不加入 npm test 链，保持卸载类测试政策外的纯映射断言）。
+// 纯映射断言，不碰宿主，故在 test/manifest.js 标 L1（由 runner 随全链执行）。
 
 const path = require('node:path');
 const ROOT = path.join(__dirname, '..');

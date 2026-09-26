@@ -128,8 +128,10 @@ console.log('== P3 GUI plist 只表达「登录启动」==');
   }
 }
 
-// -- P4/P5 行为（纯参数调用，不触真实系统）--
+// -- P4/P5 行为（真调 setGuiAutostart，会动本机登录态 -> 代码守卫）--
 console.log('== P4/P5 边界行为 ==');
+require('./_sandbox-guard').requireHostSandbox(
+  'autostart-ownership-test.js P4/P5', 'linux 会 unlink 真实 XDG autostart 条目，darwin 会真跑 launchctl');
 {
   // 关闭：任何平台都必须是幂等且不抛
   for (const pl of ['linux', 'darwin', 'win32']) {

@@ -37,13 +37,14 @@
    再 npm run build:launcher:all 且 DSH_LAUNCHER_REQUIRED=1（否则 all-platforms 的
    T6-d/T6-e **静默 SKIP = 该断言在 CI 永不检查**）。本机跑 npm test **不含这些步骤**。
 
-5. **平台原生的命令行上限**（2026-09-17 CI 实证）：`scripts.test` 是单条 `&&` 巨链，
+5. **平台原生的命令行上限**（2026-09-17 CI 实证）：`scripts.test` 曾是单条 `&&` 巨链，
    增长到 8593 字符后，**`windows-latest` 报 `The command line is too long.`**
    （cmd.exe 上限 8191），而同一提交的 `ubuntu-22.04` / `macos-latest` / `macos-14`
    **三个矩阵同时全绿**，且 `test` job 也全绿。
-   本机 Linux 跑一万遍**都不可能**发现这条 —— 修法是 `--require` → `-r` 缩短到 7711，
-   并把该平台差异固化为门禁 **N-e**（`test-chain-completeness-test.js`），
-   使其不再依赖 Windows CI 才发现。
+   本机 Linux 跑一万遍**都不可能**发现这条 —— 当时的修法是 `--require` → `-r` 缩短长度
+   并把该上限固化成硬门禁。余量后来仍枯竭到放不下一个新条目，门禁反过来禁止了新增测试，
+   故清单已迁到 `test/manifest.js`（`scripts.test` 收敛为一行 runner）；
+   同一条 Windows 差异现由 **C-f**（不得回到硬编码巨链）守住。
 
 **结论：本机 npm test 的绿/红都不构成任何交付证据。**
 
@@ -56,11 +57,10 @@
    pull_request、workflow_dispatch；
    ⚠ **推送非 master 分支不会触发 CI** —— 必须开 PR 或 workflow_dispatch；
 3. 以 CI 的**四平台矩阵**结果为准。
-4. `npm test` 链是 `&&` 串接的**全部**测试文件（条数/长度由 `test/test-chain-completeness-test.js`
-   的 N-a/N-e 每次实跑打印，本文不写死数字），**首个红点即截断** —— 因此「本轮只报 N 条红」
-   不等于其后文件已绿。补推前：按红点文件在链中的位置取**未执行的那一段**，
-   对其中属静态门禁（只读源码做判据）的文件做同口径只读复算，再推。
-   由 N-g 禁止任何文档/workflow 注释重新写死链条数。
+4. `npm test` 由 `test/_runner.js` 按 `test/manifest.js` 逐条起独立子进程执行，且**默认跑完
+   全部条目、在末尾汇总所有红点**（`--fail-fast` 才短路）—— 一次 CI 红即可定位全部失败，
+   不再需要「按链中位置取未执行段做只读复算」再推。条目数与长度只由
+   `test/test-chain-completeness-test.js` 实跑打印，本文不写死数字（由该门禁的 C-j 执法）。
 
 ### CI 实际执行的内容（.github/workflows/build.yml）
 

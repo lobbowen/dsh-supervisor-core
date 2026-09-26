@@ -224,7 +224,7 @@ jobs:
           node-version: '24'
 
       # ⚠ 2026-09-13：Linux leg 需要 Xvfb ——
-      #   ci-core.sh 的 npm test 含看护 E2E（「壳缺失 → 真的被拉起」），而看护在拉起 GUI 壳前
+      #   ci-core.sh 的 L2 腿含看护 E2E（「壳缺失 → 真的被拉起」），而看护在拉起 GUI 壳前
       #   会先判定图形会话；无头 runner 判定为 false → 按设计拒绝拉起 → 该 E2E 四条失败。
       #   darwin / win32 的判定恒为真（守卫本就只在图形会话内存活），故只有 Linux 需要装。
       - name: 安装 Xvfb（图形会话前置条件 · 仅 Linux）
@@ -238,7 +238,7 @@ jobs:
       # 内核 launcher 为纯 JS（Node ≥18 运行时），无需 Rust/系统库依赖。
       #
       # A3-a（2026-09-19 审计）：**验证腿不带发布令牌**。原实现把 NPM_TOKEN 挂在
-      #   build job env 上 —— ci-core.sh 内的 ui npm ci postinstall 钩子与全量 npm test
+      #   build job env 上 —— ci-core.sh 内的 ui npm ci postinstall 钩子与矩阵腿回归
       #   等所有第三方代码进程树都能读到它（供应链失窃面）。
       #   现拆为两步：本步只跑验证（verify + build:launcher + 子包 dry-run），任何事件
       #   （push/PR/tag）都跑；发布拆到下一步，令牌仅存在于「内核发布」步骤的进程树。

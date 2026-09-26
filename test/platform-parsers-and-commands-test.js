@@ -49,7 +49,7 @@ const check = (n, c, x) => {
 
 const LF = String.fromCharCode(10);
 const CRLF = String.fromCharCode(13) + String.fromCharCode(10);
-// 异步判据登记表：汇总前统一 await（Y-6 起新增行为断言不再自开独立文件，N-e 链条长度纪律）。
+// 异步判据登记表：汇总前统一 await（Y-6 起新增行为断言并入本文件，而不是为一条判据另开一道门禁）。
 const pendingChecks = [];
 
 // -- Y-1：三平台监听者解析 --

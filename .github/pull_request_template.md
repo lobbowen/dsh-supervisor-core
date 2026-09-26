@@ -16,7 +16,7 @@
 
 - [ ] **平台知识只在 `src/platform/**`**：本次没有在业务域新增 `process.platform` / os 映射表
 - [ ] **新增跨层依赖已登记**：若有新的跨层 import，已在 `test/layering-and-dependency-gate-test.js` 的 `CROSS_LAYER` 加条目**并写明理由**
-- [ ] **新增测试已进链**：新测试文件已加入 `package.json#scripts.test`，或已写进排除表并说明理由
+- [ ] **新增测试已登记**：新测试文件已在 `test/manifest.js` 加一行（`tier` / `os` / `why`），或写进 `test-chain-completeness` 的排除表并说明理由
 - [ ] **注入验证**：新增/修改的门禁我都做了「注入缺陷 -> 确认 FAIL -> 还原（sha256 校验）-> 确认 PASS」
 - [ ] **未引入假绿**：判据不依赖默认值兜底 / 不靠夹具顺序巧合 / 不与自己的说明文字匹配（见 DEVELOPMENT-TRACK 第 3 节）
 - [ ] **验收状态：待 CI 裁决**（按 ACCEPTANCE-STANDARD，测试一律不在本机执行；不得以本机结果作结论）

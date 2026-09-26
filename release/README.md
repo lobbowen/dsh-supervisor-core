@@ -161,7 +161,7 @@ procOS.killTree(pid, 'SIGKILL', cb, { ownGroup: true });   // 整树终止，两
 >
 > 六道门禁都有**反向断言**（判据必须能识别违规形态），并已用真实注入验证：
 > 业务域写回 `process.platform` → CP-1 失败；写回 os 映射表 → M-c / CP-2 失败；
-> 新增一个不在链中的测试 → N-a 失败；矩阵与发布清单不一致 → M-a 失败；
+> 新增一个未登记的测试 → C-a 失败；矩阵与发布清单不一致 → M-a 失败；
 > 删掉某平台的 shellSelfHeal 声明 → P-4/P-5 失败；标签写错 → P-1/P-6/P-7 全链路失败；
 > 还原 exec-path 的「不传播 platform」→ X-2 五条失败；移除 autostart 未知平台守卫 → X-4 两条失败。
 > 把 PowerShell 转义退回 JSON 规则 → Y-3/Y-5 四条失败；wmic 空输出误判为有值 → Y-2 两条失败。
@@ -183,7 +183,7 @@ procOS.killTree(pid, 'SIGKILL', cb, { ownGroup: true });   // 整树终止，两
 | `bootstrap_flow.rs` **G2**：`commands/` 只做校验与委托，不得直接执行外部命令/不得有平台分支 | 铁律二（业务域不得持平台知识）|
 | `bootstrap_flow.rs` **G3**：`main.rs` 只做组装（行数上限 550、零 IPC 命令） | 分层纪律 |
 | `platform_shared_items_test.rs` | 平台文件必须导入所用共享项（E0425 防线）|
-| `ci_gate_coverage_test.rs` C-a/C-b + CI `ls tests/*.rs` 自动枚举 | 内核 `test-chain-completeness-test` **N-a**（同一目标）|
+| `ci_gate_coverage_test.rs` C-a/C-b + CI `ls tests/*.rs` 自动枚举 | 内核 `test-chain-completeness-test` **C-a**（同一目标）|
 
 > 即：**两仓各有一套「边界门禁」，目标一致、实现按各自语言惯例**
 > （内核用 JS 静态扫描 + 行为断言；壳仓用 Rust 结构断言 + 真实平台编译）。
@@ -197,7 +197,7 @@ procOS.killTree(pid, 'SIGKILL', cb, { ownGroup: true });   // 整树终止，两
 - **四平台完整构建**：`.github/workflows/build.yml` 的 `build` job，4 runner 矩阵
   （`ubuntu-22.04` / `windows-latest` / `macos-latest` / `macos-14`），各 runner 只构建**自己**的平台；
   `build` **不受 `need_build` 门控**（2026-09-14 硬标准）—— 每次 push / PR 都跑。
-- **验证内容**：`ci-core.sh` 内 `verify:versions` → 前端 `verify` → `npm test` → `build:launcher` →
+- **验证内容**：`ci-core.sh` 内 `verify:versions` → 前端 `verify` → `npm run test:os-behavior`（该平台真实宿主行为腿）→ `build:launcher` →
   子包组装 + `npm publish --dry-run`；构建期断言四平台 `core.cjs` 逐字节一致，并做
   self-check + fresh-HOME daemon 自举 + UI 服务端到端冒烟。
 - **发布**：tag `v*` + 有 `NPM_TOKEN` + `need_build=true` 时，各平台 runner 由**单独发布步骤**执行
@@ -332,7 +332,7 @@ CI（tag 触发）
 避免与 CI 形成同平台二次发布（npm 同版本不可重发）。
 
 CI 产线（.github/workflows/build.yml → release/scripts/ci-core.sh）：四平台各自
-`verify --core → build-ui → npm test → build:launcher → 子包 dry-run`；**tag 触发 + 存有 NPM_TOKEN 时**
+`verify --core → build-ui → test:os-behavior → build:launcher → 子包 dry-run`；**tag 触发 + 存有 NPM_TOKEN 时**
 由不带令牌的验证步之后的**单独发布步骤**（`--publish-only`）真发并挂 GitHub Release。内核 launcher 为纯 JS（Node ≥18），无需 Rust/系统库。
 
 ### B. 壳发布（公开仓 dsh-supervisor-launcher）

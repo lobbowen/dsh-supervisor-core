@@ -107,14 +107,10 @@ check('SR-4 config 不再硬编码 ~/.dsh/supervisor', !/stateFile:\s*'~\.dsh\/s
 
 // -- SR-7：测试隔离 hygiene（防回归：测试不得再写真实 HOME 的产品状态）--
 {
-  const pkg = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8'));
-  const chain = pkg.scripts.test || '';
-  //接受 `-r`（--require 的短形式）—— 二者语义相同。
-  //   改用短形式是为压 scripts.test 长度以适配 **Windows cmd.exe 8191 命令行上限**
-  //   （CI 实测 windows-latest 报 "The command line is too long."，Linux/macOS 不受限）；
-  //   本判据的意图（链经 _preload 注入隔离、不依赖 shell 语法）不变。
-  check('SR-7 测试链经 _preload 注入隔离（跨平台，不依赖 shell 语法）',
-    /(?:-r|--require) .*_preload\.js/.test(chain), 'ok');
+  // 链条目改由 test/_runner.js 逐条 `-r test/_preload.js` 起子进程（scripts.test 已收敛为一行）。
+  const runner = fs.readFileSync(path.join(ROOT, 'test', '_runner.js'), 'utf8');
+  check('SR-7 runner 逐条以 -r 注入 _preload（跨平台，不依赖 shell 语法）',
+    /'-r',\s*PRELOAD/.test(runner) && /PRELOAD\s*=\s*path\.join\(__dirname,\s*'_preload\.js'\)/.test(runner), 'ok');
   check('SR-7 _preload 设置为 DSH_SUPERVISOR_HOME',
     /DSH_SUPERVISOR_HOME/.test(fs.readFileSync(path.join(ROOT, 'test', '_preload.js'), 'utf8')), 'ok');
   // 测试文件不得硬编码产品状态旧位置（注释除外）

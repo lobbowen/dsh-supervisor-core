@@ -12,10 +12,10 @@
 //   块注释以换行占位，**保持行结构**（多处判据依赖行号/行数）。
 //
 // ## 本文件是助手，不是测试
-//   - test-chain-completeness-test.js：N-a 只要求 `*-test.js` 入链（本文件不匹配）；
-//     N-c 的 helper 计数显式排除 `_` 前缀 => 本文件既不占链条目也不触发 N-c。
+//   - test-chain-completeness-test.js：C-a 只要求 `*-test.js`（加遗留两名）入登记表，本文件不匹配；
+//     登记表按文件显式列条目，`_` 前缀助手既不在表内也不被计为测试。
 //   - test-port-discipline-test.js / workflow-parse-test.js 的枚举也显式跳过 `_` 前缀。
-//   => 新增本文件**不消耗链条余量**（依然 7899/8000），也不需要 `scripts.test` 改动。
+//   => 新增本文件不需要动 test/manifest.js，也不影响任何链长判据（scripts.test 已收敛为一行 runner）。
 //
 // ## 三个产物（按各门禁**原有语义**选用，不得一律改成「全剥」）
 //   - stripComments(src)     删除式：注释整段删除（块注释换行保留）。原「剥块+行注释」的门禁用。
