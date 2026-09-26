@@ -11,7 +11,7 @@
 |---|---|---|
 | 1 | **平台知识只允许在 `src/platform/**`** | `cross-platform-architecture-gate-test` CP-1/CP-2 |
 | 2 | **跨层依赖必须显式登记**（`test/layering-and-dependency-gate-test.js` 的 `CROSS_LAYER`）| `layering-and-dependency-gate-test` L-2 |
-| 3 | **新增测试必须进链**（或在排除表里写理由）| `test-chain-completeness-test` N-a |
+| 3 | **新增测试必须在 `test/manifest.js` 登记**（tier/os/why；或在排除表里写理由）| `test-chain-completeness-test` C-a/C-c |
 
 ---
 
@@ -100,7 +100,7 @@ const frp = matrix.frpTag();            // 第三方命名 'windows_amd64'
 | 新增平台解析（命令输出 -> 数据） | **抽成纯函数**并在 `platform-parsers-and-commands-test` 加断言 |
 | 新增平台层模块/行为 | 在 `platform-layer-portability-test` 加穷举断言 |
 | 修任何缺陷 | 先写**会失败的断言**（注入验证），再修 |
-| 新增测试文件 | 加进 `package.json#scripts.test`（否则 N-a 失败）|
+| 新增测试文件 | 在 `test/manifest.js` 加一行（否则 C-a 失败；靠 runner 执行，不再动 `scripts.test`）|
 
 ### 第 5 步：验证（**不可跳过**）
 

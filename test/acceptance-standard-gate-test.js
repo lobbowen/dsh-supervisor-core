@@ -63,6 +63,18 @@ function collectMd(dir, out) {
   ];
   const miss = need.filter(([, re]) => !re.test(ciText)).map(([n]) => n);
   check('A-2 CI test job 含全部断言前置步骤', miss.length === 0, miss.length ? '缺: ' + miss.join(', ') : 'ok');
+
+  // 产线矩阵腿的分层执行（同一处修复的两个半边：test job 判全量、矩阵腿只判本宿主行为）。
+  //   回归风险：有人把 ci-core 改回全量 npm test -> 每次 push 又在四个 runner 上重跑平台无关链，
+  //   而这条「跨平台证据通道」的价值消失且无人报警，故在此钉住执行口形态。
+  const ciCore = fs.existsSync(path.join(ROOT, 'release/scripts/ci-core.sh'))
+    ? fs.readFileSync(path.join(ROOT, 'release/scripts/ci-core.sh'), 'utf8') : '';
+  check('A-2 产线矩阵腿按 L2 分层跑回归（全量链只在 test job 判一次）',
+    /npm run test:os-behavior/.test(ciCore) && !/^\s+xvfb-run -a npm test\s*$/m.test(ciCore),
+    'ci-core.sh [2/5] 执行口');
+  check('A-2 反向：矩阵腿改回全量 npm test 的旧形态与本判据可区分',
+    !/npm run test:os-behavior/.test('  xvfb-run -a npm test')
+    && /^\s+xvfb-run -a npm test\s*$/m.test('  xvfb-run -a npm test'), 'hit');
 }
 
 // -- A-3：四平台矩阵 --

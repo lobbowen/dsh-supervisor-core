@@ -84,6 +84,8 @@ console.log('== A1 能力字段完整性（无遗漏 / 无 undefined）==');
 
 // -- A4 autostart 跨平台行为（真实调用，非文本扫描）--
 console.log('== A4 autostart 跨平台行为一致性 ==');
+require('./_sandbox-guard').requireHostSandbox(
+  'platform-capability-audit-test.js A4', 'setGuiAutostart(false) 会动本机登录自启条目');
 {
   // 壳自启：声明必须与行为一致
   // 三平台**均已实现**。

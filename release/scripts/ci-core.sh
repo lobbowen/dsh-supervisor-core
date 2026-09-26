@@ -90,21 +90,21 @@ else
   bash release/scripts/build-ui.sh
 fi
 
-echo "=== [2/5] 内核回归测试（npm test） ==="
-#  复（P1）：**看护 E2E 需要图形会话**。
-#   缺陷：shell-watchdog-e2e-test 验证「壳缺失 -> 真的被拉起」，而看护在拉起 GUI 壳前
-#   会先判定图形会话（src/platform/os/desktop.js::sessionAvailable —— 这是刻意设计，
-#   防「无显示时拉起必失败 -> 重启风暴」）。无头 runner 上判定为 false ->
-#   看护按设计拒绝拉起 -> E2E-1/3/4/5 四条失败，日志给出确切原因：
-#       [shell-watchdog] 不拉起桌面壳：无图形会话（注销/纯终端），拉起 GUI 必失败
-#   linux 需要 Xvfb 提供 DISPLAY；darwin/win32 的判定恒为真（守卫本就只在图形会话内存活），
-#   故这里「有 xvfb-run 就用、没有就直跑」即可三平台通用（也是单源修复的原因：
-#   test job 与 build 矩阵都调本脚本，修在这里两处同时生效）。
+echo "=== [2/5] 本宿主相关的内核回归（仅 L2 分层，全链由 test job 跑一遍） ==="
+#  复（跨平台假覆盖）：本脚本原先跑**完整** npm test，而 build 矩阵有四条腿 ——
+#   于是同一条链（绝大多数条目与宿主无关）在每个 runner 上各跑一遍，每次 push 共 5 遍，
+#   真正的跨平台证据（OS 相关行为）却没有专门通道。现在按 test/manifest.js 的分层跑：
+#   矩阵腿只跑 L2（真 spawn 进程 / 跑 bash、pkill、systemctl / 读 /proc / 断言权限位的那批），
+#   L1 由 test job 在 ubuntu 上跑一遍即判。分层与缺口台账由 test-chain-completeness C-g/C-h 执法。
+#  复（P1）：**看护 E2E 需要图形会话**（保留原修法）。
+#   shell-watchdog-e2e 验证「壳缺失 -> 真的被拉起」，看护拉起 GUI 壳前先判图形会话
+#   （src/platform/os/desktop.js::sessionAvailable —— 刻意设计，防无显示时重启风暴）。
+#   linux 需要 Xvfb 提供 DISPLAY；darwin/win32 判定恒为真，故「有 xvfb-run 就用、没有就直跑」。
 if command -v xvfb-run >/dev/null 2>&1; then
   echo "[test] 经 xvfb-run 提供图形会话（看护 E2E 需要）..."
-  xvfb-run -a npm test
+  xvfb-run -a npm run test:os-behavior
 else
-  npm test
+  npm run test:os-behavior
 fi
 
 echo "=== [3/5] 构建内核 launcher（build:launcher：esbuild bundle + node 启动脚本，全平台统一） ==="

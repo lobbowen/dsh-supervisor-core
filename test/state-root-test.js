@@ -107,14 +107,18 @@ check('SR-4 config 不再硬编码 ~/.dsh/supervisor', !/stateFile:\s*'~\.dsh\/s
 
 // -- SR-7：测试隔离 hygiene（防回归：测试不得再写真实 HOME 的产品状态）--
 {
-  const pkg = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8'));
-  const chain = pkg.scripts.test || '';
-  //接受 `-r`（--require 的短形式）—— 二者语义相同。
-  //   改用短形式是为压 scripts.test 长度以适配 **Windows cmd.exe 8191 命令行上限**
-  //   （CI 实测 windows-latest 报 "The command line is too long."，Linux/macOS 不受限）；
-  //   本判据的意图（链经 _preload 注入隔离、不依赖 shell 语法）不变。
-  check('SR-7 测试链经 _preload 注入隔离（跨平台，不依赖 shell 语法）',
-    /(?:-r|--require) .*_preload\.js/.test(chain), 'ok');
+  // 判据口径：每条链都由 test/_runner.js 以「-r + 相对 _preload 字面量」起子进程（scripts.test 已收敛为一行）。
+  //   相对而非绝对是实质要求，不是风格：子进程的 cmdline 会被被测层当作归属锚点读回来
+  //   （src/app/main/signals.js 的接管判据按 cmdline 子串认「受管 DSH」），绝对路径把仓库检出目录名
+  //   写进每条 cmdline，测试进程因此被守卫误判成实例并对它发 SIGTERM（smoke 端口占用用例实证）。
+  const injectOk = (t) => /'-r',\s*PRELOAD/.test(t) && /PRELOAD\s*=\s*'\.\/test\/_preload\.js'/.test(t);
+  const runner = fs.readFileSync(path.join(ROOT, 'test', '_runner.js'), 'utf8');
+  check('SR-7 runner 逐条以 -r 注入相对 _preload（跨平台、不把绝对路径泄进被测 cmdline）',
+    injectOk(runner), 'ok');
+  check('SR-7 反向：绝对路径形态（path.join(__dirname, …)）必判红',
+    !injectOk("const PRELOAD = path.join(__dirname, '_preload.js');\nspawnSync(node, ['-r', PRELOAD, f]);"), '被抓到');
+  check('SR-7 反向：丢了 -r 注入必判红（隔离就不成立）',
+    !injectOk("const PRELOAD = './test/_preload.js';\nspawnSync(node, [entry.file]);"), '被抓到');
   check('SR-7 _preload 设置为 DSH_SUPERVISOR_HOME',
     /DSH_SUPERVISOR_HOME/.test(fs.readFileSync(path.join(ROOT, 'test', '_preload.js'), 'utf8')), 'ok');
   // 测试文件不得硬编码产品状态旧位置（注释除外）

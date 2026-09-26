@@ -89,7 +89,12 @@ module.exports = {
     if (!cmd) return false;
     const bin = d.config().command && d.config().command[1];
     if (typeof bin === 'string' && bin && cmd.includes(bin)) return true;
-    return pidlook.isDshCmdline(pid);
+    // 兜底只给「手动标准安装的 DSH」：其真实形态是 dsh web --port N，故 web 子命令词
+    //   必须与 dsh 特征同时成立。isDshCmdline 单独放行等于「命令行里出现过 dsh 三个
+    //   字母」——从含 dsh 的检出目录或安装路径跑的任意脚本都会被接管，接管后守卫
+    //   对它发 SIGTERM，即本函数上方注释要避开的「路径碰巧含 dsh 误接管」。
+    //   与 port-rederive.js 的 genericDsh 同一条闸：跨进程归属判定只此一处标准。
+    return /(^|\s)web(\s|$)/.test(cmd) && pidlook.isDshCmdline(pid);
   },
 
   /** 向进程组发信号（detached spawn 的子进程是组长）；组信号失败退回单进程。平台层封装：

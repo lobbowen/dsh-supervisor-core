@@ -105,7 +105,7 @@
 
 | 用途 | 命令 |
 |---|---|
-| CI 产线核心（测试 job 与 build 矩阵共用）| `bash release/scripts/ci-core.sh`（**仅 CI 内**：内含 `npm test` 与构建，本机执行即违反 §0 硬标准）|
+| CI 产线核心（测试 job 与 build 矩阵共用）| `bash release/scripts/ci-core.sh`（**仅 CI 内**：内含回归与构建 —— 测试 job 跑全量 `npm test`，四平台矩阵腿只跑 `npm run test:os-behavior`，本机执行即违反 §0 硬标准）|
 | 构建 launcher（**仅 CI 内**）| `npm run build:launcher` |
 | 四平台 launcher（**仅 CI 内**；本地 exit 2）| `npm run build:launcher:all` |
 | 子包组装 + dry-run（**仅 CI 内**；本地跑到这一步即已产出发布形态）| `npm run publish:core` |
@@ -128,7 +128,7 @@
 |---|---|---|
 | `precheck` | 总是 | 探测「该版本是否已在 npm 全平台发布」→ 输出 `need_build` |
 | `test` | 总是 | 前端产物 + Xvfb + `npm test`（全部门禁；**不检出壳仓**，见 §0 跨仓隔离）|
-| `build` | **总是**（**不受** need_build 门控）| 四平台矩阵各自 `ci-core.sh`：**完整构建 + 验证**（上传制品；验证步**不持有任何发布令牌**）；**发布**由 tag + NPM_TOKEN + need_build 门控的单独步骤执行（`--publish-only`，NPM_TOKEN 唯一持有者，见 AUDIT-2026-09-19 A3-a）|
+| `build` | **总是**（**不受** need_build 门控）| 四平台矩阵各自 `ci-core.sh`（该平台只跑 `npm run test:os-behavior`，即登记表中 tier=L2 且 os 含该宿主的条目 —— 平台无关判据由 `test` job 判一次，四腿重复不产生额外跨平台证据）：**完整构建 + 验证**（上传制品；验证步**不持有任何发布令牌**）；**发布**由 tag + NPM_TOKEN + need_build 门控的单独步骤执行（`--publish-only`，NPM_TOKEN 唯一持有者，见 AUDIT-2026-09-19 A3-a）|
 | `release` | tag `v*` **且** `need_build` | 挂 GitHub Release 附件 |
 
 **`need_build` 只作用于「发布」，不作用于「构建」**（2026-09-14 修正）：
@@ -219,7 +219,7 @@
 | P-2 | 每个 `npm run <name>` 的 `<name>` **存在**于 `package.json#scripts` |
 | P-3 | 矩阵与 `npmPublish.packages` **逐项一致**，且 CI build 矩阵覆盖同集合 |
 | P-4 | CI job 名与触发（含 tag 模式）与 workflow 一致 |
-| P-5 | 本文件列出的门禁文件都存在，且在 `scripts.test` 链中 |
+| P-5 | 本文件列出的门禁文件都存在，且在 `test/manifest.js` 登记表中 |
 | P-6 | 必需章节标题齐备 |
 | P-7 | 反向：判据能识别伪造入口/缺失文件（门禁非空转）|
 

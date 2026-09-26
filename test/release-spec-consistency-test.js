@@ -16,7 +16,7 @@
 //   P-2  规范里的每个 `npm run X` 的 X 存在于 package.json#scripts
 //   P-3  平台矩阵与 package.json#npmPublish.packages 逐项一致，且 CI build 矩阵覆盖同集合
 //   P-4  CI job 名与 tag 模式与 workflow 一致
-//   P-5  规范列出的门禁文件存在且在 scripts.test 链中
+//   P-5  规范列出的门禁文件存在且在 test/manifest.js 登记表中
 //   P-6  必需章节标题齐备
 //   P-7  反向：判据能识别伪造入口 / 缺失文件（门禁非空转）
 // ---------------------------------------------------------------------------
@@ -119,14 +119,14 @@ if (spec) {
   check('P-4b tag 触发模式与规范一致',
     wf.indexOf("tags:") >= 0 && wf.indexOf("'") >= 0 && spec.tagPattern === 'v*', String(spec.tagPattern));
 
-  // -- P-5：门禁文件存在且在链中 --
-  const chain = String(npmScripts.test || '');
+  // -- P-5：门禁文件存在且在登记表中（清单唯一事实源 = test/manifest.js）--
+  const listed = require(path.join(ROOT, 'test', 'manifest.js')).chain().join(' ');
   const badGates = [];
   for (const g of spec.specGates || []) {
     if (!fs.existsSync(path.join(ROOT, g))) { badGates.push(g + '（不存在）'); continue; }
-    if (chain.indexOf(g) < 0) badGates.push(g + '（不在 scripts.test 链中）');
+    if (listed.indexOf(g) < 0) badGates.push(g + '（不在 test/manifest.js 登记表中）');
   }
-  check('P-5 规范列出的门禁都存在且在 scripts.test 链中',
+  check('P-5 规范列出的门禁都存在且在登记表中',
     badGates.length === 0, badGates.length ? badGates.join(', ') : (spec.specGates.length + ' 道门禁'));
 
   // -- P-6：必需章节 --

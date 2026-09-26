@@ -3,8 +3,8 @@
 
 // 卸载类离线夹具测试（NativeManager 状态探测 / 环境检查 / 清单记录 / 全量卸载清理）。
 //   夹具用临时 npm 全局根，不碰宿主环境；但 ops.uninstall 会真起 npm 子进程，
-//   且 bin 链接经 fs.symlinkSync 造（Windows 需特权或开发者模式），故未入 npm test 链，
-//   理由与入链前提登记在 test/test-chain-completeness-test.js 的排除表。
+//   且 bin 链接经 fs.symlinkSync 造（Windows 需特权或开发者模式），故未入 test/manifest.js 登记表，
+//   理由与入册前提登记在 test/test-chain-completeness-test.js 的排除表。
 //   本仓硬标准禁止在本机执行任何测试，CI 也不跑这条脚本，所以它不产生验收证据；
 //   链内的卸载行为面由 test/uninstall-timeout-behavior-test.js（npmBin 注入）承担。
 

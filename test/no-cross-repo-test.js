@@ -104,14 +104,17 @@ console.log('== X-3 壳仓定位助手不得复活 ==');
     !fs.existsSync(path.join(ROOT, 'test', '_shell-repo.js')), '已删除');
 }
 
-// -- X-4 scripts.test 自包含 --
-console.log('== X-4 scripts.test 自包含 ==');
+// -- X-4 清单自包含 --
+console.log('== X-4 清单自包含 ==');
 {
+  // 清单唯一事实源 = test/manifest.js（scripts.test 已收敛为 `node test/_runner.js`）。
   const chain = String((require(path.join(ROOT, 'package.json')).scripts || {}).test || '');
-  check('X-4 scripts.test 不含壳仓耦合门禁',
-    !chain.includes('_shell-repo') && !chain.includes('DSH_SHELL_REPO'), '自包含');
-  check('X-4 scripts.test 含本门禁（防自身被漏掉）',
-    chain.includes('no-cross-repo-test.js'), '已接线');
+  const listed = require(path.join(__dirname, 'manifest.js')).chain().join(' ');
+  const selfContained = (s) => !s.includes('_shell-repo') && !s.includes('DSH_SHELL_REPO');
+  check('X-4 scripts.test 与登记表都不含壳仓耦合门禁',
+    selfContained(chain) && selfContained(listed), '自包含');
+  check('X-4 登记表含本门禁（防自身被漏掉）',
+    listed.includes('no-cross-repo-test.js'), '已登记');
 }
 
 // -- X-5 反向：判据非空转 --
