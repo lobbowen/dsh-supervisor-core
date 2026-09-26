@@ -23,7 +23,6 @@ function depsOf(host) {
       ctl() { return host.ctl; },
       logger() { return host.logger; },
       events() { return host.events; },
-      name() { return host.name; },
       daemons() { return host.daemons; },
       instances() { return host.instances; },
       views() { return host.views; },
@@ -82,7 +81,6 @@ module.exports = {
     },
     /** ensure 结果 -> 旧调用方契约翻译（adopted 不带 spawned：避免监督误报“失联重拉”）。 */
     _daemonEnsureResult(lc, writeOwnerLock) {
-      const d = depsOf(this);
       const rr = lc.ensureRunning();
       if (rr.mode === 'started' || rr.mode === 'adopted') {
         if (writeOwnerLock) writeOwnerLock();
@@ -95,7 +93,7 @@ module.exports = {
       // _spawn 被退出意图/停止闸否决时如实返回（不得混入 error 语义 spam 告警）。
       if (rr.mode === 'stopping') return { active: false, mode: 'stopping' };
       // spawn 未能启动（脚本不可执行等）时如实上报，不当作「已 started」。
-      if (rr.mode === 'failed') return { active: false, mode: 'error', error: rr.error || ('daemon 未启动: ' + d.name()) };
+      if (rr.mode === 'failed') return { active: false, mode: 'error', error: rr.error || ('daemon 未启动: ' + lc.name) };
       return { active: false, mode: 'error', error: 'unexpected lifecycle mode: ' + rr.mode };
     },
     /** 实例清单+令牌 -> lan-state.json（原子 0600；daemon 轮询消费）。hash 相同不落盘。 */

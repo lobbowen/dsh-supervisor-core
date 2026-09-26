@@ -106,9 +106,6 @@ function installFacets(host, deps) {
     if (f.factory) { installMethods(host, f.mod[f.factory](domainActionDeps(host))); continue; }
     if (f.mod.methods) installMethods(host, f.mod.methods);
     if (f.mod.accessors) installAccessors(host, f.mod.accessors);
-    // 兜底分支：模块自带 buildFieldHelpers 时才调用；_mXxx/_mSetXxx 现由 collaborators.js
-    //   的 installFieldHelpers 装到实例上（不挂 prototype），当前无切面走这里。
-    if (typeof f.mod.buildFieldHelpers === 'function') f.mod.buildFieldHelpers(host);
   }
   // state/session/control 由真 ctor 工厂构造（自己持有实现）；其余切面为薄委托。
   // 必须在全部切面装毕之后：薄委托协作方转发到 host 上的既有切面方法。

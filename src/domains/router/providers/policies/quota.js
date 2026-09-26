@@ -180,14 +180,4 @@ function creditsRefilled(acc) {
   return Number.isFinite(now) && now > base;
 }
 
-/** 账号额度使用百分比（各窗口最大百分比），「将耗尽」信号。 */
-function quotaPercent(acc) {
-  const q = (acc && acc.quota) || {};
-  let max = 0;
-  for (const w of [q.rolling, q.weekly, q.monthly]) {
-    if (w && Number.isFinite(Number(w.percent))) max = Math.max(max, Number(w.percent));
-  }
-  return max;
-}
-
-module.exports = { classifyUpstreamLimited, headerRetryMs, bodyResetMs, normalizeResetTs, fmtClock, isQuotaCreditsLow, quotaOverallStatus, monthlyResetAtOf, accountQuotaSummary, windowExhausted, nextResetAt, creditsResetDue, creditsRefilled, quotaPercent };
+module.exports = { classifyUpstreamLimited, headerRetryMs, bodyResetMs, normalizeResetTs, fmtClock, isQuotaCreditsLow, quotaOverallStatus, monthlyResetAtOf, accountQuotaSummary, windowExhausted, nextResetAt, creditsResetDue, creditsRefilled };

@@ -87,6 +87,4 @@ function deserializeInstance(o) {
   return i;
 }
 
-function stateContainer(opts) { return new ProxyInstance(opts || {}); }
-
-module.exports = { ProxyInstance, INSTANCE_STATES, isServable, occupiesSlot, stateContainer, serializeInstance, deserializeInstance };
+module.exports = { ProxyInstance, INSTANCE_STATES, isServable, occupiesSlot, serializeInstance, deserializeInstance };

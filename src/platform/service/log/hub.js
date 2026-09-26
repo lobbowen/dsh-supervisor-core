@@ -225,7 +225,6 @@ module.exports = {
   registerSource: sources.registerSource,
   registerSources: sources.registerSources,
   setSources: sources.setSources,
-  getSources: sources.getSources,
   registerInternalType: sources.registerInternalType,
   setInternalTypes: sources.setInternalTypes,
 };

@@ -46,27 +46,38 @@ function legacyShellDir() {
   return path.join(os.homedir(), '.dsh', 'shell');
 }
 
-/** 前向自愈迁移：旧位置存在、新位置不存在时整目录搬移。不双读、不复制；失败静默（下次启动再试）。 */
+/** 搬迁失败原因（只取稳定字段：code+message 足够定位，且不丢 errno）。 */
+function why(e) { return ((e && e.code) ? e.code + ': ' : '') + ((e && e.message) || String(e)); }
+
+/** 一次性把旧位置（DSH 数据目录下）整目录搬进产品状态根；不双读、不复制。
+ *  返回 { moved, skipped, failed }：
+ *    moved   已搬走的条目
+ *    skipped 新根已有同名条目（新副本为准，旧文件原样留在旧位置——不是失败，但必须可见）
+ *    failed  **没能**搬走的条目：旧位置仍有用户数据而未进新根，静默继续等于以空状态启动
+ *  失败不在此处重试也不在此处吞掉：调用方据 failed 决定是否启动（「下次启动再试」会把数据缺失
+ *  伪装成正常，正是本轮要收口的病）。空目录残留不记失败：它不携带数据，且下次仍然可删。 */
 function migrateLegacy() {
   const moved = [];
+  const skipped = [];
+  const failed = [];
   for (const [from, to] of [
     [legacySupervisorDir(), supervisorDir()],
     [legacyShellDir(), shellDir()],
   ]) {
-    try {
-      if (!fs.existsSync(from)) continue;
-      fs.mkdirSync(to, { recursive: true });
-      // 按条目合并：目标已存在的文件不覆盖（可能是新写入的契约）。
-      for (const name of fs.readdirSync(from)) {
-        const src = path.join(from, name);
-        const dst = path.join(to, name);
-        if (fs.existsSync(dst)) continue;
-        try { fs.renameSync(src, dst); moved.push(src + ' -> ' + dst); } catch { /* 跨设备等：跳过该条 */ }
-      }
-      try { if (fs.readdirSync(from).length === 0) fs.rmdirSync(from); } catch {}
-    } catch { /* 权限等：不阻断启动 */ }
+    if (!fs.existsSync(from)) continue;
+    try { fs.mkdirSync(to, { recursive: true }); } catch (e) { failed.push({ from, entry: null, error: why(e) }); continue; }
+    let names = [];
+    try { names = fs.readdirSync(from); } catch (e) { failed.push({ from, entry: null, error: why(e) }); continue; }
+    for (const name of names) {
+      const src = path.join(from, name);
+      const dst = path.join(to, name);
+      if (fs.existsSync(dst)) { skipped.push(src); continue; }
+      // 跨设备（旧位置在另一挂载点）时 rename 会 EXDEV：如实记失败，不做「复制一份」的第二套真源。
+      try { fs.renameSync(src, dst); moved.push(src + ' -> ' + dst); } catch (e) { failed.push({ from, entry: name, error: why(e) }); }
+    }
+    try { if (fs.readdirSync(from).length === 0) fs.rmdirSync(from); } catch { /* 空目录残留，下次再清 */ }
   }
-  return moved;
+  return { moved, skipped, failed };
 }
 
 // legacy* 仅 migrateLegacy 内部使用，不对外导出（收窄公开面）。

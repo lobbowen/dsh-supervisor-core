@@ -33,7 +33,6 @@ function createUpgrade(deps) {
   function installSandbox(inst) { return install.installSandbox(inst); }
   function readInstalledVersion(inst) { return install.readInstalledVersion(inst); }
   async function latestDsh() { return install.latestDsh(); }
-  async function latestDshVersion() { return install.latestDshVersion(); }
 
   /** 视图行所需的版本信息（纯读，供 ops.list 组装）。 */
   function versionInfo(inst) {
@@ -227,6 +226,6 @@ function createUpgrade(deps) {
     if (!job) return { error: 'no upgrade job for ' + id };
     return { state: job.state, step: job.step, errors: job.errors, error: job.error, startedAt: job.startedAt, finishedAt: job.finishedAt };
   }
-  return { _scheduleJobCleanup, installSandbox, readInstalledVersion, latestDshVersion, versionInfo, jobView, checkUpdate, upgradeInstance, upgradeStatus };
+  return { _scheduleJobCleanup, installSandbox, readInstalledVersion, versionInfo, jobView, checkUpdate, upgradeInstance, upgradeStatus };
 }
 module.exports = { createUpgrade };

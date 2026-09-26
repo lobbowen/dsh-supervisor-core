@@ -51,7 +51,7 @@ function saveTasks(file, tasks, maxTasks) {
     const mine = new Map(tasks.map((t) => [t.id, t]));
     for (const t of disk) { if (t && t.id && !mine.has(t.id)) mine.set(t.id, t); }
     merged = Array.from(mine.values());
-    merged.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+    merged.sort((a, b) => (b.startedAt || 0) - (a.startedAt || 0));
     if (merged.length > maxTasks) merged = merged.slice(0, maxTasks);
   }
   writeTasks(file, merged);
