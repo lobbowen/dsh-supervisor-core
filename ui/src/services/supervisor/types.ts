@@ -721,10 +721,31 @@ export type StartupSectionData = {
   } | null;
 };
 
-/** 维度台账。已知的四张数据形状点名声明（页面据此渲染具体字段），其余维度（浏览器/会话/能力/偏好/
+/** 桌面壳所见维度：壳投放的环境报告（内核 platform/contract/shell-report.js 的读回产物）。
+ *  available=false 要分得清没报过（never-written）与读不出/版本不符（unreadable-or-schema-mismatch），
+ *  后者是要去查文件的故障。与 runtime 维**并排而不互相覆盖**：两份实测不一致就是要看的证据。 */
+export type ShellSectionData = {
+  /** 读回结论三档：true = 拿到一份可报告的壳观测；false 时看 reason，别把读不出说成没写过。 */
+  available?: boolean;
+  path?: string;
+  reason?: 'ok' | 'never-written' | 'unreadable-or-schema-mismatch' | string;
+  writtenBy?: string | null;
+  schema?: number | null;
+  at?: number | null;
+  ageMs?: number | null;
+  node?: { path?: string | null; binDir?: string | null; version?: string | null; min?: string | null; ok?: boolean | null } | null;
+  npm?: { path?: string | null; args?: string[]; version?: string | null; ok?: boolean | null } | null;
+  prefix?: { dir?: string | null; writable?: boolean | null; why?: string | null } | null;
+  registry?: { best?: string | null; latencyMs?: number | null; probes?: Array<{ url?: string | null; ok?: boolean | null; latencyMs?: number | null }>; probesTotal?: number } | null;
+  records?: Array<{ probe?: string; source?: string; target?: string; ms?: number | null; ok?: boolean | null; note?: string }>;
+  droppedRecords?: number;
+};
+
+/** 维度台账。已知的五张数据形状点名声明（页面据此渲染具体字段），其余维度（浏览器/会话/能力/偏好/
  *  选路，以及未来注册进来的）走索引签名 —— 表单加维度不需要前端先改类型再显示。 */
 export type EnvironmentSections = {
   runtime?: EnvironmentSection<RuntimeSectionData>;
+  shell?: EnvironmentSection<ShellSectionData>;
   dsh?: EnvironmentSection<DshSectionData>;
   egress?: EnvironmentSection<EgressSectionData>;
   startup?: EnvironmentSection<StartupSectionData>;

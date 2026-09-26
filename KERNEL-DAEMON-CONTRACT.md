@@ -40,9 +40,41 @@ P4 服务定义（三平台模板）  ── node+guard+daemon ──►
 P5 启动（systemd/launchd/schtasks 或 spawn）──►  daemon 启动
                                           D1..D9
 P6 healthz  ── GET /healthz ────────────►  2xx
+P7 shell-report.json ── 壳所见 node/npm/镜像源/前缀 ──►  环境表单 `shell` 维
 ```
 
 **内核不得反向**：不得安装自己（D5）、不得写服务定义（D6）、不得直接/间接启动第二个守卫实例（`guard.lock` 只允许一个 daemon）。
+
+### 2.1 P7：壳的环境观测报告（`supervisor/shell-report.json`，schema 1）
+
+与 P0 `runtime.json` 同目录、同为「壳写内核读」的文件，但性质相反：P0 是**启动契约**（字段错一个字符就装不上
+内核，内核拿它去 spawn），P7 是**观测报告**（内核只读它给人看，永不参与 spawn）。走文件而不新开 HTTP
+上报端点，是因为壳与内核恒同机、采集者就是写入者；开 HTTP 要新造带体动词再加投递重试，而那条重试正是把
+「没送达」伪装成「已上报」。
+
+读侧唯一实现：`src/platform/contract/shell-report.js`（`file()` 是路径的唯一口径，`read()` 永不抛错）。
+它作为环境表单的 `shell` 维进台账（`platform/os/environment.js`），与内核自己的 `runtime` 维**并排而不互相
+覆盖**：壳那一份是「装内核时真正用的那一套」，内核那一份是「本进程现在解析到的」，两份不一致就是要排障的
+东西，谁盖住谁都会让这类缺陷重新隐身。
+
+| 字段 | 含义 | 纪律 |
+|---|---|---|
+| `schema` | 固定 `1` | 不等即整份作废（读侧判 `unreadable-or-schema-mismatch`，不做字段猜测） |
+| `writtenBy` | 写入者标识（壳版本串） | 自由文本，入站即脱敏 |
+| `at` | 壳写入时的 epoch 毫秒 | 缺失即整份作废（没有它算不出年龄，会把旧报告显示成新鲜） |
+| `node` | `{path,binDir,version,min,ok}` | `ok` 三态：`null` = 壳也判不出 |
+| `npm` | `{path,args[],version,ok}` | `args` 与 `path` 成对（`node + 包内 npm-cli.js` 形态只念 path 会把 node 版本念成 npm 版本） |
+| `prefix` | `{dir,writable,why}` | `writable:null` = 没试出来，不是不可写 |
+| `registry` | `{best,latencyMs,probes[{url,ok,latencyMs}]}` | URL 里的凭据由内核抹除后才入台账与快照（私有源常把 token 写在 URL 里） |
+| `records` | `[{probe,source,target,ms,ok,note}]` | 至多 64 行，超出只截断并如实报 `droppedRecords` |
+
+读回三档（写侧与界面都必须分清，因为处置相反）：`ok` = 拿到一份可报告的观测；`never-written` = 这台机器的
+壳还没报过（内核由命令行或别的进程拉起、或壳版本未含写入者，都是常态而非故障）；
+`unreadable-or-schema-mismatch` = 文件在但读不出/版本不符/超字节上限，得去查那个文件。
+
+**壳侧现状**：写入者尚未实现（本批只交付内核接收口）。未在场期间面板如实显示「这台机器的壳还没报过」。
+执法：`test/runtime-contract-test.js` 的 SR 组（三档分档、schema handshake、三态不折叠、入站脱敏、
+明细截断、读取口永不抛、路径口径唯一）。
 
 ---
 

@@ -13,17 +13,21 @@
 //   维度台账收敛的是**账本形状**（每个维度一条 {at, source, state, data, probed}），不是采集实现：
 //   采集仍归各自的所有者，用 registerSection() 把**既有探针**挂进来（零第二份实现），
 //   本文件只负责按拍装配、失效与落盘。
+//   壳那一份采集结果经 ../contract/shell-report 以 `shell` 维进同一张表：一张表、按来源留痕，
+//   并排而不互相覆盖（两份实测不一致本身就是要看的证据，见该维度注册处的说明）。
 // 平台事实仍只写在 ./browser-inventory.js 与 ./egress.js 一处：本文件不查注册表、不跑 LaunchServices 脚本、
-//   不扫 XDG 目录、不自己摸网络，只做表单装配、选路次序与快照落盘。
+//   不扫 XDG 目录、不自己摸网络，只做表单装配、选路次序与快照落盘（shell 维只读一个本地小文件）。
 
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const stateRoot = require('../service/state-root');
 const { writeAtomic } = require('../util/fs');
+const { maskProxyServer, maskProxySecrets } = require('../util/redact');
 const desktop = require('./desktop');
 const detector = require('./browser-inventory');
 const egress = require('./egress');
+const shellReport = require('../contract/shell-report');
 const { engineOf } = detector;
 
 /** 快照 schema：落盘格式变更时递增，读侧据此判旧快照是否作废（不得按字段猜版本）。
@@ -38,6 +42,10 @@ const FORM_TTL_MS = 60000;
 
 /** 维度默认复用窗口：出网条件与运行时探测都比「读一次文件」贵得多，按维度各自 ttlMs 覆盖。 */
 const SECTION_TTL_MS = 60000;
+
+/** 壳上报维度的复用窗口：读一次小文件近乎免费，取短窗口是为了「壳刚重探完，面板下一拍就能看到」。
+ *  这里没有「等壳上报」的轮询，也没有超时判失败 —— 报告旧到什么程度由 data.ageMs 如实交出。 */
+const SHELL_REPORT_TTL_MS = 10000;
 
 /** 装配期注入的取数口。platform 不得 require app/api（分层门禁 L-1），而「用户的偏好」住在内核配置里、
  *  「能力矩阵的实测覆写」住在 ./index.js 里，两者都只能由上层在组装时把 getter 绑进来。
@@ -168,8 +176,10 @@ const _sections = new Map();
 const _reads = new Map();
 
 /** 面板与快照的固定呈现次序；未列出的注册维度追加在后面（不藏维度）。
+ *  shell 紧跟 runtime：两维量的是同一批事实（本机 Node/npm/镜像源/前缀），只是采集者不同 ——
+ *  并排放，两份实测不一致时一眼看得见，中间隔开就等于把矛盾拆成两个页面。
  *  startup 在最后：它是「这一拍本机跑过什么」的元信息，不参与任何分发判定，但排障时必须在一起。 */
-const SECTION_ORDER = ['runtime', 'dsh', 'browsers', 'session', 'egress', 'capabilities', 'preference', 'pick', 'startup'];
+const SECTION_ORDER = ['runtime', 'shell', 'dsh', 'browsers', 'session', 'egress', 'capabilities', 'preference', 'pick', 'startup'];
 
 /** 表单自己装配的同步维度：这些名字由本文件每拍现装，不接受外部注册（注册即两个口径）。 */
 const SYNC_DIMS = ['browsers', 'session', 'capabilities', 'preference', 'pick'];
@@ -204,23 +214,7 @@ function sectionData(id) {
 }
 
 /** 出网条件维度的数据装配：代理读数 + 已判过的目标主机，全部三态原样交出（不把 null 折成 false）。
- *  代理地址里的凭据一律抹掉：快照 0600 也要给人看、表单也要过 HTTP，`user:pass@host` 没有理由出现在任何一处。
- *  两种写法都要管（`http://u:p@host` 与裸 `u:p@host`）。`//` 必须先于「无协议头」这条分支参与匹配，
- *  且用户名与密码都不得跨 `/`：少了这两条约束，`http://u:p@h` 会先撞上协议名后那个冒号，
- *  脱敏就把整段 `//u:p` 当成密码吃掉、留下 `http:***@h` —— 地址看着像被处理过，实际把主机前的结构改了形。
- *  `host:port` 里没有 @，不会被误伤。 */
-function maskProxyServer(server) {
-  return server ? String(server).replace(/(\/\/)?([^\s/@:]+):([^\s/@]*)@/, '$1$2:***@') : null;
-}
-
-/** 探测留痕行里的凭据同样要抹：egress 层的 note 会原样写下 `ProxyServer=http://u:p@host`，
- *  这一份既进表单也进快照，漏一处就等于把凭据投给人看的界面。整行可能有多处，故 global。 */
-function maskProxySecrets(text) {
-  return String(text == null ? '' : text).replace(/(\/\/)?([^\s/@:]+):([^\s/@]*)@/g, '$1$2:***@');
-}
-
-/** 代理地址脱敏（导出的理由：它是本维度的安全边界，门禁要能直接喂样本判红绿，
- *  绕开函数另拼一份正则就等于验不住真正跑的那条路）。 */
+ *  代理地址的脱敏在 ../util/redact（入站边界的唯一一把尺），本维度只在装配时过一次。 */
 function proxyDataOf(p) {
   return p ? { state: p.state, server: maskProxyServer(p.server), pac: p.pac || null, source: p.source, cached: p.cached === true } : null;
 }
@@ -265,6 +259,19 @@ registerSection('egress', {
       .concat(hosts.map((h) => egress.reach(h, reachOpts))))
       .then(([p]) => egressData(p));
   },
+});
+
+/** 内置维度：桌面壳所见。注册在本文件加载时，因为它的采集口（../contract/shell-report）也在 platform 层。
+ *  为什么与 runtime 并存而不是互相覆盖：壳与内核量的是同一批事实（Node/npm/镜像源/全局前缀），
+ *    但**壳那一份是「装内核时真正用的那一套」**（它的 npm 探针真实执行过，见不变量 T-1b/T-10），
+ *    内核这一份是「本进程现在解析到的」。两者不一致正是要排障的东西 —— 谁盖住谁都会把
+ *    「探针的 npm 与装内核的 npm 不是同一个」这类缺陷重新藏起来。所以这里只如实并排，不裁决。
+ *  壳未上报（内核独立跑、CLI、老版本壳）时本维度 available=false 并带原因，不是失败也不是空清单。 */
+registerSection('shell', {
+  label: '桌面壳所见（Node/npm/镜像源/全局前缀）',
+  source: 'shell',
+  ttlMs: SHELL_REPORT_TTL_MS,
+  probe: () => shellReport.read(),
 });
 
 /** 拍一个维度：跑 probe、按结果定 state、失败只记账不抛（表单不得成为用户可见的失败原因）。 */
@@ -471,6 +478,21 @@ function form(o) {
   }
   const egressRows = ((sections.egress || {}).data || {}).probed || [];
   for (const row of egressRows) probed.push({ section: 'egress', source: row.source, detail: row.detail });
+  // shell 维单独留一行结论：读侧只有 sections 而没有这条时，面板折叠处就等于「壳没报过」与「壳报了但
+  // 我们没读到」分不清。available 为假要指名是 never-written 还是读不出（后者得去查那个文件）。
+  const sh = (sections.shell || {}).data;
+  if (sh) {
+    probed.push({
+      section: 'shell',
+      source: 'shell-report:' + (sh.reason || '?'),
+      detail: sh.available === true
+        ? '壳已上报（写入者 ' + (sh.writtenBy || '未署名') + '，schema ' + sh.schema
+          + '，距今 ' + (sh.ageMs === null ? '未读出' : sh.ageMs) + ' 毫秒，明细 ' + (sh.records || []).length + ' 条'
+          + (sh.droppedRecords ? '，截断 ' + sh.droppedRecords + ' 条' : '') + '）'
+        : (sh.reason === 'never-written' ? '这台机器的壳还没报过（内核独立跑或老版本壳时是常态，不是故障）'
+          : '壳报的文件读不出或版本不符，得查：' + (sh.path || '?')),
+    });
+  }
 
   const value = {
     schema: SCHEMA,
@@ -541,6 +563,6 @@ module.exports = {
   bind, preferenceId, capabilities, identity, paths,
   browsers, normalizeInventory, rankCandidates, pickLauncher, checkPreference,
   registerSection, unregisterSection, section, sectionData, refresh,
-  coldProfileViable, checkEgress, maskProxyServer,
+  coldProfileViable, checkEgress,
   form, snapshotPath, readSnapshot, lastSnapshot, invalidate,
 };
