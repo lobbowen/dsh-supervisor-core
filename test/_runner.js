@@ -38,7 +38,11 @@ const TIER = flag('tier', 'all');
 const ONLY = flag('only', '').split(',').map((s) => s.trim()).filter(Boolean);
 const KEEP_GOING = !has('fail-fast');
 const ROOT = path.join(__dirname, '..');
-const PRELOAD = path.join(__dirname, '_preload.js');
+// 必须相对（与旧 && 链的字面量一致）：子进程 cmdline 会被被测层当作归属锚点读回来。
+//   绝对路径把仓库检出目录名写进每条 cmdline，而 src/app/main/signals.js 的接管判据
+//   含「命令行出现过 dsh」这种子串匹配 —— 测试进程就被守卫认成受管 DSH 并 SIGTERM
+//   （smoke 的端口占用用例实证：改回相对后同一条判定不再触发）。
+const PRELOAD = './test/_preload.js';
 
 // tier=all 不按宿主过滤（见 manifest.select 注释）；--tier=L2 才按当前宿主筛。
 let picked = MANIFEST.select(TIER === 'os' ? 'L2' : TIER, process.platform);

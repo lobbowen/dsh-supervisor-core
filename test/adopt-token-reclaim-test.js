@@ -307,6 +307,48 @@ async function main() {
     try { fs.unlinkSync(f); } catch {}
   }
 
+  // -- D-12：cmdline 兜底必须认「DSH 形态」，不得只认「命令行里出现过 dsh」 --
+  //   失效模式：_isManagedProcess 的兜底单靠 isDshCmdline（整条 cmd 的 /dsh/i 子串匹配）。
+  //   于是路径里含 dsh 的无关进程只要恰好监听 target 端口就被判成受管 DSH 并接管，
+  //   接管后守卫对它发 SIGTERM = 误杀无关进程。smoke 的端口占用用例在 runner 下被打死
+  //   即此路径（绝对 -r 把检出目录名写进了被测进程的 cmdline）。
+  //   双向对照：带 web 子命令、路径不含配置 bin 的真「手动标准安装」形态必须仍放行，
+  //   否则就是砍兼容能力来掩盖缺陷。
+  {
+    const { spawn } = require('node:child_process');
+    const pidlook = require(path.join(ROOT, 'src', 'platform', 'os', 'pidlookup'));
+    // 配置 bin 用默认 /nonexistent/bin/dsh：两个子进程都不含它，判定只能走兜底分支。
+    const sup3 = buildSupervisor({});
+    try { fs.unlinkSync(sup3._mainOwnerFile()); } catch {}
+    const IDLE = 'setTimeout(function () {}, 8000);';
+    const kids = [];
+    const alive = async (pid) => {
+      for (let i = 0; i < 40; i++) { if (pidlook.isAlive(pid)) return true; await sleep(50); }
+      return false;
+    };
+    const cmdOf = (pid) => (pidlook.readCmdline(pid) || '').slice(0, 120);
+    try {
+      // (a) 手动起的标准 DSH：路径与配置 bin 无关，但带 web 子命令 -> 可接管
+      const manual = spawn(process.execPath,
+        ['-e', IDLE, path.join(TMP, 'manual-dsh-bin'), 'web', '--port', '3080'], { stdio: 'ignore' });
+      kids.push(manual);
+      check('D-12 对照组 (a) 子进程已起', await alive(manual.pid), 'pid=' + manual.pid);
+      check('D-12 带 web 子命令的手动 DSH 仍判可接管（路径不含配置 bin）',
+        sup3._isManagedProcess(manual.pid) === true, 'cmd=' + cmdOf(manual.pid));
+      // (b) 无关进程：命令行含 dsh 字样但无 web 子命令 -> 绝不接管
+      const stranger = spawn(process.execPath,
+        ['-e', IDLE, '/opt/dsh-supervisor/tools/build-cache.js'], { stdio: 'ignore' });
+      kids.push(stranger);
+      check('D-12 对照组 (b) 子进程已起', await alive(stranger.pid), 'pid=' + stranger.pid);
+      const sCmd = cmdOf(stranger.pid);
+      check('D-12 反例前提：该 cmdline 确实含 dsh 字样（否则判据空转）', /dsh/i.test(sCmd), sCmd);
+      check('D-12 只含 dsh 字样、无 web 子命令的进程不得判可接管（误杀源头）',
+        sup3._isManagedProcess(stranger.pid) === false, 'cmd=' + sCmd);
+    } finally {
+      for (const k of kids) { try { k.kill('SIGKILL'); } catch {} }
+    }
+  }
+
   console.log('\n==============================');
   console.log('结果: ' + passed + ' passed, ' + failed + ' failed');
   try { fs.rmSync(TMP, { recursive: true, force: true }); } catch {}
