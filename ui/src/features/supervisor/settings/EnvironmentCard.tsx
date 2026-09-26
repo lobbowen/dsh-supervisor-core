@@ -66,6 +66,22 @@ function triText(v?: boolean | null): string {
   return v === true ? "是" : v === false ? "否" : "未读出";
 }
 
+/** 同一事实的两个采集者并排写：内核探针（本进程现在解析到的）与桌面壳上报（装内核时真正用的那一套）。
+ *  缺哪一侧就说哪一侧缺，绝不拿另一侧顶上 —— 用壳的数替内核填坑，正是「覆盖」那套做法会犯的错；
+ *  两侧都有且读数不同则要明说，因为「探针的 npm 与装内核的 npm 不是同一个」这类缺陷只有并排才看得见。 */
+function compareRow(label: string, kernel?: string | null, shell?: string | null): string {
+  const k = kernel || "";
+  const s = shell || "";
+  const clash = k && s && k !== s ? "（两份不一致：装内核用的是壳那套，本进程解析到的是内核这套）" : "";
+  return label + " 内核 " + (k || "未读出") + " ／ 壳 " + (s || "未报") + clash;
+}
+
+/** 壳的一条探测明细：三态 ok 各说一句，判不出不许显示成不通（与内核 reachText 同一纪律）。 */
+function shellRecordText(r: { probe?: string | null; source?: string | null; target?: string | null; ms?: number | null; ok?: boolean | null; note?: string | null }): string {
+  const ok = r.ok === true ? "通" : r.ok === false ? "不通" : "判不出";
+  return (r.probe || "明细") + " " + ok + (r.target ? "（" + r.target + "）" : "") + (typeof r.ms === "number" ? " " + r.ms + " 毫秒" : "");
+}
+
 /** 本拍落盘读数：读缓存那一拍压根不写盘，要先按这条分清，否则会把上次装配的 written 冒成本拍成果。 */
 function writeText(snap?: EnvironmentForm["snapshot"], cached?: boolean): string {
   if (!snap) return "未给出（这一拍没装配）";
@@ -163,6 +179,16 @@ export function EnvironmentCard() {
   const chosen = draft !== null ? draft : current;
   // 启动段逐字摊开内核记录：格子空着就显示「未读出」，界面一栏推断都不补 —— 补出来的因果链正是排障的噪声。
   const startup = sections?.startup?.data;
+  // 壳上报维与 runtime 维并排渲染：同一批事实的两个采集者，隔开就等于把矛盾拆成两处。
+  const shell = sections?.shell?.data;
+  const shellRegistry = shell?.registry;
+  const shellProbes = shellRegistry?.probes || [];
+  const shellRecords = shell?.records || [];
+  const shellLatency = shellRegistry?.latencyMs;
+  const shellProbesTotal = shellRegistry?.probesTotal ?? 0;
+  // 内核侧版本取自 EnvCatalog 条目视图（node 另有 version 字段，npm 的版本就在 detail 里）。
+  const kernelNodeVersion = (sections?.runtime?.data?.node?.version as string | undefined) || null;
+  const kernelNpmVersion = (sections?.runtime?.data?.npm?.detail as string | undefined) || null;
 
   return (
     <>
@@ -253,6 +279,48 @@ export function EnvironmentCard() {
                     {" · 候选 " + (sections?.runtime?.data?.registry?.candidates || []).length + " 个"}
                   </span>
                   <span className="break-all">全局前缀：{sections?.runtime?.data?.prefix || "未实测（npm root -g 未返回）"}</span>
+                </div>
+              ) : null}
+              <span className="text-xs font-medium">桌面壳所见（装内核时真正用的那一套，与上面的内核读数并排对照）</span>
+              <span className="text-xs text-muted-foreground">{sectionState(sections?.shell)}</span>
+              {shell ? (
+                <div className="grid gap-0.5 text-xs text-muted-foreground">
+                  <span>
+                    {shell.available === true
+                      ? "壳上报于 " + agoText(shell.ageMs) + "，写入者 " + (shell.writtenBy || "未署名") + "（报告版本 " + (shell.schema ?? "未读出") + "）"
+                      : shell.reason === "never-written"
+                        ? "这台机器的壳还没报过：内核由命令行或别的进程拉起时这是常态，不是故障"
+                        : "壳报的文件读不出或版本不符（不是没写过，得查那个文件）"}
+                  </span>
+                  {shell.available === true ? (
+                    <div className="grid gap-0.5">
+                      <span className="break-all">{compareRow("Node：", kernelNodeVersion, shell.node?.version)}</span>
+                      <span className="break-all">{compareRow("npm：", kernelNpmVersion, shell.npm?.version)}</span>
+                      <span className="break-all">{compareRow("镜像源：", sections?.runtime?.data?.registry?.origin, shell.registry?.best)}</span>
+                      <span className="break-all">{compareRow("全局前缀：", sections?.runtime?.data?.prefix, shell.prefix?.dir)}</span>
+                      {shell.node && shell.node.ok !== true ? (
+                        <span>壳判 Node 达标：{triText(shell.node.ok)}（{shell.node.version || "版本未报"}，门槛 {shell.node.min || "未报"}）</span>
+                      ) : null}
+                      {shell.prefix && shell.prefix.writable !== true ? (
+                        <span className="break-all">壳判前缀可写：{triText(shell.prefix.writable)}{shell.prefix.why ? "（" + shell.prefix.why + "）" : ""}</span>
+                      ) : null}
+                      {(shellProbes.length || shellRegistry?.best) ? (
+                        <span className="break-all">
+                          壳的镜像源候选：{shellProbes.map((p) => (p.url || "?") + " " + reachText(p.ok)).join("、")}
+                          {typeof shellLatency === "number" ? "（择优选中用时 " + shellLatency + " 毫秒）" : ""}
+                          {shellProbesTotal > shellProbes.length
+                            ? "（报告里共 " + shellProbesTotal + " 个候选，此处只列前 " + shellProbes.length + " 个）" : ""}
+                        </span>
+                      ) : null}
+                      {shellRecords.length ? (
+                        <span>
+                          壳的探测明细 {shellRecords.length} 条：{shellRecords.slice(0, 8).map(shellRecordText).join("；")}
+                          {shellRecords.length > 8 ? "…其余见内核快照文件" : ""}
+                          {shell.droppedRecords ? "（报告送达时被截断 " + shell.droppedRecords + " 条）" : ""}
+                        </span>
+                      ) : null}
+                    </div>
+                  ) : null}
                 </div>
               ) : null}
               <span className="text-xs text-muted-foreground">{sectionState(sections?.dsh)}</span>

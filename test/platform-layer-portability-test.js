@@ -1610,6 +1610,8 @@ async function x13() {
   const eg = require(path.join(ROOT, 'src', 'platform', 'os', 'egress.js'));
   const reg = require(path.join(ROOT, 'src', 'platform', 'os', 'registry.js'));
   const br = require(path.join(ROOT, 'src', 'platform', 'os', 'browser.js'));
+  const red = require(path.join(ROOT, 'src', 'platform', 'util', 'redact.js'));
+  const sr = require(path.join(ROOT, 'src', 'platform', 'contract', 'shell-report.js'));
   const T = 'login.example.test';
   const url = 'https://' + T + '/callback?state=x13';
   const rd = (ok, stage, detail) => ({ ok, stage, detail, at: 7 });
@@ -1766,10 +1768,36 @@ async function x13() {
   const syncCalls = eg.hosts().length;
   check('X-13 同步读数只取缓存、绝不触发系统查询（HTTP 路径与判据读 proxyRead；起子进程的是刷新那一步）',
     syncCalls === 0 && (eg.proxyRead() === null || eg.proxyRead().platform === process.platform), 'ok');
-  check('X-13 代理凭据不进表单也不进快照（脱敏住在装配处，漏一处就等于把 user:pass 投给人看的界面）',
-    env.maskProxyServer('http://usr:pwd@127.0.0.1:7890') === 'http://usr:***@127.0.0.1:7890'
-      && env.maskProxyServer('127.0.0.1:7890') === '127.0.0.1:7890' && env.maskProxyServer(null) === null,
-    JSON.stringify([env.maskProxyServer('http://usr:pwd@h:1'), env.maskProxyServer('a:b@h:1')]));
+  check('X-13 代理凭据不进表单也不进快照（脱敏住在入站口的同一把尺上，漏一处就等于把 user:pass 投给人看的界面）',
+    red.maskProxyServer('http://usr:pwd@127.0.0.1:7890') === 'http://usr:***@127.0.0.1:7890'
+      && red.maskProxyServer('127.0.0.1:7890') === '127.0.0.1:7890' && red.maskProxyServer(null) === null
+      && red.maskProxySecrets('a=b http://u:p@h/x u2:p2@h2') === 'a=b http://u:***@h/x u2:***@h2',
+    JSON.stringify([red.maskProxyServer('http://usr:pwd@h:1'), red.maskProxyServer('a:b@h:1')]));
+  // 尺只有一把：任何第二个文件写出替换串 `:***@` 就是第二套「什么算机密」。反向样本 = 把尺复制进读取器。
+  const rulerHits = (() => {
+    const walk = (d, out) => { for (const f of fs.readdirSync(d, { withFileTypes: true })) {
+      const p = path.join(d, f.name); if (f.isDirectory()) walk(p, out); else if (f.name.endsWith('.js')) out.push(p); } return out; };
+    return walk(path.join(ROOT, 'src'), [])
+      .filter((f) => fs.readFileSync(f, 'utf8').includes(':***@'))
+      .map((f) => path.relative(ROOT, f).split(path.sep).join('/')).sort();
+  })();
+  check('X-13 脱敏实现唯一（入站两条路：内核自己的探针与壳上报；各写一把尺即两个机密口径）',
+    rulerHits.length === 1 && rulerHits[0] === 'src/platform/util/redact.js'
+      && env.maskProxyServer === undefined,
+    JSON.stringify(rulerHits));
+  // 壳上报维：台账里必须有它，且读侧落点就是契约拼出来的那个路径 —— 第二处拼路径等于两份「壳报在哪」。
+  //   available 与 reason 必须自洽（读得出才算 available），这一档在 CI 上是 never-written、
+  //   在装过壳的真机上是 ok，两条都合法，所以判据钉的是自洽而不是某个固定答案。
+  const shf = await env.refresh({ only: ['shell'], force: true, inventory: NO_INV, now: () => 5 });
+  const shRead = (shf.sections.shell || {}).data || {};
+  check('X-13 壳上报维进台账且读侧落点唯一（available 必须等于 reason 是否 ok，读不出不能伪装成读到）',
+    shf.sections.shell.state === 'ok' && shf.sections.shell.source === 'shell'
+      && typeof shf.sections.shell.label === 'string'
+      && shRead.path === sr.file() && shRead.available === (shRead.reason === 'ok')
+      && (shRead.schema === null || shRead.schema === sr.SUPPORTED_SCHEMA)
+      && Array.isArray(shRead.records) && typeof shRead.droppedRecords === 'number'
+      && shf.probed.some((p) => p.section === 'shell' && /壳/.test(String(p.detail))),
+    JSON.stringify(shf.sections.shell));
 
   // (6) 执行口接线：降档要说清依据、判不出要保持原档、全程零摸网
   const CH = { id: 'chrome', name: 'Chrome', bin: '/usr/bin/google-chrome', engine: 'chromium', sources: ['fixture'] };

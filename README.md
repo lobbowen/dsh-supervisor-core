@@ -122,7 +122,7 @@ xdg-open http://127.0.0.1:36360/   # 浏览器直接开面板（默认端口；�
 | 幂等收敛 | 守卫自身重启后读期望状态调和，不叠加实例；接管既有实例时通过 /proc 识别其 pid，可正常 stop/升级 |
 | 观测模式 | 期望停止时发现无主运行实例 → 进入 OBSERVED：如实展示运行状态与 pid，**不强杀不拉起**；点「启动」同一实例无缝转正纳管 |
 | 一键升级 | **先停后装**：停 DSH → npm 安装 → 自动拉起 → 健康验证；失败自动回滚旧版本并恢复运行 |
-| 外部打开 | 先收齐这台机器的实况，再谈交给谁：五层各一处——探测（`src/platform/os/browser-inventory.js`，三端多源并集枚举已装浏览器 + 默认项来源，每条来源都留痕；`src/platform/os/egress.js`，三端读系统代理 + 按主机探 DNS/TCP/TLS 三态通路，判不出即 `null` 不折成「不通」）、环境表单（`src/platform/os/environment.js#form`，schema 2 维度台账：本机实况按维度收齐——运行时/DSH 判定/浏览器清单/图形会话/出网条件/能力档位/用户偏好/这一拍的分发依据/启动既成事实（守卫这一拍真跑过什么：逐字抄启动装配的既有值，没走到的那步留 `null` 显示「未读出」，不写计划），每维带 `at`/`source`/`state` 与留痕，未刷新的异步维度如实 `pending`；后续动作只从这张表分发；读路径零写侧副作用零摸网，快照只在主动刷新与改偏好两处落盘、并配一条只读回看口 `GET /env/environment/last`（单向写的留痕等于没留；它绝不掺进当拍判定））、选路与偏好（`pickLauncher`：用户在本产品里选的 > 系统说得出的默认项 > 穷举唯一解 > 候选次序首个；末档会披露也可改，不再以「系统说不出默认项」为由显式失败；判据只有一处 `checkPreference`）、执行（`src/platform/os/browser.js#openBrowser(url, {intent})`，唯一出口，登录隔离窗口是意图不是第二个出口；隔离窗口先过 `checkEgress`：只有「直连明确不通且代理明确关闭」才降档为直启，判不出保持原档）、消费面（只读 `GET /env/environment` + 写偏好 `POST /settings/external-browser` + 每次打开都带 `evidence.diagnostics` 与 `evidence.egress`）。结果分三档 `confirmed`（本次启动确定拥有自己的窗口且它以 0 退出）/ `handedOff`（只证明交出去了——被既有实例吸收的裸 URL 直启与 win32 全部形态都属此类）/ `ok:false`（带 `reason` 码 + 探测诊断）。「退出码何时算证据」是一条**双向**规则，只写在 `ownsItsWindow` 一处：不可信形态既不凭 0 冒领成功，也不凭非 0 判失败（Windows 那条「向系统 shell 冒开」的未文档化退路已整体删除）。可用性由能力位 `openBrowser` 声明（Linux 按图形会话实测覆写，档位随表单一起交出），三档与 `url`、`evidence`（`bin`/`via`/`ownsWindow`/`exitCode`/`profile`/`diagnostics`/`egress`）一路原样透传到面板——**任何一档都把地址交到用户眼前**，非 `confirmed` 那两档还把启动形态与分发依据摊成一行小字，真机报错才有可定位的证据；`confirmed` 档里**真的判过冷档案出网**的那一次（`evidence.via:isolated` 或带 `egress`）同样摊出这一行——引擎、冷档案目录与出网判定住在一起，那句「弹了但是白窗口」才有可谈的现场。面板自己那条路只有一条选路判据（来源是否回环：本机请内核经 `POST /env/open-url` 代开，远程访客用自己的浏览器），标准见 PLATFORM-CAPABILITY-MATRIX.md §九 |
+| 外部打开 | 先收齐这台机器的实况，再谈交给谁：五层各一处——探测（`src/platform/os/browser-inventory.js`，三端多源并集枚举已装浏览器 + 默认项来源，每条来源都留痕；`src/platform/os/egress.js`，三端读系统代理 + 按主机探 DNS/TCP/TLS 三态通路，判不出即 `null` 不折成「不通」）、环境表单（`src/platform/os/environment.js#form`，schema 2 维度台账：本机实况按维度收齐——运行时/桌面壳所见（壳投放的观测报告，与运行时维并排对照而不互相覆盖）/DSH 判定/浏览器清单/图形会话/出网条件/能力档位/用户偏好/这一拍的分发依据/启动既成事实（守卫这一拍真跑过什么：逐字抄启动装配的既有值，没走到的那步留 `null` 显示「未读出」，不写计划），每维带 `at`/`source`/`state` 与留痕，未刷新的异步维度如实 `pending`；后续动作只从这张表分发；读路径零写侧副作用零摸网，快照只在主动刷新与改偏好两处落盘、并配一条只读回看口 `GET /env/environment/last`（单向写的留痕等于没留；它绝不掺进当拍判定））、选路与偏好（`pickLauncher`：用户在本产品里选的 > 系统说得出的默认项 > 穷举唯一解 > 候选次序首个；末档会披露也可改，不再以「系统说不出默认项」为由显式失败；判据只有一处 `checkPreference`）、执行（`src/platform/os/browser.js#openBrowser(url, {intent})`，唯一出口，登录隔离窗口是意图不是第二个出口；隔离窗口先过 `checkEgress`：只有「直连明确不通且代理明确关闭」才降档为直启，判不出保持原档）、消费面（只读 `GET /env/environment` + 写偏好 `POST /settings/external-browser` + 每次打开都带 `evidence.diagnostics` 与 `evidence.egress`）。结果分三档 `confirmed`（本次启动确定拥有自己的窗口且它以 0 退出）/ `handedOff`（只证明交出去了——被既有实例吸收的裸 URL 直启与 win32 全部形态都属此类）/ `ok:false`（带 `reason` 码 + 探测诊断）。「退出码何时算证据」是一条**双向**规则，只写在 `ownsItsWindow` 一处：不可信形态既不凭 0 冒领成功，也不凭非 0 判失败（Windows 那条「向系统 shell 冒开」的未文档化退路已整体删除）。可用性由能力位 `openBrowser` 声明（Linux 按图形会话实测覆写，档位随表单一起交出），三档与 `url`、`evidence`（`bin`/`via`/`ownsWindow`/`exitCode`/`profile`/`diagnostics`/`egress`）一路原样透传到面板——**任何一档都把地址交到用户眼前**，非 `confirmed` 那两档还把启动形态与分发依据摊成一行小字，真机报错才有可定位的证据；`confirmed` 档里**真的判过冷档案出网**的那一次（`evidence.via:isolated` 或带 `egress`）同样摊出这一行——引擎、冷档案目录与出网判定住在一起，那句「弹了但是白窗口」才有可谈的现场。面板自己那条路只有一条选路判据（来源是否回环：本机请内核经 `POST /env/open-url` 代开，远程访客用自己的浏览器），标准见 PLATFORM-CAPABILITY-MATRIX.md §九 |
 
 ## 安装
 
@@ -192,8 +192,9 @@ GET  /env/status             环境探针 + **平台能力矩阵**（capabilitie
 GET  /env/dsh                DSH 本体安装/纳管判定（bin/binOk/managed/phase）
 GET  /env/node-lts           Node 当前 vs 官方最新 LTS
 GET  /env/environment        环境表单（schema 2 维度台账：本机实况按维度收齐——运行时 node/npm/镜像源/前缀、
-      DSH 判定、浏览器候选与默认项来源、图形会话、出网条件（系统代理 + 目标域通路）、能力档位、
-      用户偏好、这一拍的分发依据 pick、启动既成事实（守卫这一拍真跑过什么），每维带 at/source/state 与留痕 probed；
+      桌面壳所见（壳投放的 shell-report.json 读回，与上一维并排对照而不互相覆盖：一份是装内核时真正用的那套，
+      一份是本进程现在解析到的）、DSH 判定、浏览器候选与默认项来源、图形会话、出网条件（系统代理 + 目标域通路）、
+      能力档位、用户偏好、这一拍的分发依据 pick、启动既成事实（守卫这一拍真跑过什么），每维带 at/source/state 与留痕 probed；
       未刷新的维度如实 pending）；
       只读、零 spawn、零摸网，仅同源防护；
       ?force=1 走异步 refresh 补齐异步维度并把这一拍落进快照，常态读不写盘

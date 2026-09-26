@@ -12,12 +12,23 @@
 // 因此本文件从不真起浏览器，也不 patch 任何模块导出。
 
 const path = require('node:path');
+const fs = require('node:fs');
 const http = require('node:http');
 
 const ROOT = path.join(__dirname, '..');
 const API_PORT = 28010;
 const results = [];
 const check = (n, c, x) => { results.push(!!c); console.log((c ? 'PASS' : 'FAIL') + ' ' + n + (x ? '  ← ' + x : '')); };
+
+/** 维度名单从内核源码取，不再抄第二份：表单加一维而这里没跟上，正是「新维度悄悄变成摆设」的走法。
+ *  X-13 那条钉的是表单自己按分母装配；这里钉的是**边界有没有把每一维原样交出去**，两处分母必须同源。
+ *  取不到即抛（不静默降级成一份硬编码名单，那样门禁会在名单变更时自动失效）。 */
+const SRC_SECTION_ORDER = (() => {
+  const src = fs.readFileSync(path.join(ROOT, 'src/platform/os/environment.js'), 'utf8');
+  const m = /const SECTION_ORDER = \[([^\]]*)\]/.exec(src);
+  if (!m) throw new Error('判据失效：在 platform/os/environment.js 里找不到 SECTION_ORDER 定义');
+  return m[1].split(',').map((s) => s.trim().replace(/^['"]|['"]$/g, '')).filter(Boolean);
+})();
 
 const nativeManager = {
   startInstall: () => ({ ok: true }),
@@ -101,6 +112,20 @@ const ENVIRONMENT_FORM = {
   sections: {
     runtime: { label: '运行时', at: 1700000000000, source: 'registered', state: 'ok', error: null,
       data: { node: 'v24.18.0', npm: '11.0.0', git: null, registry: { origin: 'https://registry.npmjs.org', mode: 'default' }, prefix: 'C:\\npm' } },
+    // 桌面壳所见（内核 platform/contract/shell-report.js 的读回）：夹具放「壳报过且读得通」那一档，
+    //   并把 reason/ageMs/writtenBy 一起给全 —— 面板要分得清「壳没报」与「报了但读不出」，
+    //   这两档的处置相反（一个去刷新、一个去查文件），边界挑掉任一个字段就说不出来。
+    shell: { label: '桌面壳所见（Node/npm/镜像源/全局前缀）', at: 1700000000000, source: 'shell', state: 'ok', error: null,
+      data: { available: true, reason: 'ok', path: 'C:\\s\\shell-report.json', at: 1699999900000, ageMs: 100000,
+        writtenBy: 'dsh-shell 1.2.8', schema: 1,
+        node: { path: 'C:\\n\\node.exe', binDir: 'C:\\n', version: 'v22.12.0', min: 'v22.12.0', ok: true },
+        npm: { path: 'C:\\n\\node.exe', args: ['C:\\n\\node_modules\\npm\\bin\\npm-cli.js'], version: '10.9.0', ok: true },
+        prefix: { dir: 'C:\\Users\\u\\AppData\\Roaming\\npm', writable: true, why: null },
+        registry: { best: 'https://registry.npmmirror.com', latencyMs: 88, probesTotal: 2,
+          probes: [{ url: 'https://registry.npmjs.org', ok: null, latencyMs: null },
+            { url: 'https://registry.npmmirror.com', ok: true, latencyMs: 88 }] },
+        records: [{ probe: 'node --version', source: 'shell:spawn', target: 'C:\\n\\node.exe', ms: 30, ok: true, note: '' }],
+        droppedRecords: 0 } },
     dsh: { label: 'DSH', at: null, source: 'registered', state: 'pending', data: null, error: null },
     browsers: { label: 'browsers', at: 1700000000000, source: 'self', state: 'ok', data: { count: 2, defaultSource: 'userchoice' } },
     session: { label: 'session', at: 1700000000000, source: 'self', state: 'ok', data: { reason: 'session-scoped-by-launcher' } },
@@ -292,12 +317,19 @@ function req(method, p, body, hostHeader, extraHeaders, via) {
     // 维度台账是 schema 2 的全部意义：面板要在一处看完「本机实况 + 每条结论的来路与新鲜度」。
     //   边界要是挑字段回传，异步维度就会静默消失（面板显示成「本机没有」而不是「尚未探测」）。
     const secs = r.body.sections || {};
-    check('EF 交出整张维度台账（九维齐备且每维带 state/source/at/label，未刷新的那维 at 为 null）',
-      ['runtime', 'dsh', 'browsers', 'session', 'egress', 'capabilities', 'preference', 'pick', 'startup']
-        .every((id) => secs[id] && typeof secs[id].state === 'string' && typeof secs[id].source === 'string'
-          && typeof secs[id].label === 'string')
-      && secs.dsh.state === 'pending' && secs.dsh.at === null && secs.runtime.state === 'ok',
-      JSON.stringify(Object.keys(secs).map((id) => [id, secs[id].state, secs[id].at])));
+    check('EF 交出整张维度台账（名单取自内核 SECTION_ORDER，任一维在边界消失即红；未刷新那维 at 为 null）',
+      SRC_SECTION_ORDER.length >= 10
+        && SRC_SECTION_ORDER.every((id) => secs[id] && typeof secs[id].state === 'string'
+          && typeof secs[id].source === 'string' && typeof secs[id].label === 'string')
+        && Object.keys(secs).length === SRC_SECTION_ORDER.length
+        && secs.dsh.state === 'pending' && secs.dsh.at === null && secs.runtime.state === 'ok',
+      JSON.stringify({ order: SRC_SECTION_ORDER, keys: Object.keys(secs).map((id) => [id, secs[id].state, secs[id].at]) }));
+    check('EF 壳上报维连 reason/ageMs 一起交出（「壳没报」与「报了读不出」处置相反，缺一个字段面板就说错话）',
+      secs.shell.data.available === true && secs.shell.data.reason === 'ok'
+        && secs.shell.data.ageMs === 100000 && secs.shell.data.writtenBy === 'dsh-shell 1.2.8'
+        && secs.shell.data.node.version === 'v22.12.0' && secs.shell.data.npm.args.length === 1
+        && secs.shell.data.registry.probes[0].ok === null && secs.shell.data.records.length === 1,
+      JSON.stringify(secs.shell && secs.shell.data));
     check('EF 代理地址的凭据在边界外仍为脱敏形态（表单是唯一的抹除处，端点再拼一遍就会把两份口径都弄错）',
       secs.egress.data.proxy.server === 'http://usr:***@127.0.0.1:7890'
         && !/pwd/.test(JSON.stringify(secs.egress)), JSON.stringify(secs.egress && secs.egress.data));
