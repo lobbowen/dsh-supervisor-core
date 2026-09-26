@@ -7,8 +7,9 @@ import { classifyOpenResult, handOffFromPanel } from "../../services/supervisor/
 import type { OpenExternalResult } from "../../services/supervisor";
 
 /** 地址条：点开（本机内核托管时请内核开浏览器，否则用访客自己的浏览器）+ 复制；
- *  复制失败时明示要手动选中。 */
-function OpenUrlRow({ url }: { url: string }) {
+ *  复制失败时明示要手动选中。导出给需要把地址常驻的调用方（一键登录等回调可长达三分钟，
+ *  toast 十几秒就消失，等待期间用户只剩这一条出路）。 */
+export function OpenUrlRow({ url }: { url: string }) {
   async function onOpen() {
     // 与端点同一套呈现：三档各说一句，任何一档地址都仍在眼前（这里不另造成败说法）。
     await runOpenExternal(() => handOffFromPanel(url));

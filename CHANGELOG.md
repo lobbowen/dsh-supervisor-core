@@ -1,5 +1,24 @@
 ## [未发布]
 
+### 一键登录的白窗口：`--no-open` 落到真正自弹的那条命令，隔离方言收最小集
+
+真机报障「反向代理里点一键登录，打开的就是一个白窗」。上一批把 `--no-open` 只补在沙箱实例的执行口，
+而真机自弹浏览器的是**主实例**（原生 DSH）的启动命令 —— 修错了对象，所以现象一模一样。本批三条：
+
+- **主实例命令组装口过同一道 `--no-open` 闸**：该 CLI 开关契约从沙箱域内提出为全仓唯一实现
+  （`src/platform/contract/dsh-cli.js#withoutAutoOpen`），`src/app/native/command.js` 与
+  `src/domains/instance/sandbox.js` 两条组装口共用它。仍只补缺省：命令里已显式写了 `--open`/`--no-open`
+  的一律原样交回，位置参数分隔符 `--` 之后的 token 不当开关。判据在 `native-dsh-binding-test` D-10
+  （补齐 / 幂等 / 反向不砍显式开关 / 反向非 web 形态不动 / 全仓只许一处实现）。
+- **隔离登录窗口的 argv 收最小集**（`src/platform/os/browser.js#isolatedPlan`）：删 chromium 的 `--incognito`
+  与 firefox 的 `-private-window` —— 独立 profile 本身就是隔离，且该目录用完即删，再叠一层无痕只是第二重冗余；
+  删 `--window-size` 与 `--lang` —— 界面语言与窗口尺寸是用户看得见的一面，不属于指纹面，真机上中文 Windows
+  因此被弹出过一个法语界面的窗口。反指纹环境只留随机时区一项。判据在 `platform-layer-portability` X-8/X-10
+  （正向钉 argv 形状，反向钉「环境档相对宿主档只许改 TZ 一项」，故宿主自带 LANG 不会误报）。
+- **授权地址在弹窗里常驻**（`ui/src/features/supervisor/RouterPage.tsx`，取数口径 `ui/src/services/supervisor/externalOpen.ts#loginUrlOf`）：
+  等待授权可长达三分钟，而打开结果的 toast 十几秒就消失 —— 窗口停在空白页时，用户只剩「复制这一行手动打开」
+  这一条出路。地址行随弹窗关闭作废（上一轮的回调端口与 state 已释放，留着就是死链），且只摊 https 地址。
+
 ## [0.1.6-BETA.16]（2026-09-26）
 
 ### 真机三条缺陷：实例自弹浏览器、journald 档空转、外部打开零留痕
