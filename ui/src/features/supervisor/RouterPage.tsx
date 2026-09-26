@@ -16,8 +16,8 @@ import {
 import { formatCount } from "./format";
 import { Card, Metric, Pill, QuotaBox, MonoEllipsis, ToneDot } from "./widgets";
 import { useSupervisorAction } from "./useSupervisorAction";
-import { runOpenExternal } from "./openExternal";
-import { loginIsolationText } from "../../services/supervisor/externalOpen";
+import { runOpenExternal, OpenUrlRow } from "./openExternal";
+import { loginIsolationText, loginUrlOf } from "../../services/supervisor/externalOpen";
 import { cn } from "../../framework/utils";
 
 function quotaFull(q?: ProviderAccount["quota"]): boolean {
@@ -324,13 +324,18 @@ function EditKeysDialog({ open, onOpenChange, p }: {
   const [input, setInput] = useState("");
   const [saving, setSaving] = useState(false);
   const [loggingIn, setLoggingIn] = useState(false);
+  const [loginUrl, setLoginUrl] = useState("");
   const isProxy = p.kind === "proxy";
+  // 上一轮的地址随本轮作废（回调端口与 state 都已释放），弹窗再开时不留在屏幕上。
+  useEffect(() => { if (open) setLoginUrl(""); }, [open]);
   /** 一键登录（仅反代 Command Code 类）：内核已调起隔离浏览器，此处只如实呈现打开结果并轮询回调。
    *  授权地址恒可见：内核报不出「窗口已出现」时（拿不到浏览器退出证据/旧壳未回执）用户仍可复制或手动打开。 */
   async function oneClickLogin() {
     setLoggingIn(true);
     try {
       const s = await runOpenExternal(() => supervisorApi.proxyLoginStart());
+      // 地址常驻到弹窗关闭：等待授权可长达三分钟，而 toast 十几秒就消失 —— 白窗口时用户只剩这一行可复制。
+      setLoginUrl(loginUrlOf(s));
       if (!s || s.ok !== true) return;
       // 未隔离的两种原因（引擎无隔离方言 / 冷档案注定空白）说法与处置都不同，文案由服务层的纯函数给。
       const iso = loginIsolationText(s);
@@ -411,14 +416,24 @@ function EditKeysDialog({ open, onOpenChange, p }: {
         <div className="grid gap-3">
           {/* 一键登录（反代专属：Command Code OAuth） */}
           {isProxy ? (
-            <div className="flex items-center justify-between gap-3 rounded-md border border-border/70 bg-muted/40 px-3 py-2.5">
-              <div className="grid gap-0.5">
-                <span className="text-xs font-medium text-foreground">一键登录</span>
-                <span className="text-[11px] leading-tight text-muted-foreground">浏览器打开 Command Code 授权，自动添加账号</span>
+            <div className="grid gap-2 rounded-md border border-border/70 bg-muted/40 px-3 py-2.5">
+              <div className="flex items-center justify-between gap-3">
+                <div className="grid gap-0.5">
+                  <span className="text-xs font-medium text-foreground">一键登录</span>
+                  <span className="text-[11px] leading-tight text-muted-foreground">浏览器打开 Command Code 授权，自动添加账号</span>
+                </div>
+                <Button disabled={loggingIn || saving} onClick={() => void oneClickLogin()} size="sm">
+                  {loggingIn ? "等待授权…" : "一键登录"}
+                </Button>
               </div>
-              <Button disabled={loggingIn || saving} onClick={() => void oneClickLogin()} size="sm">
-                {loggingIn ? "等待授权…" : "一键登录"}
-              </Button>
+              {loginUrl ? (
+                <div className="grid gap-1 border-t border-border/60 pt-2">
+                  <span className="text-[11px] leading-tight text-muted-foreground">
+                    {loggingIn ? "等待授权中。窗口没弹出或停在空白页时，复制这一行在你的浏览器里打开：" : "本轮授权地址（窗口停在空白页时复制这一行手动打开）："}
+                  </span>
+                  <OpenUrlRow url={loginUrl} />
+                </div>
+              ) : null}
             </div>
           ) : null}
           {/* 已录入 Keys */}

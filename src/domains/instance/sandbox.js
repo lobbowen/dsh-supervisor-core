@@ -1,6 +1,8 @@
 'use strict';
 
 const platform = require('../../platform/os/index');
+// `dsh web` 不得自弹浏览器：这条 CLI 契约的唯一实现，主实例命令组装口取的是同一份。
+const dshCli = require('../../platform/contract/dsh-cli');
 
 // 沙箱布局：目录推导、启动命令、systemd 属性与 env 装配、平台能力判决。
 // 纯函数，rootDir 由组装根绑定后显式传入（无状态、无隐式 this）；能力判决只查 platform/os 的缓存能力矩阵（负结果 60s TTL），不直接 spawn。
@@ -43,25 +45,12 @@ function sandboxCommand(rootDir, inst) {
 function defaultCommand(dshBin, inst) {
   return [process.execPath, dshBin, 'web', '--port', String(inst.port), '--host', '127.0.0.1', '--trusted-host', '127.0.0.1', '--no-open'];
 }
-/** dsh 的 web 子命令自己会拉起系统浏览器，而那条路绕在外部打开唯一出口之外：没有能力档、没有预检、
- *  没有三档证据，守卫每次拉起都再弹一个窗。启动命令是从存量数据载回的（旧版默认命令没带 --no-open，
- *  真机上就是「实例一起就白弹一个浏览器」的来源），故无论命令出自哪一档都在执行口补齐该开关。
- *  只补缺省：命令里已显式写了 --open 或 --no-open 的一律原样交回，用户的显式意图不被砍掉。 */
-function withoutAutoOpen(cmd) {
-  const arr = (Array.isArray(cmd) ? cmd : []).map(String);
-  const webAt = arr.indexOf('web');
-  if (webAt < 0 || arr.includes('--no-open') || arr.includes('--open')) return cmd;
-  // 位置参数分隔符之后的 token 不是开关，补在那里等于交给 dsh 当参数。
-  const sep = arr.indexOf('--', webAt);
-  if (sep < 0) return arr.concat(['--no-open']);
-  return arr.slice(0, sep).concat(['--no-open'], arr.slice(sep));
-}
 /** 有效启动命令优先级：用户显式 command > 沙箱独立安装默认命令 > 宿主 dshBin 默认命令。
  *  三条都过 withoutAutoOpen —— 优先级说的是「用哪条命令」，不改变「web 启动不得自弹浏览器」。 */
 function effectiveCommand(rootDir, dshBin, inst) {
-  if (inst.domain === 'sandbox' && (!inst.command || !inst.command.length)) return withoutAutoOpen(sandboxCommand(rootDir, inst));
-  if (inst.command && inst.command.length) return withoutAutoOpen(inst.command);
-  return withoutAutoOpen(defaultCommand(dshBin, inst));
+  if (inst.domain === 'sandbox' && (!inst.command || !inst.command.length)) return dshCli.withoutAutoOpen(sandboxCommand(rootDir, inst));
+  if (inst.command && inst.command.length) return dshCli.withoutAutoOpen(inst.command);
+  return dshCli.withoutAutoOpen(defaultCommand(dshBin, inst));
 }
 /** systemd transient 单元属性（业务约束以「属性」表达，域层不拼 systemd 参数；平台只翻译语义、不决定数额）。
  *  alloc 的 MemoryMax/MemoryHigh/CPUQuota 由 governor 按机器预算与活跃实例数推导——用户填额已废止，

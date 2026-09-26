@@ -3,7 +3,7 @@
 // 只能证明源码里有这些字样，证不了分档判据按字段而非文案走、也证不了选路判据成立，故这里按行为钉。
 // 与 client.test.ts 同一手法：注入 fetch 替身，测到真实请求的路径与请求体，不碰 supervisorApi 本身。
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { handOffFromPanel, openViaWindow, servedByKernelHost, classifyOpenResult, evidenceDetail, loginIsolationText } from "./externalOpen";
+import { handOffFromPanel, openViaWindow, servedByKernelHost, classifyOpenResult, evidenceDetail, loginIsolationText, loginUrlOf } from "./externalOpen";
 import type { ProxyLoginStart } from "./types";
 
 function jsonResponse(status: number, body: unknown): Response {
@@ -112,6 +112,21 @@ describe("loginIsolationText：「没用隔离窗口」的两种原因分不开�
   it("依据码缺失时给一句兜底而不是什么都不显示", () => {
     const t = loginIsolationText({ ok: true, isolated: false });
     expect(t).toContain("未使用隔离窗口");
+  });
+});
+
+describe("loginUrlOf：等待授权期间常驻的地址行（toast 十几秒就消失，用户的出路不能跟着消失）", () => {
+  it("优先取三档词汇的 url，缺失时回退登录专有的 authUrl", () => {
+    expect(loginUrlOf({ url: "https://commandcode.test/a", authUrl: "https://stale.test/b" }))
+      .toBe("https://commandcode.test/a");
+    const s: ProxyLoginStart = { ok: false, authUrl: "https://commandcode.test/c" };
+    expect(loginUrlOf(s)).toBe("https://commandcode.test/c");
+  });
+  it("反向：地址缺失或非 https 一律不摊 —— 这一行会被渲染成可点链接，且面板地址带着访问令牌", () => {
+    expect(loginUrlOf(null)).toBe("");
+    expect(loginUrlOf({ url: "" })).toBe("");
+    expect(loginUrlOf({ url: "javascript:alert(1)" })).toBe("");
+    expect(loginUrlOf({ authUrl: "http://127.0.0.1:3080/?token=secret" })).toBe("");
   });
 });
 

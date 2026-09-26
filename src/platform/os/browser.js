@@ -9,7 +9,7 @@
 
 // 外部打开的唯一出口是 openBrowser，`intent` 决定用哪种形态：
 //   'plain'          —— 普通打开（面板/CTL 的「在浏览器里打开」），用系统或用户选的浏览器、并入既有会话；
-//   'isolated-login' —— 一键登录用的隔离窗口（独立 profile + 无痕/隐私参数 + 反指纹环境），
+//   'isolated-login' —— 一键登录用的隔离窗口（独立 profile + 首启动静音参数 + 随机时区环境），
 //                       并监视窗口关闭以便取消登录。窗口是否真能出内容还要过出网条件这一关
 //                       （环境表单的 egress 维度判冷档案，判据不住在本文件）。
 // 两种意图共用同一结果词汇 {ok, confirmed, handedOff, reason, error, message, url, evidence}：
@@ -152,7 +152,7 @@ function openPlan(platform, url, opts) {
  *  否则用户在偏好里选一次只对一半功能生效。
  *  拿不到独立 profile 或引擎无隔离方言时降为非隔离（isolated:false）：没有独立 profile 就并入既有实例，
  *  此时 onExit 恒误报「用户关了窗口」，故 watch 一并置 false —— 降级要降得如实，不冒充隔离。
- *  @param {{inventory?:object, pick?:object, profileDir?:string, size?:number[], lang?:string}} [opts] */
+ *  @param {{inventory?:object, pick?:object, profileDir?:string}} [opts] */
 function isolatedPlan(platform, url, opts) {
   const o = opts || {};
   const pl = platform || process.platform;
@@ -166,10 +166,11 @@ function isolatedPlan(platform, url, opts) {
     exitIsEvidence: ownsItsWindow('browser', pl),
   });
   if (form.direct && form.engine === 'chromium' && o.profileDir) {
-    const args = ['--incognito', '--user-data-dir=' + o.profileDir];
-    if (Array.isArray(o.size) && o.size.length === 2) args.push('--window-size=' + o.size[0] + ',' + o.size[1]);
-    if (o.lang) args.push('--lang=' + o.lang);
-    args.push('--no-first-run', '--no-default-browser-check', '--disable-session-crashed-bubble');
+    // 方言只留「让它安静地开这一个窗」所必需的：独立 user-data-dir 本身就是隔离，且该目录用完即删
+    // （deferredRemove），再叠一层无痕只是第二重冗余。外观参数（界面语言、窗口尺寸）一律不发：
+    // 那是用户看得见的一面，不属于指纹面 —— 真机上中文 Windows 被弹出过一个法语界面的窗口。
+    const args = ['--user-data-dir=' + o.profileDir,
+      '--no-first-run', '--no-default-browser-check', '--disable-session-crashed-bubble'];
     // 独立 user-data-dir => 必为新实例进程，其 exit 即窗口关闭（onExit 语义成立）。
     return Object.assign(common, {
       bin: b.bin, args: [...baseArgs, ...args, url], via: 'isolated', isolated: true, watch: true,
@@ -178,8 +179,9 @@ function isolatedPlan(platform, url, opts) {
   }
   if (form.direct && form.engine === 'firefox' && o.profileDir) {
     // --no-remote + 专用 profile：不并入既有实例，新进程随窗口关闭而退出。
+    // 同上不再叠 -private-window：专用 profile 已用完即删。
     return Object.assign(common, {
-      bin: b.bin, args: [...baseArgs, '--no-remote', '--profile', o.profileDir, '-private-window', url],
+      bin: b.bin, args: [...baseArgs, '--no-remote', '--profile', o.profileDir, url],
       via: 'isolated', isolated: true, watch: true, envKind: 'anti', label: 'firefox',
       exitIsEvidence: ownsItsWindow('isolated', pl),
     });
@@ -213,22 +215,18 @@ function observeSpawn(child, windowMs, setTimeoutFn) {
 /** 观测窗口：够长以捕获同步失败（ENOENT/权限）与秒退，够短以不占用面板的 15s 动作预算。 */
 const OPEN_OBSERVE_MS = 1500;
 
-/** 隔离登录窗口的随机化面（时区/语言/窗口尺寸）：策略与引擎方言同处一层 —— 域侧只声明「要登录用的
- *  隔离窗口」，不各自维护一份池子，否则两侧漂移就成了「同一产品两种指纹形状」。
- *  池子只影响外观参数，不参与任何能力判定。 */
+/** 隔离登录窗口的随机化面：只随机用户看不见的那一面（时区）。
+ *  这里曾有界面语言与窗口尺寸，真机上因此给中文 Windows 弹出一个法语界面的窗口 —— 看得见的一面归用户，
+ *  不归指纹策略；且 LANG 在 Linux/macOS 上本就是 Chromium 的界面语言来源，把它留在环境里只是换平台复发。
+ *  池子不参与任何能力判定。 */
 const LOGIN_TZ_POOL = ['Asia/Shanghai', 'Asia/Seoul', 'Asia/Tokyo', 'Asia/Singapore', 'Europe/Berlin', 'Europe/London', 'Europe/Paris', 'America/New_York', 'America/Los_Angeles', 'Australia/Sydney'];
-const LOGIN_LANG_POOL = ['zh-CN', 'en-US', 'en-GB', 'ja-JP', 'ko-KR', 'de-DE', 'fr-FR', 'zh-TW'];
-const LOGIN_SIZE_POOL = [[1280, 800], [1366, 768], [1440, 900], [1536, 864], [1600, 900], [1680, 1050], [1920, 1080], [1024, 768], [1152, 864], [1280, 720]];
 
-/** 隔离登录用的两套环境：anti=带随机化时区/语言（隔离引擎用），sys=宿主环境补齐图形变量（降级路径用）。
+/** 隔离登录用的两套环境：anti=随机时区（隔离引擎用），sys=宿主环境补齐图形变量（降级路径用）。
  *  图形环境补齐只读 desktop.js 一处，不在这里再摸一遍 socket。 */
 function loginEnv(rand) {
-  const pick = (arr) => arr[Math.floor((typeof rand === 'function' ? rand() : Math.random()) * arr.length)];
-  const size = pick(LOGIN_SIZE_POOL);
-  const lang = pick(LOGIN_LANG_POOL);
-  const tz = pick(LOGIN_TZ_POOL);
+  const tz = LOGIN_TZ_POOL[Math.floor((typeof rand === 'function' ? rand() : Math.random()) * LOGIN_TZ_POOL.length)];
   const sysEnv = Object.assign({}, process.env, desktop.sessionEnv());
-  return { size, lang, sysEnv, antiEnv: Object.assign({}, sysEnv, { TZ: tz, LANG: lang }) };
+  return { sysEnv, antiEnv: Object.assign({}, sysEnv, { TZ: tz }) };
 }
 
 /** 探测清单摊成「一行能看完」的诊断，随每次打开的 evidence 交出：
@@ -373,7 +371,7 @@ async function openBrowser(url, o) {
     try { profile = opts.profileDir || alloc(); } catch { profile = null; }
   }
   const plan = intent === 'isolated-login'
-    ? isolatedPlan(pl, url, { inventory: inv, pick: picked, profileDir: profile, size: login.size, lang: login.lang })
+    ? isolatedPlan(pl, url, { inventory: inv, pick: picked, profileDir: profile })
     : openPlan(pl, url, { inventory: inv, pick: picked });
   run.args = plan.args;
   const diagnostics = launchDiagnostics(inv, plan, picked);

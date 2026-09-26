@@ -192,6 +192,38 @@ check('B21 反向：旧无绑定形态被判失败', oldS.indexOf('host._bindNat
   try { fs.rmSync(mdir, { recursive: true, force: true }); } catch {}
 }
 
+// D-10：主实例（原生 DSH）的启动命令必须自带 --no-open。
+// `dsh web` 自己会拉起系统浏览器，这条路绕在 platform/os/browser#openBrowser 唯一出口之外：没有能力档、
+// 没有预检、没有三档证据，守卫每重启一次就多弹一个窗。该闸要覆盖每一条组装口，不能只装在沙箱那条上。
+{
+  const { nativeCommand } = require(path.join(ROOT, 'src', 'app', 'native', 'command.js'));
+  const dshCli = require(path.join(ROOT, 'src', 'platform', 'contract', 'dsh-cli.js'));
+  const dshCliSrc = fs.readFileSync(path.join(ROOT, 'src', 'platform', 'contract', 'dsh-cli.js'), 'utf8');
+  const cmd = nativeCommand({ command: [process.execPath, JS, 'web'], targetPort: 3080 });
+  check('D-10 主实例 web 命令在组装口补 --no-open', cmd.includes('--no-open'), JSON.stringify(cmd));
+  check('D-10 补开关不改变端口注入（--port 仍取 targetPort）',
+    String(cmd[cmd.indexOf('--port') + 1]) === '3080', JSON.stringify(cmd));
+  const keepOpen = nativeCommand({ command: [process.execPath, JS, 'web', '--open'], targetPort: 3080 });
+  check('D-10 反向：显式 --open 原样交回，不被砍成不自弹',
+    keepOpen.includes('--open') && !keepOpen.includes('--no-open'), JSON.stringify(keepOpen));
+  const once = nativeCommand({ command: [process.execPath, JS, 'web', '--no-open'], targetPort: 3080 });
+  check('D-10 已带 --no-open 不重复补', once.filter((t) => t === '--no-open').length === 1, JSON.stringify(once));
+  const notWeb = nativeCommand({ command: [process.execPath, JS, '--version'] });
+  check('D-10 反向：非 web 形态原样交回', notWeb.length === 3 && !notWeb.includes('--no-open'), JSON.stringify(notWeb));
+  const sep = dshCli.withoutAutoOpen([process.execPath, JS, 'web', '--', 'web']);
+  check('D-10 分隔符后的位置参数不当作开关，开关补在分隔符之前',
+    sep.indexOf('--no-open') < sep.indexOf('--'), JSON.stringify(sep));
+
+  const assemblers = ['src/app/native/command.js', 'src/domains/instance/sandbox.js']
+    .map((p) => [p, fs.readFileSync(path.join(ROOT, p), 'utf8')]);
+  const owners = [['src/platform/contract/dsh-cli.js', dshCliSrc]].concat(assemblers)
+    .filter(([, s]) => /function withoutAutoOpen/.test(s)).map(([p]) => p);
+  check('D-10 --no-open 判定全仓只有一处实现（两条组装口不得各自写一份）',
+    owners.length === 1 && owners[0] === 'src/platform/contract/dsh-cli.js', JSON.stringify(owners));
+  const wired = assemblers.filter(([, s]) => /require\([^)]*dsh-cli/.test(s)).map(([p]) => p);
+  check('D-10 主实例与沙箱两条组装口都取该契约', wired.length === 2, JSON.stringify(wired));
+}
+
 restore();
 try { fs.rmSync(TMP, { recursive: true, force: true }); } catch {}
 

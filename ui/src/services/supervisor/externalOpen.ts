@@ -108,6 +108,14 @@ export function loginIsolationText(s?: ProxyLoginStart | null): string | null {
   return "本次登录未使用隔离窗口" + (s.isolatedDetail ? "：" + s.isolatedDetail : "，换账号请先在浏览器里退出");
 }
 
+/** 等待授权期间面板要常驻的那一行地址（纯函数，页面不自己取字段）。
+ *  同一地址内核放在 url（三档词汇必备）与 authUrl（登录专有）两处，取数口径只能有一处；
+ *  产物会被渲染成可点链接且来自 HTTP 响应，故非 https 一律不摊。 */
+export function loginUrlOf(s?: { url?: string | null; authUrl?: string | null } | null): string {
+  const u = typeof s?.url === "string" && s.url ? s.url : (typeof s?.authUrl === "string" ? s.authUrl : "");
+  return u.startsWith("https://") ? u : "";
+}
+
 /** 结果分档（纯函数）：三档语义在此唯一一次映射为界面档位。
  *  判据取 ok/confirmed，不取 message/error 文本 —— 文案可变，档位是契约。
  *  reveal = 这一档要不要把证据行摊到屏幕上，与服务层的分档同处判定：组件只做渲染，

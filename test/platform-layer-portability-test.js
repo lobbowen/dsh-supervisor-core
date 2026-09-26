@@ -900,16 +900,21 @@ const TMP = fs.mkdtempSync(path.join(os.tmpdir(), 'platport-'));
     [kl, kw, knone, kmany, ko].every((p) => !/^\s*(cmd|sh)\b/.test(String(p.bin)) && !/&/.test(String(p.bin))), 'clean');
 
   // —— 隔离计划：与 openPlan 同一份探测输入，同一个默认项（否则系统默认只对一半功能生效）——
-  const pc = br.isolatedPlan('linux', u, { inventory: invOf([brow('/usr/bin/google-chrome', { baseArgs: [] })]), profileDir: '/P', size: [1280, 800], lang: 'zh-CN' });
-  check('X-8 隔离计划（chromium）= 默认浏览器直启：incognito + user-data-dir + size/lang + url 收尾，无 cmd',
+  const pc = br.isolatedPlan('linux', u, { inventory: invOf([brow('/usr/bin/google-chrome', { baseArgs: [] })]), profileDir: '/P' });
+  check('X-8 隔离计划（chromium）= 默认浏览器直启：user-data-dir + 首启动静音参数 + url 收尾，无 cmd',
     pc.bin === '/usr/bin/google-chrome' && pc.isolated === true && pc.watch === true && pc.envKind === 'anti'
-    && JSON.stringify(pc.args) === JSON.stringify(['--incognito', '--user-data-dir=/P', '--window-size=1280,800', '--lang=zh-CN',
+    && JSON.stringify(pc.args) === JSON.stringify(['--user-data-dir=/P',
       '--no-first-run', '--no-default-browser-check', '--disable-session-crashed-bubble', u]),
     JSON.stringify(pc.args));
   const pf = br.isolatedPlan('linux', u, { inventory: invOf([brow('/usr/lib/firefox/firefox')]), profileDir: '/P' });
-  check('X-8 隔离计划（firefox）= --no-remote --profile <tmp> -private-window（新实例，退出可监听）',
-    pf.isolated === true && JSON.stringify(pf.args) === JSON.stringify(['--no-remote', '--profile', '/P', '-private-window', u]),
+  check('X-8 隔离计划（firefox）= --no-remote --profile <tmp>（新实例，退出可监听）',
+    pf.isolated === true && JSON.stringify(pf.args) === JSON.stringify(['--no-remote', '--profile', '/P', u]),
     JSON.stringify(pf.args));
+  // 反向对照：曾出现在真机 argv 里的用户可见参数，一律不得由隔离计划发出 —— 独立 profile 已用完即删，
+  //   再叠无痕是第二重冗余；界面语言与窗口尺寸属于用户看得见的一面，不属于指纹面。
+  const visible = [pc, pf].every((p) => !p.args.some((a) => /^--(lang|window-size|incognito)\b/.test(String(a)) || String(a) === '-private-window'));
+  check('X-8 反向：隔离 argv 里没有 --lang/--window-size/--incognito/-private-window', visible,
+    JSON.stringify([pc.args, pf.args]));
   const ps = br.isolatedPlan('darwin', u, { inventory: invOf([brow('/Applications/Safari.app/Contents/MacOS/Safari')]), profileDir: '/P' });
   check('X-8 Safari 默认 = open 非隔离兜底（isolated:false/watch:false），不再强拉其他内核',
     ps.bin === 'open' && ps.isolated === false && ps.watch === false && JSON.stringify(ps.args) === JSON.stringify([u]), JSON.stringify(ps));
@@ -920,8 +925,8 @@ const TMP = fs.mkdtempSync(path.join(os.tmpdir(), 'platport-'));
   check('X-8 反向：chromium 但缺 profileDir 不冒充隔离（退回非隔离，防并入既有实例后 onExit 恒误报）',
     pg.isolated === false && pg.bin === '/usr/bin/google-chrome', JSON.stringify(pg));
   const pb = br.isolatedPlan('linux', u, { inventory: invOf([brow('brave-browser', { baseArgs: ['--ozone-platform=x11'] })]), profileDir: '/P' });
-  check('X-8 desktop baseArgs 原样带入（隔离参数在其后、url 收尾；无 size/lang 则不发对应参数）',
-    JSON.stringify(pb.args) === JSON.stringify(['--ozone-platform=x11', '--incognito', '--user-data-dir=/P',
+  check('X-8 desktop baseArgs 原样带入（隔离参数在其后、url 收尾）',
+    JSON.stringify(pb.args) === JSON.stringify(['--ozone-platform=x11', '--user-data-dir=/P',
       '--no-first-run', '--no-default-browser-check', '--disable-session-crashed-bubble', u]), JSON.stringify(pb.args));
   const pbn = br.isolatedPlan('win32', u, { inventory: invOf([brow('C:\\Edge\\msedge.exe')]), profileDir: '/P' });
   check('X-8 win32 隔离计划与 openPlan 同一本体（登录窗口与外部打开不得是两个浏览器）',
@@ -1243,18 +1248,21 @@ async function x10() {
         && li.evidence.via === 'isolated' && li.evidence.isolated === true && li.evidence.watch === true
         && li.evidence.ownsWindow === true && li.evidence.profile === '/P' && li.url === u,
       JSON.stringify(li));
-    // argv 的形状是本层的契约（先隔离方言、再随机化外观、url 收尾）；具体取值取自池子，不在此钉死。
+    // argv 的形状是本层的契约（隔离方言在前、url 收尾）；不发任何用户可见的外观参数。
     const ia = isoSpawnArgs || [];
-    check('X-10 隔离登录的 argv 走隔离方言：--incognito + user-data-dir 开头，外观参数居中，url 收尾',
-      ia[0] === '--incognito' && ia[1] === '--user-data-dir=/P'
-        && /^--window-size=\d+,\d+$/.test(ia[2]) && /^--lang=[A-Za-z-]+$/.test(ia[3])
-        && ia.slice(4, 7).join(',') === '--no-first-run,--no-default-browser-check,--disable-session-crashed-bubble'
-        && ia[ia.length - 1] === u, JSON.stringify(ia));
-    check('X-10 环境档用反指纹面（TZ 与 argv 里的 --lang 同源注入，域侧不自己拼一份）',
-      (() => {
-        const m = /^--lang=([A-Za-z-]+)$/.exec(ia[3] || '');
-        return !!m && !!isoEnv && isoEnv.LANG === m[1] && typeof isoEnv.TZ === 'string' && !!isoEnv.TZ;
-      })(), JSON.stringify([isoEnv && isoEnv.TZ, ia[3]]));
+    check('X-10 隔离登录的 argv 走最小隔离方言：user-data-dir 开头、静音参数居中、url 收尾',
+      ia[0] === '--user-data-dir=/P'
+        && ia.slice(1, 4).join(',') === '--no-first-run,--no-default-browser-check,--disable-session-crashed-bubble'
+        && ia[ia.length - 1] === u && ia.length === 5, JSON.stringify(ia));
+    // 判据不能钉「环境里没有 LANG」——runner 自己就带 LANG，那样只会误报；要比的是反指纹档相对宿主档
+    //   只多改了一项（把界面语言随机化改回来就红）。
+    const le = br.loginEnv(() => 0.5);
+    const injected = Object.keys(le.antiEnv).filter((k) => le.sysEnv[k] !== le.antiEnv[k]);
+    check('X-10 反指纹档相对宿主档只改 TZ 一项（这里曾随机化界面语言：中文 Windows 被弹出过法语窗口）',
+      JSON.stringify(injected) === JSON.stringify(['TZ']), JSON.stringify(injected));
+    check('X-10 隔离登录确实用反指纹档：TZ 有值且宿主 LANG 原样带过',
+      !!isoEnv && typeof isoEnv.TZ === 'string' && !!isoEnv.TZ && isoEnv.LANG === le.sysEnv.LANG,
+      JSON.stringify([isoEnv && isoEnv.TZ, isoEnv && isoEnv.LANG]));
     check('X-10 只在 watch 形态将关闭回调接到 spawn（并入既有实例时 onExit 恒误报，宁可不接）',
       isoOnExit === onExit, String(isoOnExit));
     check('X-10 隔离登录成功后延迟回收临时 profile（一次登录留一个目录 = 磁盘上的孤儿）',
