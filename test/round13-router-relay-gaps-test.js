@@ -388,8 +388,13 @@ const runUpstream = (headers, chunks, chunkMs) => new Promise((resolve) => {
     const { freePort } = require(path.join(__dirname, '_ports'));
     const { createOAuthOps } = require(path.join(ROOT, 'src', 'domains', 'router', 'ops', 'oauth.js'));
     const oauthSrc = strip(read('src/domains/router/ops/oauth.js'));
-    check('⑥ 形态：handler 决议前比对轮次且旧轮回调回 410',
-      /st\._ccLoginRound !== roundId/.test(oauthSrc) && /writeHead\(410\)/.test(oauthSrc), '有');
+    // 轮次比对与 410 由下面的真实 HTTP 夹具按行为判红，这里不再按源码字样重复钉。
+    // 域与平台的接线只有一行 glue（router-ops 的 openInBrowser）：它声明意图而不是机制，域侧一旦
+    //   重新拼起 argv/profile，登录就又开了第二条执行路——该形态运行期看不出来，故钉文本。
+    const roSrc = strip(read('src/domains/router/router-ops.js'));
+    check('⑥ router-ops 经唯一出口声明 isolated-login 意图，域侧零 argv/零 profile 拼接',
+      /platform\.browser\.openBrowser\(url, \{ intent: 'isolated-login'/.test(roSrc)
+        && !/user-data-dir|--incognito|--profile/.test(roSrc + oauthSrc), roSrc.slice(0, 160));
     const watchers = [];
     // 夹具形状 = 平台层唯一出口 openBrowser(url, {intent:'isolated-login', onExit}) 的返回：
     //   三档词汇在顶层、隔离产物（profile/isolated）在 evidence 里。域侧只认这一套字段，
@@ -416,6 +421,10 @@ const runUpstream = (headers, chunks, chunkMs) => new Promise((resolve) => {
 
     const s1 = await ops.commandcodeLoginStart();
     check('⑥ 第一轮登录轮启动成功（前置）', s1.ok === true && !!s1.state, JSON.stringify(s1).slice(0, 100));
+    // 三档由平台层原样交回：本层若自己宣称 confirmed/handedOff，「面板说已打开、屏幕什么都没有」就回来了。
+    check('⑥ 成功档原样透传平台层三档（confirmed/message 取自夹具，isolated 取自 evidence，本层不自造）',
+      s1.confirmed === true && s1.handedOff === false && s1.message === '已在隔离窗口打开'
+        && s1.isolated === true && s1.isolatedBasis === 'isolated', JSON.stringify(s1).slice(0, 160));
     // 在途请求：连接与请求体已送达、未 end —— 复现「用户在浏览器里点了回调但守卫恰好重发登录」。
     const inflight = http.request({ host: '127.0.0.1', port: s1.port, path: '/callback', method: 'POST', headers: { 'Content-Type': 'application/json' } });
     inflight.on('error', () => {});
@@ -443,6 +452,23 @@ const runUpstream = (headers, chunks, chunkMs) => new Promise((resolve) => {
     const w3 = await w3p;
     check('⑥ 旧轮浏览器监视迟到不误杀新轮（旧实现此处报「浏览器已关闭，登录已取消」）',
       w3.ok === true && w3.apiKey === 'K3', JSON.stringify(w3).slice(0, 100));
+
+    // 失败档：打不开浏览器时授权地址与分发依据必须一起活着走到面板（否则界面只剩「再点一次」），
+    //   且登录态当场拆干净——不能留下一个无人决议、也等不到回调的悬挂轮。
+    const opsF = createOAuthOps({
+      ports: { allocate: async () => freePort(), unregister: () => {}, allocateMark: () => {} },
+      openInBrowser: async () => ({
+        ok: false, confirmed: false, handedOff: false, reason: 'no-launcher', error: '未探到可启动的浏览器',
+        message: null, url: 'x', evidence: { diagnostics: { pick: 'none-found' } },
+      }),
+    });
+    const f1 = await opsF.commandcodeLoginStart();
+    check('⑥ 失败档把 authUrl/reason/evidence 一起交出，error 只补文案不改地址字段',
+      f1.ok === false && f1.reason === 'no-launcher' && f1.url === f1.authUrl
+        && !!f1.evidence && /手动打开/.test(f1.error), JSON.stringify(f1).slice(0, 180));
+    const wf = await opsF.commandcodeLoginWait(200);
+    check('⑥ 失败档当场拆轮：wait 报「未在登录中」而非悬挂等待',
+      wf.ok === false && /未在登录中/.test(wf.error), JSON.stringify(wf));
   })().catch((e) => check('6) B2-6b 异步块无异常完成（含网络夹具）', false, e && e.message));
 
   const failed = results.concat(asyncResults).filter((r) => !r);
