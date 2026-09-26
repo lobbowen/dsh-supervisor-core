@@ -155,6 +155,6 @@ pool.onChange(fn)                        // fn(id, value|null, record) —— va
 | TK-G3 | **无静默销毁**：`persist.js` 不含清空式 `rmSync` |
 | TK-G4 | **用户配置与 DSH 令牌通道不混**：`src/app/daemons/runtime.js#_syncLanState` 写出的 `tokens` 段只含 `dsh-*`；instances[] 行字段 ⊆ 白名单且仅 `remoteToken` 携带凭证（TK-7 裁决） |
 | TK-G5 | **单实例令牌获取**：除 token 组件外无 `this.dshToken` 式缓存（relay 改为按需读） |
-| TK-G6 | **令牌不进 argv/URL**：`browser.js` 调用点不得拼 `?token=` |
+| TK-G6 | **令牌不进 argv/URL**：`browser.js` 调用点不得拼 `?token=`（经中间封装转交同样判，实参表带选项对象时按**首个顶层实参**识别转交）；唯一出口的每次打开落一行日志，argv 里的查询串与片段先截掉，令牌同样不得进日志 |
 | TK-G7 | 幽灵键 `lanToken` 在 `src/` 中零引用 |
 | TK-G8 | 反向：判据能识别旧形态（门禁非空转） |

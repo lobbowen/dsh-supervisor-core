@@ -5,6 +5,8 @@
 // 退避重试与周期兜底归 pool，本层只拉一次；TK-7：用户配置类（remote-token/api-access-key/frp-auth）只登记不捕捉，对非 captured 分类直接返回 null。
 
 const ex = require('../../util/exec');
+// 服务档的唯一分派处（platform/os/service.js#current）：journald 只在单元真由 systemd 拉起时才存在。
+const service = require('../../os/service');
 const persist = require('./persist');
 const kinds = require('./kinds');
 
@@ -16,10 +18,24 @@ function parseDshTokenLine(line) {
   return m ? m[1] : null;
 }
 
-/** journald 查询：按单元取“最近一条含回环 URL 的行”。
- *  resolve { token, source:'journal', line } 或 null；任何失败（含非 systemd 平台无 journalctl）都 resolve(null)，绝不 reject。 */
+// 每个单元的「journald 档已停用」只说一次：那是停用的状态，不是待重试的失败，逐拍重刷只会把真因埋进噪声。
+const _channelNoticed = new Set();
+
+/** journald 查询：按单元取“最近一条含回环 URL 的行”；任何失败（含无 journalctl）都 resolve(null)，绝不 reject。
+ *  先过服务档闸（判据取 platform/os/service#current 单源，本层不写第二份平台判断）：
+ *  'dsh-web@' + 实例 id 只是实例标识，portable 档（darwin/win32 与无 user-systemd 的容器）同样带着它，
+ *  而那里没有任何 journal 可查 —— 旧形态每 30s 起一次注定 ENOENT 的 journalctl，日志尾只剩噪声。 */
 async function captureJournal(unit, opts) {
-  const logger = (opts && opts.logger) || console;
+  const o = opts || {};
+  const logger = o.logger || console;
+  const kind = (typeof o.providerKind === 'function' ? o.providerKind : service.kind)();
+  if (kind !== 'systemd') {
+    if (!_channelNoticed.has(unit)) {
+      _channelNoticed.add(unit);
+      logger.info && logger.info('[token] journald 档对 ' + unit + ' 停用：本机服务档=' + kind + '，没有 systemd 单元可查');
+    }
+    return null;
+  }
   // runOutAsync 失败/超时返回 null 且输出有上限，无需再包 try/catch。
   const out = await ex.runOutAsync('journalctl', ['--user', '-u', unit + '.service', '--no-pager', '-o', 'cat', '-g', '127\\.0\\.0\\.1:.*token=', '-n', '1'], {
     timeoutMs: 5000,

@@ -130,7 +130,8 @@ function commandShapeError(command, dshBin) {
 
 function handle(ctx) {
   const { sup, req, res, pathname, identity, send, collectBody, originAllowed, tokOf, browser } = ctx;
-  function openInSystemBrowser(url) { return browser.openBrowser(url); }
+  // logger 交进唯一出口：这次打开的 argv 与档位要能在守卫日志里查到（面板上的三档读数只有当场看得见的份）。
+  function openInSystemBrowser(url) { return browser.openBrowser(url, { logger: sup.logger }); }
 
     // /open 落地页不属 /instances 前缀，但消费本域签发的一次性码、与 tokOf 同源，故不再建第二份实现。
     if (req.method === 'GET' && pathname === '/open') return handleOpen(ctx);

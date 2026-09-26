@@ -1122,11 +1122,31 @@ async function x10() {
       ['browser', EDGE_WIN]],
   ];
   for (const [name, url, opts, judge, form] of cases) {
-    const r = await br.openBrowser(url, opts);
+    // 每档结局都要落且只落一行日志：白窗/无弹窗在界面上没有任何线索，日志是唯一可取证的现场，
+    //   而逐档重复刷（或整条链路一句都没有）都等于没有。
+    const rows = [];
+    const lg = { info: (m) => rows.push(String(m)), warn: (m) => rows.push(String(m)) };
+    const r = await br.openBrowser(url, Object.assign({}, opts, { logger: lg }));
     const got = r.evidence ? [r.evidence.via, r.evidence.bin] : [];
     const formOk = !form || (got[0] === form[0] && (!form[1] || got[1] === form[1]));
-    check('X-10 ' + name, judge(r) && vocabOk(r) === null && formOk,
-      (vocabOk(r) || '') + (formOk ? '' : '形态漂移，实走 ' + got.join('/') + ' ') + JSON.stringify(r));
+    check('X-10 ' + name, judge(r) && vocabOk(r) === null && formOk && rows.length === 1,
+      (vocabOk(r) || '') + (formOk ? '' : '形态漂移，实走 ' + got.join('/') + ' ') +
+      (rows.length === 1 ? '' : '日志行数=' + rows.length + ' ') + JSON.stringify(r));
+  }
+
+  // 日志不是令牌的家：普通打开传的就是带 ?token= 的本机地址，argv 摘要必须截掉查询串与片段，
+  //   同时留住 origin+path —— 整条抹掉等于把「开的到底是哪个地址」这个取证点也一起抹了。
+  {
+    const rows = [];
+    const lg = { info: (m) => rows.push(String(m)), warn: (m) => rows.push(String(m)) };
+    const r = await br.openBrowser('http://127.0.0.1:28111/?token=AbC123def-456',
+      { platform: 'linux', inventory: NO_INV, observe: obs(EX_OK), spawn: okSpawn, binAvailable: () => true, logger: lg });
+    const line = rows[0] || '';
+    check('X-10 带令牌地址仍恰落一行', rows.length === 1 && r.ok === true, JSON.stringify(rows));
+    check('X-10 令牌值不入日志', !/AbC123def-456/.test(line), line);
+    check('X-10 查询串整体截掉（不止令牌那一个键）', !/\?token=/.test(line), line);
+    check('X-10 地址主体仍留在日志里可比对', /127\.0\.0\.1:28111/.test(line), line);
+    check('X-10 日志写明档位与分发依据', /\[open\] intent=plain via=dispatcher.*=> confirmed/.test(line), line);
   }
 
   // 失败路径必须**零 spawn**：预检不过还起进程 = 把必死命令交给系统，且面板无从解释。
